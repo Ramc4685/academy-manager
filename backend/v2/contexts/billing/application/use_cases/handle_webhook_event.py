@@ -38,6 +38,9 @@ from backend.v2.contexts.billing.application.ports import (
     SubscriptionRepository,
     TransactionRunner,
 )
+from backend.v2.contexts.billing.application.use_cases.billing_settings_admin import (
+    BillingAuditAppender,
+)
 from backend.v2.contexts.billing.application.use_cases.checkout_allocation import (
     allocate_checkout_payment_across_invoices,
 )
@@ -52,6 +55,7 @@ from backend.v2.contexts.billing.application.use_cases.record_payment_dispute im
     RecordPaymentDispute,
 )
 from backend.v2.contexts.billing.domain.ach_returns import normalize_nacha_return_code
+from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 from backend.v2.contexts.billing.domain.checkout_hold import release_checkout_hold
 from backend.v2.contexts.billing.domain.connected_account import (
     ConnectedAccount,
@@ -270,9 +274,11 @@ class HandleWebhookEvent:
         expected_livemode: bool | None = None,
         tenancy_mode: str = "single_academy",
         academy_timezone: AcademyTimezoneReader | None = None,
+        billing_audit: BillingAuditAppender | None = None,
         clock=lambda: datetime.now(UTC),
     ) -> None:
         self._stripe = stripe
+        self._billing_audit = billing_audit
         self._dedup = dedup
         self._payments = payments
         self._subscriptions = subscriptions
@@ -1854,6 +1860,7 @@ class HandleWebhookEvent:
                 payment=existing_payment,
                 amount_cents=amount_cents,
                 return_code=return_code,
+                source_key=f"pi-return:{pi_id}",
             )
             return
 
@@ -2196,10 +2203,14 @@ class HandleWebhookEvent:
         obj = event.get("data", {}).get("object", {})
         if not isinstance(obj, dict):
             return
+        customer_id = str(obj.get("customer") or "")
         if event.get("type") == "mandate.updated":
             if obj.get("status") != "inactive":
                 return
             payment_method_id, reason = str(obj.get("payment_method") or ""), "mandate_inactive"
+            customer_id = await self._payment_method_customer(
+                payment_method_id, stripe_account=event.get("account")
+            )
         else:
             bank = obj.get("us_bank_account") or {}
             blocked = (
@@ -2218,11 +2229,28 @@ class HandleWebhookEvent:
         if not payment_method_id:
             return
         flagged = await self._parent_customers.flag_payment_method_blocked(
-            payment_method_id=payment_method_id, reason=reason, at=self._now()
+            payment_method_id=payment_method_id,
+            reason=reason,
+            at=self._now(),
+            stripe_customer_id=customer_id or None,
         )
         log.warning(
             "payment_method_unusable pm=%s reason=%s flagged=%d", payment_method_id, reason, flagged
         )
+
+    async def _payment_method_customer(self, payment_method_id: str, *, stripe_account: Any) -> str:
+        """The Stripe customer a method belongs to ("" when unknown). A mandate
+        names only its method; the id match still runs if this lookup fails."""
+        if not payment_method_id:
+            return ""
+        try:
+            method = await self._stripe.retrieve_payment_method(
+                payment_method_id, stripe_account=str(stripe_account or "") or None
+            )
+        except Exception:
+            log.warning("payment_method_customer_lookup_failed pm=%s", payment_method_id)
+            return ""
+        return str((method or {}).get("customer") or "")
 
     async def _on_charge_refunded(self, event: dict[str, Any]) -> None:
         ch = event["data"]["object"]
@@ -2300,6 +2328,7 @@ class HandleWebhookEvent:
                 payment=payment,
                 amount_cents=total_refunded,
                 return_code=return_code,
+                source_key=None,  # amount_refunded is cumulative
             )
             return
         # Invoice-level sync runs FIRST: if it fails, the payment row is still
@@ -2309,16 +2338,17 @@ class HandleWebhookEvent:
         await self._sync_invoice_refunds_for_ledger_payment(
             pi_id=pi_id, payment=payment, total_refunded_cents=total_refunded
         )
-        if total_refunded == payment.refunded_cents:
-            return
-        delta = max(0, total_refunded - payment.refunded_cents)
-        new_status = "refunded" if total_refunded >= payment.amount_cents else "partially_refunded"
-        updated = await self._billing_ledger.mark_payment_refunded(
+        # ``amount_refunded`` is cumulative for the charge only; a keyed dispute
+        # already on the total must not be overwritten by it (L8).
+        updated, total_moved = await self._billing_ledger.apply_payment_return(
             payment.payment_id,
-            refunded_cents=total_refunded,
-            status=new_status,
+            amount_cents=total_refunded,
+            source_key=None,
             updated_at=self._now(),
         )
+        if not total_moved:
+            return
+        delta = updated.refunded_cents - payment.refunded_cents
         await self._outbox.append(
             PaymentRefunded(
                 aggregate_id=updated.payment_id,
@@ -2414,6 +2444,7 @@ class HandleWebhookEvent:
         payment: LedgerPayment,
         amount_cents: int,
         return_code: str,
+        source_key: str | None,
     ) -> None:
         """Money taken back after it settled: a late bank return, a bank dispute or a
         lost dispute (A4-5). Every invoice this payment settled reopens, whatever
@@ -2492,23 +2523,69 @@ class HandleWebhookEvent:
                     ),
                     created_by_event_id=event_id or None,
                 )
+            elif partial and self._billing_audit is not None:
+                # Never applied to an invoice, so no attempt row can carry it; the
+                # audit entry is the owner's trail (L8). Written BEFORE the money
+                # moves: once the payment reads refunded, a replay stops early and
+                # could never write it. The deterministic id de-dupes replays.
+                await self._billing_audit.append(
+                    BillingAuditEntry(
+                        # One row per keyed source, or per cumulative total.
+                        audit_id=(
+                            f"baud-payment-return:{pi_id}:{source_key}"
+                            if source_key
+                            else f"baud-payment-return:{pi_id}:{return_code}:{amount_cents}"
+                        ),
+                        academy_id=payment.academy_id,
+                        action="payment_return_unreconciled",
+                        actor_id="system",
+                        at=self._now(),
+                        payment_id=payment.payment_id,
+                        parent_id=payment.parent_id or None,
+                        reason=f"{label} {return_code}: {amount_cents} cents",
+                        before={"refunded_cents": payment.refunded_cents},
+                        after={"returned_cents": amount_cents},
+                    )
+                )
+            # Also before the money moves, for the same reason. A retry after a
+            # failed ledger write alerts again; Sentry groups the repeat.
             capture_message(
                 f"{'Partial payment' if partial else 'Payment'} return not reversed: "
                 f"pi={pi_id} {amount_cents} of {payment.amount_cents} cents ({return_code}); "
                 "reconcile by hand",
                 level="warning",
             )
+            if partial and not invoices:
+                # The returned part must stop being spendable unapplied money. The
+                # repo never lowers or doubles the total: cumulative charge refunds
+                # merge, keyed sources add once. Last, so it is the terminal step.
+                await ledger.apply_payment_return(
+                    payment.payment_id,
+                    amount_cents=amount_cents,
+                    source_key=source_key,
+                    updated_at=self._now(),
+                )
             return
 
         reopened_due = await self._academy_today(payment.academy_id) + timedelta(
             days=REOPENED_INVOICE_DUE_DAYS
         )
         for invoice in invoices:
-            if invoice.due_date < reopened_due:
-                # Lead decision 2026-11-15: a reopened invoice is due again in five
-                # days, so no late fee lands before the family can pay. Set before
-                # the reversal so a replay that finds the allocations gone is done.
-                await ledger.save_invoice(invoice.model_copy(update={"due_date": reopened_due}))
+            # Lead decision 2026-11-15: a reopened invoice is due again in five
+            # days, so no late fee lands before the family can pay. The autopay
+            # charge stamp moves too, or an old stamp re-arms the ladder at once
+            # (L8). Set before the reversal so a replay that finds the
+            # allocations gone is done.
+            moved = {
+                field: reopened_due
+                for field, day in (
+                    ("due_date", invoice.due_date),
+                    ("autopay_charge_date", invoice.autopay_charge_date),
+                )
+                if day is not None and day < reopened_due
+            }
+            if moved:
+                await ledger.save_invoice(invoice.model_copy(update=moved))
             await ledger.record_payment_attempt(
                 invoice_id=invoice.invoice_id,
                 parent_id=invoice.parent_id,
@@ -2626,6 +2703,8 @@ class HandleWebhookEvent:
             payment=payment,
             amount_cents=int(dispute.get("amount") or payment.amount_cents),
             return_code=f"dispute:{dispute.get('reason') or 'unknown'}",
+            # One dispute can arrive as created then closed: key it, not the event.
+            source_key=f"dispute:{dispute.get('id') or event.get('id') or pi_id}",
         )
 
     async def _request_receipt(

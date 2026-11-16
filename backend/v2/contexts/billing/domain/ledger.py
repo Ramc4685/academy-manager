@@ -60,6 +60,10 @@ class LedgerInvoice(BaseModel):
     refunded_cents: int = Field(default=0, ge=0)
     currency: str = Field(default="usd", min_length=3, max_length=3)
     due_date: date
+    # The day autopay first charges this invoice (L8). Only the monthly
+    # generator stamps it; None means "on the due date" (see ``charge_date``),
+    # so a creation path that forgets charges on the due date, never not at all.
+    autopay_charge_date: date | None = None
     # Human-facing invoice number, e.g. "BLNO-202606-001". Minted once at invoice-creation
     # time via MongoBillingCounterRepository (atomic per academy+month counter) — see
     # format_invoice_number() below. None for invoices created before Slice D (not
@@ -103,6 +107,11 @@ class LedgerInvoice(BaseModel):
     version: int = Field(default=0, ge=0)
     created_at: datetime
     updated_at: datetime
+
+
+def charge_date(due_date: date, autopay_charge_date: date | None) -> date:
+    """The day autopay charges an invoice: its stamp, else its due date (L8)."""
+    return autopay_charge_date or due_date
 
 
 class InvoiceLine(BaseModel):

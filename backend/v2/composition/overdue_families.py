@@ -24,6 +24,8 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     AUTOPAY_ACTIVE_STATUS,
     CHARGEABLE_INVOICE_STATUSES,
 )
+from backend.v2.contexts.billing.application.collections_buckets import has_failed_attempt
+from backend.v2.contexts.billing.domain.dunning import PARK_REASONS_NEEDING_ATTENTION
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.time.academy_timezone import (
     academy_timezone_lookup,
@@ -35,26 +37,6 @@ log = logging.getLogger(__name__)
 # shortcut: counts stop at this many invoices per scan (logged when hit); page
 # by due_date if an academy ever carries more open overdue invoices than this.
 _MAX_INVOICES = 5000
-
-# Same rule as collections_buckets ``_has_failed_attempt`` (private there);
-# keep the two in step until that one is made public.
-_FAILED_LADDER_STATUSES = ("active", "processing")
-_DUNNED_STATUS = "dunned"
-
-# Park reasons where the charge never reached the card and only an operator can
-# unblock it. Parking keeps the ladder ``active`` with no attempt counted
-# (domain/dunning.py ``park``), so without this an autopay family whose charge
-# is parked would read as covered forever. Mirrors process_dunning_retries.
-_BLOCKED_PARK_REASONS = frozenset(
-    {"charge_technical_failure", "connected_account_not_ready", "stripe_not_configured"}
-)
-
-
-def _failed(state: dict[str, Any]) -> bool:
-    status = state.get("status")
-    return status == _DUNNED_STATUS or (
-        status in _FAILED_LADDER_STATUSES and int(state.get("attempt_count") or 0) >= 1
-    )
 
 
 class OverdueFamiliesReader:
@@ -140,11 +122,15 @@ class OverdueFamiliesReader:
             if not parent:
                 continue
             state = dunning.get(str(inv["invoice_id"])) or {}
-            if _failed(state):
+            if has_failed_attempt(
+                state.get("status"),
+                int(state.get("attempt_count") or 0),
+                state.get("suppression_reason"),
+            ):
                 failed.add(parent)
             elif _naive_utc(inv.get("due_date")) < cutoff and (
                 str(inv.get("enrollment_id") or "") not in autopay_active
-                or state.get("suppression_reason") in _BLOCKED_PARK_REASONS
+                or state.get("suppression_reason") in PARK_REASONS_NEEDING_ATTENTION
             ):
                 # shortcut: active autopay with no saved card or an unready
                 # Stripe account still reads as covered until the first dunning

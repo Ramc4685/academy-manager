@@ -10,6 +10,7 @@ from pymongo.errors import DuplicateKeyError
 from backend.v2.main import (
     _due_periods,
     _lifespan,
+    _monthly_generation_retry_reason,
     _previous_period,
     _run_monthly_invoice_generation,
     _scheduler_academy_ids,
@@ -70,6 +71,29 @@ def test_scheduler_registers_dunning_retry_job() -> None:
 
     assert "_process_dunning_retries" in source
     assert 'id="process_dunning_retries"' in source
+
+
+@pytest.mark.parametrize(
+    ("job", "minute", "crontab"),
+    [
+        ("_process_dunning_retries", "minute=5,", "5 * * * *"),
+        ("_reconcile_stripe_payment_intents", 'minute="*/10",', "*/10 * * * *"),
+        ("_process_stalled_hold_reclaims", 'minute="*/15",', "*/15 * * * *"),
+    ],
+)
+def test_money_timers_run_on_the_wall_clock(job: str, minute: str, crontab: str) -> None:
+    """G:jobs_data_infra:3: an interval job's timer restarts at every boot, so
+    each deploy pushed the next autopay charge out by up to an hour."""
+    from backend.v2.main import SCHEDULED_JOB_MONITORS
+
+    source = inspect.getsource(_lifespan)
+    registration = source.split(f"scheduler.add_job(\n        {job},", 1)[1].split(")", 1)[0]
+    assert '"cron"' in registration
+    assert minute in registration
+    assert SCHEDULED_JOB_MONITORS[job.lstrip("_")]["schedule"] == {
+        "type": "crontab",
+        "value": crontab,
+    }
 
 
 def test_scheduler_registers_monthly_invoice_generation_job() -> None:
@@ -794,6 +818,79 @@ async def test_generation_without_a_send_pass_behaves_as_before() -> None:
 
     assert totals["created"] == 3
     assert totals["invoices_emailed"] == 0
+
+
+# --- G:jobs_data_infra:2: a failed run retries hourly, not tomorrow ---------
+
+
+async def _one_run(generate, send=None):
+    db = _FakeDb()
+    _seed_history(db, "academy-a", "2026-08")
+    return await _run_monthly_invoice_generation(
+        db=db,
+        academy_ids=["academy-a"],
+        get_billing_settings=_settings_getter({"academy-a": _FakeSettings(1)}),
+        generate=generate,
+        now=datetime(2026, 9, 1, 3, 0),
+        send_invoices=send,
+    )
+
+
+async def _ok(period: str) -> _FakeResult:
+    return _FakeResult(created=1)
+
+
+@pytest.mark.asyncio
+async def test_a_clean_run_needs_no_retry() -> None:
+    async def _send(period: str) -> dict[str, int]:
+        return {"emailed": 1}
+
+    assert _monthly_generation_retry_reason(await _one_run(_ok, _send)) is None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_generation_needs_a_retry() -> None:
+    async def _boom(period: str) -> _FakeResult:
+        raise RuntimeError("mongo blip")
+
+    reason = _monthly_generation_retry_reason(await _one_run(_boom))
+    assert reason == "generation_failed=1"
+
+
+@pytest.mark.asyncio
+async def test_a_partial_generation_needs_a_retry() -> None:
+    async def _partial(period: str) -> _FakeResult:
+        return _FakeResult(created=3, failed_repair=1)
+
+    assert _monthly_generation_retry_reason(await _one_run(_partial)) == "partial_run_count=1"
+
+
+@pytest.mark.asyncio
+async def test_a_crashed_email_pass_needs_a_retry_but_single_failed_emails_do_not() -> None:
+    # A failed email is already recorded as delivery_failed and re-sent by the next
+    # run's send pass; retrying for it hourly could re-send an autopay notice.
+    async def _some_failed(period: str) -> dict[str, int]:
+        return {"emailed": 1, "email_failed": 2}
+
+    async def _send_down(period: str) -> dict[str, int]:
+        raise RuntimeError("resend is down")
+
+    assert _monthly_generation_retry_reason(await _one_run(_ok, _some_failed)) is None
+    assert (
+        _monthly_generation_retry_reason(await _one_run(_ok, _send_down))
+        == "invoice_email_pass_failed=1"
+    )
+
+
+def test_the_invoice_job_fails_the_academy_run_when_it_needs_a_retry() -> None:
+    """Without the raise, run_daily_at_local_time marks the local day done and
+    a 03:00 blip pushes invoices (and every due date) to the next day."""
+    source = inspect.getsource(_lifespan)
+    body = source.split("async def _generate_monthly_invoices_body", 1)[1].split(
+        "await _run_local_daily(", 1
+    )[0]
+    assert "_monthly_generation_retry_reason(academy_totals)" in body
+    assert "raise RuntimeError(" in body
 
 
 # --- Row 24: no phantom ``default-academy`` tenant in multi-academy mode ------

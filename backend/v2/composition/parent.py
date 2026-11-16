@@ -103,6 +103,9 @@ from backend.v2.contexts.billing.domain.plan_price_change import next_period
 from backend.v2.contexts.billing.infrastructure.mongo_autopay_consent_repo import (
     MongoAutopayConsentRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_billing_audit_log import (
+    MongoBillingAuditLogRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo import (
     MongoBillingCounterRepository,
 )
@@ -710,6 +713,7 @@ def compose_parent_webhook_handler(
         else None,
         tenancy_mode=settings.tenancy_mode,
         academy_timezone=academy_timezone_lookup(db),
+        billing_audit=MongoBillingAuditLogRepository(db),
     )
 
 
@@ -881,6 +885,7 @@ def compose_parent(
         else None,
         tenancy_mode=settings.tenancy_mode,
         academy_timezone=academy_timezone_lookup(db),
+        billing_audit=MongoBillingAuditLogRepository(db),
     )
     quote_enrollment_uc = QuoteEnrollment(
         sessions=payments_repo,

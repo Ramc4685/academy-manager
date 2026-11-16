@@ -319,6 +319,9 @@ class AdminUseCases:
     maintain_session_occurrences: object | None = None  # async (session) -> None
     # Read-only welcome email render: async (session_id) -> (subject, html) | None
     preview_welcome_email: object | None = None
+    # Read-only autopay date-change notice (L8): async (parent_id | None) ->
+    # {subject, html, recipients} | None. Never sends.
+    preview_ach_notice: object | None = None
     # Assistant coaches editor (composition/admin_session_staff.py).
     set_session_assistants: object | None = None  # SetSessionAssistants
     add_session_replacement: object | None = None  # async (...) -> dict | None

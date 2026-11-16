@@ -225,6 +225,19 @@ async def test_several_matured_offsets_send_one_email_and_stamp_all() -> None:
     assert stamps.stamps == [("inv-1", -1), ("inv-1", 0), ("inv-1", 2)]
 
 
+@pytest.mark.asyncio
+async def test_l8_calendar_reminds_manual_payers_on_the_5th_8th_and_12th() -> None:
+    """Owner decision: due on the 5th, reminders on the due date, +3 and +7."""
+    invoices = _FakeInvoices([_invoice("inv-jan", due_date=date(2027, 1, 5))])
+    sender = _FakeSender()
+    uc, _ = _build(invoices, sender)
+
+    for day in range(1, 16):
+        await uc.execute(today=date(2027, 1, day), reminder_days=(0, 3, 7))
+
+    assert sender.sent == [("inv-jan", 0), ("inv-jan", 3), ("inv-jan", 7)]
+
+
 def test_reminder_copy_names_the_month_in_words_not_the_raw_period() -> None:
     """PR #795's naming helper, reused — never a raw ``2026-09`` in a parent's inbox."""
     naming = InvoiceNaming(student_name="Arjun", session_label="Tue/Thu 5pm")

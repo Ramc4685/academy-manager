@@ -280,3 +280,70 @@ async def test_heartbeats_are_not_read_when_mongo_is_down() -> None:
 
     assert healthy is False
     assert "jobs" not in report
+
+
+# --- G:jobs_data_infra:6: Fly does not restart on a failed check -------------
+
+
+async def _run_watchdog(scheduler: Any, dispatcher: Any, ticks: int) -> list[int]:
+    from backend.v2.shared.observability.health import watch_for_dead_workers
+
+    exits: list[int] = []
+    slept = 0
+
+    async def _sleep(_seconds: float) -> None:
+        nonlocal slept
+        slept += 1
+        if slept > ticks:
+            raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await watch_for_dead_workers(scheduler, dispatcher, sleep=_sleep, exit_process=exits.append)
+    return exits
+
+
+@pytest.mark.asyncio
+async def test_watchdog_leaves_a_healthy_process_alone() -> None:
+    assert await _run_watchdog(_FakeScheduler(), _FakeDispatcher(), ticks=3) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("scheduler", "dispatcher"),
+    [
+        (_FakeScheduler(running=False), _FakeDispatcher()),
+        (_FakeScheduler(), _FakeDispatcher(running=False)),
+    ],
+)
+async def test_watchdog_exits_non_zero_when_a_worker_dies(
+    scheduler: Any, dispatcher: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from backend.v2.shared.observability.health import watch_for_dead_workers
+
+    exits: list[int] = []
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    with caplog.at_level(logging.ERROR):
+        await watch_for_dead_workers(
+            scheduler, dispatcher, sleep=_no_sleep, exit_process=exits.append
+        )
+
+    assert exits == [1]
+    assert any("worker_dead_exiting_for_restart" in r.getMessage() for r in caplog.records)
+
+
+def test_watchdog_is_cancelled_before_the_scheduler_shuts_down() -> None:
+    """A clean shutdown stops the scheduler; a live watchdog would read that as
+    a dead worker and exit mid-drain."""
+    import inspect
+
+    from backend.v2.main import _lifespan
+
+    source = inspect.getsource(_lifespan)
+    assert "asyncio.create_task(watch_for_dead_workers(scheduler, dispatcher))" in source
+    teardown = source.split("    finally:\n", 1)[1]
+    assert teardown.index("worker_watchdog.cancel()") < teardown.index("_drain_scheduler(")

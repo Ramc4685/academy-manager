@@ -817,3 +817,117 @@ async def test_reparking_keeps_the_original_parked_since(real_db, acad) -> None:
     doc = await real_db["dunning_states"].find_one({"invoice_id": fault_id})
     assert doc["suppression_reason"] == "charge_technical_failure"
     assert doc["parked_since"].replace(tzinfo=UTC) == NOW
+
+
+class _StripeDownCharge:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def execute(self, invoice_id: str, *, retry_scope: str | None = None):
+        self.calls += 1
+        raise RuntimeError("stripe api unreachable")
+
+
+@pytest.mark.asyncio
+async def test_a_day_of_technical_parks_caps_the_ladder(real_db, acad, caplog) -> None:
+    """A7-6: a charge that fails for a technical reason used to be retried every
+    hour forever. After 24h of unbroken technical parks it stops retrying, shows
+    as needing attention, and alerts."""
+    import logging
+
+    from backend.v2.composition.dues_reminders import PARK_REASONS_NEEDING_ATTENTION
+
+    repo = MongoDunningStateRepository(real_db)
+    await _seed_invoice(real_db, academy_id=acad, invoice_id="inv-down", enrollment_id="enr-d")
+    charge = _StripeDownCharge()
+
+    async def _tick(hours: int) -> None:
+        await ProcessDunningRetries(
+            dunning=repo, charge_invoice=charge, clock=lambda: NOW + timedelta(hours=hours)
+        ).execute(limit=10, worker_id="w")
+
+    for hour in range(24):
+        await _tick(hour)
+        doc = await real_db["dunning_states"].find_one({"invoice_id": "inv-down"})
+        assert doc["suppression_reason"] == "charge_technical_failure", hour
+
+    with caplog.at_level(logging.ERROR):
+        await _tick(24)
+    doc = await real_db["dunning_states"].find_one({"invoice_id": "inv-down"})
+    assert doc["suppression_reason"] == "technical_failure_capped"
+    assert doc["attempt_count"] == 0  # no rung spent, the parent was never declined
+    assert "technical_failure_capped" in PARK_REASONS_NEEDING_ATTENTION
+    assert any("dunning_technical_failure_capped" in r.getMessage() for r in caplog.records)
+
+    # Backs off to once a day: nothing for the next 23 hours...
+    await _tick(47)
+    assert charge.calls == 25
+    # ...then one recheck, which re-caps straight away on another technical failure.
+    await _tick(48)
+    assert charge.calls == 26
+    doc = await real_db["dunning_states"].find_one({"invoice_id": "inv-down"})
+    assert doc["suppression_reason"] == "technical_failure_capped"
+
+
+@pytest.mark.asyncio
+async def test_a_capped_ladder_stands_down_once_the_invoice_is_paid(real_db, acad) -> None:
+    """Review P1: a capped ladder must not stay "stuck" forever after the owner
+    charges the invoice by hand; the daily recheck sees it is no longer chargeable."""
+    repo = MongoDunningStateRepository(real_db)
+    await _seed_invoice(real_db, academy_id=acad, invoice_id="inv-cap", enrollment_id="enr-c")
+    await repo.prepare_due_states(now=NOW, limit=10)
+    await real_db["dunning_states"].update_one(
+        {"invoice_id": "inv-cap"},
+        {
+            "$set": {
+                "next_attempt_at": None,
+                "suppression_reason": "technical_failure_capped",
+                "suppressed_at": NOW,
+            }
+        },
+    )
+    assert await repo.claim_next_due(now=NOW + timedelta(hours=23), worker_id="w") is None
+
+    await real_db["invoices"].update_one(
+        {"invoice_id": "inv-cap"}, {"$set": {"status": "paid", "balance_due_cents": 0}}
+    )
+    assert await repo.claim_next_due(now=NOW + timedelta(hours=24), worker_id="w") is None
+    doc = await real_db["dunning_states"].find_one({"invoice_id": "inv-cap"})
+    assert doc["status"] == "suppressed"
+    assert doc["suppression_reason"] == "invoice_not_chargeable"
+
+
+@pytest.mark.asyncio
+async def test_no_late_fee_while_a_ladder_is_capped(real_db, acad) -> None:
+    """Lead decision: a cap is our own technical fault, so the family owes no
+    late fee for it (and a fee would change the autopay idempotency key)."""
+    repo = MongoDunningStateRepository(real_db)
+    await _seed_invoice(real_db, academy_id=acad, invoice_id="inv-fee", enrollment_id="enr-f")
+    await repo.prepare_due_states(now=NOW, limit=10)
+    assert await repo.has_active_retry("inv-fee") is True
+    await real_db["dunning_states"].update_one(
+        {"invoice_id": "inv-fee"},
+        {"$set": {"next_attempt_at": None, "suppression_reason": "technical_failure_capped"}},
+    )
+    assert await repo.has_active_retry("inv-fee") is True
+
+
+@pytest.mark.asyncio
+async def test_a_real_decline_restarts_the_technical_park_clock(real_db, acad) -> None:
+    from backend.v2.contexts.billing.domain.dunning import record_dunning_attempt_result
+
+    repo = MongoDunningStateRepository(real_db)
+    await _seed_invoice(real_db, academy_id=acad, invoice_id="inv-mix", enrollment_id="enr-m")
+    await repo.prepare_due_states(now=NOW, limit=10)
+    claimed = await repo.claim_next_due(now=NOW, worker_id="w")
+    assert claimed is not None
+    parked = await repo.park_attempt(state=claimed[1], reason="stripe_unavailable", now=NOW)
+    assert parked.technical_parked_since is not None
+
+    later = NOW + timedelta(hours=30)
+    again = await repo.claim_next_due(now=later, worker_id="w")
+    assert again is not None
+    declined = record_dunning_attempt_result(
+        again[1], succeeded=False, failure_code="card_declined", now=later
+    )
+    assert declined.technical_parked_since is None

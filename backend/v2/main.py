@@ -269,7 +269,7 @@ from backend.v2.shared.observability import (
     configure_logging,
     configure_tracing,
 )
-from backend.v2.shared.observability.health import build_health_report
+from backend.v2.shared.observability.health import build_health_report, watch_for_dead_workers
 from backend.v2.shared.observability.ops_alerts import (
     capture_exception,
     capture_message,
@@ -450,7 +450,7 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "max_runtime": 5,
     },
     "reconcile_stripe_payment_intents": {
-        "schedule": {"type": "interval", "value": 10, "unit": "minute"},
+        "schedule": {"type": "crontab", "value": "*/10 * * * *"},
         "checkin_margin": 10,
         "max_runtime": 10,
     },
@@ -460,7 +460,7 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "max_runtime": 30,
     },
     "process_dunning_retries": {
-        "schedule": {"type": "interval", "value": 60, "unit": "minute"},
+        "schedule": {"type": "crontab", "value": "5 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
@@ -512,7 +512,7 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     # jobs' cadence but frequent enough that a stalled claim (and the seat it
     # is holding open) does not sit unresolved for a full day.
     "process_stalled_hold_reclaims": {
-        "schedule": {"type": "interval", "value": 15, "unit": "minute"},
+        "schedule": {"type": "crontab", "value": "*/15 * * * *"},
         "checkin_margin": 10,
         "max_runtime": 10,
     },
@@ -1595,10 +1595,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # is mid-retry, a quarantine has given up. Folding them together would
         # make the one number that reaches the logs mean two opposite things.
         totals = {"processed": 0, "failed": 0, "quarantined": 0}
-        for academy_id in await _scheduler_academy_ids(
-            MongoAcademyRepository(db),
-            scheduler_fallback_academy_id,
-        ):
+
+        async def _drain(academy_id: str) -> None:
             processor = stripe_webhook_processors.get(academy_id)
             if processor is None:
                 processor = compose_parent_webhook_handler(
@@ -1620,6 +1618,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                     totals["quarantined"] += 1
                 else:
                     totals["failed"] += 1
+
+        await _run_isolated_per_academy(
+            "process_stripe_webhook_events",
+            await _scheduler_academy_ids(MongoAcademyRepository(db), scheduler_fallback_academy_id),
+            _drain,
+        )
         if totals["processed"] or totals["failed"] or totals["quarantined"]:
             log.info("stripe_webhook_events_processed", extra=totals)
 
@@ -1639,10 +1643,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             "quarantined": 0,
             "failed": 0,
         }
-        for academy_id in await _scheduler_academy_ids(
-            MongoAcademyRepository(db),
-            scheduler_fallback_academy_id,
-        ):
+
+        async def _reconcile(academy_id: str) -> None:
             with tenant_scope(academy_id):
                 result = await ReconcileStripePaymentIntents(
                     stripe=stripe_gw,
@@ -1657,6 +1659,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             totals["skipped"] += int(result.get("skipped") or 0)
             totals["quarantined"] += int(result.get("quarantined") or 0)
             totals["failed"] += int(result.get("failed") or 0)
+
+        await _run_isolated_per_academy(
+            "reconcile_stripe_payment_intents",
+            await _scheduler_academy_ids(MongoAcademyRepository(db), scheduler_fallback_academy_id),
+            _reconcile,
+        )
         if totals["repaired"] or totals["quarantined"] or totals["failed"]:
             log.info("stripe_payment_intent_reconciliation_processed", extra=totals)
 
@@ -1782,6 +1790,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             for key, value in academy_totals.items():
                 totals[key] = totals.get(key, 0) + value
             periods.append(local_now.strftime("%Y-%m"))
+            # Fail this academy's local run so the marker goes to failed and the
+            # next hourly ticks today retry it (local_clock.MAX_ATTEMPTS).
+            # Generation is idempotent and the send pass only selects
+            # undelivered invoices, so a retry never duplicates either.
+            reason = _monthly_generation_retry_reason(academy_totals)
+            if reason:
+                raise RuntimeError(f"monthly invoice run incomplete: {reason}")
 
         await _run_local_daily("generate_monthly_invoices", _for_academy)
         if not periods:
@@ -2158,10 +2173,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         replace_existing=True,
         max_instances=1,
     )
+    # Wall-clock crons, not intervals: an interval restarts its timer on every
+    # boot, so each deploy pushed these runs out (G:jobs_data_infra:3).
     scheduler.add_job(
         _process_stalled_hold_reclaims,
-        "interval",
-        minutes=15,
+        "cron",
+        minute="*/15",
         id="process_stalled_hold_reclaims",
         replace_existing=True,
         max_instances=1,
@@ -2268,16 +2285,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     scheduler.add_job(
         _reconcile_stripe_payment_intents,
-        "interval",
-        minutes=10,
+        "cron",
+        minute="*/10",
         id="reconcile_stripe_payment_intents",
         replace_existing=True,
         max_instances=1,
     )
     scheduler.add_job(
         _process_dunning_retries,
-        "interval",
-        minutes=60,
+        "cron",
+        minute=5,
         id="process_dunning_retries",
         replace_existing=True,
         max_instances=1,
@@ -2285,9 +2302,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Automated monthly invoice generation (issue #288). Ticks hourly and runs
     # once per academy-local day from 03:00 local (Settings Phase 4); each run
     # generates for an academy with an unfinished period — its billing_day has
-    # passed and no successful run is recorded yet, so a failed run self-heals
-    # on the next tick (issue #431). The first autopay charge is NOT scheduled
-    # here — it is already the attempt-0 rung of the
+    # passed and no successful run is recorded yet (issue #431). A failed,
+    # partial or email-failing run fails its local-day marker, so the next
+    # hourly ticks retry it (up to local_clock.MAX_ATTEMPTS a day), and the
+    # next day's run picks up anything still unfinished. The first autopay
+    # charge is NOT scheduled here — it is already the attempt-0 rung of the
     # existing dunning ladder, which picks up any invoice once its due_date
     # passes (see prepare_due_states / DUNNING_SCHEDULE_DAYS). Adding a second
     # charge trigger here would risk double-charging the same invoice.
@@ -2410,6 +2429,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     await seed_job_heartbeats(db)
     scheduler.start()
     app.state.scheduler = scheduler
+    # Fly does not restart a machine whose health check fails, so a dead
+    # scheduler or dispatcher exits the process instead (G:jobs_data_infra:6).
+    worker_watchdog = asyncio.create_task(watch_for_dead_workers(scheduler, dispatcher))
 
     app.state.bootstrap_academy = BootstrapAcademy(
         store=MongoTenantBootstrapStore(db),
@@ -2419,6 +2441,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        worker_watchdog.cancel()
         if scheduler is not None:
             await _drain_scheduler(scheduler, drain_seconds=SCHEDULER_DRAIN_TIMEOUT_SECONDS)
             scheduler.shutdown(wait=False)
@@ -2526,7 +2549,7 @@ async def _resolve_billing_day(
 
     Settings are advisory for generation: the billing context's own rule is
     that a missing or unreadable billing_settings doc "must never block the
-    monthly run" (see MongoMonthlyBilling._load_invoice_due_days). Skipping the
+    monthly run" (see MongoMonthlyBillingGenerator._load_schedule). Skipping the
     academy on a read failure would make an unreadable settings doc a permanent
     silent skip — the exact failure mode issue #431 set out to remove.
     """
@@ -2557,10 +2580,39 @@ _DUNNING_TOTAL_KEYS = (
 )
 
 
+async def _run_isolated_per_academy(
+    job: str, academy_ids: Sequence[str], run: Callable[[str], Awaitable[None]]
+) -> None:
+    """Run ``run(academy_id)`` for each academy, then raise if any of them raised.
+
+    One academy raising is logged (Sentry gets it through the logging
+    integration) and skipped, so a broken Stripe connection or bad row in one
+    academy never stops the money loops for the academies after it (A7-5;
+    mirrors ``run_local_daily_job``).
+    """
+    failures = 0
+    for academy_id in academy_ids:
+        try:
+            await run(academy_id)
+        except Exception:
+            failures += 1
+            log.exception(
+                "scheduled_job_academy_failed job=%s academy=%s",
+                job,
+                academy_id,
+                extra={"job_id": job, "academy_id": academy_id},
+            )
+    if failures:
+        # Every academy ran, but the job must still read as failed in Crons,
+        # the heartbeat and healthz.
+        raise RuntimeError(f"{job}: {failures} academy run(s) failed")
+
+
 async def _run_dunning_for_academies(
     *, academy_ids: list[str], late_fees: Any | None, worker: Any | None
 ) -> dict[str, int]:
-    """One dunning tick across academies; one academy's failure never skips the rest.
+    """One dunning tick across academies; one academy's failure never skips the rest,
+    but the tick raises at the end if any academy's retries failed.
 
     Late fees run BEFORE the retries: the fee raises balance_due_cents, so the
     dunning notice this same tick may send quotes the new total (#552).
@@ -2593,6 +2645,12 @@ async def _run_dunning_for_academies(
         totals["academy_count"] += 1
         for key in _DUNNING_TOTAL_KEYS:
             totals[key] += int(getattr(result, key, 0) or 0)
+    if totals["academy_failures"]:
+        # Every academy ran; the tick must still read as failed (heartbeat, Crons).
+        raise RuntimeError(
+            f"process_dunning_retries: {totals['academy_failures']} academy run(s) failed,"
+            f" totals={totals}"
+        )
     return totals
 
 
@@ -2615,7 +2673,11 @@ async def _run_monthly_invoice_generation(
     generation is recorded for the period", not ``billing_day == now.day``. An
     exact-day match meant a single failed 03:00 run (Mongo blip, lease
     handover, crash) silently skipped the whole month, recoverable only by an
-    admin. Now the next daily tick retries until one run completes.
+    admin. Now a later run retries until one completes: the next hourly tick
+    the same day (the job wrapper fails the academy's local-day marker when
+    generation failed, was partial or the email pass raised, see
+    ``_monthly_generation_retry_reason``), else the next day. A single failed
+    email is left at delivery_failed for the next day's send pass.
 
     Two periods are considered each tick: the current one, and the immediately
     prior one when it is unrecorded *and* the academy has generation history
@@ -2639,10 +2701,11 @@ async def _run_monthly_invoice_generation(
     scheduling rules above can be tested without a running app.
 
     ``send_invoices`` (issue #430) emails the period's undelivered invoices.
-    It runs on every tick, not only the ones that generate — it is its own
+    It runs on every run, not only the ones that generate — it is its own
     retry mechanism, since the generation gate above deliberately stops
-    yielding a period once it has been generated. Its failures are contained:
-    generation must never be re-attempted because an email provider was down.
+    yielding a period once it has been generated. Its failures are contained
+    to the academy (counted, never raised here), and a retry re-runs
+    generation only for a period that is still unrecorded.
     """
     period = now.strftime("%Y-%m")
     prior_period = _previous_period(period)
@@ -2664,6 +2727,11 @@ async def _run_monthly_invoice_generation(
         "invoice_emails_failed": 0,
         "invoice_emails_skipped_autopay": 0,
         "invoice_autopay_notices_sent": 0,
+        # Gate or generate() raised; the period stays unrecorded.
+        "generation_failed": 0,
+        # send_invoices itself raised (per-invoice failures are
+        # invoice_emails_failed).
+        "invoice_email_pass_failed": 0,
     }
     log = logging.getLogger("backend.v2.scheduler")
     for academy_id in academy_ids:
@@ -2681,6 +2749,7 @@ async def _run_monthly_invoice_generation(
             except Exception:
                 # One academy's gate failure must not abort the run for the
                 # rest. Nothing is recorded, so the next tick retries it.
+                totals["generation_failed"] += 1
                 log.exception(
                     "monthly_invoice_generation_gate_failed academy=%s period=%s",
                     academy_id,
@@ -2694,7 +2763,8 @@ async def _run_monthly_invoice_generation(
                     result = await generate(run_period)
                 except Exception:
                     # A failing academy/period leaves no record, so the next
-                    # daily tick retries exactly this (academy, period).
+                    # tick retries exactly this (academy, period).
+                    totals["generation_failed"] += 1
                     log.exception(
                         "monthly_invoice_generation_failed academy=%s period=%s",
                         academy_id,
@@ -2756,7 +2826,7 @@ async def _run_monthly_invoice_generation(
                 totals["academy_count"] += 1
             if send_invoices is not None:
                 # Deliberately outside the `due` loop, and so run on every
-                # tick rather than only on generation ticks. `_due_periods`
+                # run rather than only on generation runs. `_due_periods`
                 # stops yielding a period the moment generation is recorded,
                 # so a send pass gated on it would get exactly one attempt per
                 # month: a single email-provider blip on billing day would
@@ -2797,13 +2867,14 @@ async def _email_generated_invoices(
 ) -> None:
     """Email this academy's undelivered invoices and fold the counts in.
 
-    Called inside the academy's ``tenant_scope``. Swallows every failure by
-    design: generation has already been recorded at this point, and a raised
-    email error would abort the remaining academies in the run.
+    Called inside the academy's ``tenant_scope``. Counts every failure instead
+    of raising: a raised email error would abort the remaining academies in
+    the run. The job wrapper turns the count into a retry.
     """
     try:
         outcome = await send_invoices(run_period)
     except Exception:
+        totals["invoice_email_pass_failed"] += 1
         log.exception(
             "generated_invoice_emails_failed academy=%s period=%s",
             academy_id,
@@ -2819,6 +2890,23 @@ async def _email_generated_invoices(
         ("invoice_autopay_notices_sent", "autopay_notified"),
     ):
         totals[total_key] += int(_outcome_count(outcome, outcome_key))
+
+
+def _monthly_generation_retry_reason(totals: dict[str, int]) -> str | None:
+    """Why an academy's monthly invoice run must be retried, else ``None``."""
+    failed = {
+        key: totals.get(key, 0)
+        for key in (
+            "generation_failed",
+            "partial_run_count",
+            # Not invoice_emails_failed: SendInvoice records those as delivery_failed
+            # and the next run's send pass re-sends them; an hourly retry could
+            # re-send an autopay notice whose save hit a version conflict.
+            "invoice_email_pass_failed",
+        )
+        if totals.get(key, 0)
+    }
+    return ", ".join(f"{key}={value}" for key, value in failed.items()) or None
 
 
 def _outcome_count(outcome: Any, key: str) -> int:

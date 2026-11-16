@@ -1,3 +1,7 @@
 ## README.md
 
-No drift detected.
+- [undocumented] README.md:101-102 ends the pipeline at "Release record", but `.github/workflows/production.yml:1053` defines a `sentry-release` job (needs `smoke`) that runs before/alongside `publish-release` (`production.yml:1123`).
+- [undocumented] README.md:92-94 lists Validate as compile/tests, boundary checks and Next.js checks only. `production.yml` also runs a real-Mongo contract job (`:167`), dependency vulnerability scans (`:143`, `:308`), an OpenAPI drift check (`:312`), a Worker runtime smoke (`:352`), a scripts job (`:673`) and hook classifier tests (`:718`), all gated by `ci-gate` (`:733`).
+- [wording] README.md:101-102 says the release record is published "only when every changed component deployed and smoke passed". `production.yml:1126-1129` gates `publish-release` only on `smoke` succeeding on `main` and not a PR. The per-component check is not in the workflow, so it must be in `scripts/dev/publish_release.py`.
+- [wording] README.md:116-117 says password-provider tokens are checked for email verification "at every authenticated request". The enforcement is in `backend/v2/contexts/identity/application/token_claims.py:19-36`, which resolves claims per provider. The "every request" part was not traced to a per-request call site.
+- [wording] README.md:139 gives a `SECURITY DISCLOSURE` subject line for the security contact. `SECURITY.md` contains no matching contact or subject line.

@@ -42,6 +42,7 @@ from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.owner_gate import ensure_owner_for_invoice_void
 from backend.v2.interfaces.admin.staff_tier import require_staff_tier
 from backend.v2.interfaces.admin.views import (
+    AchNoticePreviewView,
     AdminEnrollmentQuoteRequest,
     AdminEnrollmentQuoteResponse,
     AdminExpenseList,
@@ -137,6 +138,26 @@ async def get_invoice_schedule(
         billing_day=result.billing_day,
         invoice_due_days=result.invoice_due_days,
     )
+
+
+@router.get(
+    "/billing/ach-notice/preview",
+    response_model=AchNoticePreviewView,
+    summary="Render the autopay date-change notice (never sent)",
+)
+async def preview_ach_notice(
+    parent_id: str | None = Query(default=None, max_length=200),
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AchNoticePreviewView:
+    use_case = _required_callable(use_cases.preview_ach_notice, "preview_ach_notice")
+    rendered = await use_case(parent_id)  # type: ignore[operator]
+    if rendered is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No autopay date change is scheduled, or the parent is not on autopay",
+        )
+    return AchNoticePreviewView(**rendered)
 
 
 # `PUT /billing/settings/invoice-schedule` (the write side of this legacy

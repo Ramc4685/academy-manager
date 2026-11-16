@@ -11,7 +11,7 @@ Targets:
 
 | URL | Expect | What it proves |
 |---|---|---|
-| `https://api.academy.courtmastr.com/api/v2/healthz` | HTTP 200, body contains `"status":"ok"` | API up, Mongo reachable, scheduler and outbox dispatcher running. A 503 here already restarts the Fly machine; the monitor is for when nobody comes back. |
+| `https://api.academy.courtmastr.com/api/v2/healthz` | HTTP 200, body contains `"status":"ok"` | API up, Mongo reachable, scheduler and outbox dispatcher running. A 503 only takes the machine out of Fly's routing (Fly does not restart on a failed check); a dead scheduler or dispatcher makes the app exit itself so Fly restarts it. The monitor is for when nobody comes back. |
 | `https://academy.courtmastr.com/` | HTTP 200 | Cloudflare Worker (`academy-next`) serving the Next.js app. |
 
 Check both from outside the US too if the option is free; the academy's
@@ -44,9 +44,9 @@ already emails the owner when a monitor fails. No new login, no new inbox.
    - URL: `https://academy.courtmastr.com/`
    - GET, 1 minute, 10 s timeout, expected status 200.
 5. Recovery threshold 1, failure threshold 3 (three consecutive 1-minute
-   failures = about 3 minutes to alert; Fly's health check will usually have
-   restarted the machine before this fires, which is the point: it alerts on
-   the outages a restart does not fix).
+   failures = about 3 minutes to alert; the app's worker watchdog will usually
+   have exited for a restart before this fires, which is the point: it alerts
+   on the outages a restart does not fix).
 6. Confirm: the monitors appear under **Alerts -> Uptime** as "Up". A failed
    check opens an issue titled `Downtime detected for <name>`; verify the
    "New issue" rule emails you by pausing the API for a minute in staging or
@@ -121,7 +121,7 @@ Open `https://fly-metrics.net` (sign in with the Fly account), then:
      alternative is `resets(fly_instance_net_recv_bytes_total{app="courtmastr-academy-api"}[15m]) > 0`
      (counters reset on restart too). Either way the alert fires once per
      restart and self-resolves after 15 minutes, which is what you want:
-     the Fly health check restarts silently, and this is the only place a
+     the worker watchdog's exit restarts silently, and this is the only place a
      restart loop becomes visible.
    - Memory: the machine is a shared-cpu-1x with 1 GB (see `[[vm]]` in
      `backend/fly.toml`); 85% = about 870 MB, which leaves room for one large

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 from pymongo.errors import DuplicateKeyError
@@ -38,8 +39,15 @@ _DERIVED_FIELDS = {"allow_platform_charge_fallback"}
 class MongoBillingSettingsRepository(TenantScopedRepository):
     collection_name = "billing_settings"
 
-    async def get(self) -> BillingSettings:
-        """Return this academy's billing settings, or fail-safe defaults if none exist."""
+    async def get(self, *, on: date | None = None) -> BillingSettings:
+        """Return this academy's billing settings, or fail-safe defaults if none exist.
+
+        A dated ``schedule_change`` that has matured by ``on`` is applied
+        (``BillingSettings.effective``). shortcut: ``on`` defaults to the UTC
+        date, which is a few hours early on an academy's last evening before the
+        change; the monthly generator passes its own date. Pass the academy date
+        everywhere if a reader ever needs that evening exact.
+        """
         doc = await self._find_one()
         academy_id = current_academy_id()
         if not doc:
@@ -50,7 +58,8 @@ class MongoBillingSettingsRepository(TenantScopedRepository):
         doc["allow_platform_charge_fallback"] = platform_charges_allowed(
             academy_id, bool(doc.get("allow_platform_charge_fallback", False))
         )
-        return BillingSettings.model_validate(doc)
+        settings = BillingSettings.model_validate(doc)
+        return settings.effective(on or datetime.now(UTC).date())
 
     async def upsert(self, settings: BillingSettings) -> None:
         """Persist the academy-editable settings.
@@ -70,6 +79,12 @@ class MongoBillingSettingsRepository(TenantScopedRepository):
             mode="python", exclude=_PLATFORM_ONLY_FIELDS | _DERIVED_FIELDS
         )
         payload.pop("academy_id", None)
+        change = payload.get("schedule_change")
+        if change is not None:
+            # BSON has no date type; store the day as UTC midnight like due_date.
+            change["effective_from"] = datetime.combine(
+                change["effective_from"], time.min, tzinfo=UTC
+            )
         await self._update_one(
             {},
             {"$set": payload},

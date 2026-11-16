@@ -97,8 +97,10 @@ Failed handlers retry with exponential backoff:
 | 4 | 16s |
 | 5 | 64s |
 | 6 | 256s |
+| 7 | 1024s |
+| 8 | 2048s |
 
-After **5 retries (6 total attempts)**, the event moves to `dead_letter_events` and pages oncall (`severity=high`).
+After **7 retries (8 total attempts, about 57 minutes)**, the event moves to `dead_letter_events`; the dispatcher logs `event_dead_lettered` at error level and reports it to Sentry.
 
 ## Dead Letter & Replay
 

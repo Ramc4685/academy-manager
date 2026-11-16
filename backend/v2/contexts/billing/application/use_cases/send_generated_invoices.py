@@ -13,8 +13,8 @@ Design notes:
   ``sent``, so a re-run (daily tick, catch-up run, lease handover) does not
   re-email anyone who already received their invoice.
 * **Failures retry on the next tick for free.** A send that fails leaves the
-  invoice at ``delivery_failed``, which the same query still selects
-  tomorrow.
+  invoice at ``delivery_failed``, which the same query still selects on the
+  next run (the next day's run; only a crashed pass retries hourly).
 * **Autopay enrollments get a pre-charge notice, not a pay link.** Their
   invoice gets charged by the dunning/autopay worker; emailing "here is your
   bill, pay here" alongside an automatic charge invites a double payment.
@@ -121,7 +121,7 @@ class SendGeneratedInvoices:
             except Exception:
                 # One bad invoice must not stop the rest of the academy's
                 # billing run. The invoice keeps its current delivery_status,
-                # so the next daily tick re-selects and retries it.
+                # so the next run re-selects and retries it.
                 email_failed += 1
                 log.exception(
                     "generated_invoice_email_failed",

@@ -221,6 +221,68 @@
         "title": "AchDiscountRequest",
         "type": "object"
       },
+      "AchNoticePreviewView": {
+        "description": "``GET /admin/billing/ach-notice/preview``: the autopay date-change notice,\nrendered and never sent, with the autopay families it is meant for (L8).",
+        "properties": {
+          "html": {
+            "title": "Html",
+            "type": "string"
+          },
+          "recipients": {
+            "items": {
+              "$ref": "#/components/schemas/AchNoticeRecipientView"
+            },
+            "title": "Recipients",
+            "type": "array"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "html",
+          "recipients"
+        ],
+        "title": "AchNoticePreviewView",
+        "type": "object"
+      },
+      "AchNoticeRecipientView": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "parent_id": {
+            "title": "Parent Id",
+            "type": "string"
+          },
+          "payment_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Method"
+          }
+        },
+        "required": [
+          "parent_id"
+        ],
+        "title": "AchNoticeRecipientView",
+        "type": "object"
+      },
       "ActivateSubscriptionRequest": {
         "properties": {
           "current_period_end": {
@@ -35644,6 +35706,56 @@
         "summary": "Override Billing Enrollment Price",
         "tags": [
           "admin.session-types"
+        ]
+      }
+    },
+    "/api/v2/admin/billing/ach-notice/preview": {
+      "get": {
+        "operationId": "preview_ach_notice_api_v2_admin_billing_ach_notice_preview_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "parent_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Parent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AchNoticePreviewView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Render the autopay date-change notice (never sent)",
+        "tags": [
+          "admin.billing"
         ]
       }
     },

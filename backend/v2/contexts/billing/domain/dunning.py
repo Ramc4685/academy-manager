@@ -27,6 +27,17 @@ FIRST_ATTEMPT_LOCAL_HOUR = 9
 #: Stripe API or network error: we never reached the card or bank (A4-3).
 STRIPE_UNAVAILABLE = "stripe_unavailable"
 
+#: Technical parks retry every tick. Once a ladder has been parked for these alone
+#: for TECHNICAL_PARK_CAP, it parks as TECHNICAL_FAILURE_CAPPED instead, which is
+#: rechecked once a day rather than hourly: the failing call stops hitting Stripe
+#: every hour, the admin and the alert take over, and a paid or voided invoice
+#: stands down on the next daily check (A7-6).
+TECHNICAL_PARK_REASONS = frozenset(
+    {"charge_technical_failure", "attempt_indeterminate", STRIPE_UNAVAILABLE}
+)
+TECHNICAL_PARK_CAP = timedelta(hours=24)
+TECHNICAL_FAILURE_CAPPED = "technical_failure_capped"
+
 #: Park reasons that mean "we could not ask the bank" because of something on our
 #: side. A ladder parked for one of these is listed for the admin and counted by
 #: the ops digest; settling ACH debits, open checkouts and paused enrollments are
@@ -38,6 +49,7 @@ PARK_REASONS_NEEDING_ATTENTION = frozenset(
         "connected_account_not_ready",
         "stripe_not_configured",
         STRIPE_UNAVAILABLE,
+        TECHNICAL_FAILURE_CAPPED,
     }
 )
 
@@ -83,6 +95,9 @@ class DunningState(BaseModel):
     #: When this rung first parked; survives re-claims so "parked for a day" is
     #: measurable (each re-park overwrites suppressed_at).
     parked_since: datetime | None = None
+    #: Start of the current unbroken run of TECHNICAL_PARK_REASONS parks; cleared
+    #: by any other park or any recorded attempt.
+    technical_parked_since: datetime | None = None
     #: Set on claim when the bank debit this rung was waiting on has come back
     #: failed: the worker records that failure instead of debiting again (A4-2).
     settling_failure_code: str | None = None
@@ -164,6 +179,11 @@ class DunningState(BaseModel):
     def park(self, *, reason: str, now: datetime) -> DunningState:
         if self.status != "processing":
             raise ValueError("only processing dunning states can be parked")
+        technical_since = None
+        if reason in TECHNICAL_PARK_REASONS:
+            technical_since = self.technical_parked_since or now
+            if now - technical_since >= TECHNICAL_PARK_CAP:
+                reason = TECHNICAL_FAILURE_CAPPED
         return self.model_copy(
             update={
                 "status": "active",
@@ -176,6 +196,7 @@ class DunningState(BaseModel):
                 "suppression_reason": reason,
                 "suppressed_at": now,
                 "parked_since": self.parked_since or now,
+                "technical_parked_since": technical_since,
                 "updated_at": now,
             }
         )
@@ -264,6 +285,7 @@ def record_dunning_attempt_result(
                 "settling_failure_code": None,
                 "lease_expires_at": None,
                 "first_attempt_at": first_attempt_at,
+                "technical_parked_since": None,
                 "last_attempt_at": now,
                 "parked_since": None,
                 "next_attempt_at": None,
@@ -288,6 +310,7 @@ def record_dunning_attempt_result(
                 "settling_failure_code": None,
                 "lease_expires_at": None,
                 "first_attempt_at": first_attempt_at,
+                "technical_parked_since": None,
                 "last_attempt_at": now,
                 "parked_since": None,
                 "next_attempt_at": None,
@@ -314,6 +337,7 @@ def record_dunning_attempt_result(
             "settling_failure_code": None,
             "lease_expires_at": None,
             "first_attempt_at": first_attempt_at,
+            "technical_parked_since": None,
             "last_attempt_at": now,
             "next_attempt_at": next_due,
             "parked_since": None,
