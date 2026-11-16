@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from backend.v2.contexts.curriculum.domain.models import Skill
+from backend.v2.contexts.curriculum.infrastructure.mongo_level_repo import RESEQUENCE_OFFSET
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 
@@ -90,3 +93,25 @@ class MongoSkillRepository(TenantScopedRepository):
             sort=[("sequence", 1)],
         )
         return [self._to_domain(doc) async for doc in cursor]
+
+    async def list_all_for_level(self, level_id: str) -> list[Skill]:
+        """Active and retired skills, in sequence order (reorder needs both)."""
+        cursor = self._find_many({"level_id": level_id}, sort=[("sequence", 1)])
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def resequence(self, ordered_ids: list[str]) -> None:
+        """Number ``ordered_ids`` 1..n in two passes, so the unique sequence
+        index never sees two rows on one number mid-way.
+
+        shortcut: not atomic; a crash between passes leaves sequences above
+        RESEQUENCE_OFFSET (still ordered) until the next reorder.
+        """
+        now = datetime.now(UTC)
+        for i, item_id in enumerate(ordered_ids, start=1):
+            await self._update_one(
+                {"skill_id": item_id}, {"$set": {"sequence": RESEQUENCE_OFFSET + i}}
+            )
+        for i, item_id in enumerate(ordered_ids, start=1):
+            await self._update_one(
+                {"skill_id": item_id}, {"$set": {"sequence": i, "updated_at": now}}
+            )

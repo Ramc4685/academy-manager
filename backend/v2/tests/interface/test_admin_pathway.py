@@ -654,3 +654,58 @@ def test_real_router_seed_badminton_409s_for_non_badminton_academy():
     assert r.status_code == 409, r.text
     assert "badminton" in r.json()["detail"].lower()
     seed.execute.assert_not_awaited()
+
+
+def _retire_app(*, curriculum: Any, on_level: list[str], pending: bool = False) -> TestClient:
+    checks = SimpleNamespace(
+        active_student_ids=AsyncMock(return_value=on_level),
+        recheck_level=AsyncMock(return_value=1),
+        has_pending_level_ups=AsyncMock(return_value=pending),
+    )
+    app = _build_real_router_app(curriculum=curriculum)
+    app.dependency_overrides[get_admin_use_cases] = lambda: SimpleNamespace(
+        curriculum=curriculum,
+        student_progress=SimpleNamespace(curriculum_change_checks=checks),
+    )
+    return TestClient(app)
+
+
+def test_retiring_a_level_with_students_on_it_is_409_and_writes_nothing():
+    update = SimpleNamespace(execute=AsyncMock())
+    client = _retire_app(curriculum=SimpleNamespace(update_level=update), on_level=["a", "b"])
+
+    r = client.put("/api/v2/admin/levels/level-1", json={"is_active": False})
+
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["active_students"] == 2
+    update.execute.assert_not_awaited()
+
+
+def test_retiring_a_skill_reports_students_and_queued_level_ups():
+    update = SimpleNamespace(execute=AsyncMock(return_value=_make_skill()))
+    client = _retire_app(curriculum=SimpleNamespace(update_skill=update), on_level=["a"])
+
+    r = client.put("/api/v2/admin/skills/skill-1", json={"is_active": False})
+
+    assert r.status_code == 200, r.text
+    assert (r.json()["active_students"], r.json()["level_ups_queued"]) == (1, 1)
+    assert update.execute.await_args.args[0].is_active is False
+
+
+def test_reordering_levels_waits_for_pending_level_ups():
+    reorder = SimpleNamespace(execute=AsyncMock(return_value=["l2", "l1"]))
+    blocked = _retire_app(
+        curriculum=SimpleNamespace(reorder_levels=reorder), on_level=[], pending=True
+    )
+    assert (
+        blocked.put(
+            "/api/v2/admin/programs/prog-1/levels/order", json={"ids": ["l2", "l1"]}
+        ).status_code
+        == 409
+    )
+    reorder.execute.assert_not_awaited()
+
+    free = _retire_app(curriculum=SimpleNamespace(reorder_levels=reorder), on_level=[])
+    r = free.put("/api/v2/admin/programs/prog-1/levels/order", json={"ids": ["l2", "l1"]})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ids": ["l2", "l1"]}

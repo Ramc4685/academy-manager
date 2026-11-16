@@ -24,7 +24,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [undocumented] `interfaces/` route modules and `scripts/reconcile_membership_roles.py` missing from Layout.
 - [undocumented] Test directories missing from the tests list.
 - [undocumented] Boot migrations gated by `run_migrations_on_boot`, and the context list, are not described.
-- [undocumented] CI section omits `ruff format --check` and the real-Mongo contract job.
+- [undocumented] CI section omits `ruff format --check` and the real-Mongo contract job, and the `compileall` step.
 - [undocumented] Top-level test files (`test_pytest_timeout_backstop.py`, `_route_paths.py`, `conftest.py`) missing from tests layout.
 - [contract] `pyproject.toml` cites missing `tests/structural/test_tenancy_literals.py`; tenancy check is `tests/test_no_raw_tenant_mongo_access.py`.
 - [wording] Persona list, admin router prefix (`interfaces/admin/router.py:61`), identity context shape, `views.py` not in every persona; see report.
@@ -41,7 +41,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [undocumented] README:22 `migrations/` omits the runner and CLI.
 - [wording] Platform, student and owner routers mount behind settings flags, not always under `/api/v2`.
 
-## `frontend/README.md`: 18 items, from `drift/frontend.md`
+## `frontend/README.md`: 19 items, from `drift/frontend.md`
 - [stale-not-built] `components/ui/` does not exist.
 - [stale-not-built] `public/splash/` (and the 180 icon) do not exist.
 - [stale-not-built] No workflow runs size-limit or lhci.
@@ -52,6 +52,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] OpenAPI snapshot is committed (`lib/api/generated/v2.d.ts`, `openapi.snapshot.json`); README contradicts itself at line 88.
 - [wording] Radix and `firebase/auth` usage overstated.
 - [wording] Calendar dynamic imports live in page files, not the admin shell.
+- [wording] The admin dynamic import is `RevenueChart`, not a calendar, and `components/coach` is not dynamically imported.
 - [stale-not-built] `components/coach` is not dynamically imported (static in coach layout).
 - [undocumented] Layout omits `middleware.ts`, `app/sw.ts`, CSP report and v2 proxy routes, Dockerfile, `e2e/`, `scripts/`.
 - [undocumented] Three more no-patch GHSA exceptions in `pnpm-workspace.yaml`.

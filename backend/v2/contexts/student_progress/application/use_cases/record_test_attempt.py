@@ -1,4 +1,10 @@
-"""Use case: coach records a test attempt for a student skill."""
+"""Use case: coach records a test attempt for a student skill.
+
+This is the one writer of a tested PASSED, so it owns the skill's pass rule
+for every route (detailed test, tap-to-master): LEAD_COACH refuses a pass
+from an assistant-only coach, and N_TRIES counts a passing attempt as one
+try, passing the skill only on the Nth.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +20,7 @@ from backend.v2.contexts.student_progress.application.ports import (
 )
 from backend.v2.contexts.student_progress.domain.errors import (
     OverrideNotPermitted,
+    PassNeedsLeadCoach,
     SkillNotOnCurrentLevel,
     StudentNotPlaced,
 )
@@ -38,6 +45,9 @@ from backend.v2.shared.idempotency import IdempotencyStore, idempotent
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy import current_academy_id
 
+#: Taps an N_TRIES skill needs when none is stored (the curriculum default).
+DEFAULT_PASS_TRIES = 3
+
 
 def _resolve_academy_id() -> str:
     return current_academy_id()
@@ -52,6 +62,9 @@ class RecordTestAttemptCommand(BaseModel):
     level_id: str | None = None
     program_id: str
     coach_id: str
+    #: False for an assistant-only coach. Required, so no route can forget
+    #: it: a LEAD_COACH skill refuses a pass when it is False.
+    can_sign_off: bool
     session_id: str | None = None
     occurrence_id: str | None = None
     scoring_type: str = "ATTEMPT_BASED"
@@ -79,6 +92,8 @@ class RecordTestAttemptResult(BaseModel):
     score: float
     skill_status: str
     level_completed: bool
+    #: Tries counted so far on an N_TRIES skill (0 for the other rules).
+    tries: int = 0
 
 
 class RecordTestAttempt:
@@ -145,6 +160,13 @@ class RecordTestAttempt:
             calculate_skill_pass(cmd.attempts_count, cmd.success_count, threshold_pct)
             or cmd.coach_override
         )
+        pass_rule = getattr(skill_meta, "pass_rule", "ONE_TAP")
+        if passed and pass_rule == "LEAD_COACH" and not cmd.can_sign_off:
+            raise PassNeedsLeadCoach(
+                "a lead coach signs this skill off",
+                student_id=cmd.student_id,
+                skill_id=cmd.skill_id,
+            )
 
         now = datetime.now(UTC)
         attempt = TestAttempt(
@@ -171,7 +193,31 @@ class RecordTestAttempt:
 
         # Update skill status
         existing_prog = await self._skill_progress.get(cmd.student_id, cmd.skill_id)
-        new_status = "PASSED" if passed else "NEEDS_REVIEW"
+        tries = 0
+        if passed and pass_rule == "N_TRIES":
+            # A passing attempt is one try; the skill passes on the Nth.
+            needed = getattr(skill_meta, "pass_tries", None) or DEFAULT_PASS_TRIES
+            if existing_prog is None:
+                await self._skill_progress.insert_if_missing(
+                    StudentSkillProgress(
+                        skill_progress_id=str(new_ulid()),
+                        academy_id=_resolve_academy_id(),
+                        student_id=cmd.student_id,
+                        skill_id=cmd.skill_id,
+                        level_id=level_id,
+                        program_id=cmd.program_id,
+                        status="NOT_STARTED",
+                        introduced_at=now,
+                        last_updated_at=now,
+                        last_updated_by=cmd.coach_id,
+                    )
+                )
+                existing_prog = await self._skill_progress.get(cmd.student_id, cmd.skill_id)
+            tries = await self._skill_progress.increment_tries(cmd.student_id, cmd.skill_id, 1) or 0
+            passed = tries >= needed
+            new_status = "PASSED" if passed else "PRACTICING"
+        else:
+            new_status = "PASSED" if passed else "NEEDS_REVIEW"
         if existing_prog is None:
             updated_prog = StudentSkillProgress(
                 skill_progress_id=str(new_ulid()),
@@ -226,7 +272,7 @@ class RecordTestAttempt:
                         attempts_count=cmd.attempts_count,
                         success_count=cmd.success_count,
                         score=round(score, 2),
-                        passed=passed,
+                        passed=attempt.passed,
                     ),
                 )
             )
@@ -265,4 +311,5 @@ class RecordTestAttempt:
             score=round(score, 2),
             skill_status=new_status,
             level_completed=level_completed,
+            tries=tries,
         )

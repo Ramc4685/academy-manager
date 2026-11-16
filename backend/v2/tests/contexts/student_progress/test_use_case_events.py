@@ -444,6 +444,7 @@ async def test_record_test_attempt_emits_attempt_event_even_when_not_passed() ->
     with tenant_scope("academy-1"):
         result = await use_case.execute(
             RecordTestAttemptCommand(
+                can_sign_off=True,
                 student_id="student-1",
                 skill_id="skill-1",
                 level_id="level-1",
@@ -489,6 +490,7 @@ async def test_record_test_attempt_emits_pass_and_completion_events_when_level_c
     with tenant_scope("academy-1"):
         result = await use_case.execute(
             RecordTestAttemptCommand(
+                can_sign_off=True,
                 student_id="student-1",
                 skill_id="skill-1",
                 level_id="level-1",

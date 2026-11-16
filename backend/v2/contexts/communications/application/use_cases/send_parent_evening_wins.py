@@ -18,6 +18,7 @@ from typing import Protocol
 
 from backend.v2.contexts.communications.application.parent_wins import (
     FamilyWins,
+    evening_wins_window,
     render_parent_wins,
 )
 from backend.v2.contexts.communications.application.ports import (
@@ -42,7 +43,7 @@ class ParentWinsProvider(Protocol):
 @dataclass(frozen=True, slots=True)
 class SendParentEveningWinsCommand:
     academy_id: str
-    #: Academy-local "now" (tz-aware). Today's wins are local midnight to now.
+    #: Academy-local "now" (tz-aware). The wins are yesterday 19:00 to today 19:00.
     local_now: datetime
 
 
@@ -68,8 +69,10 @@ class SendParentEveningWins:
 
     async def execute(self, command: SendParentEveningWinsCommand) -> SendParentEveningWinsResult:
         academy_id = command.academy_id
-        start = command.local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-        families = await self.provider.families_with_wins(start, command.local_now)
+        local_now = command.local_now
+        assert local_now.tzinfo is not None, "local_now must be tz-aware"
+        start, end = evening_wins_window(local_now.date(), local_now.tzinfo)
+        families = await self.provider.families_with_wins(start, end)
         if not families:
             return SendParentEveningWinsResult(0, 0, 0, 0)
 

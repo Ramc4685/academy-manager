@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from backend.v2.contexts.student_progress.application.ports import (
     SkillLookup,
@@ -48,6 +49,13 @@ class GetStudentPassport:
             cmd.student_id, active.level_id
         )
         prog_by_skill = {sp.skill_id: sp for sp in skill_progs}
+        # One query for the whole level, not one per skill.
+        attempts_by_skill: dict[str, list[Any]] = {}
+        for attempt in await self._test_attempts.list_for_student_skills(
+            cmd.student_id,
+            [s.skill_id for s in all_skills],  # type: ignore[attr-defined]
+        ):
+            attempts_by_skill.setdefault(attempt.skill_id, []).append(attempt)
 
         entries: list[SkillPassportEntry] = []
         for skill in all_skills:
@@ -55,7 +63,7 @@ class GetStudentPassport:
             prog = prog_by_skill.get(skill_id)
             status = prog.status if prog else "NOT_STARTED"
 
-            attempts = await self._test_attempts.list_for_student_skill(cmd.student_id, skill_id)
+            attempts = attempts_by_skill.get(skill_id, [])
             attempt_count = len(attempts)
             last_passed: bool | None = None
             last_tested_at = None

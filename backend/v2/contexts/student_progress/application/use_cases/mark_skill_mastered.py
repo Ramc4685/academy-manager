@@ -13,7 +13,6 @@ the caller can sign off (not assistant-only).
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -34,15 +33,11 @@ from backend.v2.contexts.student_progress.application.use_cases.record_test_atte
 from backend.v2.contexts.student_progress.domain.errors import (
     ActiveRecommendationExists,
     EnrollmentEnded,
+    PassNeedsLeadCoach,
 )
 from backend.v2.contexts.student_progress.domain.logic import check_level_completion
-from backend.v2.contexts.student_progress.domain.models import StudentSkillProgress
-from backend.v2.shared.ids import new_ulid
 
 MASTERED_NOTE = "Marked as mastered in class"
-
-#: Taps an N_TRIES skill needs when none is stored (matches the domain default).
-DEFAULT_PASS_TRIES = 3
 
 MasteredOutcomeKind = Literal[
     "mastered",
@@ -62,7 +57,7 @@ class MarkSkillMasteredCommand(BaseModel):
     coach_id: str
     session_id: str | None = None
     #: False for an assistant-only coach: LEAD_COACH skills then need a lead.
-    can_sign_off: bool = True
+    can_sign_off: bool
 
 
 class MasteredOutcome(BaseModel):
@@ -120,73 +115,32 @@ class MarkSkillMastered:
                 level_up_queued=complete and await self._queue_level_up(cmd, student_id),
             )
 
-        rule = getattr(skill, "pass_rule", "ONE_TAP")
-        if rule == "LEAD_COACH" and not cmd.can_sign_off:
-            return MasteredOutcome(student_id=student_id, outcome="needs_lead")
-        attempts = 1
-        tries = 0
-        if rule == "N_TRIES":
-            needed = getattr(skill, "pass_tries", None) or DEFAULT_PASS_TRIES
-            tries = await self._count_try(cmd, student_id, active.level_id, existing)
-            if tries < needed:
-                return MasteredOutcome(student_id=student_id, outcome="try_recorded", tries=tries)
-            attempts = needed
-
-        result = await self._record.execute(
-            RecordTestAttemptCommand(
-                student_id=student_id,
-                skill_id=cmd.skill_id,
-                level_id=active.level_id,
-                program_id=cmd.program_id,
-                coach_id=cmd.coach_id,
-                session_id=cmd.session_id,
-                scoring_type="COACH_APPROVAL",
-                attempts_count=attempts,
-                success_count=attempts,
-                notes=MASTERED_NOTE,
-            )
-        )
-        queued = result.level_completed and await self._queue_level_up(cmd, student_id)
-        return MasteredOutcome(
-            student_id=student_id, outcome="mastered", level_up_queued=queued, tries=tries
-        )
-
-    async def _count_try(
-        self,
-        cmd: MarkSkillMasteredCommand,
-        student_id: str,
-        level_id: str,
-        existing: StudentSkillProgress | None,
-    ) -> int:
-        """Atomically add one tap; the skill shows PRACTICING until it passes."""
-        now = datetime.now(UTC)
-        row = existing or StudentSkillProgress(
-            skill_progress_id=str(new_ulid()),
-            academy_id="",  # injected by repo
-            student_id=student_id,
-            skill_id=cmd.skill_id,
-            level_id=level_id,
-            program_id=cmd.program_id,
-            status="NOT_STARTED",
-            last_updated_at=now,
-            last_updated_by=cmd.coach_id,
-        )
-        if existing is None:
-            await self._skill_progress.insert_if_missing(row)
-            row = await self._skill_progress.get(student_id, cmd.skill_id) or row
-        tries = await self._skill_progress.increment_tries(student_id, cmd.skill_id, 1) or 0
-        if row.status != "PRACTICING":
-            # upsert never writes ``tries``, so it cannot undo the $inc above.
-            await self._skill_progress.upsert(
-                row.model_copy(
-                    update={
-                        "status": "PRACTICING",
-                        "last_updated_at": now,
-                        "last_updated_by": cmd.coach_id,
-                    }
+        # RecordTestAttempt applies the pass rule (one predicate for every route).
+        try:
+            result = await self._record.execute(
+                RecordTestAttemptCommand(
+                    student_id=student_id,
+                    skill_id=cmd.skill_id,
+                    program_id=cmd.program_id,
+                    coach_id=cmd.coach_id,
+                    can_sign_off=cmd.can_sign_off,
+                    session_id=cmd.session_id,
+                    scoring_type="COACH_APPROVAL",
+                    attempts_count=1,
+                    success_count=1,
+                    notes=MASTERED_NOTE,
                 )
             )
-        return tries
+        except PassNeedsLeadCoach:
+            return MasteredOutcome(student_id=student_id, outcome="needs_lead")
+        if not result.passed:
+            return MasteredOutcome(
+                student_id=student_id, outcome="try_recorded", tries=result.tries
+            )
+        queued = result.level_completed and await self._queue_level_up(cmd, student_id)
+        return MasteredOutcome(
+            student_id=student_id, outcome="mastered", level_up_queued=queued, tries=result.tries
+        )
 
     async def _level_complete(self, student_id: str, level_id: str) -> bool:
         skills = await self._skill_lookup.list_skills_for_level(level_id)

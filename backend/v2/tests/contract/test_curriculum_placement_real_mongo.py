@@ -19,6 +19,7 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_skill_repo import Mongo
 from backend.v2.contexts.student_progress.application.errors import (
     LevelNotConfigured,
     LevelUpInProgress,
+    PassNeedsLeadCoach,
     SkillNotOnCurrentLevel,
 )
 from backend.v2.contexts.student_progress.application.use_cases.mark_skill_mastered import (
@@ -177,6 +178,7 @@ def _place(level_id: str, program_id: str = "prog") -> PlaceStudentInLevelComman
 async def _pass(w: dict[str, Any], skill_id: str) -> None:
     await w["record"].execute(
         RecordTestAttemptCommand(
+            can_sign_off=True,
             student_id="kid",
             skill_id=skill_id,
             program_id="prog",
@@ -323,6 +325,7 @@ async def test_progress_writes_land_on_the_active_level_only(real_db: Any) -> No
         # A stale client level_id is ignored: the attempt lands on L1.
         await w["record"].execute(
             RecordTestAttemptCommand(
+                can_sign_off=True,
                 student_id="kid",
                 skill_id="s1",
                 level_id="L3",
@@ -404,15 +407,14 @@ async def test_n_tries_passes_on_the_nth_tap_and_undo_takes_one_back(real_db: An
             )
         )
         undone = await w["skill_progress"].get("kid", "s1")
-        attempt = await real_db["test_attempts"].find_one({"skill_id": "s1"})
+        attempts = await real_db["test_attempts"].count_documents({"skill_id": "s1"})
 
     assert (first.outcome, first.tries) == ("try_recorded", 1)
     assert (second.outcome, second.tries) == ("try_recorded", 2)
     assert practicing is not None and practicing.status == "PRACTICING"
     assert (third.outcome, third.tries) == ("mastered", 3)
     assert passed is not None and passed.status == "PASSED" and passed.tries == 3
-    assert attempt is not None
-    assert (attempt["attempts_count"], attempt["success_count"]) == (3, 3)
+    assert attempts == 3  # one 1-of-1 attempt per tap: the audit trail shows each try
     # Undo drops the pass and one try: the next tap passes again.
     assert undone is not None and (undone.status, undone.tries) == ("PRACTICING", 2)
 
@@ -451,3 +453,138 @@ async def test_lead_coach_skill_needs_a_lead_and_one_tap_is_unchanged(real_db: A
     assert lead.outcome == "mastered"
     # A one-tap skill still passes for an assistant; it finishes L1 here.
     assert one_tap.outcome == "mastered" and one_tap.level_up_queued is True
+
+
+# --- Slice A3: place and credit ---------------------------------------------
+
+
+def _credit(
+    level_id: str, skills: list[str], *, notify: bool = False
+) -> PlaceStudentInLevelCommand:
+    return PlaceStudentInLevelCommand(
+        student_id="kid",
+        program_id="prog",
+        level_id=level_id,
+        placed_by="owner",
+        credited_skill_ids=skills,
+        notify_parents=notify,
+    )
+
+
+async def test_credits_pass_quietly_and_never_queue_a_level_up(real_db: Any) -> None:
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await w["place"].execute(_credit("L1", ["s1", "s2"]))
+        rows = [await w["skill_progress"].get("kid", s) for s in ("s1", "s2")]
+        wins = await w["skill_progress"].list_passed_between(
+            datetime(2000, 1, 1, tzinfo=UTC), datetime(2100, 1, 1, tzinfo=UTC)
+        )
+        rec = await w["recs"].get_active_for_student("kid", "prog")
+
+    assert all(r is not None and r.status == "PASSED" and r.silent for r in rows)
+    assert wins == []  # quiet credits stay out of the parents' evening wins
+    assert rec is None
+
+
+async def test_credits_apply_on_the_same_level_and_can_be_announced(real_db: Any) -> None:
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        first = await w["place"].execute(_place("L1"))
+        again = await w["place"].execute(_credit("L1", ["s1"], notify=True))
+        row = await w["skill_progress"].get("kid", "s1")
+        wins = await w["skill_progress"].list_passed_between(
+            datetime(2000, 1, 1, tzinfo=UTC), datetime(2100, 1, 1, tzinfo=UTC)
+        )
+
+    assert again.progress_id == first.progress_id
+    assert row is not None and row.status == "PASSED" and not row.silent
+    assert [w_.skill_id for w_ in wins] == ["s1"]
+
+
+async def test_a_credit_from_another_level_refuses_the_whole_placement(real_db: Any) -> None:
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        with pytest.raises(SkillNotOnCurrentLevel):
+            await w["place"].execute(_credit("L1", ["s1", "t1"]))
+        active = await w["level_progress"].get_active("kid", "prog")
+
+    assert active is None
+    assert await real_db["student_skill_progress"].count_documents({}) == 0
+
+
+async def test_a_real_pass_announces_a_quiet_credit(real_db: Any) -> None:
+    await _seed_curriculum(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await w["place"].execute(_place("L1"))
+        await w["place"].execute(_credit("L1", ["s1"]))
+        await _pass(w, "s1")
+        row = await w["skill_progress"].get("kid", "s1")
+
+    assert row is not None and not row.silent
+
+
+async def test_a_detailed_test_cannot_pass_a_lead_coach_skill_for_an_assistant(
+    real_db: Any,
+) -> None:
+    """Security: the test route goes through the same predicate as the tap."""
+    await _seed_curriculum(real_db)
+    await _set_rule(real_db, "s1", "LEAD_COACH")
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await w["place"].execute(_place("L1"))
+        test = RecordTestAttemptCommand(
+            student_id="kid",
+            skill_id="s1",
+            program_id="prog",
+            coach_id="helper",
+            can_sign_off=False,
+            attempts_count=5,
+            success_count=5,
+        )
+        with pytest.raises(PassNeedsLeadCoach):
+            await w["record"].execute(test)
+        refused = await w["skill_progress"].get("kid", "s1")
+        # A failing attempt is still the assistant's to record.
+        await w["record"].execute(test.model_copy(update={"success_count": 0}))
+        lead = await w["record"].execute(test.model_copy(update={"can_sign_off": True}))
+
+    assert refused is not None and refused.status == "NOT_STARTED"
+    assert lead.passed and lead.skill_status == "PASSED"
+
+
+async def test_a_detailed_test_counts_one_try_on_an_n_tries_skill(real_db: Any) -> None:
+    await _seed_curriculum(real_db)
+    await _set_rule(real_db, "s1", "N_TRIES", 2)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await w["place"].execute(_place("L1"))
+        first = await w["record"].execute(
+            RecordTestAttemptCommand(
+                student_id="kid",
+                skill_id="s1",
+                program_id="prog",
+                coach_id="coach",
+                can_sign_off=True,
+                attempts_count=10,
+                success_count=10,
+                coach_override=False,
+            )
+        )
+        second = await w["record"].execute(
+            RecordTestAttemptCommand(
+                student_id="kid",
+                skill_id="s1",
+                program_id="prog",
+                coach_id="coach",
+                can_sign_off=True,
+                attempts_count=1,
+                success_count=1,
+            )
+        )
+
+    assert (first.passed, first.skill_status, first.tries) == (False, "PRACTICING", 1)
+    assert (second.passed, second.skill_status, second.tries) == (True, "PASSED", 2)

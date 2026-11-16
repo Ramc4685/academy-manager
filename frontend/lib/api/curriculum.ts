@@ -343,6 +343,32 @@ export function buildCreateSkillBody(
   };
 }
 
+// Mirrors POST /admin/pathway/placements (BulkPlacementBody).
+export interface BulkPlacementBody {
+  program_id: string;
+  level_id: string;
+  student_ids: string[];
+  credited_skill_ids: string[];
+  notify_parents: boolean;
+  reason?: string;
+}
+
+export interface BulkPlacementResult {
+  student_id: string;
+  outcome: "placed" | "refused";
+  progress_id?: string;
+  code?: string;
+}
+
+export function placeStudentsInBulk(
+  body: BulkPlacementBody,
+): Promise<{ results: BulkPlacementResult[] }> {
+  return apiFetch<{ results: BulkPlacementResult[] }>("/admin/pathway/placements", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 // Mirrors PUT /admin/skills/{skill_id} (UpdateSkillBody); omitted fields stay as they are.
 export function updateSkillPassRule(
   skillId: string,

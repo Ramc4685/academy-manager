@@ -10,11 +10,22 @@ from __future__ import annotations
 
 import html
 from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta, tzinfo
 
 from backend.v2.contexts.communications.application.unsubscribe_footer import (
     render_unsubscribe_footer,
 )
 from backend.v2.shared.comms.email_theme import EmailBrand, button, shell
+
+#: The evening email goes out at this academy-local time; a day's wins run
+#: from the previous evening's cutoff to this one, so a late class is not lost.
+EVENING_WINS_CUTOFF = time(19, 0)
+
+
+def evening_wins_window(send_date: date, tz: tzinfo) -> tuple[datetime, datetime]:
+    """``[yesterday 19:00, send_date 19:00)`` local: the wins in one evening email."""
+    end = datetime.combine(send_date, EVENING_WINS_CUTOFF, tzinfo=tz)
+    return end - timedelta(days=1), end
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,7 +126,9 @@ def _child_block(child: ChildWins, accent: str) -> str:
         parts.extend(_quote(note) for note in up.coach_notes)
     # The narrative is drafted from one level; with wins in two levels the
     # templated lines are the only ones that cover every skill.
-    narrated = bool(child.narrative) and len(child.skill_wins) == 1
+    narrated = bool(child.narrative) and (
+        len(child.skill_wins) == 1 or (not child.skill_wins and len(child.level_ups) == 1)
+    )
     if narrated:
         parts.append(f'<p style="margin:0 0 12px;">{esc(child.narrative)}</p>')
     for wins in child.skill_wins:

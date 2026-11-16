@@ -12093,6 +12093,65 @@
         "title": "BulkPayrollResultView",
         "type": "object"
       },
+      "BulkPlacementBody": {
+        "properties": {
+          "credited_skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Credited Skill Ids",
+            "type": "array"
+          },
+          "level_id": {
+            "title": "Level Id",
+            "type": "string"
+          },
+          "notify_parents": {
+            "default": false,
+            "title": "Notify Parents",
+            "type": "boolean"
+          },
+          "program_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Program Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "student_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Student Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "level_id",
+          "student_ids"
+        ],
+        "title": "BulkPlacementBody",
+        "type": "object"
+      },
       "BulkStatusBody": {
         "properties": {
           "level_id": {
@@ -28479,6 +28538,24 @@
         "title": "ReopenPayoutPeriodRequest",
         "type": "object"
       },
+      "ReorderBody": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "title": "ReorderBody",
+        "type": "object"
+      },
       "RepairCoachPayRateWindowRequest": {
         "properties": {
           "amount_cents": {
@@ -33184,6 +33261,17 @@
             ],
             "title": "Description"
           },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
           "name": {
             "anyOf": [
               {
@@ -34071,6 +34159,17 @@
               }
             ],
             "title": "Description"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
           },
           "is_required": {
             "anyOf": [
@@ -40481,6 +40580,58 @@
         ]
       }
     },
+    "/api/v2/admin/levels/{level_id}/skills/order": {
+      "put": {
+        "operationId": "reorder_skills_api_v2_admin_levels__level_id__skills_order_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "level_id",
+            "required": true,
+            "schema": {
+              "title": "Level Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Reorder Skills Api V2 Admin Levels  Level Id  Skills Order Put"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reorder Skills",
+        "tags": [
+          "admin-pathway"
+        ]
+      }
+    },
     "/api/v2/admin/messages": {
       "get": {
         "operationId": "list_messages_api_v2_admin_messages_get",
@@ -40672,6 +40823,48 @@
           }
         },
         "summary": "Get Pathway Dashboard",
+        "tags": [
+          "admin-progress"
+        ]
+      }
+    },
+    "/api/v2/admin/pathway/placements": {
+      "post": {
+        "description": "Place up to 50 students on one level, crediting skills they already have.\n\nEach student is placed (and audited) on its own: one refusal, such as a\nlevel-up already being approved, does not stop the rest.",
+        "operationId": "place_students_in_bulk_api_v2_admin_pathway_placements_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkPlacementBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Place Students In Bulk Api V2 Admin Pathway Placements Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Place Students In Bulk",
         "tags": [
           "admin-progress"
         ]
@@ -42800,6 +42993,58 @@
           }
         },
         "summary": "Create Level",
+        "tags": [
+          "admin-pathway"
+        ]
+      }
+    },
+    "/api/v2/admin/programs/{program_id}/levels/order": {
+      "put": {
+        "operationId": "reorder_levels_api_v2_admin_programs__program_id__levels_order_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Reorder Levels Api V2 Admin Programs  Program Id  Levels Order Put"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reorder Levels",
         "tags": [
           "admin-pathway"
         ]

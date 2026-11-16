@@ -364,6 +364,7 @@ def _build_coach_app() -> FastAPI:
     @app.post("/api/v2/coach/students/{student_id}/skills/{skill_id}/test", status_code=201)
     async def record_test(student_id: str, skill_id: str, body: dict) -> dict:
         cmd = RecordTestAttemptCommand(
+            can_sign_off=True,
             student_id=student_id,
             skill_id=skill_id,
             level_id=body.get("level_id", LEVEL_ID),
@@ -1909,6 +1910,32 @@ def test_real_skill_router_bulk_status_rejects_student_outside_session() -> None
 
     assert response.status_code == 404, response.text
     assert spies.update_skill_status.calls == 0
+
+
+def test_real_skill_router_test_route_tells_the_use_case_an_assistant_cannot_sign_off() -> None:
+    """Security: the detailed test route must not bypass a LEAD_COACH skill.
+
+    The route passes ``can_sign_off=False`` for an assistant-only coach and
+    RecordTestAttempt refuses the pass (see the real-Mongo pass-rule tests).
+    """
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID], assigned_session_ids={SESSION_ID}
+    )
+    app.dependency_overrides[get_auth_claims] = lambda: _real_router_claims().model_copy(
+        update={"roles": ("assistant_coach",)}
+    )
+    response = TestClient(app).post(
+        f"/api/v2/coach/students/{STUDENT_ID}/skills/{SKILL_ID}/test",
+        json={
+            "program_id": PROGRAM_ID,
+            "session_id": SESSION_ID,
+            "attempts_count": 1,
+            "success_count": 1,
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert spies.record_test_attempt.args[0].can_sign_off is False
 
 
 def test_real_skill_router_rejects_success_count_above_attempts_count() -> None:

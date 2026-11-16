@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel, Field
 
 from backend.v2.contexts.curriculum.application.ports import LevelRepository, SkillRepository
-from backend.v2.contexts.curriculum.domain.errors import LevelNotFound, SkillNotFound
+from backend.v2.contexts.curriculum.domain.errors import InvalidOrder, LevelNotFound, SkillNotFound
 from backend.v2.contexts.curriculum.domain.models import (
     MAX_PASS_TRIES as MAX_PASS_TRIES,  # re-exported for interfaces
 )
@@ -53,6 +53,8 @@ class UpdateSkillCommand(BaseModel):
     coach_override_allowed: bool | None = None
     pass_rule: PassRule | None = None
     pass_tries: int | None = Field(default=None, ge=MIN_PASS_TRIES, le=MAX_PASS_TRIES)
+    #: False retires the skill; it stops counting toward the level.
+    is_active: bool | None = None
     updated_by: str
 
 
@@ -63,8 +65,12 @@ class CreateSkill:
 
     async def execute(self, cmd: CreateSkillCommand) -> Skill:
         level = await self._levels.get(cmd.level_id)
-        if level is None:
-            raise LevelNotFound("level not found", level_id=cmd.level_id)
+        if level is None or level.program_id != cmd.program_id:
+            raise LevelNotFound(
+                "level not found in this program",
+                level_id=cmd.level_id,
+                program_id=cmd.program_id,
+            )
         now = datetime.now(UTC)
         skill = Skill(
             skill_id=str(new_ulid()),
@@ -108,6 +114,7 @@ class UpdateSkill:
                 "coach_override_allowed": cmd.coach_override_allowed,
                 "pass_rule": cmd.pass_rule,
                 "pass_tries": cmd.pass_tries,
+                "is_active": cmd.is_active,
                 "updated_at": datetime.now(UTC),
             }.items()
             if v is not None
@@ -125,3 +132,21 @@ class ListSkills:
 
     async def execute(self, level_id: str) -> list[Skill]:
         return await self._skills.list_for_level(level_id)
+
+
+class ReorderSkills:
+    """Renumber a level's active skills in the given order; retired ones follow."""
+
+    def __init__(self, *, skills: SkillRepository) -> None:
+        self._skills = skills
+
+    async def execute(self, level_id: str, skill_ids: list[str]) -> list[str]:
+        everything = await self._skills.list_all_for_level(level_id)
+        active = [s.skill_id for s in everything if s.is_active]
+        if len(set(skill_ids)) != len(skill_ids) or set(skill_ids) != set(active):
+            raise InvalidOrder(
+                "list every active skill of the level exactly once", level_id=level_id
+            )
+        ordered = skill_ids + [s.skill_id for s in everything if not s.is_active]
+        await self._skills.resequence(ordered)
+        return ordered

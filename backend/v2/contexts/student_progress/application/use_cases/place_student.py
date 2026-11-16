@@ -15,6 +15,7 @@ from backend.v2.contexts.student_progress.application.ports import (
 from backend.v2.contexts.student_progress.domain.errors import (
     LevelNotConfigured,
     LevelUpInProgress,
+    SkillNotOnCurrentLevel,
 )
 from backend.v2.contexts.student_progress.domain.events import (
     StudentPlacedInLevel,
@@ -84,6 +85,11 @@ class PlaceStudentInLevelCommand(BaseModel):
     level_id: str
     placed_by: str
     reason: str = "pathway_placement"
+    #: Skills on the target level the student already has: marked PASSED
+    #: without a test, and never queue a level-up.
+    credited_skill_ids: list[str] = []
+    #: False keeps credits out of the parents' evening wins (``silent``).
+    notify_parents: bool = True
 
 
 class PlaceStudentInLevel:
@@ -115,9 +121,22 @@ class PlaceStudentInLevel:
                 program_id=cmd.program_id,
             )
 
+        level_skill_ids = {
+            s.skill_id  # type: ignore[attr-defined]
+            for s in await self._skill_lookup.list_skills_for_level(cmd.level_id)
+        }
+        foreign = [sid for sid in cmd.credited_skill_ids if sid not in level_skill_ids]
+        if foreign:
+            raise SkillNotOnCurrentLevel(
+                "credited skills must belong to the level the student is placed in",
+                level_id=cmd.level_id,
+                skill_ids=foreign,
+            )
+
         now = datetime.now(UTC)
         active = await self._level_progress.get_active(cmd.student_id, cmd.program_id)
         if active is not None and active.level_id == cmd.level_id:
+            await self._credit(cmd, now)
             return active
         if active is not None:
             await self._withdraw_pending_level_up(cmd, now)
@@ -147,6 +166,7 @@ class PlaceStudentInLevel:
             actor=cmd.placed_by,
             now=now,
         )
+        await self._credit(cmd, now)
 
         if self._outbox is not None:
             await self._outbox.append(
@@ -189,6 +209,23 @@ class PlaceStudentInLevel:
                 "a level-up for this student is being approved; try again in a minute",
                 student_id=cmd.student_id,
                 rec_id=pending.rec_id,
+            )
+
+    async def _credit(self, cmd: PlaceStudentInLevelCommand, now: datetime) -> None:
+        """Mark credited skills PASSED. Rows exist: the level was seeded first."""
+        for skill_id in dict.fromkeys(cmd.credited_skill_ids):
+            row = await self._skill_progress.get(cmd.student_id, skill_id)
+            if row is None or row.status == "PASSED":
+                continue
+            await self._skill_progress.upsert(
+                row.model_copy(
+                    update={
+                        "status": "PASSED",
+                        "silent": not cmd.notify_parents,
+                        "last_updated_at": now,
+                        "last_updated_by": cmd.placed_by,
+                    }
+                )
             )
 
     async def _level_finished(self, student_id: str, level_id: str) -> bool:

@@ -259,6 +259,9 @@ class _FakeTestAttemptRepo:
     async def list_for_student_skill(self, student_id: str, skill_id: str) -> list:
         return [a for a in self.rows if a.student_id == student_id and a.skill_id == skill_id]
 
+    async def list_for_student_skills(self, student_id: str, skill_ids: list[str]) -> list:
+        return [a for a in self.rows if a.student_id == student_id and a.skill_id in skill_ids]
+
     async def count_for_student_skill(self, student_id: str, skill_id: str) -> int:
         return len(await self.list_for_student_skill(student_id, skill_id))
 
@@ -646,6 +649,7 @@ def _pass_all_level1_skills(env, student_id: str, coach_id: str = "coach-1") -> 
             result = _run(
                 env.ns.record_test_attempt.execute(
                     RecordTestAttemptCommand(
+                        can_sign_off=True,
                         student_id=student_id,
                         skill_id=skill.skill_id,
                         level_id=env.level1.level_id,
@@ -775,6 +779,7 @@ def test_replayed_approve_is_conflict_and_performs_no_writes(env):
         _run(
             env.ns.record_test_attempt.execute(
                 RecordTestAttemptCommand(
+                    can_sign_off=True,
                     student_id=student_id,
                     skill_id=level2_skill.skill_id,
                     level_id=env.level2.level_id,
@@ -1237,3 +1242,93 @@ def test_pathway_dashboard_route_is_not_found_for_coach() -> None:
     client = TestClient(_build_app(SimpleNamespace(), claims))
 
     assert client.get("/api/v2/admin/pathway/dashboard").status_code == 404
+
+
+class _AuditSink:
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    def __getitem__(self, _name: str) -> _AuditSink:
+        return self
+
+    async def insert_one(self, doc: dict) -> None:
+        self.rows.append(doc)
+
+
+def test_bulk_placement_places_credits_and_audits_each_student(env):
+    sink = _AuditSink()
+    env.client.app.state.db = sink
+    credited = env.level1_skills[0].skill_id
+
+    response = env.client.post(
+        "/api/v2/admin/pathway/placements",
+        json={
+            "program_id": env.program_id,
+            "level_id": env.level1.level_id,
+            "student_ids": ["st-bulk-1", "st-bulk-2", "st-bulk-1"],
+            "credited_skill_ids": [credited],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    results = response.json()["results"]
+    assert [(r["student_id"], r["outcome"]) for r in results] == [
+        ("st-bulk-1", "placed"),
+        ("st-bulk-2", "placed"),
+    ]
+    assert [row["entity_id"] for row in sink.rows] == ["st-bulk-1", "st-bulk-2"]
+    assert sink.rows[0]["after"]["credited_skill_ids"] == [credited]
+
+
+def test_bulk_placement_refuses_a_credit_from_another_level_per_student(env):
+    response = env.client.post(
+        "/api/v2/admin/pathway/placements",
+        json={
+            "program_id": env.program_id,
+            "level_id": env.level1.level_id,
+            "student_ids": ["st-bulk-3"],
+            "credited_skill_ids": [env.level2_skills[0].skill_id],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["results"] == [
+        {
+            "student_id": "st-bulk-3",
+            "outcome": "refused",
+            "code": "StudentProgress.SkillNotOnCurrentLevel",
+        }
+    ]
+
+
+@pytest.mark.parametrize("count", [0, 51])
+def test_bulk_placement_caps_the_batch_at_the_edge(env, count):
+    response = env.client.post(
+        "/api/v2/admin/pathway/placements",
+        json={
+            "level_id": env.level1.level_id,
+            "student_ids": [f"st-{i}" for i in range(count)],
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_assistant_coach_cannot_place_or_credit_skills(env):
+    """Credits write PASSED, so the placement route is admin and owner only."""
+    assistant = AuthClaims(
+        user_id="helper-1",
+        email="helper@example.com",
+        academy_id=ACADEMY_ID,
+        roles=("assistant_coach",),
+    )
+    client = TestClient(_build_app(env.use_cases, assistant))
+    response = client.post(
+        "/api/v2/admin/pathway/placements",
+        json={
+            "program_id": env.program_id,
+            "level_id": env.level1.level_id,
+            "student_ids": ["st-bulk-4"],
+            "credited_skill_ids": [env.level1_skills[0].skill_id],
+        },
+    )
+    assert response.status_code in (403, 404)
