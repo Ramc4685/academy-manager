@@ -580,6 +580,38 @@ async def test_a_row_only_full_price_child_still_binds_after_the_rule_flips(real
     assert await _discounts(real_db, acad, "enr-a", "enr-b") == {"enr-a": 0, "enr-b": 800}
 
 
+@pytest.mark.parametrize("order", [("enr-b1", "enr-b2", "enr-a"), ("enr-a", "enr-b1", "enr-b2")])
+@pytest.mark.parametrize(
+    ("rule", "applies_to", "expected"),
+    [
+        ("lowest_tuition", "all_classes", {"enr-a": 0, "enr-b1": 800, "enr-b2": 800}),
+        ("highest_tuition", "all_classes", {"enr-a": 1_000, "enr-b1": 0, "enr-b2": 0}),
+        ("lowest_tuition", "one_class_per_child", {"enr-a": 0, "enr-b1": 800, "enr-b2": 0}),
+    ],
+)
+async def test_a_child_is_weighed_on_all_its_classes_whatever_the_pricing_order(
+    real_db, acad, order: tuple[str, ...], rule: str, applies_to: str, expected: dict[str, int]
+) -> None:
+    """Ava: one 100.00 class. Ben: two 80.00 classes (160.00). Pricing one of
+    Ben's classes first must not weigh Ben on his other class alone."""
+    await _session(real_db, acad, "sess-a", 10_000)
+    await _session(real_db, acad, "sess-b1", 8_000)
+    await _session(real_db, acad, "sess-b2", 8_000)
+    await _child(real_db, acad, "stu-a")
+    await _child(real_db, acad, "stu-b")
+    await _enroll(real_db, acad, "enr-a", "stu-a", "sess-a")
+    await _enroll(real_db, acad, "enr-b1", "stu-b", "sess-b1")
+    await _enroll(real_db, acad, "enr-b2", "stu-b", "sess-b2")
+    await _offer(real_db, full_price_child=rule, applies_to=applies_to)
+    reader = MongoEnrollmentBillingTargetReader(real_db, clock=_clock)
+    for enrollment_id in order:
+        await reader.load(enrollment_id, PERIOD)
+
+    await _repo(real_db).generate_monthly_payments(PERIOD)
+
+    assert await _discounts(real_db, acad, *expected) == expected
+
+
 async def test_a_child_resuming_after_the_full_price_child_paid_is_discounted(
     real_db, acad
 ) -> None:

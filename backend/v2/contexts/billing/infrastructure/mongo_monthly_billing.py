@@ -1872,7 +1872,8 @@ async def resolve_sibling_discount(
        still in the family (it will reuse that row). That child is the
        full-price child, so this one is discounted.
     3. Otherwise the owner's rule picks the full-price child among the
-       undecided members, this one included.
+       children with no decided enrollment, each weighed on all of its
+       enrollments in the family.
 
     So a month keeps exactly one full-price child whatever the run order or a
     mid-run setting change, except when a full-price child with a row but no
@@ -1896,7 +1897,7 @@ async def resolve_sibling_discount(
             db, enrollment=enrollment, period=period, today=now.date()
         )
         in_family = {row.enrollment_id for row in family}
-        decided: set[str] = set()
+        decided: set[str] = set()  # children (student ids), not enrollments
         paid_full: set[str] = set()
         for member_id, member_student in relatives:
             if member_id == enrollment_id:
@@ -1907,7 +1908,7 @@ async def resolve_sibling_discount(
             # family: it will reuse that row when billed. Once it leaves, ignore it.
             if not invoiced and (row is None or member_id not in in_family):
                 continue
-            decided.add(member_id)
+            decided.add(member_student)
             if row is None or (
                 not row.get("discounted") and row.get("full_price_student_id") == member_student
             ):
@@ -1917,7 +1918,9 @@ async def resolve_sibling_discount(
         if own is not None and paid_full:
             full_price = own.student_id if own.student_id in paid_full else min(paid_full)
         elif own is not None:
-            undecided = [row for row in family if row.enrollment_id not in decided]
+            # Whole children only: excluding one of a child's enrollments would
+            # change that child's tuition total or first start under the rule.
+            undecided = [row for row in family if row.student_id not in decided]
             full_price = full_price_student(undecided, full_price_child=full_price_child) or ""
         discounted = own is not None and is_sibling_discounted(
             family, own, full_price=full_price, applies_to=applies_to
