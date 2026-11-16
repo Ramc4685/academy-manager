@@ -100,6 +100,14 @@ class RegisterPublicParent:
         if not isinstance(email, str) or not email:
             raise InvalidToken("token missing email")
         require_verified_email(token_claims)
+        firebase_claims = token_claims.get("firebase")
+        if (
+            isinstance(firebase_claims, dict)
+            and firebase_claims.get("sign_in_provider") == "custom"
+        ):
+            # A magic-link session already belongs to an account; its email is
+            # unverified, so it must never register or link one by address.
+            raise InvalidToken("server-minted sessions cannot register")
 
         uid = token_claims.get("uid") or token_claims.get("sub")
         if not isinstance(uid, str) or not uid:
