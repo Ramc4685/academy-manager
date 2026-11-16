@@ -87,7 +87,9 @@ export function referralFormFrom(view: Referral): ReferralForm {
   };
 }
 
-/** Blank -> null; anything not a number -> NaN so the server's 422 names it. */
+/** Blank -> null. Callers validate first (see the *Error functions), so a
+ * non-number never reaches here: JSON would turn NaN into null and clear the
+ * stored value. */
 const toNumber = (text: string): number | null =>
   text.trim() === "" ? null : Number(text);
 const toCents = (text: string): number | null => {
@@ -129,18 +131,89 @@ export function familyOffersPayload(
   return payload;
 }
 
-/** The client-side check the save button waits on; the server re-checks every bound. */
-export function siblingError(form: SiblingForm): string | null {
-  if (form.percent.trim() === "") {
-    return form.enabled
-      ? "Enter the sibling discount percentage to switch it on."
-      : null;
+/**
+ * One number field: blank is allowed only where blank means something
+ * (``blankMeansNone``) or nothing is stored yet, so a cleared input can never
+ * send null over a stored value. The server re-checks every bound.
+ */
+function numberError(
+  label: string,
+  text: string,
+  stored: number | null | undefined,
+  { min, max, integer = false, blankMeansNone = false }: {
+    min: number;
+    max: number;
+    integer?: boolean;
+    blankMeansNone?: boolean;
+  },
+): string | null {
+  if (text.trim() === "") {
+    return blankMeansNone || stored == null ? null : `Enter ${label}.`;
   }
-  const value = Number(form.percent);
-  if (!Number.isFinite(value) || value < 0.01 || value > 100) {
-    return "The sibling discount must be between 0.01% and 100%.";
+  const value = Number(text);
+  if (
+    !Number.isFinite(value) ||
+    value < min ||
+    value > max ||
+    (integer && !Number.isInteger(value))
+  ) {
+    return `${label[0].toUpperCase()}${label.slice(1)} must be ${integer ? "a whole number " : ""}between ${min} and ${max}.`;
   }
   return null;
+}
+
+/** The sibling check the save button waits on. */
+export function siblingError(
+  form: SiblingForm,
+  stored: Sibling,
+): string | null {
+  if (form.enabled && form.percent.trim() === "") {
+    return "Enter the sibling discount percentage to switch it on.";
+  }
+  return numberError(
+    "the sibling discount (%)",
+    form.percent,
+    stored.percent_bps,
+    { min: 0.01, max: 100 },
+  );
+}
+
+/** The referral check the save button waits on. */
+export function referralError(
+  form: ReferralForm,
+  stored: Referral,
+): string | null {
+  return (
+    numberError(
+      "the credit for the referring family",
+      form.referrerCreditDollars,
+      stored.referrer_credit_cents,
+      { min: 0.01, max: 500 },
+    ) ??
+    numberError(
+      "the credit for the new family",
+      form.referredCreditDollars,
+      stored.referred_credit_cents,
+      { min: 0.01, max: 500 },
+    ) ??
+    numberError("the days to hold the credit", form.holdDays, stored.hold_days, {
+      min: 0,
+      max: 60,
+      integer: true,
+    }) ??
+    numberError(
+      "the most rewards per family per year",
+      form.maxRewards,
+      stored.max_rewards_per_referrer_per_year,
+      { min: 1, max: 100, integer: true },
+    ) ??
+    numberError(
+      "the credit expiry",
+      form.expiryDays,
+      stored.credit_expiry_days,
+      { min: 30, max: 1095, integer: true, blankMeansNone: true },
+    )
+  );
 }
 
 const FULL_PRICE_LABELS: Record<FullPriceChild, string> = {
@@ -194,7 +267,11 @@ export function FamilyOffersCard() {
       ? familyOffersPayload(view, sibling, referral)
       : {};
   const dirty = Object.keys(payload).length > 0;
-  const error = sibling ? siblingError(sibling) : null;
+  const error =
+    view && sibling ? siblingError(sibling, view.sibling_discount) : null;
+  const referralProblem =
+    view && referral ? referralError(referral, view.referral_program) : null;
+  const blocked = Boolean(error || referralProblem);
   useReportSettingsDirty("family-offers", dirty);
 
   const mutation = useMutation({
@@ -399,13 +476,22 @@ export function FamilyOffersCard() {
                 </select>
               </label>
             </div>
+            {referralProblem && (
+              <p
+                className="text-xs text-red-700"
+                role="alert"
+                data-testid="family-offers-referral-error"
+              >
+                {referralProblem}
+              </p>
+            )}
           </fieldset>
 
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <Button
-              variant={dirty && !error ? "volt" : "secondary"}
+              variant={dirty && !blocked ? "volt" : "secondary"}
               size="sm"
-              disabled={!dirty || Boolean(error) || mutation.isPending}
+              disabled={!dirty || blocked || mutation.isPending}
               onClick={() => mutation.mutate()}
               data-testid="family-offers-save"
             >

@@ -12,6 +12,7 @@ import { queryKeys } from "@/lib/query/keys";
 import {
   FamilyOffersCard,
   familyOffersPayload,
+  referralError,
   referralFormFrom,
   siblingError,
   siblingFormFrom,
@@ -122,19 +123,47 @@ describe("FamilyOffersCard form", () => {
 
   it("needs a percentage to switch the sibling discount on, within 0.01% to 100%", () => {
     const base = siblingFormFrom(UNSET.sibling_discount);
-    expect(siblingError(base)).toBeNull();
-    expect(siblingError({ ...base, enabled: true })).toMatch(
+    const unset = UNSET.sibling_discount;
+    expect(siblingError(base, unset)).toBeNull();
+    expect(siblingError({ ...base, enabled: true }, unset)).toMatch(
       /Enter the sibling discount/,
     );
-    expect(siblingError({ ...base, percent: "0" })).toMatch(
-      /between 0.01% and 100%/,
+    expect(siblingError({ ...base, percent: "0" }, unset)).toMatch(
+      /between 0.01 and 100/,
     );
-    expect(siblingError({ ...base, percent: "100.5" })).toMatch(
-      /between 0.01% and 100%/,
+    expect(siblingError({ ...base, percent: "100.5" }, unset)).toMatch(
+      /between 0.01 and 100/,
     );
     expect(
-      siblingError({ ...base, enabled: true, percent: "0.01" }),
+      siblingError({ ...base, enabled: true, percent: "0.01" }, unset),
     ).toBeNull();
+  });
+
+  it("blocks a cleared or invalid number instead of sending null over a stored value", () => {
+    const sibling = {
+      ...siblingFormFrom(STORED.sibling_discount),
+      enabled: false,
+      percent: "",
+    };
+    expect(siblingError(sibling, STORED.sibling_discount)).toMatch(/Enter/);
+
+    const referral = referralFormFrom(STORED.referral_program);
+    const stored = STORED.referral_program;
+    expect(referralError(referral, stored)).toBeNull();
+    expect(referralError({ ...referral, holdDays: "" }, stored)).toMatch(
+      /Enter the days to hold/,
+    );
+    expect(referralError({ ...referral, holdDays: "2.5" }, stored)).toMatch(
+      /whole number between 0 and 60/,
+    );
+    expect(referralError({ ...referral, maxRewards: "1e400" }, stored)).toMatch(
+      /between 1 and 100/,
+    );
+    expect(
+      referralError({ ...referral, referrerCreditDollars: "abc" }, stored),
+    ).toMatch(/credit for the referring family/);
+    // Blank expiry means "never expires", so it may clear the stored value.
+    expect(referralError({ ...referral, expiryDays: "" }, stored)).toBeNull();
   });
 });
 
