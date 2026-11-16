@@ -1,6 +1,6 @@
 ## backend/v2/README.md
 
-Verified 2026-11-16 against the lf-followups worktree (re-run, including uncommitted changes). The uncommitted diff only touches billing autopay, the Stripe gateway and placement audit code and tests; none of it is described by the README, so it adds no new drift.
+Verified 2026-11-16 against the lf-followups worktree (re-run, including uncommitted changes). The only uncommitted change is a relaxed assertion in `backend/v2/tests/contract/test_idempotency_store.py:82` (the concurrent-loser may be refused as in flight or replay the stored result). The README does not describe it, so it adds no new drift beyond the existing idempotency item. All prior items below were re-checked and remain valid; there are no NEW items.
 
 - [stale-not-built] README:3 links `../../../.claude/plans/write-a-detailed-plan-curried-trinket.md`; the file does not exist at that path from backend/v2.
 - [undocumented] README:11-30 layout omits `backend/v2/composition/` (about 90 wiring modules, e.g. `composition/admin.py`, `composition/ai.py`), which holds the per-feature wiring. README:30 and :53 describe `main.py` as the composition root and the place to wire a context.

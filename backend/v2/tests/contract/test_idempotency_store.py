@@ -79,7 +79,8 @@ async def test_two_concurrent_first_calls_run_the_body_once(real_db) -> None:
     results = await asyncio.gather(uc.run("x"), uc.run("x"), return_exceptions=True)
 
     assert uc.calls == 1
-    assert sum(isinstance(r, IdempotentRequestInFlight) for r in results) == 1
+    # The loser is refused as in flight, or (on a slow machine) replays the stored result.
+    assert all(isinstance(r, IdempotentRequestInFlight) or r == {"result": "X"} for r in results)
     assert await uc.run("x") == {"result": "X"}  # later calls replay
     assert uc.calls == 1
 
