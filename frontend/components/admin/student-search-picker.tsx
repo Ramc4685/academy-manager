@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { orderPickerResults, studentPickerParams } from "@/lib/admin/student-picker";
+import { orderPickerResults, pinnedPickerOptions, studentPickerParams } from "@/lib/admin/student-picker";
 import { listAdminStudents, type AdminStudentView } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -28,6 +28,7 @@ export function StudentSearchPicker({
   testId?: string;
 }) {
   const [text, setText] = useState("");
+  const [picked, setPicked] = useState<AdminStudentView>();
   const [search, setSearch] = useState("");
   useEffect(() => {
     const id = setTimeout(() => setSearch(text.trim()), 300);
@@ -42,8 +43,7 @@ export function StudentSearchPicker({
     placeholderData: (prev) => prev,
   });
   const students = orderPickerResults(query.data?.students ?? []);
-  const showSelected =
-    selected?.student_id && !students.some((s) => s.student_id === selected.student_id);
+  const pinned = pinnedPickerOptions(students, value, selected, picked);
 
   return (
     <div className="space-y-2">
@@ -59,8 +59,11 @@ export function StudentSearchPicker({
         required
         value={value}
         onChange={(e) => {
-          const picked = students.find((s) => s.student_id === e.target.value);
-          if (picked) onChange(picked);
+          const choice = students.find((s) => s.student_id === e.target.value);
+          if (choice) {
+            setPicked(choice);
+            onChange(choice);
+          }
         }}
         className={selectClassName}
         aria-label="Student"
@@ -75,7 +78,11 @@ export function StudentSearchPicker({
                 ? "No students found"
                 : "Select a student"}
         </option>
-        {showSelected && <option value={selected.student_id}>{selected.full_name}</option>}
+        {pinned.map((s) => (
+          <option key={s.student_id} value={s.student_id}>
+            {s.full_name}
+          </option>
+        ))}
         {students.map((s) => (
           <option key={s.student_id} value={s.student_id}>
             {s.full_name}

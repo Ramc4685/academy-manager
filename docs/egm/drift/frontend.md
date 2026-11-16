@@ -12,3 +12,4 @@
 - [wording] README.md:12 lists Tailwind + Radix. `frontend/package.json:27-28` has only `@radix-ui/react-dialog` and `react-slot`. Tailwind is v4 (`package.json:68`).
 - [wording] README.md:86 says `pnpm typecheck` is `tsc --noEmit`. It is actually `next typegen && tsc --noEmit` (`frontend/package.json:13`).
 - [wording] README.md:88 says `pnpm generate:api` regenerates `lib/api/generated/v2.d.ts` from the committed snapshot. This matches `package.json:16`, but contradicts README.md:28.
+- [wording] README.md:22 lists the public landing page under `(marketing)/`. The landing page is `frontend/app/page.tsx` (root, outside any group); `(marketing)` holds login, register, legal and auth pages.

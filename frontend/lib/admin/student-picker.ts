@@ -34,3 +34,26 @@ export function orderPickerResults<T extends { lifecycle: PersonLifecycle }>(stu
   const rank = (s: T) => (ON_THE_BOOKS.includes(s.lifecycle) ? 0 : 1);
   return [...students].sort((a, b) => rank(a) - rank(b));
 }
+
+type PickerOption = { student_id: string; full_name: string };
+
+/**
+ * Options the picker lists ahead of the search results so the select never
+ * shows a placeholder while the form still holds a student id: the prefilled
+ * student, and the student the admin picked while it is still the value.
+ */
+export function pinnedPickerOptions(
+  results: readonly { student_id: string }[],
+  value: string,
+  selected?: PickerOption,
+  picked?: PickerOption,
+): PickerOption[] {
+  const listed = new Set(results.map((s) => s.student_id));
+  const pinned: PickerOption[] = [];
+  for (const option of [selected, picked?.student_id === value ? picked : undefined]) {
+    if (option?.student_id && !listed.has(option.student_id) && !pinned.some((p) => p.student_id === option.student_id)) {
+      pinned.push(option);
+    }
+  }
+  return pinned;
+}
