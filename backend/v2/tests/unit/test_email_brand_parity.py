@@ -30,6 +30,7 @@ from backend.v2.composition.email_adapters import (
     InvoiceEmailAdapter,
     InvoiceNaming,
     LastCharge,
+    render_ach_schedule_notice,
 )
 from backend.v2.contexts.billing.application.ports import (
     InviteEmailOutcome as BillingInviteOutcome,
@@ -316,6 +317,17 @@ async def render_all(doc: dict[str, Any]) -> dict[str, str]:
         )
         bodies["dispute_notice"] = dispute_sender.sent[0]["body"]
 
+        # L8: render only, there is no sender to call.
+        _subject, bodies["ach_schedule_notice"] = await render_ach_schedule_notice(
+            academies=academies,
+            parent_name="Parent One",
+            effective_from=date(2027, 1, 1),
+            charge_day=1,
+            amount_cents=None,
+            currency="usd",
+            manage_url="https://portal.example.test/parent/payments",
+        )
+
     card_sender = _BillingInviteSender()
     await SendAddCardReminder(
         contacts=_Contacts(),
@@ -358,6 +370,7 @@ EMAILS = [
     "past_due_reminder",
     "manual_reminder",
     "dispute_notice",
+    "ach_schedule_notice",
     "add_card",
     "login_invite",
     "verification",

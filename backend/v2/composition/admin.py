@@ -17,6 +17,7 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.v2.composition.absence_notifications import compose_absence_notifier
 from backend.v2.composition.academy_links import academy_frontend_base_url_lookup
+from backend.v2.composition.ach_schedule_notice import build_ach_notice_preview
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
     compose_registration_decline_refunds,
@@ -4288,6 +4289,9 @@ def compose_admin(
         get_admin_session=get_admin_session,
         maintain_session_occurrences=maintain_session_occurrences,
         preview_welcome_email=notifiers.welcome.preview,
+        preview_ach_notice=build_ach_notice_preview(
+            db, academies=academy_repo, users=users_r, frontend_url=settings.frontend_url
+        ),
         set_session_assistants=compose_set_session_assistants(
             sessions=sessions_w,
             occurrences=occurrences_r,

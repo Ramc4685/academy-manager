@@ -597,6 +597,22 @@ class WelcomeEmailPreviewView(BaseModel):
     html: str
 
 
+class AchNoticeRecipientView(BaseModel):
+    parent_id: str
+    name: str | None = None
+    payment_method: str | None = None
+    expected_amount_cents: int | None = None
+
+
+class AchNoticePreviewView(BaseModel):
+    """``GET /admin/billing/ach-notice/preview``: the autopay date-change notice,
+    rendered and never sent, with the autopay families it is meant for (L8)."""
+
+    subject: str
+    html: str
+    recipients: list[AchNoticeRecipientView]
+
+
 class SetSessionAssistantsRequest(BaseModel):
     """Body of ``PUT /admin/sessions/{id}/assistants`` (dedicated editor)."""
 
