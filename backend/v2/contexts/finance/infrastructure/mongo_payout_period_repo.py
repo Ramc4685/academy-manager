@@ -269,26 +269,28 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
             raise RuntimeError("payout period save did not persist")
         return stored
 
-    async def _guarded_set(self, period: PayoutPeriod, fields: dict[str, Any]) -> None:
+    async def _guarded_set(self, period: PayoutPeriod, fields: dict[str, Any]) -> dict[str, Any]:
         # Compare-and-set on the version the caller loaded (L7): of two
         # concurrent writes (approve vs recompute, a stale mark-paid after
         # reopen and re-approve, two recomputes) only the first lands.
         loaded = period.version
-        result = await self._update_one(
+        previous = await self._find_one_and_update(
             {
                 "period_id": period.period_id,
                 # A document written before versions existed reads as 0.
                 "version": loaded if loaded else {"$in": [0, None]},
             },
             {"$set": fields, "$inc": {"version": 1}},
+            return_document_after=False,
         )
-        if result.matched_count == 0:
+        if previous is None:
             if await self._find_one({"period_id": period.period_id}) is None:
                 raise LookupError(f"PayoutPeriod {period.period_id!r} not found")
             raise PayoutPeriodConflictError(
                 f"payout period {period.period_id!r} changed since it was loaded "
                 f"(version {loaded}); reload and try again"
             )
+        return previous
 
     async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
         await self._guarded_set(
@@ -339,12 +341,15 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
                 ]
             )
         try:
-            await self._guarded_set(period, {**header, "lines_version": token})
+            previous = await self._guarded_set(period, {**header, "lines_version": token})
         except (PayoutPeriodConflictError, LookupError):
             await lines.delete_many(
                 {"academy_id": academy_id, "period_id": period.period_id, "lines_version": token}
             )
             raise
+        # Delete only the set this write replaced (None: lines from ``save``).
+        # Never "everything but mine": a late cleanup would wipe a newer
+        # writer's current lines.
         # shortcut: until this cleanup runs (or if the process dies first),
         # raw line readers that skip the header (reports, replacement
         # snapshots) can see the old set too; filter them by the header's
@@ -353,7 +358,7 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
             {
                 "academy_id": academy_id,
                 "period_id": period.period_id,
-                "lines_version": {"$ne": token},
+                "lines_version": previous.get("lines_version"),
             }
         )
 

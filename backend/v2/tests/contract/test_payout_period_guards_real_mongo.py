@@ -222,11 +222,12 @@ async def test_a_read_between_the_line_and_header_writes_sees_one_consistent_set
     async def observing_set(period, fields):
         # New lines are already inserted here; the header still points at the old set.
         before = await repo.find_by_id("pp-1")
-        await real_set(period, fields)
+        previous = await real_set(period, fields)
         after = await repo.find_by_id("pp-1")  # old lines not yet cleaned up
         for p in (before, after):
             assert p is not None
             seen.append((p.total_minor, [line.amount_minor for line in p.lines]))
+        return previous
 
     repo._guarded_set = observing_set  # type: ignore[method-assign]
     await repo.replace_with_lines(_recomputed(loaded, amount_minor=4_000))
@@ -257,3 +258,29 @@ async def test_an_interleaved_override_and_recompute_leave_one_whole_line_set(
     assert (
         reloaded is not None and [line.amount_minor for line in reloaded.lines] == stored["lines"]
     )
+
+
+async def test_a_late_cleanup_never_deletes_a_newer_writers_lines(real_db, acad) -> None:
+    repo_a, repo_c = MongoPayoutPeriodRepository(real_db), MongoPayoutPeriodRepository(real_db)
+    await repo_a.save(_period())
+    loaded_a = await repo_a.find_by_id("pp-1")
+    assert loaded_a is not None
+    real_set = repo_a._guarded_set
+
+    async def cas_then_stall(period, fields):
+        previous = await real_set(period, fields)
+        # A has won its compare-and-set but not cleaned up yet; C loads A's
+        # write and completes a whole recompute of its own.
+        loaded_c = await repo_c.find_by_id("pp-1")
+        assert loaded_c is not None and loaded_c.total_minor == 3_000
+        await repo_c.replace_with_lines(_recomputed(loaded_c, amount_minor=7_000))
+        return previous
+
+    repo_a._guarded_set = cas_then_stall  # type: ignore[method-assign]
+    await repo_a.replace_with_lines(_recomputed(loaded_a, amount_minor=3_000))  # cleanup runs last
+
+    stored = await _stored(real_db)
+    assert stored["lines"] == [7_000]
+    reloaded = await repo_c.find_by_id("pp-1")
+    assert reloaded is not None and reloaded.total_minor == 7_000
+    assert [line.amount_minor for line in reloaded.lines] == [7_000]
