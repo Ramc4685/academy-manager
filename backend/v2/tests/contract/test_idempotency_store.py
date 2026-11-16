@@ -113,3 +113,39 @@ async def test_a_stale_claim_from_a_dead_request_is_taken_over(real_db) -> None:
     )
     assert await store.claim("k:claim")
     assert not await store.claim("k:claim")
+
+
+@pytest.mark.asyncio
+async def test_a_taken_over_request_cannot_release_the_new_holders_claim(real_db) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    store = MongoIdempotencyStore(real_db)
+    first = await store.claim("own:claim")
+    await real_db["idempotency_keys"].update_one(
+        {"key": "own:claim"}, {"$set": {"claimed_at": datetime.now(UTC) - timedelta(minutes=6)}}
+    )
+    second = await store.claim("own:claim")  # the stale claim is taken over
+    assert second is not None
+
+    await store.release("own:claim", first)  # the dead request wakes up and fails
+    assert await store.claim("own:claim") is None  # still held by the second request
+    await store.release("own:claim", second)
+    assert await store.claim("own:claim") is not None
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_result_write_replays_the_stored_result(real_db) -> None:
+    store = MongoIdempotencyStore(real_db)
+
+    class _Overtaken(_CountingUseCase):
+        @idempotent(key_from=lambda self, k: f"dup:{k}")
+        async def run(self, k: str) -> dict[str, object]:
+            self.calls += 1
+            # A request that took over our stale claim stored its result first.
+            await store.put(
+                f"dup:{k}",
+                {"value": {"_type": "raw", "data": {"result": "theirs"}}, "stored_at": "x"},
+            )
+            return {"result": "ours"}
+
+    assert await _Overtaken(store).run("z") == {"result": "theirs"}

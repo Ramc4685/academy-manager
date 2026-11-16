@@ -101,8 +101,8 @@ class _LostRecords(ClaimableStore):
     async def put(self, key: str, value: dict[str, Any]) -> None:
         return None
 
-    async def claim(self, key: str) -> bool:
-        return True
+    async def claim(self, key: str) -> object | None:
+        return "lost"
 
 
 def _bulk(mutation_id: str, *students: str) -> BulkMarkAttendanceCommand:

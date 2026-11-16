@@ -43,12 +43,12 @@ class IdempotencyStore(Protocol):
     async def get(self, key: str) -> dict[str, Any] | None: ...
     async def put(self, key: str, value: dict[str, Any]) -> None: ...
 
-    async def claim(self, key: str) -> bool:
-        """Atomically take ``key``: True for the one caller that inserted it."""
+    async def claim(self, key: str) -> object | None:
+        """Atomically take ``key``: a token for the one caller that got it, else None."""
         ...
 
-    async def release(self, key: str) -> None:
-        """Give a claim back so a retry can run (the wrapped call raised)."""
+    async def release(self, key: str, token: object) -> None:
+        """Give back the claim ``token`` holds, so a retry can run (the call raised)."""
         ...
 
 
@@ -100,16 +100,19 @@ def idempotent(
             # both run: a read-then-write let both through before either stored.
             claim_key = f"{key}:claim"
             existing = await store.get(key)
-            if existing is None and not await store.claim(claim_key):
-                existing = await store.get(key)
-                if existing is None:
-                    raise IdempotentRequestInFlight("this request is already being processed")
+            token = None
+            if existing is None:
+                token = await store.claim(claim_key)
+                if token is None:
+                    existing = await store.get(key)
+                    if existing is None:
+                        raise IdempotentRequestInFlight("this request is already being processed")
             if existing is not None:
                 return _deserialize(existing["value"], result_type)
             try:
                 result = await fn(self, *args, **kwargs)
             except BaseException:
-                await store.release(claim_key)
+                await store.release(claim_key, token)
                 raise
             try:
                 await store.put(
@@ -120,8 +123,14 @@ def idempotent(
                     },
                 )
             except BaseException:
+                # A result is already stored (a duplicate-key insert after a stale
+                # takeover, or our own write landed): replay it, as every retry will.
+                stored = await store.get(key)
+                if stored is not None:
+                    replayed: _T = _deserialize(stored["value"], result_type)
+                    return replayed
                 # The work committed but its record did not: free the key so a retry re-runs.
-                await store.release(claim_key)
+                await store.release(claim_key, token)
                 raise
             return result
 
