@@ -207,3 +207,18 @@ def test_autopay_stuck_on_our_side_reaches_the_owner(admin_client):
     items = {item["attention_id"]: item for item in r.json()["items"]}
     assert items["autopay-stuck"]["count"] == 3
     assert "not the card" in items["autopay-stuck"]["detail"]
+    assert items["autopay-stuck"]["href"] == "/admin/billing-health"
+    assert "operator" not in items["autopay-stuck"]["detail"]
+
+
+def test_autopay_waiting_on_stripe_setup_says_finish_setup(admin_client):
+    """L1 should-fix 8: an unfinished Stripe account is the academy's to fix."""
+    admin_client.seed["dunning_alerts"] = {"autopay_needs_stripe_setup": 2}
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    item = {i["attention_id"]: i for i in r.json()["items"]}["autopay-stuck"]
+    assert item["count"] == 2
+    assert "finish Stripe setup" in item["detail"]
+    assert "our side" not in item["detail"]

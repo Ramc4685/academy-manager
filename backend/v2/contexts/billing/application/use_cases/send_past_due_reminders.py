@@ -52,6 +52,9 @@ class PastDueInvoice(BaseModel):
     currency: str = "usd"
     #: Offsets already emailed for this invoice, so a re-run sends nothing.
     reminded_days: tuple[int, ...] = ()
+    #: The invoice's enrollment is on active autopay: it gets charged on its due
+    #: date, so "due today" / "due in N days" notices would only confuse.
+    autopay_active: bool = False
 
 
 #: How long after its day an unsent offset still goes out.
@@ -115,7 +118,11 @@ class SendPastDueReminders:
             if invoice.balance_due_cents <= 0:
                 continue
             age = ordinal - invoice.due_date.toordinal()
-            matured = [o for o in offsets if 0 <= age - o <= CATCH_UP_DAYS]
+            matured = [
+                o
+                for o in offsets
+                if 0 <= age - o <= CATCH_UP_DAYS and (o > 0 or not invoice.autopay_active)
+            ]
             if not matured:
                 continue
             considered += 1
@@ -125,13 +132,12 @@ class SendPastDueReminders:
                 continue
             # Today's position, not the stale offset: a caught-up reminder says
             # how late the invoice is now.
-            offset = pending[-1]
             try:
                 ok = await self._sender.send_past_due_reminder(invoice=invoice, days_past_due=age)
             except Exception:
                 log.warning(
                     "past_due_reminder_send_failed",
-                    extra={"invoice_id": invoice.invoice_id, "days_past_due": offset},
+                    extra={"invoice_id": invoice.invoice_id, "days_past_due": age},
                     exc_info=True,
                 )
                 ok = False

@@ -34,7 +34,10 @@ from backend.v2.contexts.billing.application.use_cases.send_past_due_reminders i
     PastDueInvoice,
     SendPastDueReminders,
 )
-from backend.v2.contexts.billing.domain.dunning import PARK_REASONS_NEEDING_ATTENTION
+from backend.v2.contexts.billing.domain.dunning import (
+    PARK_REASONS_NEEDING_ATTENTION,
+    PARK_REASONS_NEEDING_STRIPE_SETUP,
+)
 from backend.v2.contexts.communications.application.use_cases.send_push_to_user import (
     SendPushToUser,
 )
@@ -236,10 +239,27 @@ def compose_dues_reminders(
                     "currency": 1,
                     "reminder_sent_days": 1,
                     "due_date": 1,
+                    "enrollment_id": 1,
                 },
             )
+            docs = [doc async for doc in cursor]
+            enrollment_ids = {str(d["enrollment_id"]) for d in docs if d.get("enrollment_id")}
+            autopay_enrollments = (
+                set(
+                    await db["student_billing_enrollments"].distinct(
+                        "enrollment_id",
+                        {
+                            "academy_id": current_academy_id(),
+                            "enrollment_id": {"$in": sorted(enrollment_ids)},
+                            "autopay_enrollment_status": "active",
+                        },
+                    )
+                )
+                if enrollment_ids
+                else set()
+            )
             out: list[PastDueInvoice] = []
-            async for doc in cursor:
+            for doc in docs:
                 parent_id = str(doc.get("parent_id") or doc.get("parent_user_id") or "")
                 if not parent_id:
                     continue
@@ -254,6 +274,7 @@ def compose_dues_reminders(
                         reminded_days=tuple(
                             int(day) for day in (doc.get("reminder_sent_days") or [])
                         ),
+                        autopay_active=str(doc.get("enrollment_id") or "") in autopay_enrollments,
                     )
                 )
             return out
@@ -329,19 +350,31 @@ def compose_dues_reminders(
         )
         # Parked for a fault on OUR side before any decline (L1 A7-1): no attempt
         # spent, so the two counts above never saw these families.
+        parked = {
+            "academy_id": request_academy_id,
+            "status": "active",
+            "next_attempt_at": None,
+        }
         stuck = await states.distinct(
             "parent_id",
             {
-                "academy_id": request_academy_id,
-                "status": "active",
-                "next_attempt_at": None,
-                "suppression_reason": {"$in": sorted(PARK_REASONS_NEEDING_ATTENTION)},
+                **parked,
+                "suppression_reason": {
+                    "$in": sorted(
+                        PARK_REASONS_NEEDING_ATTENTION - PARK_REASONS_NEEDING_STRIPE_SETUP
+                    )
+                },
             },
+        )
+        needs_setup = await states.distinct(
+            "parent_id",
+            {**parked, "suppression_reason": {"$in": sorted(PARK_REASONS_NEEDING_STRIPE_SETUP)}},
         )
         return {
             "failed_autopay": len(failed),
             "dunning_exhausted": len(exhausted),
             "autopay_stuck": len(stuck),
+            "autopay_needs_stripe_setup": len(needs_setup),
         }
 
     return DuesReminderBundle(

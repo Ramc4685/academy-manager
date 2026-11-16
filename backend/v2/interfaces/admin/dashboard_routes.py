@@ -121,20 +121,29 @@ async def dashboard_attention(
         )
 
     stuck = int(dunning_alerts.get("autopay_stuck") or 0)
-    if stuck:
+    needs_setup = int(dunning_alerts.get("autopay_needs_stripe_setup") or 0)
+    if stuck or needs_setup:
+        sentences = []
+        if needs_setup:
+            sentences.append(
+                f"{needs_setup} famil{'ies' if needs_setup != 1 else 'y'} can't be charged "
+                "until you finish Stripe setup."
+            )
+        if stuck:
+            sentences.append(
+                f"{stuck} famil{'ies' if stuck != 1 else 'y'} could not be charged because "
+                "of a problem on our side, not the card."
+            )
+        sentences.append("Nothing was charged. Open Billing health for details.")
         items.append(
             AdminAttentionItemView(
                 attention_id="autopay-stuck",
                 kind="autopay_stuck",
                 title="Autopay stuck",
-                detail=(
-                    f"{stuck} famil{'ies' if stuck != 1 else 'y'} could not be charged because "
-                    "of a problem on our side, not the card. Nothing was charged; "
-                    "the operator has been alerted."
-                ),
+                detail=" ".join(sentences),
                 severity="high",
-                href="/admin/payments",
-                count=stuck,
+                href="/admin/billing-health",
+                count=stuck + needs_setup,
             )
         )
 

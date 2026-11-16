@@ -192,6 +192,27 @@ async def test_before_and_on_the_due_date_reminders_fire() -> None:
 
 
 @pytest.mark.asyncio
+async def test_autopay_invoices_get_no_before_or_on_due_reminders() -> None:
+    """Should-fix 7: autopay charges on the due date, so "due today" / "due in N
+    days" notices skip it; past-due offsets still fire."""
+    autopay = {"autopay_active": True}
+    invoices = _FakeInvoices(
+        [
+            _invoice("due-in-2", due_date=date(2026, 9, 22)).model_copy(update=autopay),
+            _invoice("due-today", due_date=_TODAY).model_copy(update=autopay),
+            _invoice("late-15", due_date=date(2026, 9, 5)).model_copy(update=autopay),
+        ]
+    )
+    sender = _FakeSender()
+    use_case, stamps = _build(invoices, sender)
+
+    await use_case.execute(today=_TODAY, reminder_days=(-2, 0, 15))
+
+    assert sender.sent == [("late-15", 15)]
+    assert stamps.stamps == [("late-15", 15)]
+
+
+@pytest.mark.asyncio
 async def test_several_matured_offsets_send_one_email_and_stamp_all() -> None:
     """A re-enabled schedule must not fire a burst: one email, every offset stamped."""
     invoices = _FakeInvoices([_invoice("inv-1", due_date=date(2026, 9, 18))])  # due+2
