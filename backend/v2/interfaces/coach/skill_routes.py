@@ -52,6 +52,7 @@ from backend.v2.interfaces.coach.deps import (
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import is_assistant_only, is_coach_supervisor, require_coach_surface
+from backend.v2.shared.http.errors import DomainError
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +73,8 @@ class UpdateStatusBody(BaseModel):
     detail, never a 500 raised from inside the handler.
     """
 
-    level_id: str
+    #: Ignored: the use case writes the student's active level.
+    level_id: str | None = None
     program_id: str
     status: CoachSettableStatus
     introduced_at: str | None = None
@@ -80,8 +82,9 @@ class UpdateStatusBody(BaseModel):
 
 class RecordTestBody(BaseModel):
     program_id: str
-    level_id: str
-    attempts_count: int = 1
+    #: Ignored: the use case records on the student's active level.
+    level_id: str | None = None
+    attempts_count: int = Field(default=1, ge=1)
     success_count: int = 0
     session_id: str | None = None
     notes: str = ""
@@ -115,9 +118,10 @@ class SetSkillNoteVisibilityBody(BaseModel):
 class BulkStatusBody(BaseModel):
     skill_id: str
     program_id: str
-    level_id: str
+    #: Ignored: each student's active level is used.
+    level_id: str | None = None
     student_ids: list[str]
-    status: str
+    status: CoachSettableStatus
 
 
 class MarkMasteredBody(BaseModel):
@@ -442,18 +446,26 @@ async def bulk_update_skill_status(
     ):
         raise HTTPException(status_code=404, detail="student not found")
 
+    # One student's refusal (not placed, other level, already passed) must not
+    # leave the rest of the class half-updated: report it per student.
+    results: list[dict[str, object]] = []
     for student_id in selected_student_ids:
-        await use_cases.student_progress.update_skill_status.execute(
-            UpdateSkillStatusCommand(
-                student_id=student_id,
-                skill_id=body.skill_id,
-                level_id=body.level_id,
-                program_id=body.program_id,
-                new_status=body.status,
-                updated_by=claims.user_id,
+        try:
+            await use_cases.student_progress.update_skill_status.execute(
+                UpdateSkillStatusCommand(
+                    student_id=student_id,
+                    skill_id=body.skill_id,
+                    program_id=body.program_id,
+                    new_status=body.status,
+                    updated_by=claims.user_id,
+                )
             )
-        )
-    return {"updated": len(selected_student_ids), "student_ids": selected_student_ids}
+        except DomainError as exc:
+            results.append({"student_id": student_id, "outcome": "refused", "code": exc.code})
+        else:
+            results.append({"student_id": student_id, "outcome": "updated", "code": None})
+    updated = [r["student_id"] for r in results if r["outcome"] == "updated"]
+    return {"updated": len(updated), "student_ids": updated, "results": results}
 
 
 async def _require_roster_students(
@@ -504,6 +516,7 @@ async def mark_skill_mastered(
             student_ids=student_ids,
             coach_id=claims.user_id,
             session_id=resolved_session_id,
+            can_sign_off=not is_assistant_only(claims),
         )
     )
     return {"results": [o.model_dump() for o in outcomes]}
@@ -531,6 +544,7 @@ async def unmark_skill_mastered(
             skill_id=skill_id,
             program_id=program_id,
             updated_by=claims.user_id,
+            can_sign_off=not is_assistant_only(claims),
         )
     )
     return result.model_dump()
@@ -601,7 +615,6 @@ async def update_skill_status(
             UpdateSkillStatusCommand(
                 student_id=student_id,
                 skill_id=skill_id,
-                level_id=body.level_id,
                 program_id=body.program_id,
                 new_status=body.status,
                 updated_by=claims.user_id,
@@ -631,8 +644,8 @@ async def record_test(
                 student_id=student_id,
                 skill_id=skill_id,
                 program_id=body.program_id,
-                level_id=body.level_id,
                 coach_id=claims.user_id,
+                can_sign_off=not is_assistant_only(claims),
                 session_id=body.session_id,
                 attempts_count=body.attempts_count,
                 success_count=body.success_count,

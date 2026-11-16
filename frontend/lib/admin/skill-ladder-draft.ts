@@ -11,13 +11,12 @@ import type { DraftLevel, DraftSkill, Level, Skill, SkillCriterion } from "@/lib
 export interface LadderSaveApi {
   createLevel: (
     programId: string,
-    body: { name: string; description: string; sequence: number },
+    body: { name: string; description: string },
   ) => Promise<Pick<Level, "level_id">>;
   createSkill: (
     levelId: string,
     body: {
       program_id: string;
-      sequence: number;
       name: string;
       description: string;
       is_required: boolean;
@@ -31,8 +30,8 @@ export interface LadderSaveApi {
 }
 
 /**
- * Levels go after the program's last existing sequence (not its count, which
- * collides when a level was deleted); skills and criteria keep draft order.
+ * The server numbers new levels and skills after every existing row; levels,
+ * skills and criteria are posted in draft order.
  *
  * Every created row is recorded on the draft (`levelId`, `skillId`,
  * `criteriaSaved`) through `onProgress`, and rows that carry a record are
@@ -43,7 +42,6 @@ export interface LadderSaveApi {
 export async function saveLadderDraft(
   programId: string,
   levels: DraftLevel[],
-  lastLevelSequence: number,
   api: LadderSaveApi,
   onLevelSaved?: (index: number) => void,
   onProgress?: (index: number, level: DraftLevel) => void,
@@ -59,7 +57,6 @@ export async function saveLadderDraft(
       const saved = await api.createLevel(programId, {
         name: level.name.trim(),
         description: level.description.trim(),
-        sequence: lastLevelSequence + li + 1,
       });
       levelId = saved.level_id;
       record((l) => ({ ...l, levelId }));
@@ -71,7 +68,6 @@ export async function saveLadderDraft(
       if (!skillId) {
         const savedSkill = await api.createSkill(levelId, {
           program_id: programId,
-          sequence: si + 1,
           name: skill.name.trim(),
           description: skill.description.trim(),
           is_required: skill.is_required,

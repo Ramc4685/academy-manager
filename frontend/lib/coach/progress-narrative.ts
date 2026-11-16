@@ -29,6 +29,14 @@ export function masteredOn(statuses: Record<string, SkillBoardCell>, date: strin
   );
 }
 
+/**
+ * The date to draft against: none for today's session, so the backend picks
+ * tonight's email (tomorrow's once today's has gone out at 19:00).
+ */
+export function narrativeDate(sessionDate: string, now = new Date()): string | undefined {
+  return sessionDate === localDateKey(now) ? undefined : sessionDate;
+}
+
 const ERROR_COPY: Record<number, string> = {
   503: "AI notes are not enabled for this academy yet",
   403: "AI notes are part of the Growth plan",

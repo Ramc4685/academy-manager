@@ -76,7 +76,11 @@ async def _setup(db: Any) -> tuple[Any, str, list[Any]]:
 async def _tap(progress: Any, program_id: str, skill_id: str) -> Any:
     [outcome] = await progress.mark_skill_mastered.execute(
         MarkSkillMasteredCommand(
-            skill_id=skill_id, program_id=program_id, student_ids=[STUDENT], coach_id=COACH
+            can_sign_off=True,
+            skill_id=skill_id,
+            program_id=program_id,
+            student_ids=[STUDENT],
+            coach_id=COACH,
         )
     )
     return outcome
@@ -101,7 +105,11 @@ async def test_tap_undo_and_evening_level_up(real_db: Any) -> None:
         # Undo the last tap: skill back to practicing, queued level-up withdrawn.
         undone = await progress.unmark_skill_mastered.execute(
             UnmarkSkillMasteredCommand(
-                student_id=STUDENT, skill_id=skill_ids[-1], program_id=program_id, updated_by=COACH
+                can_sign_off=True,
+                student_id=STUDENT,
+                skill_id=skill_ids[-1],
+                program_id=program_id,
+                updated_by=COACH,
             )
         )
         assert undone.status == "PRACTICING"
@@ -129,6 +137,7 @@ async def test_tap_undo_and_evening_level_up(real_db: Any) -> None:
         with pytest.raises(SkillNotOnCurrentLevel):
             await progress.unmark_skill_mastered.execute(
                 UnmarkSkillMasteredCommand(
+                    can_sign_off=True,
                     student_id=STUDENT,
                     skill_id=skill_ids[0],
                     program_id=program_id,
@@ -164,6 +173,7 @@ async def test_failed_retest_after_queueing_sends_the_level_up_to_the_owner(real
         # A detailed retest that fails knocks the skill back to NEEDS_REVIEW.
         await progress.record_test_attempt.execute(
             RecordTestAttemptCommand(
+                can_sign_off=True,
                 student_id=STUDENT,
                 skill_id=skills[0]["skill_id"],
                 level_id=levels[0].level_id,
@@ -239,6 +249,7 @@ async def test_undo_refuses_a_level_up_already_being_approved(real_db: Any) -> N
         with pytest.raises(LevelUpInProgress):
             await progress.unmark_skill_mastered.execute(
                 UnmarkSkillMasteredCommand(
+                    can_sign_off=True,
                     student_id=STUDENT,
                     skill_id=skills[-1]["skill_id"],
                     program_id=program_id,

@@ -2131,6 +2131,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/levels/{level_id}/skills/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Reorder Skills */
+        put: operations["reorder_skills_api_v2_admin_levels__level_id__skills_order_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/messages": {
         parameters: {
             query?: never;
@@ -2220,6 +2237,29 @@ export interface paths {
         get: operations["get_pathway_dashboard_api_v2_admin_pathway_dashboard_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/pathway/placements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Place Students In Bulk
+         * @description Place up to 50 students on one level, crediting skills they already have.
+         *
+         *     Each student is placed (and audited) on its own: one refusal, such as a
+         *     level-up already being approved, does not stop the rest.
+         */
+        post: operations["place_students_in_bulk_api_v2_admin_pathway_placements_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3027,6 +3067,23 @@ export interface paths {
         put?: never;
         /** Create Level */
         post: operations["create_level_api_v2_admin_programs__program_id__levels_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/programs/{program_id}/levels/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Reorder Levels */
+        put: operations["reorder_levels_api_v2_admin_programs__program_id__levels_order_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -11841,16 +11898,37 @@ export interface components {
              */
             skipped: number;
         };
+        /** BulkPlacementBody */
+        BulkPlacementBody: {
+            /** Credited Skill Ids */
+            credited_skill_ids?: string[];
+            /** Level Id */
+            level_id: string;
+            /**
+             * Notify Parents
+             * @default false
+             */
+            notify_parents: boolean;
+            /** Program Id */
+            program_id?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Student Ids */
+            student_ids: string[];
+        };
         /** BulkStatusBody */
         BulkStatusBody: {
             /** Level Id */
-            level_id: string;
+            level_id?: string | null;
             /** Program Id */
             program_id: string;
             /** Skill Id */
             skill_id: string;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "INTRODUCED" | "LEARNING" | "PRACTICING" | "TEST_READY" | "NEEDS_REVIEW";
             /** Student Ids */
             student_ids: string[];
         };
@@ -12813,8 +12891,6 @@ export interface components {
              * @default true
              */
             requires_coach_recommendation: boolean;
-            /** Sequence */
-            sequence: number;
         };
         /** CreateMakeupRequestRequest */
         CreateMakeupRequestRequest: {
@@ -12979,10 +13055,18 @@ export interface components {
             /** Name */
             name: string;
             /**
+             * Pass Rule
+             * @default ONE_TAP
+             * @enum {string}
+             */
+            pass_rule: "ONE_TAP" | "N_TRIES" | "LEAD_COACH";
+            /**
              * Pass Threshold Pct
              * @default 70
              */
             pass_threshold_pct: number;
+            /** Pass Tries */
+            pass_tries?: number | null;
             /** Program Id */
             program_id: string;
             /**
@@ -12991,8 +13075,6 @@ export interface components {
              * @enum {string}
              */
             scoring_type: "ATTEMPT_BASED" | "CHECKLIST_BASED" | "COACH_APPROVAL" | "RALLY_COUNT" | "TIME_BASED" | "POINTS_BASED";
-            /** Sequence */
-            sequence: number;
         };
         /** CreateSkillNoteBody */
         CreateSkillNoteBody: {
@@ -17547,7 +17629,7 @@ export interface components {
              */
             coach_override: boolean;
             /** Level Id */
-            level_id: string;
+            level_id?: string | null;
             /** Mutation Id */
             mutation_id?: string | null;
             /**
@@ -17701,6 +17783,11 @@ export interface components {
             acknowledge_paid_clawback: boolean;
             /** Reason */
             reason: string;
+        };
+        /** ReorderBody */
+        ReorderBody: {
+            /** Ids */
+            ids: string[];
         };
         /** RepairCoachPayRateWindowRequest */
         RepairCoachPayRateWindowRequest: {
@@ -19272,6 +19359,8 @@ export interface components {
             completion_rule?: string | null;
             /** Description */
             description?: string | null;
+            /** Is Active */
+            is_active?: boolean | null;
             /** Name */
             name?: string | null;
             /** Requires Admin Approval */
@@ -19494,19 +19583,25 @@ export interface components {
             coach_override_allowed?: boolean | null;
             /** Description */
             description?: string | null;
+            /** Is Active */
+            is_active?: boolean | null;
             /** Is Required */
             is_required?: boolean | null;
             /** Name */
             name?: string | null;
+            /** Pass Rule */
+            pass_rule?: ("ONE_TAP" | "N_TRIES" | "LEAD_COACH") | null;
             /** Pass Threshold Pct */
             pass_threshold_pct?: number | null;
+            /** Pass Tries */
+            pass_tries?: number | null;
             /** Scoring Type */
-            scoring_type?: string | null;
+            scoring_type?: ("ATTEMPT_BASED" | "CHECKLIST_BASED" | "COACH_APPROVAL" | "RALLY_COUNT" | "TIME_BASED" | "POINTS_BASED") | null;
         };
         /** UpdateSkillStatusBody */
         UpdateSkillStatusBody: {
             /** Level Id */
-            level_id: string;
+            level_id?: string | null;
             /** Program Id */
             program_id: string;
             /**
@@ -19528,7 +19623,7 @@ export interface components {
             /** Introduced At */
             introduced_at?: string | null;
             /** Level Id */
-            level_id: string;
+            level_id?: string | null;
             /** Program Id */
             program_id: string;
             /**
@@ -23845,6 +23940,41 @@ export interface operations {
             };
         };
     };
+    reorder_skills_api_v2_admin_levels__level_id__skills_order_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                level_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReorderBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_messages_api_v2_admin_messages_get: {
         parameters: {
             query?: never;
@@ -23980,6 +24110,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PathwayDashboardResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    place_students_in_bulk_api_v2_admin_pathway_placements_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkPlacementBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -25407,6 +25570,41 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reorder_levels_api_v2_admin_programs__program_id__levels_order_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                program_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReorderBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

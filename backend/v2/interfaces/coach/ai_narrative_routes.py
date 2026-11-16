@@ -21,16 +21,19 @@ approving, the same rule that stops assistants sharing notes with parents
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.v2.contexts.communications.application.parent_wins import (
+    EVENING_WINS_CUTOFF,
+    evening_wins_window,
+)
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.interfaces.coach.skill_routes import _require_assigned_to_student
-from backend.v2.interfaces.coach.today_routes import _resolve_date
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import is_assistant_only, is_coach_supervisor, require_coach_surface
 
@@ -57,17 +60,21 @@ def _get_narratives(request: Request) -> object:
     return service
 
 
-async def _academy_day(
-    use_cases: CoachUseCases, academy_id: str, on: date
-) -> tuple[datetime, datetime]:
+async def _academy_zone(use_cases: CoachUseCases, academy_id: str) -> tzinfo:
     lookup = getattr(use_cases, "get_academy_timezone", None)
     name = await lookup(academy_id) if lookup is not None else None
     try:
-        zone = ZoneInfo(name) if name else UTC
+        return ZoneInfo(name) if name else UTC
     except (KeyError, ValueError):
-        zone = UTC
-    start = datetime.combine(on, time.min, tzinfo=zone)
-    return start, start + timedelta(days=1)
+        return UTC
+
+
+async def _wins_date(value: str | None, *, academy_id: str, use_cases: CoachUseCases) -> date:
+    """The evening email a note is for: today's, or tomorrow's once tonight's has gone."""
+    if value is not None:
+        return date.fromisoformat(value)
+    now = datetime.now(UTC).astimezone(await _academy_zone(use_cases, academy_id))
+    return now.date() + timedelta(days=1) if now.time() >= EVENING_WINS_CUTOFF else now.date()
 
 
 def _forbid_assistant(claims: AuthClaims) -> None:
@@ -91,8 +98,8 @@ async def draft_student_narrative(
 ) -> dict[str, object]:
     _forbid_assistant(claims)
     await _require_assigned_to_student(use_cases, claims.user_id, student_id)
-    on = await _resolve_date(body.date, academy_id=claims.academy_id, use_cases=use_cases)
-    start, end = await _academy_day(use_cases, claims.academy_id, on)
+    on = await _wins_date(body.date, academy_id=claims.academy_id, use_cases=use_cases)
+    start, end = evening_wins_window(on, await _academy_zone(use_cases, claims.academy_id))
     row = await narratives.draft_for_student.execute(  # type: ignore[attr-defined]
         student_id=student_id, for_date=on, start=start, end=end, coach_id=claims.user_id
     )
@@ -108,7 +115,7 @@ async def get_student_narrative(
     narratives: object = Depends(_get_narratives),
 ) -> dict[str, object]:
     await _require_assigned_to_student(use_cases, claims.user_id, student_id)
-    on = await _resolve_date(on_date, academy_id=claims.academy_id, use_cases=use_cases)
+    on = await _wins_date(on_date, academy_id=claims.academy_id, use_cases=use_cases)
     row = await narratives.review.for_student(student_id, on)  # type: ignore[attr-defined]
     if row is None:
         raise HTTPException(status_code=404, detail="narrative not found")
@@ -145,7 +152,7 @@ async def list_pending_narratives(
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
     narratives: object = Depends(_get_narratives),
 ) -> dict[str, object]:
-    on = await _resolve_date(on_date, academy_id=claims.academy_id, use_cases=use_cases)
+    on = await _wins_date(on_date, academy_id=claims.academy_id, use_cases=use_cases)
     rows = await narratives.review.pending(  # type: ignore[attr-defined]
         on, None if is_coach_supervisor(claims) else claims.user_id
     )

@@ -15,6 +15,13 @@ class SkillProgressNotFound(DomainError):
     status_code = 404
 
 
+class PassNeedsLeadCoach(DomainError):
+    """A LEAD_COACH skill can only be passed by a lead coach, admin or owner."""
+
+    code = "StudentProgress.PassNeedsLeadCoach"
+    status_code = 403
+
+
 class SkillAlreadyPassed(DomainError):
     code = "StudentProgress.SkillAlreadyPassed"
     status_code = 409

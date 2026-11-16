@@ -5,9 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 LevelCompletionRule = Literal["ALL_REQUIRED_SKILLS", "POINTS_BASED", "COACH_APPROVAL_ONLY"]
+PassRule = Literal["ONE_TAP", "N_TRIES", "LEAD_COACH"]
+MIN_PASS_TRIES = 2
+MAX_PASS_TRIES = 10
+DEFAULT_PASS_TRIES = 3
+
 ScoringType = Literal[
     "ATTEMPT_BASED",
     "CHECKLIST_BASED",
@@ -103,10 +108,26 @@ class Skill(BaseModel):
     scoring_type: ScoringType = "ATTEMPT_BASED"
     pass_threshold_pct: float = Field(default=70.0, ge=0.0, le=100.0)
     coach_override_allowed: bool = False
+    #: How a coach's "got it" tap passes the skill: one tap, N taps in total
+    #: (any days), or a tap from a lead coach (not assistant-only), admin or owner.
+    pass_rule: PassRule = "ONE_TAP"
+    #: Taps needed for N_TRIES; None for the other rules.
+    pass_tries: int | None = Field(default=None, ge=MIN_PASS_TRIES, le=MAX_PASS_TRIES)
     is_active: bool = True
     created_at: datetime
     updated_at: datetime
     created_by: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _tries_follow_rule(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        if data.get("pass_rule", "ONE_TAP") != "N_TRIES":
+            return {**data, "pass_tries": None}
+        if data.get("pass_tries") is None:
+            return {**data, "pass_tries": DEFAULT_PASS_TRIES}
+        return data
 
 
 class SkillCriterion(BaseModel):

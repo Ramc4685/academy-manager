@@ -199,6 +199,10 @@ class _SkillProgressRepo:
         self.upserts.append(sp)
         return sp
 
+    async def insert_if_missing(self, sp) -> bool:
+        self.upserts.append(sp)
+        return True
+
     async def get(self, student_id, skill_id):
         return None
 
@@ -240,7 +244,8 @@ class _SkillLookup:
         return None
 
     async def get_level(self, level_id):
-        return None
+        # Approval refuses a missing or retired target level.
+        return SimpleNamespace(level_id=level_id, is_active=True)
 
     async def list_skills_for_level(self, level_id):
         return []

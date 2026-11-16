@@ -322,12 +322,20 @@ export async function bulkUpdateCoachSessionSkillStatus(
   });
 }
 
-export type SkillMasteredOutcome = "mastered" | "already_mastered" | "not_on_level" | "not_placed";
+export type SkillMasteredOutcome =
+  | "mastered"
+  | "already_mastered"
+  | "not_on_level"
+  | "not_placed"
+  | "try_recorded"
+  | "needs_lead";
 
 export interface SkillMasteredResult {
   student_id: string;
   outcome: SkillMasteredOutcome;
   level_up_queued: boolean;
+  /** Taps counted so far on an N_TRIES skill. */
+  tries?: number;
 }
 
 /** Tap = got it: passes the skill for each student; the last skill of a level queues the level-up. */
@@ -802,11 +810,11 @@ export function draftCoachNarrative(studentId: string, date?: string): Promise<C
 /** The day's note for one student, whatever its status; null when none was drafted. */
 export async function getCoachStudentNarrative(
   studentId: string,
-  date: string,
+  date?: string,
 ): Promise<CoachNarrative | null> {
   try {
     return await apiFetch<CoachNarrative>(
-      `/coach/students/${encodeURIComponent(studentId)}/narrative?date=${encodeURIComponent(date)}`,
+      `/coach/students/${encodeURIComponent(studentId)}/narrative${date ? `?date=${encodeURIComponent(date)}` : ""}`,
       { method: "GET" },
     );
   } catch (error) {
