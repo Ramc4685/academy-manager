@@ -750,3 +750,65 @@ async def test_an_unallocated_family_refund_is_shared_across_its_invoices(real_d
 
     for invoice_id in ("inv-a", "inv-b"):
         assert (await _invoice(real_db, invoice_id))["refunded_cents"] == 10_000
+
+
+async def _hold(real_db: Any, invoice_id: str, *, release: bool = False) -> None:
+    started = None if release else NOW - timedelta(minutes=10)
+    await real_db["invoices"].update_one(
+        {"academy_id": ACAD, "invoice_id": invoice_id},
+        {
+            "$set": {
+                "checkout_hold_started_at": started,
+                "checkout_hold_session_id": None if release else f"cs_{invoice_id}",
+            }
+        },
+    )
+
+
+async def _suppression(real_db: Any, invoice_id: str) -> str | None:
+    state = await real_db["dunning_states"].find_one({"academy_id": ACAD, "invoice_id": invoice_id})
+    assert state is not None
+    return state.get("suppression_reason")
+
+
+async def test_a_held_invoice_parks_as_checkout_session_open(real_db, acad) -> None:
+    await _seed(real_db, "inv-a")
+    await _hold(real_db, "inv-a")
+    stripe = _Stripe()
+
+    await _tick(real_db, stripe, FakeOutbox())
+
+    assert stripe.calls == []
+    assert await _suppression(real_db, "inv-a") == "checkout_session_open"
+
+
+async def test_any_dropped_sibling_means_no_family_charge(real_db, acad) -> None:
+    await _seed(real_db, "inv-a")
+    await _seed(real_db, "inv-b")
+    await _seed(real_db, "inv-c")
+    await _hold(real_db, "inv-c")
+    stripe = _Stripe()
+
+    await _tick(real_db, stripe, FakeOutbox())
+
+    # A and B are charged one by one; the held C parks on its own.
+    assert sorted(i["amount_cents"] for i in stripe.intents.values()) == [10_000, 10_000]
+    assert all("invoice_ids" not in i["metadata"] for i in stripe.intents.values())
+    assert await _suppression(real_db, "inv-c") == "checkout_session_open"
+
+
+async def test_a_held_sibling_never_grows_a_retried_charge(real_db, acad) -> None:
+    """C is held while A and B charge; the call raises after Stripe accepted.
+    Once C's hold is released, nothing is charged twice."""
+    await _seed(real_db, "inv-a")
+    await _seed(real_db, "inv-b")
+    await _seed(real_db, "inv-c")
+    await _hold(real_db, "inv-c")
+    stripe = _Stripe(crash_once=True)
+
+    await _tick(real_db, stripe, FakeOutbox())
+    await _tick(real_db, stripe, FakeOutbox(), at=NOW + timedelta(minutes=61))
+    await _hold(real_db, "inv-c", release=True)
+    await _tick(real_db, stripe, FakeOutbox(), at=NOW + timedelta(minutes=121))
+
+    assert sorted(i["amount_cents"] for i in stripe.intents.values()) == [10_000] * 3

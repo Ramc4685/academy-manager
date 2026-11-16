@@ -137,7 +137,6 @@ class ChargeInvoicePort(Protocol):
         *,
         charge_group_id: str,
         retry_scopes: Mapping[str, str | None],
-        all_or_nothing: bool = False,
     ) -> Any: ...
 
 
@@ -357,9 +356,9 @@ class ProcessDunningRetries:
     ) -> None:
         """One charge for one family's rungs due now; one result for all of them.
 
-        A ``rejoin`` re-sends the earlier charge whole or not at all: dropping a
-        member would change the charge, and charging the dropped one alone could
-        double-charge it if the first charge went through.
+        Any dropped member means no family charge. A fresh group then charges
+        each member alone; a ``rejoin`` parks them all, since the earlier charge
+        may have gone through and charging any member again would double it.
         """
         group_id = members[0][1].charge_group_id
         assert group_id is not None
@@ -372,7 +371,6 @@ class ProcessDunningRetries:
                         invoice.invoice_id: f"dunning-attempt:{state.processing_attempt_no}"
                         for invoice, state in members
                     },
-                    all_or_nothing=rejoin,
                 )
             )
         except Exception as exc:
@@ -574,7 +572,7 @@ class ProcessDunningRetries:
         retrying = [row for row in owed if row[1].status != "dunned"]
         sent = True
         for row in terminal:
-            sent = await self._send_notice([row], [row[0]], failure_code, group=False) and sent
+            sent = await self._send_notice([row], [row[0]], failure_code) and sent
         if retrying:
             named = [row[0] for row in retrying]
             if cover:
@@ -584,7 +582,7 @@ class ProcessDunningRetries:
                     if invoice_is_chargeable(row.status, row.balance_due_cents)
                     and row.invoice_id not in {t[0].invoice_id for t in terminal}
                 ] or named
-            sent = await self._send_notice(retrying, named, failure_code, group=True) and sent
+            sent = await self._send_notice(retrying, named, failure_code) and sent
         return sent
 
     async def _send_notice(
@@ -592,8 +590,6 @@ class ProcessDunningRetries:
         owed: list[tuple[LedgerInvoice, DunningState, int]],
         named: list[LedgerInvoice],
         failure_code: str | None,
-        *,
-        group: bool,
     ) -> bool:
         assert self._notifier is not None
         invoice, state, attempt_no = owed[0]
@@ -619,7 +615,7 @@ class ProcessDunningRetries:
                     academy_id=invoice.academy_id,
                     payload=payload,
                 )
-                if group and family and state.charge_group_id:
+                if family and state.charge_group_id:
                     event = event.model_copy(
                         update={"event_id": f"dunning-notice:group:{state.charge_group_id}"}
                     )

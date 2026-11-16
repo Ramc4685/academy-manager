@@ -417,16 +417,14 @@ class ChargeInvoiceViaAutopay:
         *,
         charge_group_id: str,
         retry_scopes: Mapping[str, str | None],
-        all_or_nothing: bool = False,
     ) -> FamilyChargeResult:
         """One PaymentIntent for one family's invoices due now (L8).
 
-        A member that is paid, voided, held by an open checkout or not autopaying
-        is dropped before the charge and handed back for the single path. Fewer
-        than two left means no family charge at all: every id comes back dropped.
-        ``all_or_nothing`` (a retry of a group that may already have charged)
-        drops everyone if any member would drop, so only the exact first set is
-        ever charged.
+        If any member is paid, voided, held by an open checkout or not
+        autopaying, there is no family charge at all: every id comes back
+        dropped for the worker to decide. A family charge is only ever the
+        whole set that was claimed, so a later retry of that set cannot grow
+        or shrink it and re-charge members under a new key.
 
         The key is derived from the members and their retry rungs, never from the
         per-tick ``charge_group_id``: a retry after a timeout, a crash or a
@@ -448,7 +446,7 @@ class ChargeInvoiceViaAutopay:
             members.append(invoice)
         if (
             len(members) < 2
-            or (all_or_nothing and dropped)
+            or dropped
             or len({m.parent_id for m in members}) != 1
             or len({m.currency.lower() for m in members}) != 1
         ):

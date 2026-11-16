@@ -79,10 +79,11 @@ class MongoDunningStateRepository(TenantScopedRepository):
     #: sites working while the rule itself lives with the ladder.
     first_attempt_local_hour: ClassVar[int] = FIRST_ATTEMPT_LOCAL_HOUR
 
-    #: Parked rungs a family charge may pick up: every reason retried by
-    #: charging again. A settling debit is answered, never charged (L8).
+    #: Parked rungs a fresh family charge may pick up: every reason retried by
+    #: charging again. A settling debit is answered, never charged; a technical
+    #: park may already have charged, so it retries only the way it was charged (L8).
     groupable_parked_reasons: ClassVar[frozenset[str]] = frozenset(
-        retryable_parked_reasons - {"payment_processing"}
+        retryable_parked_reasons - {"payment_processing"} - TECHNICAL_PARK_REASONS
     )
 
     def __init__(
@@ -406,14 +407,10 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 },
                 "$or": [
                     {"status": "active", "next_attempt_at": {"$lte": now}},
-                    # A technical park may already have charged: it retries only
-                    # the way it was charged (alone, or with its old group).
                     {
                         "status": "active",
                         "next_attempt_at": None,
-                        "suppression_reason": {
-                            "$in": sorted(self.groupable_parked_reasons - TECHNICAL_PARK_REASONS)
-                        },
+                        "suppression_reason": {"$in": sorted(self.groupable_parked_reasons)},
                     },
                 ],
             }

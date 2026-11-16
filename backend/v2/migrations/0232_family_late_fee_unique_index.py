@@ -57,8 +57,9 @@ async def up(db: AsyncIOMotorDatabase) -> None:  # type: ignore[type-arg]
                 "collection": COLLECTION,
                 "index": INDEX_NAME,
                 "remediation": (
-                    "two automated late-fee lines share one source_id; credit the "
-                    "surplus line, then re-run this migration"
+                    "two automated late-fee lines share one source_id; delete the "
+                    "surplus line or re-key its source_id (a credit leaves the "
+                    "duplicate in place), then re-run this migration"
                 ),
             },
         )
