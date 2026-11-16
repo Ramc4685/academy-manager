@@ -25,15 +25,16 @@ async def _seed(db, acad: str, *, parent_id: str, pm: str) -> None:
             "primary_setup_status": "active",
             "payment_method_label": "Bank",
             "payment_method_last4": "6789",
+            "created_at": NOW,
         }
     )
 
 
 @pytest.mark.asyncio
-async def test_blocked_method_is_not_chargeable_until_a_new_one_is_saved(db, acad) -> None:
-    repo = MongoParentBillingCustomerRepository(db)
-    await _seed(db, acad, parent_id="p1", pm="pm_bank")
-    await _seed(db, acad, parent_id="p2", pm="pm_other")
+async def test_blocked_method_is_not_chargeable_until_a_new_one_is_saved(real_db, acad) -> None:
+    repo = MongoParentBillingCustomerRepository(real_db)
+    await _seed(real_db, acad, parent_id="p1", pm="pm_bank")
+    await _seed(real_db, acad, parent_id="p2", pm="pm_other")
 
     flagged = await repo.flag_payment_method_blocked(
         payment_method_id="pm_bank", reason="mandate_inactive", at=NOW
@@ -48,7 +49,7 @@ async def test_blocked_method_is_not_chargeable_until_a_new_one_is_saved(db, aca
         "pm_other",
     )
 
-    await db["parent_billing_customers"].update_one(
+    await real_db["parent_billing_customers"].update_one(
         {"parent_id": "p1"},
         {"$set": {"default_payment_method_id": "pm_new", "primary_payment_method_id": "pm_new"}},
     )
@@ -60,9 +61,9 @@ async def test_blocked_method_is_not_chargeable_until_a_new_one_is_saved(db, aca
 
 
 @pytest.mark.asyncio
-async def test_flag_stays_inside_the_academy(db, acad) -> None:
-    repo = MongoParentBillingCustomerRepository(db)
-    await _seed(db, "other-academy", parent_id="p1", pm="pm_bank")
+async def test_flag_stays_inside_the_academy(real_db, acad) -> None:
+    repo = MongoParentBillingCustomerRepository(real_db)
+    await _seed(real_db, "other-academy", parent_id="p1", pm="pm_bank")
 
     assert (
         await repo.flag_payment_method_blocked(payment_method_id="pm_bank", reason="x", at=NOW) == 0

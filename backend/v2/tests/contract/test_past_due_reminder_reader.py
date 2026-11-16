@@ -15,14 +15,14 @@ async def _unused(*_: Any) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_reader_flags_invoices_whose_enrollment_is_on_active_autopay(db, acad) -> None:
+async def test_reader_flags_invoices_whose_enrollment_is_on_active_autopay(real_db, acad) -> None:
     due = datetime(2026, 9, 20, tzinfo=UTC)
     for invoice_id, enrollment_id, autopay in (
         ("inv-auto", "enr-auto", "active"),
         ("inv-paused", "enr-paused", "paused"),
         ("inv-manual", None, None),
     ):
-        await db["invoices"].insert_one(
+        await real_db["invoices"].insert_one(
             {
                 "academy_id": acad,
                 "invoice_id": invoice_id,
@@ -30,20 +30,27 @@ async def test_reader_flags_invoices_whose_enrollment_is_on_active_autopay(db, a
                 "enrollment_id": enrollment_id,
                 "period": "2026-09",
                 "status": "open",
+                "total_cents": 5000,
                 "balance_due_cents": 5000,
+                "currency": "usd",
                 "due_date": due,
+                "created_at": due,
+                "updated_at": due,
             }
         )
         if enrollment_id:
-            await db["student_billing_enrollments"].insert_one(
+            await real_db["student_billing_enrollments"].insert_one(
                 {
                     "academy_id": acad,
                     "enrollment_id": enrollment_id,
+                    "student_id": f"student-{enrollment_id}",
+                    "parent_id": "parent-1",
+                    "session_type_id": "st-1",
                     "autopay_enrollment_status": autopay,
                 }
             )
     bundle = compose_dues_reminders(
-        db,
+        real_db,
         academies=None,
         users=None,
         email_sender=None,

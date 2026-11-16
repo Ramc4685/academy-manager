@@ -102,12 +102,12 @@ async def test_prepare_due_states_only_selects_due_open_autopay_active_invoices(
 
 
 @pytest.mark.asyncio
-async def test_resolved_ladder_on_a_reopened_invoice_is_re_armed(db, acad) -> None:
+async def test_resolved_ladder_on_a_reopened_invoice_is_re_armed(real_db, acad) -> None:
     """Should-fix 6: a reversal reopens a paid invoice; its old resolved ladder
     must not block autopay from trying again."""
-    repo = MongoDunningStateRepository(db)
-    await _seed_invoice(db, academy_id=acad, invoice_id="inv-reopened", enrollment_id="enr-r")
-    await db["dunning_states"].insert_one(
+    repo = MongoDunningStateRepository(real_db)
+    await _seed_invoice(real_db, academy_id=acad, invoice_id="inv-reopened", enrollment_id="enr-r")
+    await real_db["dunning_states"].insert_one(
         {
             "academy_id": acad,
             "invoice_id": "inv-reopened",
@@ -126,7 +126,7 @@ async def test_resolved_ladder_on_a_reopened_invoice_is_re_armed(db, acad) -> No
 
     assert claimed is not None
     assert claimed[1].attempt_count == 0
-    assert await db["dunning_states"].count_documents({"academy_id": acad}) == 1
+    assert await real_db["dunning_states"].count_documents({"academy_id": acad}) == 1
 
 
 @pytest.mark.asyncio
@@ -788,12 +788,12 @@ async def test_claim_next_due_skips_excluded_parked_state_for_due_one(db, acad) 
 
 
 @pytest.mark.asyncio
-async def test_reparking_keeps_the_original_parked_since(db, acad) -> None:
+async def test_reparking_keeps_the_original_parked_since(real_db, acad) -> None:
     """L1 A7-1: "parked for a day" is measured from the first park, so the ops
     digest and the dashboard can tell a stuck ladder from a fresh one."""
-    repo = MongoDunningStateRepository(db)
-    await _seed_invoice(db, academy_id=acad, invoice_id="inv-fault", enrollment_id="enr-f")
-    await _seed_invoice(db, academy_id=acad, invoice_id="inv-ach", enrollment_id="enr-a")
+    repo = MongoDunningStateRepository(real_db)
+    await _seed_invoice(real_db, academy_id=acad, invoice_id="inv-fault", enrollment_id="enr-f")
+    await _seed_invoice(real_db, academy_id=acad, invoice_id="inv-ach", enrollment_id="enr-a")
     await repo.prepare_due_states(now=NOW, limit=10)
 
     first = await repo.claim_next_due(now=NOW, worker_id="w")
@@ -814,6 +814,6 @@ async def test_reparking_keeps_the_original_parked_since(db, acad) -> None:
     assert again is not None and again[0].invoice_id == fault_id
     await repo.park_attempt(state=again[1], reason="charge_technical_failure", now=later)
 
-    doc = await db["dunning_states"].find_one({"invoice_id": fault_id})
+    doc = await real_db["dunning_states"].find_one({"invoice_id": fault_id})
     assert doc["suppression_reason"] == "charge_technical_failure"
     assert doc["parked_since"].replace(tzinfo=UTC) == NOW

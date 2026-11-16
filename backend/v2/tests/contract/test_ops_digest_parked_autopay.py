@@ -17,7 +17,11 @@ def _state(
     return {
         "academy_id": "acad",
         "invoice_id": invoice_id,
+        "parent_id": "parent-1",
         "status": status,
+        "attempt_count": 0,
+        "created_at": NOW - timedelta(days=3),
+        "updated_at": NOW - timedelta(days=3),
         "next_attempt_at": next_attempt_at,
         "suppression_reason": reason,
         "parked_since": parked_since,
@@ -25,8 +29,8 @@ def _state(
 
 
 @pytest.mark.asyncio
-async def test_parked_autopay_charges_counted_only_when_stale_and_on_our_side(db) -> None:
-    await db["dunning_states"].insert_many(
+async def test_parked_autopay_charges_counted_only_when_stale_and_on_our_side(real_db) -> None:
+    await real_db["dunning_states"].insert_many(
         [
             _state(
                 "stale-fault",
@@ -46,7 +50,7 @@ async def test_parked_autopay_charges_counted_only_when_stale_and_on_our_side(db
         ]
     )
 
-    snapshot = await collect_ops_digest(db, now=NOW)
+    snapshot = await collect_ops_digest(real_db, now=NOW)
 
     # A row parked before parked_since existed counts too: it is stuck right now.
     assert snapshot.dunning_parked_stale == 2

@@ -15,17 +15,22 @@ NOW = datetime(2026, 11, 15, 12, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
-async def test_failed_refund_is_recorded_once_and_listed(db, acad) -> None:
-    await db["ledger_payments"].insert_one(
+async def test_failed_refund_is_recorded_once_and_listed(real_db, acad) -> None:
+    await real_db["ledger_payments"].insert_one(
         {
             "academy_id": acad,
             "payment_id": "pay-1",
             "parent_id": "parent-1",
             "stripe_payment_intent_id": "pi_1",
+            "amount_cents": 5_000,
+            "unapplied_amount_cents": 0,
             "currency": "usd",
+            "status": "succeeded",
+            "created_at": NOW,
+            "updated_at": NOW,
         }
     )
-    ledger = MongoBillingLedgerRepository(db)
+    ledger = MongoBillingLedgerRepository(real_db)
 
     for _ in range(2):
         assert await ledger.record_refund_failure(
