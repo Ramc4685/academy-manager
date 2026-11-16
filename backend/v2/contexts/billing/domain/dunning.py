@@ -29,8 +29,9 @@ STRIPE_UNAVAILABLE = "stripe_unavailable"
 
 #: Technical parks retry every tick. Once a ladder has been parked for these alone
 #: for TECHNICAL_PARK_CAP, it parks as TECHNICAL_FAILURE_CAPPED instead, which is
-#: not retried: the same failing call stops hitting Stripe hourly forever, and the
-#: admin and the alert take over (A7-6).
+#: rechecked once a day rather than hourly: the failing call stops hitting Stripe
+#: every hour, the admin and the alert take over, and a paid or voided invoice
+#: stands down on the next daily check (A7-6).
 TECHNICAL_PARK_REASONS = frozenset(
     {"charge_technical_failure", "attempt_indeterminate", STRIPE_UNAVAILABLE}
 )

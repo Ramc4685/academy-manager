@@ -898,7 +898,9 @@ async def test_a_capped_ladder_stands_down_once_the_invoice_is_paid(real_db, aca
 
 
 @pytest.mark.asyncio
-async def test_a_capped_ladder_does_not_hold_back_the_late_fee(real_db, acad) -> None:
+async def test_no_late_fee_while_a_ladder_is_capped(real_db, acad) -> None:
+    """Lead decision: a cap is our own technical fault, so the family owes no
+    late fee for it (and a fee would change the autopay idempotency key)."""
     repo = MongoDunningStateRepository(real_db)
     await _seed_invoice(real_db, academy_id=acad, invoice_id="inv-fee", enrollment_id="enr-f")
     await repo.prepare_due_states(now=NOW, limit=10)
@@ -907,7 +909,7 @@ async def test_a_capped_ladder_does_not_hold_back_the_late_fee(real_db, acad) ->
         {"invoice_id": "inv-fee"},
         {"$set": {"next_attempt_at": None, "suppression_reason": "technical_failure_capped"}},
     )
-    assert await repo.has_active_retry("inv-fee") is False
+    assert await repo.has_active_retry("inv-fee") is True
 
 
 @pytest.mark.asyncio

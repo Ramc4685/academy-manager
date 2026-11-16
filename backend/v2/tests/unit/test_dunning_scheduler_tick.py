@@ -24,19 +24,19 @@ class _Worker:
 
 
 @pytest.mark.asyncio
-async def test_one_academys_dunning_failure_does_not_abort_the_rest() -> None:
+async def test_one_academys_dunning_failure_runs_the_rest_then_fails_the_tick() -> None:
+    """Every academy still collects; the tick then raises so the dunning
+    heartbeat and Crons go red."""
     worker = _Worker(fail_for={"academy-bad"})
 
-    totals = await _run_dunning_for_academies(
-        academy_ids=["academy-bad", "academy-good"],
-        late_fees=None,
-        worker=worker,
-    )
+    with pytest.raises(RuntimeError, match=r"1 academy run.*'processed': 2"):
+        await _run_dunning_for_academies(
+            academy_ids=["academy-bad", "academy-good"],
+            late_fees=None,
+            worker=worker,
+        )
 
     assert worker.called == ["academy-bad", "academy-good"]
-    assert totals["academy_count"] == 1
-    assert totals["academy_failures"] == 1
-    assert totals["processed"] == 2
 
 
 @pytest.mark.asyncio
@@ -58,7 +58,7 @@ async def test_dunning_failure_is_logged_once_at_error(caplog) -> None:
     capture_exception would report every failure twice."""
     import logging
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError):
         await _run_dunning_for_academies(
             academy_ids=["academy-bad"], late_fees=None, worker=_Worker(fail_for={"academy-bad"})
         )

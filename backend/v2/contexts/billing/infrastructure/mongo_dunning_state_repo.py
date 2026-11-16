@@ -34,11 +34,12 @@ from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 #: reminders both read this, so "no late fee yet" and "no reminder yet" cannot
 #: drift apart. Waiting on the parent to add a card is not a retry in flight:
 #: the invoice stays due, earns its late fee and gets its reminders (A4-1, L8).
-#: Nor is a ladder capped after a day of technical failures, which is only
-#: rechecked daily (A7-6).
+#: A ladder capped after a day of technical failures still counts as a retry:
+#: the cap is our fault, so no late fee or reminder, and a late fee would change
+#: balance_due_cents and with it the autopay idempotency key (A7-6).
 ACTIVE_RETRY_FILTER: dict[str, Any] = {
     "status": {"$in": ["active", "processing"]},
-    "suppression_reason": {"$nin": [NO_SAVED_PAYMENT_METHOD, TECHNICAL_FAILURE_CAPPED]},
+    "suppression_reason": {"$ne": NO_SAVED_PAYMENT_METHOD},
 }
 
 #: Lower bound that makes the stamped-invoice query match 0230's partial filter.

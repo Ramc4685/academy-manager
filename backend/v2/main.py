@@ -2611,7 +2611,8 @@ async def _run_isolated_per_academy(
 async def _run_dunning_for_academies(
     *, academy_ids: list[str], late_fees: Any | None, worker: Any | None
 ) -> dict[str, int]:
-    """One dunning tick across academies; one academy's failure never skips the rest.
+    """One dunning tick across academies; one academy's failure never skips the rest,
+    but the tick raises at the end if any academy's retries failed.
 
     Late fees run BEFORE the retries: the fee raises balance_due_cents, so the
     dunning notice this same tick may send quotes the new total (#552).
@@ -2644,6 +2645,12 @@ async def _run_dunning_for_academies(
         totals["academy_count"] += 1
         for key in _DUNNING_TOTAL_KEYS:
             totals[key] += int(getattr(result, key, 0) or 0)
+    if totals["academy_failures"]:
+        # Every academy ran; the tick must still read as failed (heartbeat, Crons).
+        raise RuntimeError(
+            f"process_dunning_retries: {totals['academy_failures']} academy run(s) failed,"
+            f" totals={totals}"
+        )
     return totals
 
 
