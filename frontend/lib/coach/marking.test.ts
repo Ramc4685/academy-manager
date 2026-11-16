@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   coachSessionHref,
+  correctionWindowClosed,
   isCancelled,
+  markingNotOpenYet,
   markProgress,
   recentUnmarkedSessions,
+  withoutUnconfirmedMark,
 } from "./marking";
 
 type Row = { student_id: string; attendance_status?: string | null };
@@ -126,5 +129,69 @@ describe("recentUnmarkedSessions", () => {
       now,
     );
     expect(rows.map((s) => s.occurrence_id)).toEqual(["occ-late", "occ-early"]);
+  });
+});
+
+describe("voided and held rows", () => {
+  it("counts a voided mark as unmarked", () => {
+    const progress = markProgress([
+      { student_id: "a", attendance_status: "present" },
+      { student_id: "b", attendance_status: "voided" },
+    ]);
+    expect(progress).toEqual({ marked: 1, total: 2, complete: false, label: "1/2 marked" });
+  });
+
+  it("does not owe a mark for an unmarked held seat (#1040)", () => {
+    const progress = markProgress([
+      { student_id: "a", attendance_status: "present" },
+      { student_id: "b", attendance_status: null, enrollment_status: "held" },
+    ] as never);
+    expect(progress).toEqual({ marked: 1, total: 1, complete: true, label: "1/1 marked" });
+  });
+
+  it("still counts a held seat that was marked", () => {
+    const progress = markProgress([
+      { student_id: "b", attendance_status: "absent", enrollment_status: "held" },
+    ] as never);
+    expect(progress.total).toBe(1);
+    expect(progress.complete).toBe(true);
+  });
+});
+
+describe("marking windows", () => {
+  const now = new Date("2026-11-15T12:00:00Z");
+
+  it("closes the coach correction window after 48 hours", () => {
+    expect(correctionWindowClosed("2026-11-13T11:59:00Z", now)).toBe(true);
+    expect(correctionWindowClosed("2026-11-13T12:01:00Z", now)).toBe(false);
+    expect(correctionWindowClosed(null, now)).toBe(false);
+  });
+
+  it("opens marking an hour before the class starts", () => {
+    expect(markingNotOpenYet("2026-11-16T12:00:00Z", now)).toBe(true);
+    expect(markingNotOpenYet("2026-11-15T12:45:00Z", now)).toBe(false);
+    expect(markingNotOpenYet("2026-11-15T09:00:00Z", now)).toBe(false);
+  });
+});
+
+describe("withoutUnconfirmedMark", () => {
+  const entry = (pending: boolean, error?: string) => ({
+    student_id: "st1",
+    status: "present" as const,
+    pending,
+    error,
+  });
+
+  it("drops an optimistic tap whose request died, so the queued state shows", () => {
+    expect(withoutUnconfirmedMark({ st1: entry(true) }, "st1")).toEqual({});
+  });
+
+  it("drops an errored entry", () => {
+    expect(withoutUnconfirmedMark({ st1: entry(false, "boom") }, "st1")).toEqual({});
+  });
+
+  it("keeps a confirmed save and other rows", () => {
+    const marks = { st1: entry(false), st2: entry(true) };
+    expect(withoutUnconfirmedMark(marks, "st1")).toBe(marks);
   });
 });

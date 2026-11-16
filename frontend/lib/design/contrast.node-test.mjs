@@ -95,9 +95,9 @@ test("coach attendance marks use the AA green and a visible unselected outline",
   assert.ok(base, "MARK_BUTTON_BASE is a single string literal");
   assert.ok(base[1].includes("border-2"), "unselected mark buttons have a 2px border");
   assert.ok(!/\bborder\b(?!-)/.test(base[1]), "…and not the old 1px border");
-  // Both unselected branches (Present, Absent) outline with the muted token.
+  // Every unselected branch (Present, Absent, Late) outlines with the muted token.
   const outlined = source.match(/borderColor: "var\(--rally-muted\)"/g) ?? [];
-  assert.equal(outlined.length, 2, "Present and Absent both use the muted outline");
+  assert.equal(outlined.length, 3, "Present, Absent and Late all use the muted outline");
 });
 
 test("coach bottom nav inactive label uses the night-surface token", () => {

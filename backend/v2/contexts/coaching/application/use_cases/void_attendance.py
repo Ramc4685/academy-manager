@@ -10,7 +10,7 @@ Owner decision 2026-09-12:
 
 - Only an **admin** may void, and may do so at any time (no grace window;
   there is deliberately no coach-facing void path — a coach's own mis-tap is
-  a correction, inside the 24h window in ``correct_attendance``).
+  a correction, inside the 48h window in ``correct_attendance``).
 - A **reason is required**; it is stored on the row and carried on the event.
 
 Voiding an already-voided mark is a no-op (no write, no event), so a retry

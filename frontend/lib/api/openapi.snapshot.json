@@ -12100,6 +12100,7 @@
             "items": {
               "$ref": "#/components/schemas/BulkAttendanceEntryRequest"
             },
+            "maxItems": 100,
             "title": "Entries",
             "type": "array"
           },
@@ -13370,6 +13371,18 @@
       },
       "CoachRosterEntry": {
         "properties": {
+          "attendance_marked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attendance Marked At"
+          },
           "attendance_status": {
             "anyOf": [
               {

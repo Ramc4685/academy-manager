@@ -5,7 +5,7 @@ Covers all four rejection paths + idempotency + outbox emission.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -17,6 +17,7 @@ from backend.v2.contexts.coaching.application.use_cases.mark_attendance import (
 )
 from backend.v2.contexts.coaching.domain.errors import (
     ConflictAttendanceExists,
+    OccurrenceNotStarted,
     SessionCancelled,
     SessionNotAssigned,
     StudentNotEnrolled,
@@ -65,7 +66,9 @@ class FakeOccurrenceLookup:
         cancelled: bool = False,
         found: bool = True,
         session_id: str = "sess-1",
+        starts_at: datetime = FIXED_NOW,
     ) -> None:
+        self.starts_at = starts_at
         self.assigned = assigned
         self.cancelled = cancelled
         self.found = found
@@ -79,7 +82,7 @@ class FakeOccurrenceLookup:
         return OccurrenceDetails(
             occurrence_id=occurrence_id,
             session_id=self.session_id,
-            starts_at=FIXED_NOW,
+            starts_at=self.starts_at,
             status="cancelled" if self.cancelled else "scheduled",
             scheduled_coach_id="coach-1" if self.assigned else "other-coach",
             actual_coach_id=None,
@@ -307,9 +310,11 @@ async def test_conflict_when_different_mutation_id_exists() -> None:
     repo = FakeAttendanceRepo()
     uc = _build(attendance_repo=repo)
     await uc.execute(_cmd(mutation_id="mut-1"), coach_id="coach-1")
-    # Different mutation hits same (session, student) — must conflict.
-    with pytest.raises(ConflictAttendanceExists):
+    # Different mutation hits same (session, student) — must conflict, naming
+    # what is recorded so the Needs-review tray can offer the choice.
+    with pytest.raises(ConflictAttendanceExists) as exc:
         await uc.execute(_cmd(mutation_id="mut-2"), coach_id="coach-1")
+    assert exc.value.details["existing_status"] == "present"
 
 
 @pytest.mark.asyncio
@@ -399,3 +404,49 @@ async def test_makeup_on_a_different_occurrence_is_still_rejected() -> None:
         await uc.execute(_cmd(), coach_id="coach-1")
     assert exc_info.value.details["student_id"] == "st1"
     assert exc_info.value.details["occurrence_id"] == "occ-2026-05-16"
+
+
+@pytest.mark.asyncio
+async def test_future_class_cannot_be_marked() -> None:
+    repo = FakeAttendanceRepo()
+    uc = _build(
+        attendance_repo=repo,
+        occurrence_lookup=FakeOccurrenceLookup(starts_at=FIXED_NOW + timedelta(days=1)),
+    )
+    with pytest.raises(OccurrenceNotStarted):
+        await uc.execute(_cmd(), coach_id="coach-1")
+    assert repo.saved == []
+
+
+@pytest.mark.asyncio
+async def test_unassigned_coach_on_a_future_class_is_told_not_assigned() -> None:
+    """Assignment is checked first, as in bulk: the lead-time error must not
+    tell an unassigned coach about another coach's schedule."""
+    uc = _build(
+        occurrence_lookup=FakeOccurrenceLookup(
+            assigned=False, starts_at=FIXED_NOW + timedelta(days=1)
+        )
+    )
+    with pytest.raises(SessionNotAssigned):
+        await uc.execute(_cmd(), coach_id="coach-1")
+
+
+@pytest.mark.asyncio
+async def test_class_starting_within_the_lead_time_can_be_marked() -> None:
+    uc = _build(occurrence_lookup=FakeOccurrenceLookup(starts_at=FIXED_NOW + timedelta(minutes=45)))
+    result = await uc.execute(_cmd(), coach_id="coach-1")
+    assert result.status == "present"
+
+
+@pytest.mark.asyncio
+async def test_replay_without_idempotency_record_returns_its_own_row() -> None:
+    """The row committed but the idempotency put never landed: the replay
+    must succeed, not 409 into the coach's Needs-review tray."""
+    repo = FakeAttendanceRepo()
+    outbox = FakeOutbox()
+    await _build(attendance_repo=repo, outbox=outbox).execute(_cmd(), coach_id="coach-1")
+    # Fresh idempotency store = the record was lost.
+    replay = await _build(attendance_repo=repo, outbox=outbox).execute(_cmd(), coach_id="coach-1")
+    assert replay.attendance_id == "mut-1"
+    assert len(repo.saved) == 1
+    assert len(outbox.appended) == 1

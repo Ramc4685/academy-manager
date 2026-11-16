@@ -33,6 +33,9 @@ declare const self: ServiceWorkerGlobalScope & typeof globalThis;
 
 const COACH_API = /\/api\/v2\/coach\/(today|sessions)/;
 const COACH_WRITE = /\/api\/v2\/coach\/attendance/;
+// Child progress notes are never cached on the device (they are kept out of
+// localStorage for the same reason); they fall through to NetworkOnly.
+const COACH_PRIVATE = /\/progress-notes/;
 const STATIC = /\.(?:js|css|woff2?|svg|png|jpg|jpeg|webp|avif|ico)$/;
 const MANIFEST = /manifest\.webmanifest$/;
 const CLOUDFLARE_INSIGHTS_HOST = "static.cloudflareinsights.com";
@@ -81,7 +84,10 @@ const serwist = new Serwist({
       handler: networkOnlyQuiet,
     },
     {
-      matcher: ({ request, url }) => request.method === "GET" && COACH_API.test(url.pathname),
+      matcher: ({ request, url }) =>
+        request.method === "GET" &&
+        COACH_API.test(url.pathname) &&
+        !COACH_PRIVATE.test(url.pathname),
       handler: new StaleWhileRevalidate({
         cacheName: "coach-api-v1",
         plugins: [
@@ -94,9 +100,9 @@ const serwist = new Serwist({
       }),
     },
     {
-      // Wave 1A: writes go through, no queue. The UI disables the toggle
-      // while offline (lib/pwa/online.ts), so we don't try to be clever
-      // here. Wave 1B replaces this with a BackgroundSync queue.
+      // Writes go straight to the network. Offline and failed marks are
+      // queued by the page itself (lib/offline/queue.ts) and replayed by
+      // lib/offline/sync.ts, which knows who queued them.
       matcher: ({ request, url }) =>
         request.method === "POST" && COACH_WRITE.test(url.pathname),
       handler: new NetworkOnly(),

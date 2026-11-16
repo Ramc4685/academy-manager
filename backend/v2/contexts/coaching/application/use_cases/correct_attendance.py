@@ -5,8 +5,10 @@ mis-taps need an explicit correction path instead of loosening the conflict
 rule:
 
 - A **coach** assigned to the occurrence may correct within a grace window
-  (24h from when the mark was recorded — owner decision 2026-09-12, #554).
-  Outside the window ``CorrectionWindowExpired`` (403).
+  (48h from when the mark was recorded, the window the coach screen states).
+  Outside the window ``CorrectionWindowExpired`` (403). A coach may not
+  correct a mark an admin voided (``MarkVoided``, 403): un-voiding is admin
+  work.
 - An **admin** may correct at any time.
 
 Every correction keeps an audit trail on the row (``corrected_by`` /
@@ -31,6 +33,7 @@ from backend.v2.contexts.coaching.application.ports import (
 from backend.v2.contexts.coaching.domain.errors import (
     AttendanceNotFound,
     CorrectionWindowExpired,
+    MarkVoided,
     SessionNotAssigned,
 )
 from backend.v2.contexts.coaching.domain.events import (
@@ -40,7 +43,7 @@ from backend.v2.contexts.coaching.domain.events import (
 from backend.v2.contexts.coaching.domain.models import Attendance
 from backend.v2.shared.events import Outbox
 
-COACH_CORRECTION_WINDOW = timedelta(hours=24)
+COACH_CORRECTION_WINDOW = timedelta(hours=48)
 
 ActorRole = Literal["coach", "admin"]
 
@@ -116,6 +119,12 @@ class CorrectAttendance:
                     "session occurrence not found or not assigned to this coach",
                     occurrence_id=cmd.occurrence_id,
                     coach_id=actor_id,
+                )
+            if existing.status == "voided":
+                raise MarkVoided(
+                    "an admin voided this mark; ask an admin to correct it",
+                    occurrence_id=cmd.occurrence_id,
+                    student_id=cmd.student_id,
                 )
             marked_at = existing.marked_at
             if marked_at.tzinfo is None:

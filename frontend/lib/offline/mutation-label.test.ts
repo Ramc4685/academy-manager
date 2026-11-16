@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeQueuedMutation } from "./mutation-label";
+import { attendanceConflict, describeQueuedMutation } from "./mutation-label";
 import type { QueuedMutation } from "./queue";
 
 function mutation(
@@ -57,5 +57,48 @@ describe("describeQueuedMutation", () => {
 
   it("degrades to a generic label when the payload is unrecognisable", () => {
     expect(describeQueuedMutation(mutation({}))).toBe("Attendance mark");
+  });
+});
+
+describe("attendanceConflict", () => {
+  const base = {
+    mutation_id: "m1",
+    endpoint: "/coach/attendance" as const,
+    payload: { occurrence_id: "occ-1", student_id: "st1", status: "absent" },
+    status: "needs_review" as const,
+    attempts: 1,
+    created_at: "2026-11-15T10:00:00Z",
+  };
+
+  it("names the recorded and the queued mark for a conflict", () => {
+    expect(
+      attendanceConflict({
+        ...base,
+        error: {
+          code: "Coaching.ConflictAttendanceExists",
+          message: "x",
+          details: { existing_status: "present" },
+        },
+      }),
+    ).toEqual({ occurrence_id: "occ-1", student_id: "st1", recorded: "present", mine: "absent" });
+  });
+
+  it("is null for a mark an admin voided, so the row offers Retry/Dismiss", () => {
+    expect(
+      attendanceConflict({
+        ...base,
+        error: {
+          code: "Coaching.ConflictAttendanceExists",
+          message: "x",
+          details: { existing_status: "voided" },
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("is null for other tray rows", () => {
+    expect(
+      attendanceConflict({ ...base, error: { code: "Coaching.StudentNotEnrolled", message: "x" } }),
+    ).toBeNull();
   });
 });

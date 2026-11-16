@@ -12263,6 +12263,8 @@ export interface components {
         };
         /** CoachRosterEntry */
         CoachRosterEntry: {
+            /** Attendance Marked At */
+            attendance_marked_at?: string | null;
             /** Attendance Status */
             attendance_status?: ("present" | "absent" | "late" | "voided") | null;
             /** Enrollment Status */
