@@ -1,4 +1,4 @@
-"""Use case: the owner takes back a certificate issued in error.
+"""Use case: an academy admin takes back a certificate issued in error.
 
 The row stays (status ``revoked``) for the record; every non-admin read skips
 it and its share link stops resolving. The student is not moved: if they earn

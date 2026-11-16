@@ -616,7 +616,6 @@ async def test_review_level_up_approve_emits_leveled_up_and_certificate_events()
                 student_name="Student One",
                 level_name="Level One",
                 program_name="Program One",
-                level_sequence=1,
             )
         )
 
@@ -680,7 +679,6 @@ async def test_review_level_up_replayed_approve_is_rejected_without_side_effects
         student_name="Student One",
         level_name="Level One",
         program_name="Program One",
-        level_sequence=1,
     )
 
     with tenant_scope("academy-1"):
@@ -725,7 +723,6 @@ def _approve_command(rec_id: str = "rec-1") -> ReviewLevelUpCommand:
         student_name="Student One",
         level_name="Level One",
         program_name="Program One",
-        level_sequence=1,
     )
 
 

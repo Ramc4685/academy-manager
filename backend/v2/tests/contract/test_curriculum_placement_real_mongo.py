@@ -730,7 +730,6 @@ async def test_approval_refuses_a_retired_target_and_leaves_the_rec_pending(
                     student_name="Kid",
                     level_name="One",
                     program_name="Prog",
-                    level_sequence=1,
                 )
             )
         rec = await w["recs"].get("rec-1")

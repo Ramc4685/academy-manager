@@ -724,7 +724,8 @@
       "role": "admin",
       "source": "frontend/app/(admin)/admin/pathway/[programId]/page.tsx",
       "workflows": [
-        "Edit levels/skills/criteria"
+        "Edit levels/skills/criteria",
+        "Retire or reorder levels and skills"
       ],
       "controls": {
         "buttons": [
@@ -732,7 +733,13 @@
           "Add skill",
           "Save",
           "Delete",
-          "Cancel level form"
+          "Cancel level form",
+          "Retire level",
+          "Retire skill",
+          "Move level up",
+          "Move level down",
+          "Move skill up",
+          "Move skill down"
         ],
         "inputs": [
           "Level name",
@@ -742,7 +749,9 @@
         "modals": [
           "Level form",
           "Skill form",
-          "Delete confirmation"
+          "Delete confirmation",
+          "Retire level confirmation",
+          "Retire skill confirmation"
         ]
       },
       "states": [

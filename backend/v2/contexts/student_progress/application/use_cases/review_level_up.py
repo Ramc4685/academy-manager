@@ -68,7 +68,6 @@ class ReviewLevelUpCommand(BaseModel):
     student_name: str = ""
     level_name: str = ""
     program_name: str = ""
-    level_sequence: int = 1
 
 
 class ReviewLevelUpResult(BaseModel):

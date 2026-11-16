@@ -3,7 +3,7 @@
 PR: TBD
 
 ## What changed
-The owner can revoke a certificate issued in error: the certificate page has a Revoke button that asks for a reason and confirms first. A revoked certificate stays on file and the admin pages show it with a Revoked label and banner, but the family no longer sees it in the journey, the parent views or the evening wins email, and any share link stops working. The student stays on their level; if they earn the level again, a fresh certificate is issued. Each revoke writes a `certificate.revoked` audit row.
+An academy admin can revoke a certificate issued in error: the certificate page has a Revoke button that asks for a reason and confirms first. A revoked certificate stays on file and the admin pages show it with a Revoked label and banner, but the family no longer sees it in the journey, the parent views or the evening wins email, and any share link stops working. The student stays on their level; if they earn the level again, a fresh certificate is issued. Each revoke writes a `certificate.revoked` audit row.
 
 New certificates are numbered per academy from a counter: `BLNO-C-0001` with the invoice prefix, or `C-0001` without one. Existing certificates keep their numbers. A certificate now records its skills, level number and level colour when it is issued, so renaming a skill or recolouring a level later no longer changes certificates already issued (older certificates still read the live curriculum).
 

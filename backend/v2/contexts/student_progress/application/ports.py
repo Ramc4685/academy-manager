@@ -156,9 +156,7 @@ class CertificateRepository(Protocol):
     async def list_for_student(
         self, student_id: str, *, include_revoked: bool = False
     ) -> list[SkillCertificate]: ...
-    async def list_for_students(
-        self, student_ids: list[str], *, include_revoked: bool = False
-    ) -> list[SkillCertificate]: ...
+    async def list_for_students(self, student_ids: list[str]) -> list[SkillCertificate]: ...
     async def revoke(
         self, student_id: str, cert_id: str, *, at: datetime, by: str, reason: str
     ) -> bool:

@@ -186,8 +186,6 @@ class SkillCertificate(BaseModel):
     level_color: str | None = None
     #: Public share link (the share page lands separately); unset on revoke.
     share_token: str | None = None
-    share_enabled_at: datetime | None = None
-    share_enabled_by: str | None = None
 
 
 # ---------------------------------------------------------------------------

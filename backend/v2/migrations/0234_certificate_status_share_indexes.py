@@ -12,7 +12,9 @@
    one a re-earned level issues.
 4. ``certs_share_token_per_academy_uq``: unique ``(academy_id, share_token)``,
    partial on ``{share_token: {"$gt": ""}}`` (not ``$type``: the planner
-   ignores ``$type`` partials for equality lookups, see 0188).
+   ignores ``$type`` partials for equality lookups, see 0188). The public
+   share lookup resolves the academy from the request host first, then looks
+   the token up within it, so this key is tenant-first like every other.
 
 Re-running is a no-op.
 """
