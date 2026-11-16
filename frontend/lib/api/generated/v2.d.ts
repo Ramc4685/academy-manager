@@ -406,6 +406,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/billing/family-offers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The referral programme and sibling discount settings */
+        get: operations["get_family_offers_api_v2_admin_billing_family_offers_get"];
+        /** Set the family offers (owner only, audited) */
+        put: operations["set_family_offers_api_v2_admin_billing_family_offers_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/billing/invoices": {
         parameters: {
             query?: never;
@@ -13978,6 +13996,11 @@ export interface components {
              */
             updated_at: string;
         };
+        /** FamilyOffersResponse */
+        FamilyOffersResponse: {
+            referral_program: components["schemas"]["ReferralProgramView"];
+            sibling_discount: components["schemas"]["SiblingDiscountView"];
+        };
         /** FamilyParent */
         FamilyParent: {
             /** Email */
@@ -17692,6 +17715,44 @@ export interface components {
              */
             success_count: number;
         };
+        /**
+         * ReferralProgramRequest
+         * @description Partial: only the keys sent change. No bounds here on purpose; the use
+         *     case owns them so one path names the offending field in the 422.
+         */
+        ReferralProgramRequest: {
+            /** Credit Expiry Days */
+            credit_expiry_days?: number | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Hold Days */
+            hold_days?: number | null;
+            /** Max Rewards Per Referrer Per Year */
+            max_rewards_per_referrer_per_year?: number | null;
+            /** Referred Credit Cents */
+            referred_credit_cents?: number | null;
+            /** Referrer Credit Cents */
+            referrer_credit_cents?: number | null;
+            /** Trigger */
+            trigger?: ("first_paid_invoice" | "first_paid_monthly_invoice") | null;
+        };
+        /** ReferralProgramView */
+        ReferralProgramView: {
+            /** Credit Expiry Days */
+            credit_expiry_days?: number | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Hold Days */
+            hold_days?: number | null;
+            /** Max Rewards Per Referrer Per Year */
+            max_rewards_per_referrer_per_year?: number | null;
+            /** Referred Credit Cents */
+            referred_credit_cents?: number | null;
+            /** Referrer Credit Cents */
+            referrer_credit_cents?: number | null;
+            /** Trigger */
+            trigger?: ("first_paid_invoice" | "first_paid_monthly_invoice") | null;
+        };
         /** RefundFailureDto */
         RefundFailureDto: {
             /**
@@ -18419,6 +18480,28 @@ export interface components {
             items: components["schemas"]["SetupChecklistItemView"][];
             /** Total */
             total: number;
+        };
+        /** SiblingDiscountRequest */
+        SiblingDiscountRequest: {
+            /** Applies To */
+            applies_to?: ("all_classes" | "one_class_per_child") | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Full Price Child */
+            full_price_child?: ("highest_tuition" | "lowest_tuition" | "first_enrolled") | null;
+            /** Percent Bps */
+            percent_bps?: number | null;
+        };
+        /** SiblingDiscountView */
+        SiblingDiscountView: {
+            /** Applies To */
+            applies_to?: ("all_classes" | "one_class_per_child") | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Full Price Child */
+            full_price_child?: ("highest_tuition" | "lowest_tuition" | "first_enrolled") | null;
+            /** Percent Bps */
+            percent_bps?: number | null;
         };
         /** SourceConversionView */
         SourceConversionView: {
@@ -19392,6 +19475,13 @@ export interface components {
             hold_reclaim_policy: "longest_held" | "never";
             /** Max Hold Days */
             max_hold_days: number;
+        };
+        /** UpdateFamilyOffersRequest */
+        UpdateFamilyOffersRequest: {
+            /** Reason */
+            reason?: string | null;
+            referral_program?: components["schemas"]["ReferralProgramRequest"] | null;
+            sibling_discount?: components["schemas"]["SiblingDiscountRequest"] | null;
         };
         /** UpdateLevelBody */
         UpdateLevelBody: {
@@ -20617,6 +20707,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FailedPaymentsResponse"];
+                };
+            };
+        };
+    };
+    get_family_offers_api_v2_admin_billing_family_offers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FamilyOffersResponse"];
+                };
+            };
+        };
+    };
+    set_family_offers_api_v2_admin_billing_family_offers_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateFamilyOffersRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FamilyOffersResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

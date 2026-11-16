@@ -87,6 +87,11 @@ BillingAuditAction = Literal[
     "plan_price_change_scheduled",
     "plan_price_change_cancelled",
     "plan_price_change_applied",
+    # Settings -> Billing rules -> Family offers (L9 C1): the owner changed the
+    # referral programme or the automatic sibling discount. Before/after carry
+    # the whole block. Applies to invoices generated afterwards only.
+    "referral_program_changed",
+    "sibling_discount_changed",
     # Unattended: the bank took part of a payment back that was never applied
     # to an invoice, so no attempt row can carry it (attempts need an invoice).
     # The payment is marked partially refunded; this is the owner's trail.

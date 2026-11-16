@@ -9,6 +9,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:98 shows `flyctl deploy --remote-only`; production.yml deploys a prebuilt `--image` with `--ha=false`.
 - [wording] Validate step undersells the job: it also runs real-Mongo contract tests, lint, the OpenAPI drift check, the Worker runtime smoke, real-auth E2E and scripts validation.
 - [wording] README:173 lists importers under `scripts/`; none exist there.
+- [wording] README:121-123 says email sends only with APP_ENV=production; `resend_send_port.py:14` also allows staging.
 - [wording] README:51 says multi-region; the API runs one machine in one region (`backend/fly.toml:2`).
 - [wording] Auth methods: README:31,142 name only Google and email/password; code also has Apple and magic links, and self-registration is email/password only.
 - [wording] README:101-102 says the release record publishes only when every changed component deployed; `publish-release` gates only on smoke succeeding on `main` (`production.yml:1126-1129`).
@@ -17,7 +18,8 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:164-165 calls `backend/` the FastAPI service; the app code is in `backend/v2/`.
 - [wording] Email verification is required for every provider except magic-link custom tokens (`token_claims.py:25-48`).
 
-## `backend/v2/README.md`: 26 items, from `drift/backend__v2.md`
+## `backend/v2/README.md`: 29 items, from `drift/backend__v2.md`
+- [missing] README:64 requires a wrong-persona 404 test for every route; only per-area gate tests exist (e.g. `tests/structural/test_owner_gate_policy.py`).
 - [stale-not-built] Migration-plan link under `.claude/plans/` is dead.
 - [contract] Coverage: README ≥70% on `v2/shared`; CI enforces 86% on all of `v2`.
 - [contract] Mypy "advisory"; CI fails new errors via the baseline filter.
@@ -38,6 +40,9 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:49 places `ports.py` as a sibling of `use_cases/` under `application/`; minor.
 - [wording] README mypy command differs from CI's baseline-filter invocation.
 - [wording] README:12 and :46 omit the ai, communications, crm, curriculum, finance, onboarding, platform and student_progress contexts.
+- [wording] README:53 says wiring lives in `main.py`; new context wiring goes in `composition/` modules (e.g. `composition/family_offers.py`) that `main.py` only calls.
+- [undocumented] BFF route steps omit the family-offers route (`family_offers_routes.py` GET + PUT `/admin/billing/family-offers`) and its `require_owner()` gate on the PUT.
+- [undocumented] `migrations/` described only as boot indexes/validators; `0237_sibling_discount_decisions` adds an insert-once decisions collection.
 
 - [wording] README cites W1A-02 (nowhere in code); migrations dir has two `0070_*` files despite "one file per index set".
 

@@ -29,6 +29,7 @@ from .dues_routes import router as dues_router
 from .families_routes import router as families_router
 from .family_crm_routes import router as family_crm_router
 from .family_index_routes import router as family_index_router
+from .family_offers_routes import router as family_offers_router
 from .family_record_routes import router as family_record_router
 from .hold_routes import router as hold_router
 from .inbox_routes import router as inbox_router
@@ -86,6 +87,7 @@ router.include_router(billing_router)
 router.include_router(billing_setup_router)
 router.include_router(billing_products_router)
 router.include_router(billing_rules_router)
+router.include_router(family_offers_router)
 router.include_router(payment_methods_router)
 router.include_router(platform_fee_router)
 router.include_router(pricing_router)

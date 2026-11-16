@@ -22,6 +22,7 @@ from backend.v2.contexts.billing.application.use_cases.bill_enrollment_period im
 from backend.v2.contexts.billing.domain.tuition_discount import display_label
 from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
     resolve_monthly_charge,
+    resolved_parent_id,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
@@ -59,13 +60,7 @@ class MongoEnrollmentBillingTargetReader:
         student = await self._db["students"].find_one(
             {"academy_id": academy_id, "student_id": student_id}
         )
-        parent_id = str(
-            enrollment.get("parent_id")
-            or enrollment.get("parent_user_id")
-            or (student or {}).get("parent_id")
-            or (student or {}).get("parent_user_id")
-            or ""
-        )
+        parent_id = resolved_parent_id(enrollment, student)
         if not parent_id:
             return None
 

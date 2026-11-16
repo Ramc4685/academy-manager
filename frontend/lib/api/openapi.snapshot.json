@@ -18158,6 +18158,22 @@
         "title": "FamilyNoteView",
         "type": "object"
       },
+      "FamilyOffersResponse": {
+        "properties": {
+          "referral_program": {
+            "$ref": "#/components/schemas/ReferralProgramView"
+          },
+          "sibling_discount": {
+            "$ref": "#/components/schemas/SiblingDiscountView"
+          }
+        },
+        "required": [
+          "referral_program",
+          "sibling_discount"
+        ],
+        "title": "FamilyOffersResponse",
+        "type": "object"
+      },
       "FamilyParent": {
         "properties": {
           "email": {
@@ -28340,6 +28356,178 @@
         "title": "RecordTestBody",
         "type": "object"
       },
+      "ReferralProgramRequest": {
+        "additionalProperties": false,
+        "description": "Partial: only the keys sent change. No bounds here on purpose; the use\ncase owns them so one path names the offending field in the 422.",
+        "properties": {
+          "credit_expiry_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credit Expiry Days"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "hold_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold Days"
+          },
+          "max_rewards_per_referrer_per_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Rewards Per Referrer Per Year"
+          },
+          "referred_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referred Credit Cents"
+          },
+          "referrer_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referrer Credit Cents"
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "enum": [
+                  "first_paid_invoice",
+                  "first_paid_monthly_invoice"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger"
+          }
+        },
+        "title": "ReferralProgramRequest",
+        "type": "object"
+      },
+      "ReferralProgramView": {
+        "properties": {
+          "credit_expiry_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credit Expiry Days"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "hold_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold Days"
+          },
+          "max_rewards_per_referrer_per_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Rewards Per Referrer Per Year"
+          },
+          "referred_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referred Credit Cents"
+          },
+          "referrer_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referrer Credit Cents"
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "enum": [
+                  "first_paid_invoice",
+                  "first_paid_monthly_invoice"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "ReferralProgramView",
+        "type": "object"
+      },
       "RefundFailureDto": {
         "properties": {
           "amount_cents": {
@@ -30262,6 +30450,121 @@
           "complete"
         ],
         "title": "SetupChecklistView",
+        "type": "object"
+      },
+      "SiblingDiscountRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "applies_to": {
+            "anyOf": [
+              {
+                "enum": [
+                  "all_classes",
+                  "one_class_per_child"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applies To"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "full_price_child": {
+            "anyOf": [
+              {
+                "enum": [
+                  "highest_tuition",
+                  "lowest_tuition",
+                  "first_enrolled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Price Child"
+          },
+          "percent_bps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent Bps"
+          }
+        },
+        "title": "SiblingDiscountRequest",
+        "type": "object"
+      },
+      "SiblingDiscountView": {
+        "properties": {
+          "applies_to": {
+            "anyOf": [
+              {
+                "enum": [
+                  "all_classes",
+                  "one_class_per_child"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applies To"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "full_price_child": {
+            "anyOf": [
+              {
+                "enum": [
+                  "highest_tuition",
+                  "lowest_tuition",
+                  "first_enrolled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Price Child"
+          },
+          "percent_bps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent Bps"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "SiblingDiscountView",
         "type": "object"
       },
       "SourceConversionView": {
@@ -33396,6 +33699,44 @@
         "title": "UpdateEnrollmentDeparturePolicyRequest",
         "type": "object"
       },
+      "UpdateFamilyOffersRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "referral_program": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReferralProgramRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sibling_discount": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SiblingDiscountRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "UpdateFamilyOffersRequest",
+        "type": "object"
+      },
       "UpdateLevelBody": {
         "properties": {
           "color": {
@@ -35943,6 +36284,66 @@
         "summary": "List Failed Payment Attempts",
         "tags": [
           "admin.billing"
+        ]
+      }
+    },
+    "/api/v2/admin/billing/family-offers": {
+      "get": {
+        "operationId": "get_family_offers_api_v2_admin_billing_family_offers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FamilyOffersResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "The referral programme and sibling discount settings",
+        "tags": [
+          "admin.family-offers"
+        ]
+      },
+      "put": {
+        "operationId": "set_family_offers_api_v2_admin_billing_family_offers_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFamilyOffersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FamilyOffersResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set the family offers (owner only, audited)",
+        "tags": [
+          "admin.family-offers"
         ]
       }
     },

@@ -539,7 +539,15 @@ async def test_delta_is_priced_net_of_the_active_tuition_discount() -> None:
     """The invoice was built net of the discount, so the delta must be too."""
     ledger, credits = FakeLedger(), FakeCredits()
     invoice = _invoice(total=6400)  # 8000 less 20%
-    ledger.seed(invoice, _line(invoice, 6400))
+    discount_line = _line(invoice, -1600).model_copy(
+        update={
+            "line_id": "line-discount",
+            "line_type": "discount",
+            "source_type": "tuition_discount",
+            "source_id": "disc-1",
+        }
+    )
+    ledger.seed(invoice, _line(invoice, 8000), discount_line)
     use_case = ApplyEnrollmentMove(
         ledger=ledger,
         credits=credits,
