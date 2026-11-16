@@ -362,6 +362,7 @@ from backend.v2.contexts.enrollment.application.use_cases.self_service_policies 
 )
 from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
     ApproveTrialRequest,
+    CancelGuestTrialBooking,
     DenyTrialRequest,
     LinkTrialConversion,
     ListTrialRequestsForAdmin,
@@ -1001,6 +1002,7 @@ def compose_admin(
         occurrence_roster=occurrence_roster_repo,
     )
     deny_trial_request = DenyTrialRequest(trials=trial_requests_repo)
+    cancel_guest_trial_booking = CancelGuestTrialBooking(trials=trial_requests_repo)
     link_trial_conversion = LinkTrialConversion(trials=trial_requests_repo)
     connected_accounts_repo = MongoConnectedAccountRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
@@ -4243,6 +4245,7 @@ def compose_admin(
         list_trial_requests_for_admin=list_trial_requests_for_admin,
         approve_trial_request=approve_trial_request,
         deny_trial_request=deny_trial_request,
+        cancel_guest_trial_booking=cancel_guest_trial_booking,
         list_self_cancellations_for_admin=list_self_cancellations_for_admin,
         get_platform_charge_fallback=get_platform_charge_fallback,
         get_invoice_schedule=get_invoice_schedule,

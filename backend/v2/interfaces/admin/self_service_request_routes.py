@@ -319,6 +319,29 @@ async def deny_trial_request(
     return TrialRequestAdminRow(**request.model_dump(exclude={"academy_id", "parent_user_id"}))
 
 
+@router.post(
+    "/self-service/trials/{request_id}/cancel-booking", status_code=204, response_model=None
+)
+async def cancel_guest_trial_booking(
+    request_id: str,
+    http: Request,
+    background_tasks: BackgroundTasks,
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> None:
+    """L9: staff cancel one approved website guest booking. It goes back to
+    the pending queue and the family gets the date-cancelled email."""
+    booking = await use_cases.cancel_guest_trial_booking.execute(request_id)
+    emails = getattr(http.app.state, "trial_emails", None)
+    if emails is not None and booking.guest_starts_at is not None:
+        background_tasks.add_task(
+            emails.trial_date_cancelled,
+            trials=[booking],
+            start_at=booking.guest_starts_at,
+            reason="",
+        )
+
+
 @router.get("/self-service/cancellations", response_model=SelfCancellationsAdminResponse)
 async def list_self_cancellations_for_admin(
     _claims: AuthClaims = Depends(require_persona("admin")),

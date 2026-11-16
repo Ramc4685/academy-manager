@@ -3692,6 +3692,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/self-service/trials/{request_id}/cancel-booking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Guest Trial Booking
+         * @description L9: staff cancel one approved website guest booking. It goes back to
+         *     the pending queue and the family gets the date-cancelled email.
+         */
+        post: operations["cancel_guest_trial_booking_api_v2_admin_self_service_trials__request_id__cancel_booking_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/self-service/trials/{request_id}/deny": {
         parameters: {
             query?: never;
@@ -26686,6 +26707,35 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["TrialRequestAdminRow"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_guest_trial_booking_api_v2_admin_self_service_trials__request_id__cancel_booking_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

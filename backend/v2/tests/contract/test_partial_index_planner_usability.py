@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -211,6 +212,7 @@ HOT_SHAPED_LOOKUPS: list[tuple[str, dict[str, Any], set[str]]] = [
             "academy_id": "acad_0",
             "guest_mailbox": {"$eq": "jamie@example.test", "$gt": ""},
             "status": "approved",
+            "guest_starts_at": {"$gt": datetime(2026, 1, 1, tzinfo=UTC)},
         },
         {"trial_requests_guest_mailbox_class_unique"},
     ),

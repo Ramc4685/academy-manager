@@ -44,6 +44,7 @@ class MongoTrialRequestRepository(TenantScopedRepository):
             guest_age=_optional_str(doc.get("guest_age")),
             guest_mailbox=_optional_str(doc.get("guest_mailbox")),
             guest_day_claim=_optional_str(doc.get("guest_day_claim")),
+            guest_starts_at=_optional_utc(doc.get("guest_starts_at")),
         )
 
     @staticmethod
@@ -75,6 +76,7 @@ class MongoTrialRequestRepository(TenantScopedRepository):
             "guest_age": request.guest_age,
             "guest_mailbox": request.guest_mailbox,
             "guest_day_claim": request.guest_day_claim,
+            "guest_starts_at": request.guest_starts_at,
         }
 
     async def add(self, request: TrialRequest) -> None:
@@ -240,16 +242,41 @@ class MongoTrialRequestRepository(TenantScopedRepository):
         )
         return next(iter([self._to_domain(doc) async for doc in cursor]), None)
 
-    async def count_active_guests(self, mailbox: str, *, since: datetime) -> int:
-        """Approved guest bookings of this canonical inbox made at or after
-        ``since``: the per-academy mailbox limit."""
+    async def count_active_guests(self, mailbox: str, *, now: datetime) -> int:
+        """Approved guest bookings of this canonical inbox whose date has not
+        started yet: the per-academy mailbox limit."""
         return await self._count(
             {
                 "guest_mailbox": {"$eq": mailbox, "$gt": ""},
                 "status": "approved",
-                "created_at": {"$gte": since},
+                "guest_starts_at": {"$gt": now},
             }
         )
+
+    async def cancel_guest_booking(self, request_id: str) -> TrialRequest | None:
+        """Staff cancel one approved guest booking (L9): back to ``pending``
+        with its seat, inbox and day claims released, as a cancelled date does
+        for every trial on it. Compare-and-swap on the approved guest row;
+        returns the row as it was, or None when it is not one any more."""
+        doc = await self._find_one_and_update(
+            {"request_id": request_id, "status": "approved", "contact_id": {"$gt": ""}},
+            {
+                "$set": {
+                    "status": "pending",
+                    "assigned_occurrence_id": None,
+                    "decided_by": None,
+                    "decided_at": None,
+                },
+                "$unset": {
+                    "guest_slot": "",
+                    "guest_mailbox": "",
+                    "guest_day_claim": "",
+                    "guest_starts_at": "",
+                },
+            },
+            return_document_after=False,
+        )
+        return self._to_domain(doc) if doc else None
 
     async def transition_from_pending(
         self, request_id: str, updates: dict[str, object]

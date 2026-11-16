@@ -122,6 +122,14 @@ class TrialRequestNotPending(DomainError):
     status_code = 409
 
 
+class TrialBookingNotCancellable(DomainError):
+    """Raised when staff cancel a trial booking that is not an approved
+    website guest booking (L9)."""
+
+    code = "Enrollment.TrialBookingNotCancellable"
+    status_code = 409
+
+
 class TrialOutcomeNotAllowed(DomainError):
     """Raised when Came / Didn't come is recorded on a trial that cannot take
     an outcome: not approved (still pending, denied, or already converted),
@@ -368,6 +376,9 @@ class TrialRequest(BaseModel):
     #: Internal: never shown.
     guest_mailbox: str | None = None
     guest_day_claim: str | None = None
+    #: When the guest's booked date starts: a booking counts toward the
+    #: per-academy inbox limit only until then. Internal: never shown.
+    guest_starts_at: datetime | None = None
 
     @model_validator(mode="after")
     def _one_requester(self) -> TrialRequest:

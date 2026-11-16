@@ -39,7 +39,7 @@ describe("TrialRequestForm self-booking (L9)", () => {
   it("asks how the family heard about the academy, optionally", () => {
     const html = render();
     const id = attr(control(html, "heard_from"), "id");
-    expect(html).toMatch(new RegExp(`<label for="${id}">How did you hear about us\?`));
+    expect(html).toMatch(new RegExp(`<label for="${id}">How did you hear about us[?]`));
   });
 
   it("offers no date picker until a class with dates is chosen, and no widget", () => {

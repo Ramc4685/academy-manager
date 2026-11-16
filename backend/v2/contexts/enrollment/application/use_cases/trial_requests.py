@@ -37,6 +37,7 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     OccurrenceFull,
     OccurrenceRosterEntry,
     ParentActionDisabled,
+    TrialBookingNotCancellable,
     TrialRequest,
     TrialRequestNotFound,
     TrialRequestNotPending,
@@ -194,6 +195,8 @@ class AdminTrialRequestRepository(Protocol):
     ) -> TrialRequest | None: ...
 
     async def guest_counts_for_occurrences(self, occurrence_ids: list[str]) -> dict[str, int]: ...
+
+    async def cancel_guest_booking(self, request_id: str) -> TrialRequest | None: ...
 
 
 class AdminTrialOccurrenceQuery(Protocol):
@@ -411,7 +414,9 @@ class ApproveTrialRequest:
         if request.contact_id is not None:
             # A guest re-approved onto a new date takes a seat number there.
             updated = await self._trials.approve_guest(
-                request.request_id, updates, max_slot=guests + remaining
+                request.request_id,
+                {**updates, "guest_starts_at": occurrence.start_at},
+                max_slot=guests + remaining,
             )
         else:
             updated = await self._trials.transition_from_pending(request.request_id, updates)
@@ -479,6 +484,26 @@ class DenyTrialRequest:
                 "only pending trial requests can be denied", request_id=cmd.request_id
             )
         return updated
+
+
+class CancelGuestTrialBooking:
+    """Staff cancel one approved website guest booking (L9). Every self-booking
+    starts approved, so Deny cannot reach it; this puts it back to
+    ``pending`` with its claims released, like a cancelled date does. Returns
+    the booking as it was, so the caller can tell the family which date."""
+
+    def __init__(self, *, trials: AdminTrialRequestRepository) -> None:
+        self._trials = trials
+
+    async def execute(self, request_id: str) -> TrialRequest:
+        booking = await self._trials.cancel_guest_booking(request_id)
+        if booking is None:
+            if await self._trials.get(request_id) is None:
+                raise TrialRequestNotFound("trial request not found", request_id=request_id)
+            raise TrialBookingNotCancellable(
+                "only an approved guest booking can be cancelled", request_id=request_id
+            )
+        return booking
 
 
 # ============================================================================

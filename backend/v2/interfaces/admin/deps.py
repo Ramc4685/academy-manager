@@ -126,6 +126,7 @@ from backend.v2.contexts.enrollment.application.use_cases.stop_all_classes impor
 )
 from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
     ApproveTrialRequest,
+    CancelGuestTrialBooking,
     DenyTrialRequest,
     ListTrialRequestsForAdmin,
 )
@@ -461,6 +462,7 @@ class AdminUseCases:
     list_trial_requests_for_admin: ListTrialRequestsForAdmin | None = None
     approve_trial_request: ApproveTrialRequest | None = None
     deny_trial_request: DenyTrialRequest | None = None
+    cancel_guest_trial_booking: CancelGuestTrialBooking | None = None
     # Self-cancel audit list (R4, Task 8)
     list_self_cancellations_for_admin: ListSelfCancellationsForAdmin | None = None
     # Read-only view of billing_settings.allow_platform_charge_fallback, which

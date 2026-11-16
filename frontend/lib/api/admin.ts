@@ -3635,7 +3635,8 @@ export interface TrialRequestAdminRow {
   outcome?: "came" | "no_show" | null;
   outcome_by?: string | null;
   outcome_at?: string | null;
-  /** L9: a website guest's trial (no account): parent name and player age. */
+  /** L9: a website guest's trial (no account): CRM contact, parent name and player age. */
+  contact_id?: string | null;
   guest_name?: string | null;
   guest_age?: string | null;
 }
@@ -3746,6 +3747,14 @@ export function denyTrial(
   return apiFetch<TrialRequestAdminRow>(
     `/admin/self-service/trials/${encodeURIComponent(requestId)}/deny`,
     { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+/** L9: cancel one approved website guest booking; it returns to pending. */
+export function cancelGuestTrialBooking(requestId: string): Promise<void> {
+  return apiFetch<void>(
+    `/admin/self-service/trials/${encodeURIComponent(requestId)}/cancel-booking`,
+    { method: "POST" },
   );
 }
 

@@ -80,7 +80,7 @@ class GuestTrialRepository(Protocol):
         self, request: TrialRequest, *, max_slot: int, day_ceiling: int
     ) -> TrialRequest | GuestBookingRefusal: ...
 
-    async def count_active_guests(self, mailbox: str, *, since: datetime) -> int: ...
+    async def count_active_guests(self, mailbox: str, *, now: datetime) -> int: ...
 
     async def guests_for_occurrence(self, occurrence_id: str) -> list[TrialRequest]: ...
 
@@ -214,13 +214,11 @@ class BookTrialGuest:
     async def execute(self, cmd: BookTrialGuestCommand) -> BookTrialGuestResult:
         now = self._now()
         mailbox = canonical_mailbox(cmd.email) or cmd.email
-        # A booking is "active" until its date has passed; no date is more than
-        # the horizon away, so anything booked before that is over.
+        # A booking is "active" until its date starts.
         # shortcut: count-then-insert, so two concurrent bookings of different
         # classes by one inbox can both pass the per-academy limit (at most one
         # per class still holds); make it a claim if abuse shows up.
-        since = now - BOOKABLE_HORIZON - timedelta(days=1)
-        if await self._trials.count_active_guests(mailbox, since=since) >= (
+        if await self._trials.count_active_guests(mailbox, now=now) >= (
             MAILBOX_BOOKINGS_PER_ACADEMY
         ):
             return BookTrialGuestResult(booking=None, refused="mailbox_limit")
@@ -243,6 +241,7 @@ class BookTrialGuest:
             guest_name=cmd.guest_name,
             guest_age=cmd.guest_age,
             guest_mailbox=mailbox,
+            guest_starts_at=cmd.date.start_at,
         )
         booked = await self._trials.add_guest(
             request, max_slot=cmd.date.max_slot, day_ceiling=ACADEMY_DAILY_GUEST_CEILING

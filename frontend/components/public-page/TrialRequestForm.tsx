@@ -71,6 +71,7 @@ export function TrialRequestForm({
   const [formError, setFormError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "editing" });
   const [summaryTick, setSummaryTick] = useState(0);
+  const [turnstileRound, setTurnstileRound] = useState(0);
   const summaryRef = useRef<HTMLDivElement>(null);
   const doneRef = useRef<HTMLDivElement>(null);
 
@@ -141,6 +142,11 @@ export function TrialRequestForm({
     }
     setPhase({ kind: "sending" });
     const result = await submit(values);
+    if (result.kind !== "received" && values.turnstile_token) {
+      // Turnstile tokens are single-use: a retry needs a fresh widget and token.
+      setValues((current) => ({ ...current, turnstile_token: "" }));
+      setTurnstileRound((round) => round + 1);
+    }
     switch (result.kind) {
       case "received":
         setErrors({});
@@ -492,7 +498,11 @@ export function TrialRequestForm({
 
         {values.slot_key && turnstileSiteKey ? (
           <div className={styles.field} id={id("turnstile_token")} tabIndex={-1}>
-            <TurnstileWidget siteKey={turnstileSiteKey} onToken={onTurnstileToken} />
+            <TurnstileWidget
+              key={turnstileRound}
+              siteKey={turnstileSiteKey}
+              onToken={onTurnstileToken}
+            />
             {errorText("turnstile_token")}
           </div>
         ) : null}

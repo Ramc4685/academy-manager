@@ -1,6 +1,5 @@
-## README.md (repo root)
+## README.md
 
-- [contract] README.md:139-140 says security disclosures go by email with subject `SECURITY DISCLOSURE`; SECURITY.md:3-6 directs reporters to GitHub "Security -> Report a vulnerability" (private advisory) and has no email or subject-line convention. The two documents give different disclosure channels.
-- [undocumented] README.md:89-102 lists the deploy pipeline as seven steps; `.github/workflows/production.yml:1053` defines a `sentry-release` job that is not mentioned. The pipeline also has `backend-contract-real-mongo` (line 167), `backend-advisory` (line 229), `scripts-validate` (line 673), `hook-tests` (line 718) and `ci-gate` (line 733) jobs; the README's "Validate" step does not cover them.
-- [wording] README.md:164 says `backend/` is the "FastAPI service" and README.md:165 says `backend/v2/` is the "Production FastAPI app". `backend/` holds only packaging and config (`Dockerfile`, `fly.toml`, `pyproject.toml`, `scripts/`, `v2/`); the app entrypoint is `backend/v2/main.py`.
-- [stale-not-built] README.md:172 says `scripts/` holds "importers"; `scripts/` contains only `ci/`, `dev/`, `ops/`, `prod/`, `smoke/` and `local_test_stack.sh`, and no importer script exists there.
+- [undocumented] README.md:92-102 (Deployment pipeline) lists seven stages, but `.github/workflows/production.yml:1057` also defines a `sentry-release` job (needs `smoke`), which runs before `publish-release` at `production.yml:1127`. The README does not mention it.
+- [wording] README.md:92-93 describes Validate as "backend compile/tests, v2 DDD boundary checks, and Next.js typecheck/lint/build/E2E". The workflow also has a real-Mongo contract job (`production.yml:167`), an advisory job (`production.yml:229`), a scripts-validate job (`production.yml:675`), a hook-tests job (`production.yml:720`) and a `ci-gate` job (`production.yml:735`).
+- [wording] README.md:83-84 says the `academy-next` Worker owns `academy.courtmastr.com/*` through a Worker Route. `frontend/wrangler.jsonc:18-24` also routes `*.courtmastr.com/*`, so the claim understates the route set.
