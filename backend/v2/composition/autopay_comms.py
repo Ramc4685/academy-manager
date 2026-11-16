@@ -81,6 +81,7 @@ def build_dunning_worker(
     email_port: Callable[[], InvoiceEmailAdapter | None],
     outbox: Any,
     parent_customers: Any = None,
+    family_autopay: Any = None,
 ) -> Callable[[], ProcessDunningRetries]:
     def _dunning_worker() -> ProcessDunningRetries:
         required = ("get_default_payment_method", "create_off_session_payment_intent")
@@ -102,6 +103,7 @@ def build_dunning_worker(
             # transient Resend error is retried by the dispatcher instead of
             # being logged once and losing the parent's only warning.
             outbox=outbox,
+            family_autopay=family_autopay,
         )
 
     return _dunning_worker

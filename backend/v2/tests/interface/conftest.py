@@ -2467,8 +2467,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     send_dues_reminders = SendDuesReminders(sender=_FakeDuesReminderSender())
 
     class _NoPastDueInvoices:
-        async def list_past_due(self, *, due_on):
-            _ = due_on
+        async def list_past_due(self, *, due_from, due_to):
+            _ = due_from, due_to
             return []
 
     class _UnusedPastDueSender:

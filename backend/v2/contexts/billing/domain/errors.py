@@ -23,6 +23,15 @@ class WebhookAccountLookupUnavailable(DomainError):
     status_code = 503
 
 
+class StripeUnavailable(DomainError):
+    """Stripe could not be asked (network, rate limit, auth, a bad request on our
+    side). Not a decline: it must never spend a retry rung or email the parent
+    that their payment failed (L1 A4-3)."""
+
+    code = "Billing.StripeUnavailable"
+    status_code = 503
+
+
 class PaymentNotFound(DomainError):
     code = "Billing.PaymentNotFound"
     status_code = 404

@@ -123,7 +123,7 @@ async def test_autopay_notice_names_month_student_and_class() -> None:
 async def test_autopay_receipt_names_month_and_student() -> None:
     sender = _FakeSender()
     with tenant_scope("acad"):
-        await _adapter(sender, naming=_FULL_NAMING).send_autopay_receipt(
+        await _adapter(sender, naming=_FULL_NAMING).send_payment_receipt(
             parent_id="parent-1",
             invoice_id=RAW_INVOICE_ID,
             period="2026-09",
@@ -184,7 +184,7 @@ async def test_emails_never_leak_raw_period_or_invoice_id(naming: InvoiceNaming 
             charge_on=date(2026, 9, 8),
             portal_url=None,
         )
-        await adapter.send_autopay_receipt(
+        await adapter.send_payment_receipt(
             parent_id="parent-1",
             invoice_id=RAW_INVOICE_ID,
             period="2026-09",
@@ -271,7 +271,7 @@ async def test_autopay_receipt_explains_the_previous_month_charge() -> None:
     sender = _FakeSender()
     naming = _FULL_NAMING.model_copy(update={"last_charge": _LAST_CHARGE})
     with tenant_scope("acad"):
-        await _adapter(sender, naming=naming).send_autopay_receipt(
+        await _adapter(sender, naming=naming).send_payment_receipt(
             parent_id="parent-1",
             invoice_id=RAW_INVOICE_ID,
             period="2026-09",

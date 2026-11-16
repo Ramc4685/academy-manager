@@ -477,9 +477,10 @@ async def test_dispute_closed_records_the_outcome_and_a_late_created_does_not_re
     row = await world.ledger_row(ACAD_A, pi_id)
     assert row["dispute_status"] == "lost"
     assert row["dispute_outcome"] == "lost"
-    # A lost dispute is the academy's loss on its own account: no ledger money moves.
-    assert row["status"] == "succeeded"
-    assert row["refunded_cents"] == 0
+    # Owner 2026-11-15 (L1 A4-5): a lost dispute took the money back, so the
+    # payment is reversed and the invoice is owed again (it used to stay paid).
+    assert row["status"] == "refunded"
+    assert row["refunded_cents"] == 10_000
     names = await world.outbox_names(ACAD_A)
     assert names.count("Billing.PaymentDisputeNoticeRequested") == 2
     ids = {
@@ -554,3 +555,27 @@ async def test_dispute_account_contradicting_the_payment_is_refused(real_db) -> 
         await use_case.execute(obj, stripe_account_id="acct_not_the_payments")
     with tenant_scope(ACAD_A):
         assert await world.disputes.get("dp_1") is None
+
+
+async def test_bank_debit_dispute_reopens_the_invoice_when_opened(real_db) -> None:
+    """L1 A4-5: a bank debit dispute has no evidence round, so the money is gone
+    the moment it opens; the invoice is owed again straight away."""
+    world = _World(real_db)
+    await world.seed_accounts()
+    pi_id = await world.autopay_payment(ACAD_A, account=ACCT_A)
+    event = _dispute_event(pi_id, kind="created", status="lost", account=ACCT_A)
+    event["data"]["object"]["payment_method_details"] = {"type": "us_bank_account"}
+
+    await world.deliver(ACAD_A, event)
+    await world.deliver(ACAD_A, event)
+
+    row = await world.ledger_row(ACAD_A, pi_id)
+    assert row["status"] == "refunded"
+    assert row["refunded_cents"] == 10_000
+    with tenant_scope(ACAD_A):
+        invoice = await world.ledger.get_invoice(f"inv-{ACAD_A}")
+    assert invoice is not None
+    assert invoice.status == "open"
+    assert invoice.balance_due_cents == 10_000
+    # A dispute is the parent's own claim: no "payment returned" notice.
+    assert "Billing.DunningNoticeRequested" not in await world.outbox_names(ACAD_A)

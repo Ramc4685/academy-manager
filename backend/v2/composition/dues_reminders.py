@@ -25,14 +25,20 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
-from backend.v2.composition.email_adapters import DuesReminderEmailAdapter
+from backend.v2.composition.email_adapters import DuesReminderEmailAdapter, due_phrase
 from backend.v2.composition.invoice_naming import build_invoice_naming_resolver
+from backend.v2.contexts.billing.application.autopay_eligibility import AUTOPAY_ACTIVE_STATUS
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     SendDuesReminders,
 )
 from backend.v2.contexts.billing.application.use_cases.send_past_due_reminders import (
     PastDueInvoice,
     SendPastDueReminders,
+)
+from backend.v2.contexts.billing.domain.dunning import (
+    PARK_REASONS_NEEDING_ATTENTION,
+    PARK_REASONS_NEEDING_STRIPE_SETUP,
+    RETURN_CODES_NEEDING_MANUAL_REVIEW,
 )
 from backend.v2.contexts.communications.application.use_cases.send_push_to_user import (
     SendPushToUser,
@@ -46,6 +52,12 @@ from backend.v2.shared.tenancy import current_academy_id
 #: Statuses a reminder may chase. ``draft`` is excluded on purpose: an invoice
 #: the family has never been sent cannot be "overdue" to them.
 _REMINDABLE_STATUSES = ("open", "partially_paid")
+
+
+def _as_date(value: object) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    return value if isinstance(value, date) else None
 
 
 @dataclass(frozen=True)
@@ -207,16 +219,17 @@ def compose_dues_reminders(
     # --- the automated due+N sweep (issue #774) ----------------------------
 
     class _PastDueInvoiceReader:
-        async def list_past_due(self, *, due_on: date) -> list[PastDueInvoice]:
+        async def list_past_due(self, *, due_from: date, due_to: date) -> list[PastDueInvoice]:
             # due_date is persisted as a midnight-UTC instant (see
-            # mongo_billing_ledger_repo), so match the whole calendar day.
-            start = datetime.combine(due_on, time.min, tzinfo=UTC)
+            # mongo_billing_ledger_repo), so match whole calendar days.
+            start = datetime.combine(due_from, time.min, tzinfo=UTC)
+            end = datetime.combine(due_to, time.min, tzinfo=UTC) + timedelta(days=1)
             cursor = db["invoices"].find(
                 {
                     "academy_id": current_academy_id(),
                     "status": {"$in": list(_REMINDABLE_STATUSES)},
                     "balance_due_cents": {"$gt": 0},
-                    "due_date": {"$gte": start, "$lt": start + timedelta(days=1)},
+                    "due_date": {"$gte": start, "$lt": end},
                     "is_deleted": {"$ne": True},
                 },
                 {
@@ -227,10 +240,28 @@ def compose_dues_reminders(
                     "balance_due_cents": 1,
                     "currency": 1,
                     "reminder_sent_days": 1,
+                    "due_date": 1,
+                    "enrollment_id": 1,
                 },
             )
+            docs = [doc async for doc in cursor]
+            enrollment_ids = {str(d["enrollment_id"]) for d in docs if d.get("enrollment_id")}
+            autopay_enrollments = (
+                set(
+                    await db["student_billing_enrollments"].distinct(
+                        "enrollment_id",
+                        {
+                            "academy_id": current_academy_id(),
+                            "enrollment_id": {"$in": sorted(enrollment_ids)},
+                            "autopay_enrollment_status": AUTOPAY_ACTIVE_STATUS,
+                        },
+                    )
+                )
+                if enrollment_ids
+                else set()
+            )
             out: list[PastDueInvoice] = []
-            async for doc in cursor:
+            for doc in docs:
                 parent_id = str(doc.get("parent_id") or doc.get("parent_user_id") or "")
                 if not parent_id:
                     continue
@@ -239,12 +270,13 @@ def compose_dues_reminders(
                         invoice_id=str(doc["invoice_id"]),
                         parent_id=parent_id,
                         period=str(doc.get("period") or ""),
-                        due_date=due_on,
+                        due_date=_as_date(doc.get("due_date")) or due_to,
                         balance_due_cents=int(doc.get("balance_due_cents") or 0),
                         currency=str(doc.get("currency") or "usd"),
                         reminded_days=tuple(
                             int(day) for day in (doc.get("reminder_sent_days") or [])
                         ),
+                        autopay_active=str(doc.get("enrollment_id") or "") in autopay_enrollments,
                     )
                 )
             return out
@@ -276,7 +308,7 @@ def compose_dues_reminders(
                 await _push_dues(
                     invoice.parent_id,
                     academy_name=academy_name,
-                    body=f"{due} is {days_past_due} days past due. Tap to pay.",
+                    body=f"{due} {due_phrase(days_past_due)}. Tap to pay.",
                 )
             return ok
 
@@ -318,9 +350,44 @@ def compose_dues_reminders(
             "parent_id",
             {"academy_id": request_academy_id, "status": "dunned"},
         )
+        # Parked for a fault on OUR side before any decline (L1 A7-1): no attempt
+        # spent, so the two counts above never saw these families.
+        parked = {
+            "academy_id": request_academy_id,
+            "status": "active",
+            "next_attempt_at": None,
+        }
+        stuck = await states.distinct(
+            "parent_id",
+            {
+                **parked,
+                "suppression_reason": {
+                    "$in": sorted(
+                        PARK_REASONS_NEEDING_ATTENTION - PARK_REASONS_NEEDING_STRIPE_SETUP
+                    )
+                },
+            },
+        )
+        needs_setup = await states.distinct(
+            "parent_id",
+            {**parked, "suppression_reason": {"$in": sorted(PARK_REASONS_NEEDING_STRIPE_SETUP)}},
+        )
+        # Returns the ledger could not reverse on its own (owner rule: failures
+        # show in admin), by family, over the last 30 days.
+        returns_to_review = await db["payment_attempts"].distinct(
+            "parent_id",
+            {
+                "academy_id": request_academy_id,
+                "failure_code": {"$in": list(RETURN_CODES_NEEDING_MANUAL_REVIEW)},
+                "created_at": {"$gte": datetime.now(UTC) - timedelta(days=30)},
+            },
+        )
         return {
             "failed_autopay": len(failed),
             "dunning_exhausted": len(exhausted),
+            "autopay_stuck": len(stuck),
+            "autopay_needs_stripe_setup": len(needs_setup),
+            "bank_returns_to_review": len(returns_to_review),
         }
 
     return DuesReminderBundle(

@@ -331,6 +331,54 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         return self._payment_from_doc(doc) if doc else None
 
+    async def record_refund_failure(
+        self,
+        *,
+        stripe_payment_intent_id: str,
+        refund_id: str,
+        reason: str,
+        amount_cents: int,
+        failed_at: datetime,
+    ) -> bool:
+        """A refund Stripe could not deliver: the money went back to the Stripe
+        balance and the parent was never paid (A4-8). Keyed by refund id, so a
+        redelivered event rewrites the same entry."""
+        result = await self.ledger_payments.update_one(
+            {
+                "academy_id": current_academy_id(),
+                "stripe_payment_intent_id": stripe_payment_intent_id,
+            },
+            {
+                "$set": {
+                    f"refund_failures.{refund_id}": {
+                        "refund_id": refund_id,
+                        "reason": reason,
+                        "amount_cents": amount_cents,
+                        "failed_at": failed_at,
+                    }
+                }
+            },
+        )
+        return bool(getattr(result, "matched_count", 0))
+
+    async def list_refund_failures(self, *, limit: int = 20) -> dict[str, Any]:
+        """Failed refunds for the Billing Health panel: count plus newest rows."""
+        query = {"academy_id": current_academy_id(), "refund_failures": {"$exists": True}}
+        count = await self.ledger_payments.count_documents(query)
+        rows: list[dict[str, Any]] = []
+        async for doc in self.ledger_payments.find(query).limit(limit):
+            for failure in (doc.get("refund_failures") or {}).values():
+                rows.append(
+                    {
+                        "payment_id": str(doc.get("payment_id") or ""),
+                        "parent_id": str(doc.get("parent_id") or ""),
+                        "currency": str(doc.get("currency") or "usd"),
+                        **failure,
+                    }
+                )
+        rows.sort(key=lambda row: row.get("failed_at") or datetime.min, reverse=True)
+        return {"count": count, "rows": rows[:limit], "truncated": count > limit}
+
     async def sum_stripe_settled_cents(self, *, since: datetime) -> int:
         """Succeeded Stripe payments (card or ACH) settled since ``since``, in
         cents, for the academy in scope. The upgrade instrumentation's
@@ -427,12 +475,28 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         updated_at: datetime,
     ) -> LedgerPayment:
         academy_id = current_academy_id()
+        current = await self.ledger_payments.find_one(
+            {"academy_id": academy_id, "payment_id": payment_id}
+        )
+        if current is None:
+            raise ValueError("ledger payment not found for refund")
+        # Refunded money is no longer spendable. Clear it in the same write as the
+        # refunded status: a replay skips refunded payments, so a crash between two
+        # writes would leave returned money spendable for good.
+        unapplied, over_allocated = await self._compute_unapplied(
+            academy_id=academy_id,
+            payment_id=payment_id,
+            amount_cents=int(current.get("amount_cents") or 0),
+            refunded_cents=refunded_cents,
+        )
         updated = await self.ledger_payments.find_one_and_update(
             {"academy_id": academy_id, "payment_id": payment_id},
             {
                 "$set": {
                     "refunded_cents": refunded_cents,
                     "status": status,
+                    "unapplied_amount_cents": unapplied,
+                    "over_allocated_cents": over_allocated,
                     "updated_at": updated_at,
                 }
             },
@@ -440,7 +504,14 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         if updated is None:
             raise ValueError("ledger payment not found for refund")
-        return self._payment_from_doc(updated)
+        # Recompute once more in case an allocation landed between the read and the write.
+        await self._repair_payment_after_allocation_change(
+            academy_id=academy_id, payment_id=payment_id, now=updated_at
+        )
+        repaired = await self.ledger_payments.find_one(
+            {"academy_id": academy_id, "payment_id": payment_id}
+        )
+        return self._payment_from_doc(repaired or updated)
 
     async def record_payment_attempt(
         self,
@@ -850,21 +921,8 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         if allocation_doc is None:
             if existing is not None:
-                await self._void_overpayment_credit_for_allocation(
-                    academy_id=academy_id,
-                    allocation_id=str(existing["allocation_id"]),
-                    reason=reason,
-                    now=reversed_at,
-                )
-                await self._repair_invoice_after_allocation_change(
-                    academy_id=academy_id,
-                    invoice_id=str(existing["invoice_id"]),
-                    now=reversed_at,
-                )
-                await self._repair_payment_after_allocation_change(
-                    academy_id=academy_id,
-                    payment_id=str(existing["payment_id"]),
-                    now=reversed_at,
+                await self._repair_reversed(
+                    academy_id=academy_id, reversal=existing, reason=reason, now=reversed_at
                 )
                 return {k: v for k, v in existing.items() if k != "_id"}
             return None
@@ -1007,6 +1065,41 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
 
     async def sum_allocations_for_invoice(self, invoice_id: str) -> int:
         return await self._sum_allocations(academy_id=current_academy_id(), invoice_id=invoice_id)
+
+    async def list_reversals_for_payment(self, payment_id: str) -> list[dict[str, Any]]:
+        academy_id = current_academy_id()
+        cursor = self._db["payment_allocation_reversals"].find(
+            {"academy_id": academy_id, "payment_id": payment_id}, {"_id": 0}
+        )
+        return [doc async for doc in cursor]
+
+    async def repair_after_reversal(
+        self, *, reversal_idempotency_key: str, reason: str, reversed_at: datetime
+    ) -> None:
+        academy_id = current_academy_id()
+        reversal = await self._db["payment_allocation_reversals"].find_one(
+            {"academy_id": academy_id, "idempotency_key": reversal_idempotency_key}
+        )
+        if reversal is not None:
+            await self._repair_reversed(
+                academy_id=academy_id, reversal=reversal, reason=reason, now=reversed_at
+            )
+
+    async def _repair_reversed(
+        self, *, academy_id: str, reversal: dict[str, Any], reason: str, now: datetime
+    ) -> None:
+        await self._void_overpayment_credit_for_allocation(
+            academy_id=academy_id,
+            allocation_id=str(reversal["allocation_id"]),
+            reason=reason,
+            now=now,
+        )
+        await self._repair_invoice_after_allocation_change(
+            academy_id=academy_id, invoice_id=str(reversal["invoice_id"]), now=now
+        )
+        await self._repair_payment_after_allocation_change(
+            academy_id=academy_id, payment_id=str(reversal["payment_id"]), now=now
+        )
 
     async def list_allocations_for_payment(self, payment_id: str) -> list[PaymentAllocation]:
         academy_id = current_academy_id()
@@ -1602,6 +1695,26 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
             {"$set": {"balance_due_cents": balance, "status": status, "updated_at": now}},
         )
 
+    async def _compute_unapplied(
+        self, *, academy_id: str, payment_id: str, amount_cents: int, refunded_cents: int
+    ) -> tuple[int, int]:
+        allocated_from_payment = await self._sum_allocations(
+            academy_id=academy_id,
+            payment_id=payment_id,
+        )
+        overpayment_credit = await self._sum_overpayment_credits_for_payment(
+            academy_id=academy_id,
+            payment_id=payment_id,
+        )
+        return self._resolve_unapplied(
+            academy_id=academy_id,
+            payment_id=payment_id,
+            payment_amount_cents=amount_cents,
+            refunded_cents=refunded_cents,
+            allocated_cents=allocated_from_payment,
+            overpayment_credit_cents=overpayment_credit,
+        )
+
     async def _repair_payment_after_allocation_change(
         self,
         *,
@@ -1614,23 +1727,11 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
         )
         if payment_doc is None:
             raise ValueError("allocation reversal payment not found")
-        allocated_from_payment = await self._sum_allocations(
+        unapplied, over_allocated = await self._compute_unapplied(
             academy_id=academy_id,
             payment_id=payment_id,
-        )
-        overpayment_credit = await self._sum_overpayment_credits_for_payment(
-            academy_id=academy_id,
-            payment_id=payment_id,
-        )
-        amount = int(payment_doc.get("amount_cents") or 0)
-        refunded = int(payment_doc.get("refunded_cents") or 0)
-        unapplied, over_allocated = self._resolve_unapplied(
-            academy_id=academy_id,
-            payment_id=payment_id,
-            payment_amount_cents=amount,
-            refunded_cents=refunded,
-            allocated_cents=allocated_from_payment,
-            overpayment_credit_cents=overpayment_credit,
+            amount_cents=int(payment_doc.get("amount_cents") or 0),
+            refunded_cents=int(payment_doc.get("refunded_cents") or 0),
         )
         await self.ledger_payments.update_one(
             {"academy_id": academy_id, "payment_id": payment_id},

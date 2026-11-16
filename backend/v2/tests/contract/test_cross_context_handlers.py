@@ -715,6 +715,9 @@ async def test_dunning_notice_handler_sends_inside_the_event_tenant_scope() -> N
             "currency": "usd",
             "attempt_no": 2,
             "terminal": True,
+            "failure_code": None,
+            "next_attempt_at": None,
+            "bank_debit": False,
         }
     ]
 
@@ -747,3 +750,117 @@ async def test_dunning_notice_handler_raises_when_not_installed() -> None:
     install_dunning_notifier(None)
     with pytest.raises(RuntimeError, match="install_dunning_notifier"):
         await on_dunning_notice_requested(_dunning_event())
+
+
+# ---------------------------------------------------------------------------
+# Receipts and late-return notices skip a parent nobody can reach (L1 B5)
+# ---------------------------------------------------------------------------
+
+
+def _receipt_event(parent_id: str = "parent-1"):
+    from backend.v2.contexts.billing.domain.events import (
+        PaymentReceiptRequested,
+        PaymentReceiptRequestedPayload,
+    )
+
+    return PaymentReceiptRequested(
+        event_id="payment-receipt:pay-1",
+        aggregate_id="pay-1",
+        academy_id="acad",
+        payload=PaymentReceiptRequestedPayload(
+            payment_id="pay-1",
+            parent_id=parent_id,
+            amount_cents=5_000,
+            currency="usd",
+            invoice_id="inv-1",
+            period="2026-08",
+            autopay=False,
+            bank_debit=False,
+        ),
+    )
+
+
+def _late_return_event():
+    from backend.v2.contexts.billing.domain.events import PAYMENT_RETURNED_NOTICE_PREFIX
+
+    event = _dunning_event(terminal=True)
+    return event.model_copy(update={"event_id": f"{PAYMENT_RETURNED_NOTICE_PREFIX}pi_1:inv-1"})
+
+
+class _UnreachableNotifier:
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+
+    async def send_dunning_notice(self, **kwargs) -> None:
+        raise self.exc
+
+    async def send_payment_receipt(self, **kwargs) -> None:
+        raise self.exc
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("which", ["receipt", "late_return"])
+async def test_undeliverable_receipt_or_late_return_notice_is_skipped(which: str) -> None:
+    """No active parent, no email or a suppressed address: retrying cannot help,
+    so the event must not dead-letter."""
+    from backend.v2.composition.email_adapters import UndeliverableNotice
+    from backend.v2.composition.event_handlers import (
+        install_dunning_notifier,
+        on_dunning_notice_requested,
+        on_payment_receipt_requested,
+    )
+
+    install_dunning_notifier(_UnreachableNotifier(UndeliverableNotice("parent email not found")))
+    try:
+        if which == "receipt":
+            await on_payment_receipt_requested(_receipt_event(parent_id="unknown"))
+        else:
+            await on_dunning_notice_requested(_late_return_event())
+    finally:
+        install_dunning_notifier(None)
+
+
+@pytest.mark.asyncio
+async def test_receipt_and_late_return_skip_when_no_notifier_is_installed() -> None:
+    from backend.v2.composition.event_handlers import (
+        install_dunning_notifier,
+        on_dunning_notice_requested,
+        on_payment_receipt_requested,
+    )
+
+    install_dunning_notifier(None)
+    await on_payment_receipt_requested(_receipt_event())
+    await on_dunning_notice_requested(_late_return_event())
+
+
+@pytest.mark.asyncio
+async def test_receipt_transport_failure_still_raises_for_retry() -> None:
+    from backend.v2.composition.event_handlers import (
+        install_dunning_notifier,
+        on_payment_receipt_requested,
+    )
+
+    install_dunning_notifier(_UnreachableNotifier(RuntimeError("resend 503")))
+    try:
+        with pytest.raises(RuntimeError, match="resend 503"):
+            await on_payment_receipt_requested(_receipt_event())
+    finally:
+        install_dunning_notifier(None)
+
+
+@pytest.mark.asyncio
+async def test_undeliverable_failed_attempt_notice_still_raises() -> None:
+    """Only receipts and late-return notices skip; a failed-attempt notice keeps
+    its dead-letter path so ops sees a parent who was never told."""
+    from backend.v2.composition.email_adapters import UndeliverableNotice
+    from backend.v2.composition.event_handlers import (
+        install_dunning_notifier,
+        on_dunning_notice_requested,
+    )
+
+    install_dunning_notifier(_UnreachableNotifier(UndeliverableNotice("no email")))
+    try:
+        with pytest.raises(UndeliverableNotice):
+            await on_dunning_notice_requested(_dunning_event())
+    finally:
+        install_dunning_notifier(None)
