@@ -3,18 +3,29 @@
 # push, or install once via scripts/dev/install-hooks.sh so git runs it
 # automatically.
 #
-# The FULL 3,600-test backend suite and all frontend suites remain the CI
-# merge gate (required "CI Gate" check on main). This script only decides how
-# much of that to mirror locally, based on what actually changed:
+# The FULL ~9,400-test backend suite and all frontend suites remain the CI
+# merge gate (required "CI Gate" check on main, ~7 minutes on GitHub). This
+# script is a fast first filter: it never runs the full backend suite unless
+# asked, and decides how much else to mirror based on what changed:
 #
-#   docs-only      → no build/test checks (seconds)
-#   backend-only   → ruff on changed files + changed tests + structural suite
-#   frontend-only  → node unit tests, typecheck, lint changed files
-#   mixed/high-risk→ full backend suite + full frontend static checks
-#   --full         → everything above plus E2E (previous behavior)
+#   docs-only  → no build/test checks (seconds)
+#   focused    → backend: ruff on changed files, mapped tests + structural
+#                suite; frontend: node + vitest unit tests, typecheck, eslint
+#                on changed files
+#   broad      → high-risk paths: the focused checks plus whole-tree ruff,
+#                lint-imports, mypy baseline and (for frontend changes) full
+#                lint. Still no full backend suite.
+#   --full     → full backend suite, full frontend checks and E2E
 #
-# High-risk paths (auth, tenancy, billing/Stripe, migrations, CI, deployment,
-# shared infra) always escalate to the broad tier.
+# High-risk paths (billing, tenancy, auth, migrations, composition, webhooks,
+# CI, deployment, dependency manifests) escalate to broad. A backend+frontend
+# change is not broad on its own.
+#
+# Environment:
+#   PREPUSH_FULL=1            also run the full backend suite (no E2E)
+#   PREPUSH_PYTEST_WORKERS=N  pytest-xdist workers (default 4). Every worker
+#                             replays all migrations against the one local
+#                             mongod; -n auto (10 on this Mac) crashed it.
 #
 # Usage:
 #   scripts/dev/pre-push-checks.sh          # change-aware tiers
@@ -82,18 +93,20 @@ classify_changes "${CHANGED}" "${FULL}"
 
 if [ "$FULL" = "--full" ]; then
   info "Tier: full (--full requested)"
-elif [ "$DOCS_ONLY" = true ]; then
+elif [ "$DOCS_ONLY" = true ] && [ "${PREPUSH_FULL:-}" != "1" ]; then
   info "Tier: docs-only — skipping build/test checks (CI Gate still runs the full suite on the PR)"
   echo -e "${GREEN}${BOLD}Docs-only change. Safe to push.${RESET}"
   exit 0
 elif [ "$BROAD" = true ]; then
-  info "Tier: broad (high-risk or mixed backend+frontend change)"
+  info "Tier: broad (high-risk path changed)"
 else
   info "Tier: focused ($([ "$BACKEND_CHANGED" = true ] && echo backend-only || echo frontend-only))"
 fi
 
 # ── Backend ───────────────────────────────────────────────────────────────────
-if [ "$BACKEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
+# PREPUSH_FULL=1 is the builder's one full run per lane: it must run the suite
+# even when the diff is empty (just pushed) or frontend-only.
+if [ "$BACKEND_CHANGED" = true ] || [ "$BROAD" = true ] || [ "${PREPUSH_FULL:-}" = "1" ]; then
   header "Backend"
   cd "$BACKEND"
 
@@ -102,34 +115,44 @@ if [ "$BACKEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
     exit 1
   fi
 
+  PYTEST_WORKERS="${PREPUSH_PYTEST_WORKERS:-4}"
+  CHANGED_PY=()
+  while IFS= read -r f; do
+    case "$f" in
+      backend/v2/*.py)
+        rel="${f#backend/}"
+        [ -f "$rel" ] || continue
+        CHANGED_PY+=("$rel")
+        ;;
+    esac
+  done <<< "${CHANGED}"
+
   if [ "$BROAD" = true ]; then
     run_check "ruff format --check v2" ruff format --check v2
     run_check "ruff check v2"          ruff check v2
-    run_check "pytest v2/tests"        pytest v2/tests -n auto -q --tb=short
+    # Same commands as CI (production.yml, which sets PYTHONPATH to the repo
+    # root job-wide; lint-imports needs it), mypy from the root against the
+    # frozen baseline
+    # (a few seconds warm, ~40s cold).
+    run_check "lint-imports"           env PYTHONPATH="$ROOT" lint-imports --config pyproject.toml
+    run_check "mypy (frozen baseline)" bash -c 'cd "$1" && mypy --config-file backend/pyproject.toml -p backend.v2 | mypy-baseline filter --baseline-path backend/mypy-baseline.txt --allow-unsynced' _ "$ROOT"
   else
-    # Focused tier: lint only what changed; run the tests mapped to the
-    # changed modules (#482) plus the fast structural suite (repo invariants
-    # like the route manifest).
+    # Focused tier: lint only what changed.
     # CI parity: CI lints only `v2` (ruff check v2), and pyproject excludes
     # scripts/ and tests/ — so scope to v2 files and pass --force-exclude so
     # explicitly-named files still honor the configured exclusions (#478).
-    CHANGED_PY=()
-    while IFS= read -r f; do
-      case "$f" in
-        backend/v2/*.py)
-          rel="${f#backend/}"
-          [ -f "$rel" ] || continue
-          CHANGED_PY+=("$rel")
-          ;;
-      esac
-    done <<< "${CHANGED}"
-
     if [ ${#CHANGED_PY[@]} -gt 0 ]; then
       run_check "ruff format --check (changed files)" ruff format --check --force-exclude "${CHANGED_PY[@]}"
       run_check "ruff check (changed files)"          ruff check --force-exclude "${CHANGED_PY[@]}"
     fi
+  fi
 
-    # Selection lives in lib/select-backend-tests.sh, covered by
+  if [ "$FULL" = "--full" ] || [ "${PREPUSH_FULL:-}" = "1" ]; then
+    run_check "pytest v2/tests (full suite)" pytest v2/tests -n "$PYTEST_WORKERS" -q --tb=short
+  else
+    # Both tiers: the tests mapped to the changed modules (#482) plus the fast
+    # structural suite (repo invariants like the route manifest). Selection
+    # lives in lib/select-backend-tests.sh, covered by
     # scripts/dev/pre-push-checks.test.sh: changed test files, mirrored
     # context test dirs, and test files importing a changed module. Empty
     # selection falls back to structural-only, which always runs.
@@ -144,13 +167,15 @@ if [ "$BACKEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
     else
       info "no tests mapped to changed modules — running structural suite only"
     fi
+    info "full backend suite skipped — CI runs it; PREPUSH_FULL=1 runs it here"
     run_check "pytest (focused + structural)" \
-      pytest ${SELECTED_TESTS[@]+"${SELECTED_TESTS[@]}"} v2/tests/structural -n auto -q --tb=short
+      pytest ${SELECTED_TESTS[@]+"${SELECTED_TESTS[@]}"} v2/tests/structural -n "$PYTEST_WORKERS" -q --tb=short
   fi
 fi
 
 # ── Frontend ──────────────────────────────────────────────────────────────────
-if [ "$FRONTEND_CHANGED" = true ] || [ "$BROAD" = true ]; then
+# A high-risk backend-only change no longer pulls in the frontend suites.
+if [ "$FRONTEND_CHANGED" = true ] || [ "$FULL" = "--full" ]; then
   header "Frontend"
   cd "$FRONTEND"
 
