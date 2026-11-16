@@ -31,6 +31,7 @@ import {
   correctionWindowClosed,
   isRecordedMark,
   markingNotOpenYet,
+  withoutUnconfirmedMark,
   markProgress,
 } from "@/lib/coach/marking";
 import { useCoachSurface } from "@/components/coach/coach-surface-context";
@@ -657,12 +658,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
         session_title: session?.title,
       });
       setQueuedMarks((prev) => ({ ...prev, [student_id]: { status, mutation_id: m.mutation_id } }));
-      setLocalMarks((m2) => {
-        if (!m2[student_id]?.error) return m2;
-        const next = { ...m2 };
-        delete next[student_id];
-        return next;
-      });
+      setLocalMarks((m2) => withoutUnconfirmedMark(m2, student_id));
     } catch {
       setLocalMarks((m) => ({
         ...m,

@@ -140,3 +140,19 @@ export function recentUnmarkedSessions<T extends MarkableSession>(
     })
     .sort((a, b) => new Date(b.start_at).getTime() - new Date(a.start_at).getTime());
 }
+
+/**
+ * Hand a mark to the offline queue: drop this row's unconfirmed local entry
+ * (an error, or an optimistic tap still `pending` when the request died) so
+ * the queued state is what the row shows. A confirmed save is kept.
+ */
+export function withoutUnconfirmedMark<T extends { pending: boolean; error?: string }>(
+  marks: Record<string, T>,
+  student_id: string,
+): Record<string, T> {
+  const entry = marks[student_id];
+  if (!entry || !(entry.error || entry.pending)) return marks;
+  const next = { ...marks };
+  delete next[student_id];
+  return next;
+}

@@ -7,6 +7,7 @@ import {
   markingNotOpenYet,
   markProgress,
   recentUnmarkedSessions,
+  withoutUnconfirmedMark,
 } from "./marking";
 
 type Row = { student_id: string; attendance_status?: string | null };
@@ -170,5 +171,27 @@ describe("marking windows", () => {
     expect(markingNotOpenYet("2026-11-16T12:00:00Z", now)).toBe(true);
     expect(markingNotOpenYet("2026-11-15T12:45:00Z", now)).toBe(false);
     expect(markingNotOpenYet("2026-11-15T09:00:00Z", now)).toBe(false);
+  });
+});
+
+describe("withoutUnconfirmedMark", () => {
+  const entry = (pending: boolean, error?: string) => ({
+    student_id: "st1",
+    status: "present" as const,
+    pending,
+    error,
+  });
+
+  it("drops an optimistic tap whose request died, so the queued state shows", () => {
+    expect(withoutUnconfirmedMark({ st1: entry(true) }, "st1")).toEqual({});
+  });
+
+  it("drops an errored entry", () => {
+    expect(withoutUnconfirmedMark({ st1: entry(false, "boom") }, "st1")).toEqual({});
+  });
+
+  it("keeps a confirmed save and other rows", () => {
+    const marks = { st1: entry(false), st2: entry(true) };
+    expect(withoutUnconfirmedMark(marks, "st1")).toBe(marks);
   });
 });
