@@ -1,6 +1,6 @@
 # admin-numbers-and-pickers
 
-PR: TBD
+PR: #1176
 
 ## What changed
 Admin counts follow the owner rules: Overdue counts families past the due date in any month (not only the current one) without autopay cover, at risk means two recorded absences in a row, "today" is the academy's day, the inbox badge counts only decisions, and a count that fails to load says so instead of showing 0. Student pickers search the whole academy on the server, the Sessions page can list every class, including ended and far-future ones, and the reports dashboard ages balances against today and counts classes in every month they meet.
