@@ -17,10 +17,8 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI
-from pydantic import ValidationError
 
 from backend.v2.composition.family_offers import compose_admin_family_offers
-from backend.v2.contexts.billing.domain.billing_settings import SiblingDiscount
 from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
     MongoBillingSettingsRepository,
 )
@@ -83,7 +81,7 @@ async def test_a_fresh_academy_has_both_offers_off_and_unset(owner) -> None:
     }
     assert body["referral_program"]["enabled"] is False
     assert body["referral_program"]["referrer_credit_cents"] is None
-    assert body["referral_program"]["effective_from"] is None
+    assert "effective_from" not in body["referral_program"]
 
 
 @pytest.mark.parametrize(
@@ -184,7 +182,7 @@ async def test_referrals_cannot_be_switched_on_until_c2(owner, real_db) -> None:
     assert saved.status_code == 200, saved.text
     stored = (await _stored(real_db))["referral_program"]
     assert stored["enabled"] is False
-    assert stored["effective_from"] is None
+    assert "effective_from" not in stored
     assert stored["hold_days"] == REFERRAL_FULL["hold_days"]
 
 
@@ -215,7 +213,7 @@ async def test_each_change_leaves_one_audit_row_with_the_whole_block(owner, real
     assert sibling_row["after"] == SIBLING_ON
     assert referral_row["before"]["hold_days"] is None
     assert referral_row["after"]["hold_days"] == 14
-    assert set(referral_row["after"]) == set(REFERRAL_FULL) | {"enabled", "effective_from"}
+    assert set(referral_row["after"]) == set(REFERRAL_FULL) | {"enabled"}
 
 
 async def test_another_settings_save_cannot_put_back_a_stale_block(owner, real_db) -> None:
@@ -238,7 +236,22 @@ async def test_a_non_owner_admin_gets_404_on_the_write_but_can_read(real_db, aca
     assert await real_db["billing_audit_log"].count_documents({}) == 0
 
 
-async def test_a_stored_block_switched_on_without_its_values_fails_validation() -> None:
-    with pytest.raises(ValidationError):
-        SiblingDiscount.model_validate({"enabled": True, "percent_bps": 1_000})
-    assert SiblingDiscount.model_validate({"percent_bps": 1_000}).enabled is False
+async def test_a_hand_edited_incomplete_block_breaks_no_reader_and_can_be_repaired(
+    owner, real_db
+) -> None:
+    """Only a hand edit can store a block switched on without its values; every
+    settings reader must survive it and the owner must be able to fix it."""
+    await real_db["billing_settings"].insert_one(
+        {"academy_id": "test-academy", "sibling_discount": {"enabled": True, "percent_bps": 1_000}}
+    )
+
+    settings = await MongoBillingSettingsRepository(real_db).get()
+    assert settings.sibling_discount.enabled is True
+    assert settings.sibling_discount.full_price_child is None
+    shown = await owner.get(ROUTE)
+    assert shown.status_code == 200, shown.text
+    assert shown.json()["sibling_discount"]["percent_bps"] == 1_000
+
+    repaired = await owner.put(ROUTE, json={"sibling_discount": SIBLING_ON})
+    assert repaired.status_code == 200, repaired.text
+    assert (await _stored(real_db))["sibling_discount"] == SIBLING_ON

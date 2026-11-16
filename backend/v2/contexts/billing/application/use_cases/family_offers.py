@@ -64,7 +64,7 @@ class FamilyOffersView(BaseModel):
 
 class UpdateFamilyOffersCommand(BaseModel):
     """Each block is a partial patch: only the keys present are changed, and an
-    explicit ``None`` clears a value. ``effective_from`` is never accepted."""
+    explicit ``None`` clears a value."""
 
     model_config = {"frozen": True}
 
@@ -110,8 +110,8 @@ class UpdateFamilyOffers:
             )
             _check_bounds("referral_program", referral, REFERRAL_BOUNDS)
             if referral.enabled:
-                # The values are stored now; the programme itself is C2. C2 adds
-                # the switch-on rules and the effective_from stamp.
+                # The values are stored now; the programme itself is C2, which
+                # adds the switch-on rules.
                 raise BillingRulesValidationError(
                     "referral_program.enabled", "the referral programme is not available yet"
                 )
@@ -152,7 +152,7 @@ class UpdateFamilyOffers:
 
 
 def _merge[M: BaseModel](model: type[M], block: str, current: M, patch: dict[str, Any]) -> M:
-    unknown = set(patch) - (set(model.model_fields) - {"effective_from"})
+    unknown = set(patch) - set(model.model_fields)
     if unknown:
         field = sorted(unknown)[0]
         raise BillingRulesValidationError(f"{block}.{field}", f"{field} cannot be set")

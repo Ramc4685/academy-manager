@@ -31,6 +31,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo impo
 from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import (
     MongoCreditLedgerRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_enrollment_billing_target import (
+    MongoEnrollmentBillingTargetReader,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
     MongoMonthlyBillingGenerator,
     resolve_sibling_discount,
@@ -398,12 +401,12 @@ async def test_the_decision_is_frozen_across_orphan_recovery_after_a_sibling_dro
 
     assert result.repaired_orphan_keys == 1
     assert await _discount(real_db, acad, "enr-b") == 800
-    # Both rows were written together by the crashed run's family decision.
+    # Ben's row from the crashed run; Ava (dropped, offer off) never got one.
     decisions = {
         d["enrollment_id"]: d["discounted"]
         async for d in real_db["sibling_discount_decisions"].find({})
     }
-    assert decisions == {"enr-a": False, "enr-b": True}
+    assert decisions == {"enr-b": True}
 
 
 async def test_the_family_charge_key_is_unchanged_across_a_retry(real_db, acad) -> None:
@@ -506,38 +509,84 @@ async def _rows(db: Any) -> dict[str, bool]:
     }
 
 
-async def test_a_setting_change_between_members_keeps_one_full_price_child(real_db, acad) -> None:
+async def test_a_setting_change_between_members_keeps_one_full_price_child(
+    real_db, acad, monkeypatch: pytest.MonkeyPatch
+) -> None:
     await _family(real_db, acad)
     await _offer(real_db)
-    assert await _resolve(real_db, "enr-b") is not None  # Ava is the full-price child
+    real_write = MongoMonthlyBillingGenerator._dual_write_ledger_invoice
 
-    await _offer(real_db, full_price_child="lowest_tuition")  # now Ben would be
+    async def _switch_after_ben(self: Any, **kwargs: Any) -> None:
+        await real_write(self, **kwargs)
+        if kwargs["enrollment_id"] == "enr-b":
+            # Ben was billed discounted (Ava full price); now Ben would be.
+            await _offer(real_db, full_price_child="lowest_tuition")
+
+    monkeypatch.setattr(
+        MongoMonthlyBillingGenerator, "_dual_write_ledger_invoice", _switch_after_ben
+    )
     await _repo(real_db).generate_monthly_payments(PERIOD)
 
     assert await _rows(real_db) == {"enr-a": False, "enr-b": True}
     assert await _discounts(real_db, acad, "enr-a", "enr-b") == {"enr-a": 0, "enr-b": 800}
 
 
-async def test_the_top_child_leaving_between_members_keeps_the_family_snapshot(
+async def _cal(db: Any, acad: str, *, status: str = "active") -> None:
+    await _session(db, acad, "sess-mini", 5_000)
+    await _child(db, acad, "stu-c")
+    await _enroll(db, acad, "enr-c", "stu-c", "sess-mini", status=status)
+
+
+async def test_the_full_price_child_pausing_after_a_sibling_was_priced_keeps_one(
     real_db, acad
 ) -> None:
+    """ "Bill this month" prices Ben ahead of the run, then Ava (the full-price
+    child) pauses: Cal must become the full-price child, not a second discount."""
     await _family(real_db, acad)
-    await _session(real_db, acad, "sess-mini", 5_000)
-    await _child(real_db, acad, "stu-c")
-    await _enroll(real_db, acad, "enr-c", "stu-c", "sess-mini")
+    await _cal(real_db, acad)
     await _offer(real_db)
-    await _resolve(real_db, "enr-b")
+    target = await MongoEnrollmentBillingTargetReader(real_db, clock=_clock).load("enr-b", PERIOD)
+    assert target is not None and target.monthly_discount_cents == 800
+    assert await _rows(real_db) == {"enr-b": True}
 
-    # Ava withdraws; Ben would now be the top child if Cal were decided alone.
     await real_db["enrollments"].update_one(
-        {"enrollment_id": "enr-a"}, {"$set": {"status": "dropped"}}
+        {"enrollment_id": "enr-a"}, {"$set": {"status": "paused"}}
     )
     await _repo(real_db).generate_monthly_payments(PERIOD)
 
-    rows = await _rows(real_db)
-    assert rows == {"enr-a": False, "enr-b": True, "enr-c": True}
-    assert [eid for eid, discounted in rows.items() if not discounted] == ["enr-a"]
-    assert await _discounts(real_db, acad, "enr-b", "enr-c") == {"enr-b": 800, "enr-c": 500}
+    assert await _discounts(real_db, acad, "enr-b", "enr-c") == {"enr-b": 800, "enr-c": 0}
+    assert await _rows(real_db) == {"enr-b": True, "enr-c": False}
+
+
+async def test_a_child_resuming_after_the_full_price_child_paid_is_discounted(
+    real_db, acad
+) -> None:
+    await _family(real_db, acad)
+    await _cal(real_db, acad, status="paused")
+    await _offer(real_db)
+    await _repo(real_db).generate_monthly_payments(PERIOD)
+    assert await _discounts(real_db, acad, "enr-a", "enr-b") == {"enr-a": 0, "enr-b": 800}
+
+    # Cal resumes mid-month; under the rule alone Cal (50.00) would pay full.
+    await _offer(real_db, full_price_child="lowest_tuition")
+    await real_db["enrollments"].update_one(
+        {"enrollment_id": "enr-c"}, {"$set": {"status": "active"}}
+    )
+    await _repo(real_db).generate_monthly_payments(PERIOD)
+
+    assert await _discount(real_db, acad, "enr-c") == 500
+
+
+async def test_pricing_one_member_writes_nothing_for_the_others(real_db, acad) -> None:
+    """A "Bill this month" that is refused after pricing leaves only its own row."""
+    await _family(real_db, acad)
+    await _cal(real_db, acad)
+    await _offer(real_db)
+
+    await MongoEnrollmentBillingTargetReader(real_db, clock=_clock).load("enr-b", PERIOD)
+
+    assert await _rows(real_db) == {"enr-b": True}
+    assert await real_db["invoices"].count_documents({}) == 0
 
 
 async def _other_invoice(db: Any, acad: str, enrollment_id: str, status: str) -> None:
@@ -574,7 +623,7 @@ async def test_a_void_invoice_does_not_count_as_billed(real_db, acad) -> None:
     await _other_invoice(real_db, acad, "enr-b", "void")
 
     assert await _resolve(real_db, "enr-b") is not None
-    assert await _rows(real_db) == {"enr-a": False, "enr-b": True}
+    assert await _rows(real_db) == {"enr-b": True}
 
 
 async def test_an_already_billed_sibling_gets_no_row_but_still_counts(real_db, acad) -> None:
@@ -643,19 +692,29 @@ def _move(db: Any, *, with_paid_snapshot: bool) -> ApplyEnrollmentMove:
 
 
 @pytest.mark.parametrize("with_paid_snapshot", [True, False])
-@pytest.mark.parametrize("drop_the_line", [False, True])
-async def test_a_move_prices_both_sides_with_the_sibling_discount(
-    real_db, acad, with_paid_snapshot: bool, drop_the_line: bool
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        # 10% off both sides: 108.00 - 72.00.
+        ("kept", 3_600),
+        # No discount line: priced as undiscounted, 120.00 - paid 72.00 or 80.00.
+        ("dropped", None),
+        # A line without a source id: the recorded decision decides, 10% off.
+        ("anonymous", 3_600),
+    ],
+)
+async def test_a_move_prices_both_sides_with_the_invoice_discount(
+    real_db, acad, with_paid_snapshot: bool, line: str, expected: int | None
 ) -> None:
     await _family(real_db, acad)
     await _offer(real_db)
     await _repo(real_db).generate_monthly_payments(PERIOD)
     assert await _discount(real_db, acad, "enr-b") == 800
-    if drop_the_line:
-        # No discount line to read: the recorded decision decides instead.
-        await real_db["invoice_lines"].delete_many(
-            {"invoice_id": f"inv-monthly-enr-b-{PERIOD}", "source_type": "tuition_discount"}
-        )
+    discount_line = {"invoice_id": f"inv-monthly-enr-b-{PERIOD}", "source_type": "tuition_discount"}
+    if line == "dropped":
+        await real_db["invoice_lines"].delete_many(discount_line)
+    elif line == "anonymous":
+        await real_db["invoice_lines"].update_many(discount_line, {"$set": {"source_id": None}})
 
     # Ben moves before September's first Monday from his 80.00 class to a
     # 120.00 one, so every class is still to come on both sides.
@@ -669,8 +728,9 @@ async def test_a_move_prices_both_sides_with_the_sibling_discount(
         )
     )
 
-    # 10% off both sides: 108.00 - 72.00, not 120.00 - 72.00 or 120.00 - 80.00.
-    assert result.delta_cents == 3_600
+    if expected is None:
+        expected = 4_800 if with_paid_snapshot else 4_000
+    assert result.delta_cents == expected
 
 
 # --- tenancy ------------------------------------------------------------------

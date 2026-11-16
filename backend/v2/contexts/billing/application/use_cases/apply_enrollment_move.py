@@ -165,10 +165,12 @@ class MoveDiscountReader(Protocol):
     async def get_active(self, enrollment_id: str) -> TuitionDiscount | None: ...
 
 
-#: The recorded sibling percentage for ``(enrollment_id=, period=)`` when the
-#: month was sibling-discounted, else ``None`` (L9 C1). Satisfied by
-#: ``mongo_monthly_billing.sibling_decision_percent_bps`` bound to the db.
-MoveSiblingDecisionReader = Callable[..., Awaitable[int | None]]
+class MoveSiblingDecisionReader(Protocol):
+    """The recorded sibling percentage when the month was sibling-discounted,
+    else ``None`` (L9 C1). Satisfied by
+    ``mongo_monthly_billing.sibling_decision_percent_bps`` bound to the db."""
+
+    def __call__(self, *, enrollment_id: str, period: str) -> Awaitable[int | None]: ...
 
 
 class MoveChargeBasisReader(Protocol):
@@ -578,16 +580,21 @@ class ApplyEnrollmentMove:
         """The tuition discount the period's invoice was priced with.
 
         The invoice's ``tuition_discount`` line names it: the automatic sibling
-        policy or the manual one. Without such a line, the monthly run's rule
-        decides: the larger of the manual policy and the recorded sibling
-        decision, the manual one on a tie (L9 C1 review).
+        policy or the manual one. No such line: the month was not discounted.
+        A line without a ``source_id`` falls back to the monthly run's rule:
+        the larger of the manual policy and the recorded sibling decision, the
+        manual one on a tie (L9 C1 review).
         """
-        manual = await self._manual_discount(enrollment_id, billing_period)
-        sibling = await self._sibling_discount(enrollment_id, billing_period)
         lines = await self._ledger.get_lines_for_invoice(invoice.invoice_id)
         line = next((ln for ln in lines if ln.source_type == TUITION_DISCOUNT_SOURCE_TYPE), None)
-        if line is not None and line.source_id:
-            return sibling if line.source_id.startswith(SIBLING_DISCOUNT_ID_PREFIX) else manual
+        if line is None:
+            return None
+        if line.source_id and line.source_id.startswith(SIBLING_DISCOUNT_ID_PREFIX):
+            return await self._sibling_discount(enrollment_id, billing_period)
+        manual = await self._manual_discount(enrollment_id, billing_period)
+        if line.source_id:
+            return manual
+        sibling = await self._sibling_discount(enrollment_id, billing_period)
         return best_tuition_discount(manual, sibling, monthly_price_cents=monthly_price_cents)
 
     async def _sibling_discount(

@@ -99,8 +99,8 @@ class ReferralProgram(BaseModel):
     """Family offers: the referral programme (L9 C1 stores it; C2 builds the logic).
 
     Off unless the owner switches it on. Every value is the owner's: there are
-    no numeric defaults here, only ``None`` = "not set". Bounds and the
-    all-fields-on-enable rule live in ``UpdateFamilyOffers``.
+    no numeric defaults here, only ``None`` = "not set". Bounds live in
+    ``UpdateFamilyOffers``, which refuses switching it on until C2.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -113,9 +113,6 @@ class ReferralProgram(BaseModel):
     #: ``None`` = credits never expire.
     credit_expiry_days: int | None = None
     trigger: ReferralTrigger | None = None
-    #: Server-stamped when the programme is switched on (like
-    #: ``late_fee_effective_from``): only referrals after it count.
-    effective_from: datetime | None = None
 
 
 class SiblingDiscount(BaseModel):
@@ -132,15 +129,6 @@ class SiblingDiscount(BaseModel):
     percent_bps: int | None = None
     full_price_child: SiblingFullPriceChild | None = None
     applies_to: SiblingAppliesTo | None = None
-
-    @model_validator(mode="after")
-    def _complete_when_enabled(self) -> SiblingDiscount:
-        # A bad stored block must fail validation (the resolver then applies no
-        # discount and pages), never reach the resolver half-configured.
-        for name in SIBLING_REQUIRED_ON_ENABLE:
-            if self.enabled and getattr(self, name) is None:
-                raise ValueError(f"{name} is required to switch this offer on")
-        return self
 
 
 #: Fields the sibling discount needs before it can be switched on.

@@ -35,7 +35,6 @@ class ReferralProgramView(BaseModel):
     max_rewards_per_referrer_per_year: int | None = None
     credit_expiry_days: int | None = None
     trigger: _Trigger | None = None
-    effective_from: str | None = None
 
 
 class SiblingDiscountView(BaseModel):
@@ -52,8 +51,7 @@ class FamilyOffersResponse(BaseModel):
 
 class ReferralProgramRequest(BaseModel):
     """Partial: only the keys sent change. No bounds here on purpose; the use
-    case owns them so one path names the offending field in the 422.
-    ``effective_from`` is server-stamped and refused."""
+    case owns them so one path names the offending field in the 422."""
 
     model_config = {"extra": "forbid"}
 

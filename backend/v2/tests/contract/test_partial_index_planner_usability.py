@@ -222,6 +222,17 @@ HOT_SHAPED_LOOKUPS: list[tuple[str, dict[str, Any], set[str]]] = [
         {"academy_id": "acad_0", "enrollment_id": "enr-1", "period": "2026-09"},
         {"sibling_decision_enrollment_period_unique"},
     ),
+    # ...and its sibling lookup: one $in of parent aliases per student field.
+    (
+        "students",
+        {"academy_id": "acad_0", "parent_id": {"$in": ["p-1", "fb-1"]}},
+        {"parent_children"},
+    ),
+    (
+        "students",
+        {"academy_id": "acad_0", "parent_user_id": {"$in": ["p-1", "fb-1"]}},
+        {"parent_user_children"},
+    ),
 ]
 
 

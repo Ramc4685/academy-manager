@@ -46,17 +46,15 @@ class FamilyEnrollment:
     enrolled_at: datetime | None = None
 
 
-def sibling_discounted_enrollment_ids(
-    family: Sequence[FamilyEnrollment],
-    *,
-    full_price_child: SiblingFullPriceChild,
-    applies_to: SiblingAppliesTo,
-) -> frozenset[str]:
+def full_price_student(
+    family: Sequence[FamilyEnrollment], *, full_price_child: SiblingFullPriceChild
+) -> str | None:
+    """The child who pays full price among ``family``, or ``None`` when empty."""
     by_child: dict[str, list[FamilyEnrollment]] = defaultdict(list)
     for row in family:
         by_child[row.student_id].append(row)
-    if len(by_child) < 2:
-        return frozenset()
+    if not by_child:
+        return None
 
     def tuition(student_id: str) -> int:
         return sum(row.list_fee_cents for row in by_child[student_id])
@@ -68,23 +66,50 @@ def sibling_discounted_enrollment_ids(
 
     # student_id is the last key everywhere: ties go to the lowest id.
     if full_price_child == "highest_tuition":
-        full_price = min(by_child, key=lambda sid: (-tuition(sid), sid))
-    elif full_price_child == "lowest_tuition":
-        full_price = min(by_child, key=lambda sid: (tuition(sid), sid))
-    else:
-        full_price = min(by_child, key=lambda sid: (*first_start(sid), sid))
+        return min(by_child, key=lambda sid: (-tuition(sid), sid))
+    if full_price_child == "lowest_tuition":
+        return min(by_child, key=lambda sid: (tuition(sid), sid))
+    return min(by_child, key=lambda sid: (*first_start(sid), sid))
 
-    discounted: set[str] = set()
-    for student_id in by_child:
-        if student_id == full_price:
-            continue
-        rows = by_child[student_id]
-        if applies_to == "all_classes":
-            discounted.update(row.enrollment_id for row in rows)
-        else:
-            pick = min(rows, key=lambda row: (-row.list_fee_cents, row.enrollment_id))
-            discounted.add(pick.enrollment_id)
-    return frozenset(discounted)
+
+def is_sibling_discounted(
+    family: Sequence[FamilyEnrollment],
+    enrollment: FamilyEnrollment,
+    *,
+    full_price: str,
+    applies_to: SiblingAppliesTo,
+) -> bool:
+    """Whether ``enrollment`` is discounted, given the full-price child.
+
+    Every other child is discounted on all their classes, or on one class
+    each (the highest list fee in ``family``, ties to the lowest id).
+    """
+    if enrollment.student_id == full_price:
+        return False
+    if applies_to == "all_classes":
+        return True
+    own = [row for row in family if row.student_id == enrollment.student_id] or [enrollment]
+    pick = min(own, key=lambda row: (-row.list_fee_cents, row.enrollment_id))
+    return pick.enrollment_id == enrollment.enrollment_id
+
+
+def sibling_discounted_enrollment_ids(
+    family: Sequence[FamilyEnrollment],
+    *,
+    full_price_child: SiblingFullPriceChild,
+    applies_to: SiblingAppliesTo,
+) -> frozenset[str]:
+    """Every discounted enrollment when the whole family is priced together."""
+    if len({row.student_id for row in family}) < 2:
+        return frozenset()
+    full_price = full_price_student(family, full_price_child=full_price_child)
+    if full_price is None:  # pragma: no cover - two children were just counted
+        return frozenset()
+    return frozenset(
+        row.enrollment_id
+        for row in family
+        if is_sibling_discounted(family, row, full_price=full_price, applies_to=applies_to)
+    )
 
 
 def sibling_policy(

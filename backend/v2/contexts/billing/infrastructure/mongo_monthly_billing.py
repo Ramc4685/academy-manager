@@ -12,12 +12,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, time, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 from bson import ObjectId
 from pydantic import ValidationError
-from pymongo.errors import BulkWriteError, DuplicateKeyError
+from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     GenerateMonthlyPaymentsResult,
@@ -26,7 +26,13 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
 from backend.v2.contexts.billing.application.use_cases.invoice_numbering import (
     mint_invoice_number,
 )
-from backend.v2.contexts.billing.domain.billing_settings import BillingSettings, SiblingDiscount
+from backend.v2.contexts.billing.domain.billing_settings import (
+    SIBLING_REQUIRED_ON_ENABLE,
+    BillingSettings,
+    SiblingAppliesTo,
+    SiblingDiscount,
+    SiblingFullPriceChild,
+)
 from backend.v2.contexts.billing.domain.ledger import (
     ACCOUNT_CREDIT_SOURCE_TYPE,
     InvoiceLine,
@@ -49,7 +55,8 @@ from backend.v2.contexts.billing.domain.proration import (
 from backend.v2.contexts.billing.domain.sibling_discount import (
     FamilyEnrollment,
     best_tuition_discount,
-    sibling_discounted_enrollment_ids,
+    full_price_student,
+    is_sibling_discounted,
     sibling_policy,
 )
 from backend.v2.contexts.billing.domain.tuition_discount import (
@@ -236,21 +243,27 @@ class MongoMonthlyBillingGenerator:
     ) -> MonthlyGenerationSkippedDetail:
         """The run's skip detail for a ``monthly_skip_reason`` result."""
         reason, value = skip
-        e, sd, p = enrollment, student_doc, period
         if reason == "deferral":
             return self._skipped_detail_from_deferral(
-                enrollment=e, student_doc=sd, period=p, deferral=value
+                enrollment=enrollment, student_doc=student_doc, period=period, deferral=value
             )
         if reason == "paused":
             # Issue #651: a paused enrollment is never invoiced, deferral row or
             # not. A deferral explains the skip when present; otherwise the
             # status itself is the reason.
-            return self._paused_status_detail(enrollment=e, student_doc=sd, period=p)
+            return self._paused_status_detail(
+                enrollment=enrollment, student_doc=student_doc, period=period
+            )
         if reason == "pending_cancellation":
             return self._pending_cancellation_detail(
-                enrollment=e, student_doc=sd, period=p, pending_period=value
+                enrollment=enrollment,
+                student_doc=student_doc,
+                period=period,
+                pending_period=value,
             )
-        return self._legacy_skip_period_detail(enrollment=e, student_doc=sd, period=p)
+        return self._legacy_skip_period_detail(
+            enrollment=enrollment, student_doc=student_doc, period=period
+        )
 
     def _skipped_detail_from_deferral(
         self,
@@ -1822,14 +1835,14 @@ async def _parent_aliases(db: Any, parent_id: str) -> frozenset[str]:
     projection = {"user_id": 1, "firebase_uid": 1, "auth_uid": 1}
     doc = None
     for field_name in _USER_REFERENCE_FIELDS:
-        doc = await db["users"].find_one({field_name: parent_id}, projection)
+        doc = await db["users"].find_one({field_name: parent_id}, projection, sort=[("_id", 1)])
         if doc is not None:
             break
     if doc is None:
         by_id: list[Any] = [parent_id]
         if ObjectId.is_valid(parent_id):
             by_id.append(ObjectId(parent_id))
-        doc = await db["users"].find_one({"_id": {"$in": by_id}}, projection)
+        doc = await db["users"].find_one({"_id": {"$in": by_id}}, projection, sort=[("_id", 1)])
     values = [parent_id]
     if doc is not None:
         values += [doc.get(name) for name in (*_USER_REFERENCE_FIELDS, "_id")]
@@ -1846,21 +1859,23 @@ async def resolve_sibling_discount(
 ) -> TuitionDiscount | None:
     """The automatic sibling policy for this enrollment-month, or ``None`` (L9 C1).
 
-    Stable by construction, in this order:
+    Only this enrollment's row is ever written, the first time its month is
+    priced, and every later pricing (retries, orphan recovery, "Bill this
+    month") reuses it, even after the setting or the family changes.
 
-    1. A recorded decision is used as is, even if the setting or the family
-       changed since, so orphan recovery and retries price the month exactly
-       as first priced.
-    2. If the month is already billed (any non-void tuition invoice, the same
-       lookup the run's repair pass uses), no decision and no discount: an
-       invoice generated before the change is never repriced.
-    3. Otherwise, with the offer switched on, the WHOLE family is decided at
-       once from the family as it stands: one row per member not yet billed,
-       inserted together. A member that already has a row keeps it, so the
-       family's rows always come from one snapshot of the family and the
-       setting, and never leave it without a full-price child.
+    Without a row, the month is decided against the family's fixed points:
 
-    Switched off with no decision on record: ``None`` and nothing written.
+    1. Already billed under any non-void tuition invoice (the run's own
+       lookup): no row and no discount, so an invoice is never repriced.
+    2. A sibling's month is already billed at full price (a row that names
+       its own child as the full-price child, or an invoice with no row):
+       that child is the full-price child, so this one is discounted.
+    3. Otherwise the owner's rule picks the full-price child among the
+       members not yet billed, this one included.
+
+    So a month never ends with two full-price children because a setting
+    changed mid-run, nor with none while an unbilled member remains. Switched
+    off with no row on record: ``None`` and nothing written.
     """
     academy_id = current_academy_id()
     enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
@@ -1872,51 +1887,54 @@ async def resolve_sibling_discount(
         if await _existing_period_invoice_id(db, enrollment_id=enrollment_id, period=period):
             return None
         offer = await _sibling_offer(db, academy_id)
-        if offer is None or not offer.enabled or offer.percent_bps is None:
+        if offer is None:
             return None
-        # SiblingDiscount's validator guarantees both once enabled.
-        full_price_child, applies_to = offer.full_price_child, offer.applies_to
-        if full_price_child is None or applies_to is None:  # pragma: no cover
-            return None
-        parent_id, family = await _sibling_family(
+        full_price_child = cast("SiblingFullPriceChild", offer.full_price_child)
+        applies_to = cast("SiblingAppliesTo", offer.applies_to)
+        parent_id, family, relatives = await _sibling_family(
             db, enrollment=enrollment, period=period, today=now.date()
         )
-        discounted = sibling_discounted_enrollment_ids(
-            family, full_price_child=full_price_child, applies_to=applies_to
-        )
-        members = {row.enrollment_id: row.student_id for row in family}
-        members.setdefault(enrollment_id, student_id)
-        family_ids = sorted(row.enrollment_id for row in family)
-        rows = []
-        for member_id, member_student_id in sorted(members.items()):
-            if member_id != enrollment_id and await _existing_period_invoice_id(
+        billed: set[str] = set()
+        paid_full: set[str] = set()
+        for member_id, member_student in relatives:
+            if member_id == enrollment_id or not await _existing_period_invoice_id(
                 db, enrollment_id=member_id, period=period
             ):
                 continue
-            rows.append(
-                {
-                    "academy_id": academy_id,
-                    "enrollment_id": member_id,
-                    "period": period,
-                    "student_id": member_student_id,
-                    "parent_id": parent_id,
-                    "discounted": member_id in discounted,
-                    "percent_bps": offer.percent_bps if member_id in discounted else None,
-                    "full_price_child": full_price_child,
-                    "applies_to": applies_to,
-                    "family_enrollment_ids": family_ids,
-                    "decided_at": now,
-                }
-            )
+            billed.add(member_id)
+            row = await decisions.find_one({**key, "enrollment_id": member_id})
+            if row is None or (
+                not row.get("discounted") and row.get("full_price_student_id") == member_student
+            ):
+                paid_full.add(member_student)
+        own = next((row for row in family if row.enrollment_id == enrollment_id), None)
+        full_price = ""
+        if own is not None and paid_full:
+            full_price = own.student_id if own.student_id in paid_full else min(paid_full)
+        elif own is not None:
+            unbilled = [row for row in family if row.enrollment_id not in billed]
+            full_price = full_price_student(unbilled, full_price_child=full_price_child) or ""
+        discounted = own is not None and is_sibling_discounted(
+            family, own, full_price=full_price, applies_to=applies_to
+        )
+        decision = {
+            **key,
+            "student_id": student_id,
+            "parent_id": parent_id,
+            "discounted": discounted,
+            "percent_bps": offer.percent_bps if discounted else None,
+            "full_price_student_id": full_price,
+            "full_price_child": full_price_child,
+            "applies_to": applies_to,
+            "family_enrollment_ids": sorted(row.enrollment_id for row in family),
+            "decided_at": now,
+        }
         try:
-            await decisions.insert_many(rows, ordered=False)
-        except BulkWriteError as exc:
-            # Members another run decided first keep that row.
-            if any(err.get("code") != 11000 for err in exc.details.get("writeErrors", [])):
+            await decisions.insert_one(dict(decision))
+        except DuplicateKeyError:
+            decision = await decisions.find_one(key)
+            if decision is None:  # pragma: no cover - the unique key just refused us
                 raise
-        decision = await decisions.find_one(key)
-        if decision is None:  # pragma: no cover - our own row was just written
-            raise RuntimeError(f"sibling decision missing for {enrollment_id} {period}")
     if not decision.get("discounted"):
         return None
     return sibling_policy(
@@ -1939,35 +1957,50 @@ async def sibling_decision_percent_bps(db: Any, *, enrollment_id: str, period: s
 
 
 async def _sibling_offer(db: Any, academy_id: str) -> SiblingDiscount | None:
-    """The sibling block alone, so a bad value elsewhere in the settings document
-    cannot block the monthly run (the schedule read degrades the same way)."""
+    """The sibling block when switched on and complete, else ``None``.
+
+    Reads the block alone, so a bad value elsewhere in the settings document
+    cannot block the monthly run. A block switched on but unreadable or missing
+    a value (only a hand edit can store one; the API refuses it) is paged and
+    applies no discount.
+    """
     doc = await db["billing_settings"].find_one({"academy_id": academy_id}, {"sibling_discount": 1})
     try:
-        return SiblingDiscount.model_validate((doc or {}).get("sibling_discount") or {})
+        offer = SiblingDiscount.model_validate((doc or {}).get("sibling_discount") or {})
+        if not offer.enabled:
+            return None
+        if all(getattr(offer, name) is not None for name in SIBLING_REQUIRED_ON_ENABLE):
+            return offer
+        logging.getLogger(__name__).warning("sibling_discount_incomplete")
     except ValidationError:
         logging.getLogger(__name__).warning("sibling_discount_unreadable", exc_info=True)
-        # Generating without it would overcharge every sibling family, so page.
-        capture_message(
-            "Monthly generation could not read the sibling discount setting; "
-            "no sibling discount was applied and no decision recorded",
-            level="error",
-        )
-        return None
+    # Generating without it would overcharge every sibling family, so page.
+    capture_message(
+        "Monthly generation could not read the sibling discount setting; "
+        "no sibling discount was applied and no decision recorded",
+        level="error",
+    )
+    return None
 
 
 async def _sibling_family(
     db: Any, *, enrollment: Mapping[str, Any], period: str, today: date
-) -> tuple[str, list[FamilyEnrollment]]:
-    """This enrollment's family: the enrollments the run bills this period that
-    share its parent, under any of the parent's ids.
+) -> tuple[str, list[FamilyEnrollment], list[tuple[str, str]]]:
+    """``(parent_id, family, relatives)`` for this enrollment's parent, under
+    any of the parent's ids.
 
-    Same filters as the run: active, a monthly-invoiced billing type, not
-    skipped by ``monthly_skip_reason``, and a class fee for the period.
+    ``family`` is the enrollments the run bills this period, with the run's
+    filters: active, a monthly-invoiced billing type, not skipped by
+    ``monthly_skip_reason``, and a class fee for the period. ``relatives`` is
+    every enrollment of the same children whatever its status, as
+    ``(enrollment_id, student_id)``: a month already billed counts even if the
+    enrollment is paused or ended since.
 
-    shortcut: siblings are found through the students' parent fields plus this
-    enrollment's own student, so a sibling linked to the parent only by
-    ``enrollment.parent_id`` / ``parent_user_id`` is missed (neither is
-    indexed). Index and widen the lookup if such rows ever appear.
+    shortcut: children are found through the students' ``parent_id`` /
+    ``parent_user_id`` (both indexed, 0010 and 0237) plus this enrollment's own
+    student, so a child linked to the parent only by ``enrollment.parent_id``
+    or ``parent_user_id`` is missed (no index there). Index and widen the
+    lookup if such rows ever appear.
     """
     academy_id = current_academy_id()
     own_student_id = str(enrollment.get("student_id") or "")
@@ -1976,7 +2009,7 @@ async def _sibling_family(
     )
     parent_id = resolved_parent_id(enrollment, own_student)
     if not parent_id:
-        return "", []
+        return "", [], []
     aliases = await _parent_aliases(db, parent_id)
     students = {own_student_id: own_student}
     for field_name in _STUDENT_PARENT_FIELDS:
@@ -1987,16 +2020,16 @@ async def _sibling_family(
             students[str(doc.get("student_id") or "")] = doc
     academy_timezone = await _academy_timezone(db) or "UTC"
     family: list[FamilyEnrollment] = []
+    relatives: list[tuple[str, str]] = []
     cursor = db["enrollments"].find(
-        {
-            "academy_id": academy_id,
-            "student_id": {"$in": sorted(sid for sid in students if sid)},
-            "status": MONTHLY_INVOICED_ENROLLMENT_STATUS,
-        }
+        {"academy_id": academy_id, "student_id": {"$in": sorted(sid for sid in students if sid)}}
     )
     async for row in cursor:
         student_id = str(row.get("student_id") or "")
         if resolved_parent_id(row, students.get(student_id)) not in aliases:
+            continue
+        relatives.append((str(row.get("enrollment_id") or row.get("_id")), student_id))
+        if str(row.get("status") or "") != MONTHLY_INVOICED_ENROLLMENT_STATUS:
             continue
         if str(row.get("billing_type") or "standard").lower() not in MONTHLY_INVOICED_BILLING_TYPES:
             continue
@@ -2020,7 +2053,7 @@ async def _sibling_family(
                 ),
             )
         )
-    return parent_id, family
+    return parent_id, family, relatives
 
 
 def _policy_applies(policy: TuitionDiscount, billing_period: BillingPeriod) -> bool:
