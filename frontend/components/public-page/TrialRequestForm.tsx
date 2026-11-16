@@ -84,7 +84,7 @@ export function TrialRequestForm({
   }, [phase.kind]);
 
   // A6-5 / A6-10: preselect a class from ?class= or a "Try a class free" tap,
-  // and keep any utm_* tags from the landing URL (no cookies).
+  // and keep any utm_* tags and ?ref= referral code from the landing URL (no cookies).
   useEffect(() => {
     const known = new Set(classOptions.map((option) => option.value));
     const fromUrl = new URLSearchParams(window.location.search).get("class") ?? "";

@@ -146,6 +146,8 @@ export const queryKeys = {
     invoiceSchedule: () => ["admin", "billing", "invoice-schedule"] as const,
     billingRules: () => ["admin", "billing", "rules"] as const,
     familyOffers: () => ["admin", "billing", "family-offers"] as const,
+    referrals: () => ["admin", "billing", "referrals"] as const,
+    referralEmailPreview: () => ["admin", "billing", "referrals", "email-preview"] as const,
     payrollSettings: () => ["admin", "payroll-settings"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
     // Shared with slice B1's AI status card: both read the same key.
@@ -237,6 +239,7 @@ export const queryKeys = {
     messages: () => ["parent", "messages"] as const,
     calendar: () => ["parent", "calendar"] as const,
     profile: () => ["parent", "profile"] as const,
+    referral: () => ["parent", "referral"] as const,
     emailPreferences: () => ["parent", "email-preferences"] as const,
     aiVideoConsent: () => ["parent", "waivers", "ai-video-consent"] as const,
   },

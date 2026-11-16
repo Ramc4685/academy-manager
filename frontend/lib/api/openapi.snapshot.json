@@ -23918,6 +23918,13 @@
             "default": "",
             "title": "Phone",
             "type": "string"
+          },
+          "referral_code": {
+            "default": "",
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9_.-]*$",
+            "title": "Referral Code",
+            "type": "string"
           }
         },
         "title": "ParentProfileView",
@@ -24030,6 +24037,57 @@
           "offset"
         ],
         "title": "ParentProgressResponse",
+        "type": "object"
+      },
+      "ParentReferralResponse": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "referral_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referral Code"
+          },
+          "referred_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referred Credit Cents"
+          },
+          "referrer_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referrer Credit Cents"
+          },
+          "rewards_earned": {
+            "default": 0,
+            "title": "Rewards Earned",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "ParentReferralResponse",
         "type": "object"
       },
       "ParentScheduleEntryView": {
@@ -28356,6 +28414,61 @@
         "title": "RecordTestBody",
         "type": "object"
       },
+      "ReferralEmailPreviewResponse": {
+        "properties": {
+          "emails": {
+            "items": {
+              "$ref": "#/components/schemas/ReferralEmailView"
+            },
+            "title": "Emails",
+            "type": "array"
+          }
+        },
+        "required": [
+          "emails"
+        ],
+        "title": "ReferralEmailPreviewResponse",
+        "type": "object"
+      },
+      "ReferralEmailView": {
+        "properties": {
+          "html": {
+            "title": "Html",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "subject",
+          "html"
+        ],
+        "title": "ReferralEmailView",
+        "type": "object"
+      },
+      "ReferralListResponse": {
+        "properties": {
+          "referrals": {
+            "items": {
+              "$ref": "#/components/schemas/ReferralRowView"
+            },
+            "title": "Referrals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "referrals"
+        ],
+        "title": "ReferralListResponse",
+        "type": "object"
+      },
       "ReferralProgramRequest": {
         "additionalProperties": false,
         "description": "Partial: only the keys sent change. No bounds here on purpose; the use\ncase owns them so one path names the offending field in the 422.",
@@ -28526,6 +28639,137 @@
           "enabled"
         ],
         "title": "ReferralProgramView",
+        "type": "object"
+      },
+      "ReferralRowView": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "grant_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grant Due At"
+          },
+          "granted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Granted At"
+          },
+          "qualified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qualified At"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unknown_code",
+                  "self_referral",
+                  "existing_family",
+                  "yearly_cap_reached"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "referral_code": {
+            "title": "Referral Code",
+            "type": "string"
+          },
+          "referral_id": {
+            "title": "Referral Id",
+            "type": "string"
+          },
+          "referred_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referred Credit Cents"
+          },
+          "referred_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referred Name"
+          },
+          "referrer_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referrer Credit Cents"
+          },
+          "referrer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referrer Name"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "granted",
+              "ineligible"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "referral_id",
+          "referral_code",
+          "status",
+          "created_at"
+        ],
+        "title": "ReferralRowView",
         "type": "object"
       },
       "RefundFailureDto": {
@@ -37389,6 +37633,48 @@
         "summary": "List Reconciliation Runs",
         "tags": [
           "admin.billing_health"
+        ]
+      }
+    },
+    "/api/v2/admin/billing/referrals": {
+      "get": {
+        "operationId": "list_referrals_api_v2_admin_billing_referrals_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferralListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "The academy's referrals and their state",
+        "tags": [
+          "admin.referrals"
+        ]
+      }
+    },
+    "/api/v2/admin/billing/referrals/email-preview": {
+      "get": {
+        "operationId": "preview_referral_emails_api_v2_admin_billing_referrals_email_preview_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferralEmailPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Preview the referral emails (never sent)",
+        "tags": [
+          "admin.referrals"
         ]
       }
     },
@@ -53318,6 +53604,27 @@
         "summary": "Get Progress Summary",
         "tags": [
           "parent-progress"
+        ]
+      }
+    },
+    "/api/v2/parent/referral": {
+      "get": {
+        "operationId": "get_referral_api_v2_parent_referral_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentReferralResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "The current parent's referral code and rewards earned",
+        "tags": [
+          "parent.referral"
         ]
       }
     },

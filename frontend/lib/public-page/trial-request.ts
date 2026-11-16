@@ -77,9 +77,15 @@ export const HEARD_FROM_OPTIONS: { value: string; label: string }[] = [
   { value: "other", label: "Something else" },
 ];
 
-/** UTM tags read from the landing URL; the server keeps only short plain values. */
+/**
+ * UTM tags and a family's referral code (`?ref=`, L9 C2) read from the
+ * landing URL; the server keeps only short plain values.
+ */
 const UTM_KEYS = ["utm_source", "utm_medium", "utm_campaign"] as const;
-export type TrialUtm = Partial<Record<(typeof UTM_KEYS)[number], string>>;
+export type TrialUtm = Partial<
+  Record<(typeof UTM_KEYS)[number] | "referral_code", string>
+>;
+const REFERRAL_CODE = /^[A-Za-z0-9_.-]{1,80}$/;
 
 export function utmFromSearch(search: string): TrialUtm {
   const params = new URLSearchParams(search);
@@ -88,6 +94,8 @@ export function utmFromSearch(search: string): TrialUtm {
     const value = params.get(key)?.trim();
     if (value) out[key] = value.slice(0, 80);
   }
+  const ref = params.get("ref")?.trim();
+  if (ref && REFERRAL_CODE.test(ref)) out.referral_code = ref;
   return out;
 }
 

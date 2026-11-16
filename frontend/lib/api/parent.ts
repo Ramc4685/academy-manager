@@ -972,3 +972,10 @@ export function updateParentChild(
     body: JSON.stringify(payload),
   });
 }
+
+/** The parent's referral code and rewards (L9 C2); ``enabled: false`` while the academy has it off. */
+export type ParentReferral = components["schemas"]["ParentReferralResponse"];
+
+export function getParentReferral(): Promise<ParentReferral> {
+  return apiFetch<ParentReferral>("/parent/referral", { method: "GET" });
+}

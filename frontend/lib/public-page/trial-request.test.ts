@@ -97,7 +97,9 @@ describe("self-booking body (L9)", () => {
       slot_key: "t_abc",
       turnstile_token: "tok",
       heard_from: "friend",
-      utm: utmFromSearch("?utm_source=facebook&utm_campaign=fall&gclid=x&class=c_open"),
+      utm: utmFromSearch(
+        "?utm_source=facebook&utm_campaign=fall&gclid=x&class=c_open&ref=QZ7KX4MP",
+      ),
     });
     expect(body).toMatchObject({
       slot_key: "t_abc",
@@ -105,8 +107,11 @@ describe("self-booking body (L9)", () => {
       heard_from: "friend",
       utm_source: "facebook",
       utm_campaign: "fall",
+      referral_code: "QZ7KX4MP",
     });
     expect(body).not.toHaveProperty("gclid");
+    // A malformed code is dropped rather than rejected by the server.
+    expect(utmFromSearch("?ref=bad%20code!")).toEqual({});
   });
 
   it("never sends a Turnstile token without a slot", () => {

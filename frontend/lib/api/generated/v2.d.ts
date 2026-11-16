@@ -874,6 +874,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/billing/referrals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The academy's referrals and their state */
+        get: operations["list_referrals_api_v2_admin_billing_referrals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/billing/referrals/email-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview the referral emails (never sent) */
+        get: operations["preview_referral_emails_api_v2_admin_billing_referrals_email_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/billing/rules": {
         parameters: {
             query?: never;
@@ -6433,6 +6467,23 @@ export interface paths {
         };
         /** Get Progress Summary */
         get: operations["get_progress_summary_api_v2_parent_progress_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/parent/referral": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The current parent's referral code and rewards earned */
+        get: operations["get_referral_api_v2_parent_referral_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -16133,6 +16184,11 @@ export interface components {
              * @default
              */
             phone: string;
+            /**
+             * Referral Code
+             * @default
+             */
+            referral_code: string;
         };
         /** ParentProgressNoteView */
         ParentProgressNoteView: {
@@ -16168,6 +16224,22 @@ export interface components {
             offset: number;
             /** Total */
             total: number;
+        };
+        /** ParentReferralResponse */
+        ParentReferralResponse: {
+            /** Enabled */
+            enabled: boolean;
+            /** Referral Code */
+            referral_code?: string | null;
+            /** Referred Credit Cents */
+            referred_credit_cents?: number | null;
+            /** Referrer Credit Cents */
+            referrer_credit_cents?: number | null;
+            /**
+             * Rewards Earned
+             * @default 0
+             */
+            rewards_earned: number;
         };
         /** ParentScheduleEntryView */
         ParentScheduleEntryView: {
@@ -17715,6 +17787,25 @@ export interface components {
              */
             success_count: number;
         };
+        /** ReferralEmailPreviewResponse */
+        ReferralEmailPreviewResponse: {
+            /** Emails */
+            emails: components["schemas"]["ReferralEmailView"][];
+        };
+        /** ReferralEmailView */
+        ReferralEmailView: {
+            /** Html */
+            html: string;
+            /** Key */
+            key: string;
+            /** Subject */
+            subject: string;
+        };
+        /** ReferralListResponse */
+        ReferralListResponse: {
+            /** Referrals */
+            referrals: components["schemas"]["ReferralRowView"][];
+        };
         /**
          * ReferralProgramRequest
          * @description Partial: only the keys sent change. No bounds here on purpose; the use
@@ -17752,6 +17843,39 @@ export interface components {
             referrer_credit_cents?: number | null;
             /** Trigger */
             trigger?: ("first_paid_invoice" | "first_paid_monthly_invoice") | null;
+        };
+        /** ReferralRowView */
+        ReferralRowView: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Grant Due At */
+            grant_due_at?: string | null;
+            /** Granted At */
+            granted_at?: string | null;
+            /** Qualified At */
+            qualified_at?: string | null;
+            /** Reason */
+            reason?: ("unknown_code" | "self_referral" | "existing_family" | "yearly_cap_reached") | null;
+            /** Referral Code */
+            referral_code: string;
+            /** Referral Id */
+            referral_id: string;
+            /** Referred Credit Cents */
+            referred_credit_cents?: number | null;
+            /** Referred Name */
+            referred_name?: string | null;
+            /** Referrer Credit Cents */
+            referrer_credit_cents?: number | null;
+            /** Referrer Name */
+            referrer_name?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "granted" | "ineligible";
         };
         /** RefundFailureDto */
         RefundFailureDto: {
@@ -21500,6 +21624,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReconciliationRunsResponse"];
+                };
+            };
+        };
+    };
+    list_referrals_api_v2_admin_billing_referrals_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferralListResponse"];
+                };
+            };
+        };
+    };
+    preview_referral_emails_api_v2_admin_billing_referrals_email_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferralEmailPreviewResponse"];
                 };
             };
         };
@@ -32366,6 +32530,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_referral_api_v2_parent_referral_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParentReferralResponse"];
                 };
             };
         };
