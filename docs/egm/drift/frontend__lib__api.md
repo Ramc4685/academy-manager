@@ -10,4 +10,4 @@
 - [wording] README:8-10 calls `admin.ts` a "thin typed wrapper". `chargeAdminInvoiceAutopay` (`frontend/lib/api/admin.ts:2854-2891`) keeps client-side state: a module-level `unconfirmedCharges` map and a 10-minute `CHARGE_RETRY_WINDOW_MS` (`admin.ts:2857-2858`). It reuses `request_id` after unconfirmed outcomes (timeout, 5xx, 409 `charge_in_progress`) and clears it on other 4xx.
 - [wording] README:7 says `client.ts` has "in-flight dedup" unqualified. `client.ts:195` dedups only when `dedup` is true or the request is readable (`dedup ?? isReadable`).
 
-Re-checked 2026-11-16 against the coach-attendance change (fix/coach-attendance): no new drift; items above still hold.
+Re-checked 2026-11-16 against the coach-attendance change (fix/coach-attendance, incl. main merge): no new drift; items above still hold.

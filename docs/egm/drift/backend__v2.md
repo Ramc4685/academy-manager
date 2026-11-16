@@ -16,4 +16,4 @@
 - [wording] README:46 says each context has `{domain,application,infrastructure}`; `curriculum/` also has `content/` and some contexts nest subcontexts.
 - [wording] README:36-40 diagram shows interfaces -> application -> domain. The linter (`backend/pyproject.toml:128-142`) lets interfaces import application only, not domain directly, but transitive imports are allowed. README:42 says "six layer rules" while pyproject has Rules 1-7 plus 4b.
 
-Re-checked 2026-11-16 against the coach-attendance change (fix/coach-attendance, incl. review fix round): no new drift; items above still hold.
+Re-checked 2026-11-16 against the coach-attendance change (fix/coach-attendance, incl. review fix round and main merge): no new drift; items above still hold.
