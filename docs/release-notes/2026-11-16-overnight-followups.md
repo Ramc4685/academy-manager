@@ -1,6 +1,6 @@
 # overnight-followups
 
-PR: TBD
+PR: #1193
 
 ## What changed
 A capped autopay ladder's daily recheck (single and family charges) now asks Stripe for a succeeded or processing PaymentIntent on the invoice(s) before charging, and settles that one instead of charging twice once Stripe's 24h idempotency window has passed. It only settles an autopay PaymentIntent that names exactly those invoices, matches the amount due, was not refunded or disputed, and actually clears the balance; anything else parks the rung unpaid for a person. The family autopay idempotency key no longer carries the total (or the fee derived from it): a retry whose total changed reuses the key, Stripe refuses it, and the group parks as `stripe_unavailable` instead of charging a second time. Also: the outbox dispatcher's failure log obeys its throttle; coach and parent digest failures reach Sentry once; the `@idempotent` decorator claims its key atomically (a concurrent duplicate gets 409 `request_in_flight` instead of running twice, and the coach offline queue retries that answer instead of sending it to Needs review); test-attempt idempotency keys carry the academy and coach; the pathway placement audit row is written by the use case after the placement, with an id per placement, placer, reason and credit set, so a retry writes one row and another admin's re-placement writes its own; the admin lead follow-up card shows its load error instead of crashing on an empty response.
