@@ -2523,45 +2523,48 @@ class HandleWebhookEvent:
                     ),
                     created_by_event_id=event_id or None,
                 )
-            elif partial:
-                # Never applied to an invoice, so no attempt row can carry it. The
-                # returned part must stop being spendable unapplied money; the
-                # audit entry is the owner's trail (L8). The repo never lowers or
-                # doubles the total: cumulative charge refunds merge, keyed sources add once.
-                updated, _ = await ledger.apply_payment_return(
-                    payment.payment_id,
-                    amount_cents=amount_cents,
-                    source_key=source_key,
-                    updated_at=self._now(),
-                )
-                # Every pass: ``append`` ignores a duplicate deterministic audit_id,
-                # so a retry after a failed audit write still leaves the trail.
-                if self._billing_audit is not None:
-                    await self._billing_audit.append(
-                        BillingAuditEntry(
-                            # One row per keyed source, or per cumulative total.
-                            audit_id=(
-                                f"baud-payment-return:{pi_id}:{source_key}"
-                                if source_key
-                                else f"baud-payment-return:{pi_id}:{return_code}:{amount_cents}"
-                            ),
-                            academy_id=payment.academy_id,
-                            action="payment_return_unreconciled",
-                            actor_id="system",
-                            at=self._now(),
-                            payment_id=payment.payment_id,
-                            parent_id=payment.parent_id or None,
-                            reason=f"{label} {return_code}: {amount_cents} cents",
-                            before={"refunded_cents": payment.refunded_cents},
-                            after={"refunded_cents": updated.refunded_cents},
-                        )
+            elif partial and self._billing_audit is not None:
+                # Never applied to an invoice, so no attempt row can carry it; the
+                # audit entry is the owner's trail (L8). Written BEFORE the money
+                # moves: once the payment reads refunded, a replay stops early and
+                # could never write it. The deterministic id de-dupes replays.
+                await self._billing_audit.append(
+                    BillingAuditEntry(
+                        # One row per keyed source, or per cumulative total.
+                        audit_id=(
+                            f"baud-payment-return:{pi_id}:{source_key}"
+                            if source_key
+                            else f"baud-payment-return:{pi_id}:{return_code}:{amount_cents}"
+                        ),
+                        academy_id=payment.academy_id,
+                        action="payment_return_unreconciled",
+                        actor_id="system",
+                        at=self._now(),
+                        payment_id=payment.payment_id,
+                        parent_id=payment.parent_id or None,
+                        reason=f"{label} {return_code}: {amount_cents} cents",
+                        before={"refunded_cents": payment.refunded_cents},
+                        after={"returned_cents": amount_cents},
                     )
+                )
+            # Also before the money moves, for the same reason. A retry after a
+            # failed ledger write alerts again; Sentry groups the repeat.
             capture_message(
                 f"{'Partial payment' if partial else 'Payment'} return not reversed: "
                 f"pi={pi_id} {amount_cents} of {payment.amount_cents} cents ({return_code}); "
                 "reconcile by hand",
                 level="warning",
             )
+            if partial and not invoices:
+                # The returned part must stop being spendable unapplied money. The
+                # repo never lowers or doubles the total: cumulative charge refunds
+                # merge, keyed sources add once. Last, so it is the terminal step.
+                await ledger.apply_payment_return(
+                    payment.payment_id,
+                    amount_cents=amount_cents,
+                    source_key=source_key,
+                    updated_at=self._now(),
+                )
             return
 
         reopened_due = await self._academy_today(payment.academy_id) + timedelta(

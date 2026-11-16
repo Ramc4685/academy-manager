@@ -358,7 +358,7 @@ async def test_second_partial_return_raises_the_total_and_stale_events_never_low
         3_000,
     )
     audits = await real_db["billing_audit_log"].find({"payment_id": "pay-pi_two"}).to_list(10)
-    assert sorted(a["after"]["refunded_cents"] for a in audits) == [4_000, 7_000]
+    assert sorted(a["after"]["returned_cents"] for a in audits) == [4_000, 7_000]
 
 
 @pytest.mark.asyncio
@@ -459,7 +459,7 @@ async def test_refund_then_dispute_sum_and_neither_replay_double_counts(real_db,
         3_000,
     )
     audits = await real_db["billing_audit_log"].find({"payment_id": "pay-pi_mix"}).to_list(10)
-    assert sorted(a["after"]["refunded_cents"] for a in audits) == [4_000, 7_000]
+    assert sorted(a["after"]["returned_cents"] for a in audits) == [3_000, 4_000]
 
 
 @pytest.mark.asyncio
@@ -498,3 +498,81 @@ async def test_a_plain_refund_after_a_dispute_adds_on_top_and_never_lowers_it(
 
     after = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_dr"})
     assert (after["status"], after["refunded_cents"]) == ("partially_refunded", 5_000)
+
+
+class _AuditFailingOnce(_Audit):
+    """The audit write dies once, as if the worker crashed mid-return."""
+
+    def __init__(self, db) -> None:
+        super().__init__(db)
+        self.failed = False
+
+    async def append(self, entry) -> None:
+        if not self.failed and entry.audit_id.endswith("dispute:dp_60"):
+            self.failed = True
+            raise RuntimeError("audit write failed")
+        await super().append(entry)
+
+
+@pytest.mark.asyncio
+async def test_a_return_that_completes_the_refund_keeps_its_audit_and_alert_on_retry(
+    real_db, acad, monkeypatch
+) -> None:
+    """PR #1181 review: $40 refunded, then a $60 dispute takes the payment to fully
+    refunded. Once it reads refunded a replay stops early, so the audit row and
+    alert must land before the money moves, or a failed audit write loses them."""
+    from backend.v2.contexts.billing.application.use_cases import handle_webhook_event
+
+    alerts: list[str] = []
+    monkeypatch.setattr(
+        handle_webhook_event,
+        "capture_message",
+        lambda message, level="error", **_: alerts.append(message),
+    )
+    repo = MongoBillingLedgerRepository(real_db)
+    await repo.record_payment(_payment(acad, "pi_full"), idempotency_key="p:full")
+    audit = _AuditFailingOnce(real_db)
+    uc = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=FakeDedup(),
+        payments=FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=FakeOutbox(),
+        academy_id=acad,
+        billing_ledger=repo,
+        family_autopay=_Family(),
+        billing_audit=audit,
+        clock=lambda: NOW,
+    )
+
+    async def _return(amount: int, code: str, key: str | None) -> None:
+        payment = await repo.get_payment_by_stripe_payment_intent_id("pi_full")
+        assert payment is not None
+        await uc._reverse_returned_payment(
+            event_id="evt",
+            pi_id="pi_full",
+            payment=payment,
+            amount_cents=amount,
+            return_code=code,
+            source_key=key,
+        )
+
+    await _return(4_000, "R01", None)
+    with pytest.raises(RuntimeError):
+        await _return(6_000, "dispute:fraudulent", "dispute:dp_60")
+    mid = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_full"})
+    assert mid["refunded_cents"] == 4_000  # nothing moved before the trail was written
+    await _return(6_000, "dispute:fraudulent", "dispute:dp_60")
+    await _return(6_000, "dispute:fraudulent", "dispute:dp_60")  # later replay: a no-op
+
+    after = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_full"})
+    assert (after["status"], after["refunded_cents"], after["unapplied_amount_cents"]) == (
+        "refunded",
+        10_000,
+        0,
+    )
+    dispute_rows = await real_db["billing_audit_log"].count_documents(
+        {"audit_id": "baud-payment-return:pi_full:dispute:dp_60"}
+    )
+    assert dispute_rows == 1
+    assert len([a for a in alerts if "6000 of 10000" in a]) == 1
