@@ -15,6 +15,10 @@ vi.mock("@/components/admin/curriculum/program-editor", () => ({
   ProgramEditor: ({ programId }: { programId: string }) => <div>editor {programId}</div>,
 }));
 
+vi.mock("@/components/admin/settings/milestones-card", () => ({
+  MilestonesCard: () => <div>milestones-card</div>,
+}));
+
 import { CurriculumPanel } from "./curriculum-panel";
 
 describe("CurriculumPanel", () => {
@@ -25,6 +29,7 @@ describe("CurriculumPanel", () => {
   it("shows the program list without a program param", () => {
     const html = renderToStaticMarkup(<CurriculumPanel />);
     expect(html).toContain("program-list");
+    expect(html).toContain("milestones-card");
     expect(html).not.toContain("editor");
   });
 
@@ -33,5 +38,6 @@ describe("CurriculumPanel", () => {
     const html = renderToStaticMarkup(<CurriculumPanel />);
     expect(html).toContain("editor prog_1");
     expect(html).not.toContain("program-list");
+    expect(html).not.toContain("milestones-card");
   });
 });

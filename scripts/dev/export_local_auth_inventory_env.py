@@ -162,6 +162,17 @@ def build_inventory_env(
     cert = _first_doc(db, "skill_certificates", {"academy_id": academy_id}, sort=cert_sort)
     add("LOCAL_AUTH_CERT_ID", cert.get("cert_id") if cert else None)
     add("LOCAL_AUTH_CERT_STUDENT_ID", cert.get("student_id") if cert else None)
+    # /c/[token] only resolves a link a parent shared (issued, token set).
+    add(
+        "LOCAL_AUTH_CERT_SHARE_TOKEN",
+        _first_field(
+            db,
+            "skill_certificates",
+            {"academy_id": academy_id, "status": "issued", "share_token": {"$gt": ""}},
+            ("share_token",),
+            sort=cert_sort,
+        ),
+    )
     # The parent certificate page only renders for the signed-in parent's own
     # child, so it needs a certificate of the sample parent's child.
     parent_cert = (

@@ -111,11 +111,41 @@ class RecordTestAttempt:
 
     async def execute(self, cmd: RecordTestAttemptCommand) -> RecordTestAttemptResult:
         if self._idempotency_store is not None and cmd.mutation_id:
+            legacy = await self._replay_legacy_key(cmd)
+            if legacy is not None:
+                return legacy
             return await self._execute_idempotent(cmd)
         return await self._execute(cmd)
 
+    async def _replay_legacy_key(
+        self, cmd: RecordTestAttemptCommand
+    ) -> RecordTestAttemptResult | None:
+        """A result stored under the old unscoped key, if it is provably this coach's.
+
+        An offline mark recorded before the key gained the academy and coach and
+        retried after must replay, not record a second attempt (an N_TRIES skill
+        would count an extra try). The key alone is client-sent, so the stored
+        attempt must exist in this tenant for this student, skill and coach.
+        """
+        # shortcut: reads the pre-scoping key; delete 7 days after deploy, once the idempotency TTL has expired them all.
+        assert self._idempotency_store is not None
+        stored = await self._idempotency_store.get(f"record_test_attempt:{cmd.mutation_id}")
+        try:
+            result = RecordTestAttemptResult.model_validate(stored["value"]["data"])  # type: ignore[index]
+        except (KeyError, TypeError, ValueError):
+            return None
+        attempts = await self._test_attempts.list_for_student_skill(cmd.student_id, cmd.skill_id)
+        owned = any(
+            a.attempt_id == result.attempt_id and a.coach_id == cmd.coach_id for a in attempts
+        )
+        return result if owned else None
+
     @idempotent(
-        key_from=lambda self, cmd: f"record_test_attempt:{cmd.mutation_id}",
+        # mutation_id is client-sent, so the key carries the tenant and the
+        # (server-derived) coach: two coaches or academies never share a result.
+        key_from=lambda self, cmd: (
+            f"record_test_attempt:{_resolve_academy_id()}:{cmd.coach_id}:{cmd.mutation_id}"
+        ),
         result_type=RecordTestAttemptResult,
     )
     async def _execute_idempotent(self, cmd: RecordTestAttemptCommand) -> RecordTestAttemptResult:

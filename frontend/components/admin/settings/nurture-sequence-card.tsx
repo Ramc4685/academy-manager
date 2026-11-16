@@ -34,6 +34,12 @@ export function NurtureSequenceCard() {
     queryKey: queryKeys.admin.nurtureSequence(),
     queryFn: getAdminNurtureSequence,
   });
+  // A body without the arrays (a stubbed or half-deployed `{}`) is unreadable,
+  // not an editor: rendering it crashed the settings page ("reading 'map'").
+  const view =
+    query.data && Array.isArray(query.data.steps) && Array.isArray(query.data.merge_fields)
+      ? query.data
+      : null;
   return (
     <Card p={24} className="max-w-3xl" data-testid="admin-settings-nurture">
       <Overline>Lead follow-up emails</Overline>
@@ -46,15 +52,15 @@ export function NurtureSequenceCard() {
       </p>
       {query.isLoading ? (
         <div className="mt-5 h-24 animate-pulse rounded-md bg-rally-paper" />
-      ) : query.isError ? (
+      ) : query.isError || (query.isSuccess && !view) ? (
         <p role="alert" className="mt-4 text-sm font-medium text-red-700">
           Could not load the follow-up emails.
         </p>
-      ) : query.data ? (
+      ) : view ? (
         // Keyed on the saved version so a save (or refetch) resets the draft.
         <NurtureEditor
-          key={JSON.stringify(query.data)}
-          saved={query.data}
+          key={JSON.stringify(view)}
+          saved={view}
           savedAt={savedAt}
           onSaved={() => setSavedAt(savedAtNow())}
         />

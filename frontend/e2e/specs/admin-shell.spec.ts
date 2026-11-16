@@ -12,6 +12,7 @@ import {
   stubCoachMessages,
   stubFamilyOffers,
   stubNurtureSequence,
+  stubProgressSettings,
   stubParentMessages,
 } from "../fixtures/saas-stubs";
 import { stubFamilyIndex } from "../fixtures/family-index";
@@ -400,6 +401,7 @@ async function stubAdminBff(
   });
   await stubNurtureSequence(page);
   await stubFamilyOffers(page);
+  await stubProgressSettings(page);
   await page.route("**/api/v2/admin/sessions*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { sessions: [] });

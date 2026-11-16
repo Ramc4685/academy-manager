@@ -149,6 +149,7 @@ export const queryKeys = {
     referrals: () => ["admin", "billing", "referrals"] as const,
     referralEmailPreview: () => ["admin", "billing", "referrals", "email-preview"] as const,
     payrollSettings: () => ["admin", "payroll-settings"] as const,
+    progressSettings: () => ["admin", "progress-settings"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
     // Shared with slice B1's AI status card: both read the same key.
     aiImportSharing: () => ["admin", "ai", "import-sharing"] as const,

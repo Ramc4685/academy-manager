@@ -21576,6 +21576,58 @@
         "title": "MembershipSummaryView",
         "type": "object"
       },
+      "MilestoneInput": {
+        "properties": {
+          "count": {
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "skills_passed",
+              "levels_completed"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "count"
+        ],
+        "title": "MilestoneInput",
+        "type": "object"
+      },
+      "MilestoneView": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "skills_passed",
+              "levels_completed"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "since": {
+            "format": "date-time",
+            "title": "Since",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "count",
+          "since"
+        ],
+        "title": "MilestoneView",
+        "type": "object"
+      },
       "ModifyUserRoleRequest": {
         "properties": {
           "reason": {
@@ -26912,6 +26964,36 @@
         "title": "ProgressNoteView",
         "type": "object"
       },
+      "ProgressSettingsView": {
+        "properties": {
+          "milestones": {
+            "items": {
+              "$ref": "#/components/schemas/MilestoneView"
+            },
+            "title": "Milestones",
+            "type": "array"
+          },
+          "milestones_enabled": {
+            "title": "Milestones Enabled",
+            "type": "boolean"
+          },
+          "share_name": {
+            "enum": [
+              "first_name",
+              "initial"
+            ],
+            "title": "Share Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "milestones_enabled",
+          "milestones",
+          "share_name"
+        ],
+        "title": "ProgressSettingsView",
+        "type": "object"
+      },
       "PublicAcademyDto": {
         "properties": {
           "brand_color": {
@@ -27164,6 +27246,62 @@
           "brand_on_color"
         ],
         "title": "PublicBrandDto",
+        "type": "object"
+      },
+      "PublicCertificateDto": {
+        "description": "A certificate a parent chose to share (L5B, ``/c/<token>``).\n\nThe minimum only: the child's first name or initial (the academy's\nchoice), the level as it was when issued, the certificate number and\nissue date, and the academy's branding. No surname, no parent, no email,\nno ids, no skills list and no program.",
+        "properties": {
+          "academy": {
+            "$ref": "#/components/schemas/PublicBrandDto"
+          },
+          "cert_number": {
+            "title": "Cert Number",
+            "type": "string"
+          },
+          "issued_on": {
+            "format": "date",
+            "title": "Issued On",
+            "type": "string"
+          },
+          "level_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Color"
+          },
+          "level_name": {
+            "title": "Level Name",
+            "type": "string"
+          },
+          "level_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Number"
+          },
+          "recipient_name": {
+            "title": "Recipient Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "academy",
+          "recipient_name",
+          "level_name",
+          "cert_number",
+          "issued_on"
+        ],
+        "title": "PublicCertificateDto",
         "type": "object"
       },
       "PublicClassDto": {
@@ -34458,6 +34596,36 @@
         "title": "UpdateProgramRequest",
         "type": "object"
       },
+      "UpdateProgressSettingsBody": {
+        "properties": {
+          "milestones": {
+            "items": {
+              "$ref": "#/components/schemas/MilestoneInput"
+            },
+            "maxItems": 20,
+            "title": "Milestones",
+            "type": "array"
+          },
+          "milestones_enabled": {
+            "title": "Milestones Enabled",
+            "type": "boolean"
+          },
+          "share_name": {
+            "enum": [
+              "first_name",
+              "initial"
+            ],
+            "title": "Share Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "milestones_enabled",
+          "share_name"
+        ],
+        "title": "UpdateProgressSettingsBody",
+        "type": "object"
+      },
       "UpdatePublicPageSettingsRequest": {
         "additionalProperties": false,
         "description": "Partial: only the keys sent are changed. ``null`` (or blank) clears\nthe privacy notice link. Switches must be real booleans.",
@@ -38826,6 +38994,66 @@
         "summary": "Draft Skill Ladder",
         "tags": [
           "admin-ai-curriculum"
+        ]
+      }
+    },
+    "/api/v2/admin/curriculum/progress-settings": {
+      "get": {
+        "operationId": "get_progress_settings_api_v2_admin_curriculum_progress_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressSettingsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Progress Settings",
+        "tags": [
+          "admin-pathway"
+        ]
+      },
+      "put": {
+        "operationId": "update_progress_settings_api_v2_admin_curriculum_progress_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProgressSettingsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressSettingsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Progress Settings",
+        "tags": [
+          "admin-pathway"
         ]
       }
     },
@@ -53831,6 +54059,108 @@
         ]
       }
     },
+    "/api/v2/parent/students/{student_id}/certificates/{cert_id}/share": {
+      "delete": {
+        "description": "Turn the public link off; the old link stops working at once (idempotent).",
+        "operationId": "unshare_certificate_api_v2_parent_students__student_id__certificates__cert_id__share_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "cert_id",
+            "required": true,
+            "schema": {
+              "title": "Cert Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Unshare Certificate Api V2 Parent Students  Student Id  Certificates  Cert Id  Share Delete"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unshare Certificate",
+        "tags": [
+          "parent-progress"
+        ]
+      },
+      "post": {
+        "description": "Turn on a public link for the child's certificate (idempotent).",
+        "operationId": "share_certificate_api_v2_parent_students__student_id__certificates__cert_id__share_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "cert_id",
+            "required": true,
+            "schema": {
+              "title": "Cert Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Share Certificate Api V2 Parent Students  Student Id  Certificates  Cert Id  Share Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Share Certificate",
+        "tags": [
+          "parent-progress"
+        ]
+      }
+    },
     "/api/v2/parent/students/{student_id}/practice-resources": {
       "get": {
         "operationId": "get_practice_resources_api_v2_parent_students__student_id__practice_resources_get",
@@ -56486,6 +56816,51 @@
           }
         },
         "summary": "Get Public Academy Page",
+        "tags": [
+          "public"
+        ]
+      }
+    },
+    "/api/v2/public/certificates/{token}": {
+      "get": {
+        "operationId": "get_shared_certificate_api_v2_public_certificates__token__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicCertificateDto"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No shared certificate for this link on this host."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Shared Certificate",
         "tags": [
           "public"
         ]

@@ -4,7 +4,15 @@ import { describe, expect, it } from "vitest";
 
 import type { ParentProgressJourney } from "@/lib/api/parent";
 
-import { LevelRing, LevelStrip, RecentWins, SkillChecklist, formatWinDate } from "./journey";
+import {
+  LevelRing,
+  LevelStrip,
+  MilestoneList,
+  RecentWins,
+  SkillChecklist,
+  formatWinDate,
+  milestoneLabel,
+} from "./journey";
 
 type Current = NonNullable<ParentProgressJourney["current_level"]>;
 
@@ -174,5 +182,27 @@ describe("formatWinDate", () => {
   it("uses the weekday within the last week, the date before that", () => {
     expect(formatWinDate("2026-10-29T18:00:00Z", now)).toMatch(/^[A-Z][a-z]{2}$/);
     expect(formatWinDate("2026-10-17T18:00:00Z", now)).toMatch(/Oct/);
+  });
+});
+
+describe("MilestoneList (L5B)", () => {
+  it("renders nothing when the academy has milestones off", () => {
+    expect(renderToStaticMarkup(createElement(MilestoneList, { milestones: [], firstName: "Maya" }))).toBe("");
+  });
+
+  it("labels each milestone, newest first", () => {
+    expect(milestoneLabel({ kind: "skills_passed", count: 1 })).toBe("1 skill mastered");
+    expect(milestoneLabel({ kind: "levels_completed", count: 2 })).toBe("2 levels completed");
+    const html = renderToStaticMarkup(
+      createElement(MilestoneList, {
+        firstName: "Maya",
+        milestones: [
+          { kind: "skills_passed", count: 10, reached_at: "2026-10-01T18:00:00Z" },
+          { kind: "levels_completed", count: 1, reached_at: "2026-11-01T18:00:00Z" },
+        ],
+      }),
+    );
+    expect(html.indexOf("1 level completed")).toBeLessThan(html.indexOf("10 skills mastered"));
+    expect(html).toContain("Maya: 10 skills mastered");
   });
 });

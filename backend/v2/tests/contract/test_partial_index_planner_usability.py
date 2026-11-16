@@ -113,6 +113,12 @@ HOT_LOOKUPS: list[tuple[str, dict[str, Any], str]] = [
         {"academy_id": "acad_0", "share_token": "tok"},
         "certs_share_token_per_academy_uq",
     ),
+    # L5B milestones (0241): the recorder's insert-once upsert key.
+    (
+        "student_milestones",
+        {"academy_id": "acad_0", "student_id": "stu", "milestone_key": "skills_passed:10"},
+        "student_milestones_one_per_key_uq",
+    ),
 ]
 
 
