@@ -22,6 +22,7 @@ from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopa
 )
 from backend.v2.contexts.billing.domain.billing_settings import SiblingDiscount
 from backend.v2.contexts.billing.domain.tuition_discount import TuitionDiscount
+from backend.v2.contexts.billing.infrastructure import mongo_monthly_billing as monthly_billing
 from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
     MongoBillingLedgerRepository,
 )
@@ -35,6 +36,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_enrollment_billing_target 
     MongoEnrollmentBillingTargetReader,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
+    SIBLING_DECISIONS_COLLECTION,
     MongoMonthlyBillingGenerator,
     resolve_sibling_discount,
     sibling_decision_percent_bps,
@@ -531,19 +533,25 @@ async def test_a_setting_change_between_members_keeps_one_full_price_child(
     assert await _discounts(real_db, acad, "enr-a", "enr-b") == {"enr-a": 0, "enr-b": 800}
 
 
-async def _cal(db: Any, acad: str, *, status: str = "active") -> None:
+async def _cal(db: Any, acad: str, *, status: str = "active", **enroll: Any) -> None:
     await _session(db, acad, "sess-mini", 5_000)
     await _child(db, acad, "stu-c")
-    await _enroll(db, acad, "enr-c", "stu-c", "sess-mini", status=status)
+    await _enroll(db, acad, "enr-c", "stu-c", "sess-mini", status=status, **enroll)
 
 
+@pytest.mark.parametrize(
+    "cal_enroll",
+    [{}, {"started": datetime(2025, 1, 1, 15, 0, tzinfo=UTC)}],
+    ids=["ben_billed_first", "cal_billed_first"],
+)
 async def test_the_full_price_child_pausing_after_a_sibling_was_priced_keeps_one(
-    real_db, acad
+    real_db, acad, cal_enroll: dict[str, Any]
 ) -> None:
-    """ "Bill this month" prices Ben ahead of the run, then Ava (the full-price
-    child) pauses: Cal must become the full-price child, not a second discount."""
+    """ "Bill this month" prices Ben ahead of the run (a row, no invoice), then
+    Ava (the full-price child) pauses: Cal must become the full-price child,
+    not a second discount, whichever of Ben and Cal the run bills first."""
     await _family(real_db, acad)
-    await _cal(real_db, acad)
+    await _cal(real_db, acad, **cal_enroll)
     await _offer(real_db)
     target = await MongoEnrollmentBillingTargetReader(real_db, clock=_clock).load("enr-b", PERIOD)
     assert target is not None and target.monthly_discount_cents == 800
@@ -556,6 +564,20 @@ async def test_the_full_price_child_pausing_after_a_sibling_was_priced_keeps_one
 
     assert await _discounts(real_db, acad, "enr-b", "enr-c") == {"enr-b": 800, "enr-c": 0}
     assert await _rows(real_db) == {"enr-b": True, "enr-c": False}
+
+
+async def test_a_row_only_full_price_child_still_binds_after_the_rule_flips(real_db, acad) -> None:
+    """Ava is priced full ahead of the run (a row, no invoice), then the rule
+    flips to lowest tuition: Ben must not become a second full-price child."""
+    await _family(real_db, acad)
+    await _offer(real_db)
+    await MongoEnrollmentBillingTargetReader(real_db, clock=_clock).load("enr-a", PERIOD)
+    assert await _rows(real_db) == {"enr-a": False}
+
+    await _offer(real_db, full_price_child="lowest_tuition")
+    await _repo(real_db).generate_monthly_payments(PERIOD)
+
+    assert await _discounts(real_db, acad, "enr-a", "enr-b") == {"enr-a": 0, "enr-b": 800}
 
 
 async def test_a_child_resuming_after_the_full_price_child_paid_is_discounted(
@@ -638,19 +660,53 @@ async def test_an_already_billed_sibling_gets_no_row_but_still_counts(real_db, a
 # --- a bad stored block, parent aliases (review P2c, P2d) ------------------------
 
 
-async def test_a_stored_block_on_without_its_values_applies_nothing_and_finishes(
-    real_db, acad
+_FULL_BLOCK = {"full_price_child": "highest_tuition", "applies_to": "all_classes"}
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        {"enabled": True, "percent_bps": 1_000},
+        {"enabled": True, "percent_bps": 20_000, **_FULL_BLOCK},
+        {"enabled": True, "percent_bps": 0, **_FULL_BLOCK},
+    ],
+    ids=["missing_values", "percent_over_100", "percent_zero"],
+)
+async def test_a_hand_edited_block_applies_nothing_pages_and_finishes(
+    real_db, acad, monkeypatch: pytest.MonkeyPatch, block: dict[str, Any]
 ) -> None:
+    pages: list[str] = []
+    monkeypatch.setattr(monthly_billing, "capture_message", lambda msg, **_: pages.append(msg))
     await _family(real_db, acad)
-    await real_db["billing_settings"].insert_one(
-        {"academy_id": acad, "sibling_discount": {"enabled": True, "percent_bps": 1_000}}
-    )
+    await real_db["billing_settings"].insert_one({"academy_id": acad, "sibling_discount": block})
 
     result = await _repo(real_db).generate_monthly_payments(PERIOD)
 
     assert result.created == 2
     assert await _discounts(real_db, acad, "enr-a", "enr-b") == {"enr-a": 0, "enr-b": 0}
     assert await _rows(real_db) == {}
+    assert pages
+
+
+async def test_a_frozen_row_with_an_invalid_percent_does_not_block_the_run(
+    real_db, acad, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hand-edited decision row prices its month undiscounted and pages; the
+    rest of the run (and the repaired setting) still bill."""
+    pages: list[str] = []
+    monkeypatch.setattr(monthly_billing, "capture_message", lambda msg, **_: pages.append(msg))
+    await _family(real_db, acad)
+    await _offer(real_db)
+    await MongoEnrollmentBillingTargetReader(real_db, clock=_clock).load("enr-b", PERIOD)
+    await real_db[SIBLING_DECISIONS_COLLECTION].update_one(
+        {"enrollment_id": "enr-b"}, {"$set": {"percent_bps": 20_000}}
+    )
+
+    result = await _repo(real_db).generate_monthly_payments(PERIOD)
+
+    assert result.created == 2
+    assert await _discounts(real_db, acad, "enr-a", "enr-b") == {"enr-a": 0, "enr-b": 0}
+    assert pages
 
 
 async def test_siblings_stored_under_different_aliases_of_one_parent_count(real_db, acad) -> None:

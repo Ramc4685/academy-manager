@@ -6,7 +6,8 @@ from datetime import UTC, datetime
 
 from backend.v2.contexts.billing.domain.sibling_discount import (
     FamilyEnrollment,
-    sibling_discounted_enrollment_ids,
+    full_price_student,
+    is_sibling_discounted,
 )
 
 
@@ -17,9 +18,15 @@ def _row(eid: str, sid: str, fee: int, start: datetime | None = None) -> FamilyE
 
 
 def _pick(family: list[FamilyEnrollment], full: str, applies: str = "all_classes") -> set[str]:
-    return set(
-        sibling_discounted_enrollment_ids(family, full_price_child=full, applies_to=applies)  # type: ignore[arg-type]
-    )
+    """Every discounted enrollment when the whole family is priced together."""
+    full_price = full_price_student(family, full_price_child=full)  # type: ignore[arg-type]
+    if full_price is None:
+        return set()
+    return {
+        row.enrollment_id
+        for row in family
+        if is_sibling_discounted(family, row, full_price=full_price, applies_to=applies)  # type: ignore[arg-type]
+    }
 
 
 def test_equal_tuition_ties_go_to_the_lowest_student_id() -> None:
@@ -53,5 +60,6 @@ def test_one_class_per_child_takes_the_highest_fee_then_the_lowest_enrollment_id
 
 
 def test_fewer_than_two_children_gets_nothing() -> None:
+    assert full_price_student([], full_price_child="highest_tuition") is None
     assert _pick([], "highest_tuition") == set()
     assert _pick([_row("a1", "stu-a", 1), _row("a2", "stu-a", 2)], "lowest_tuition") == set()

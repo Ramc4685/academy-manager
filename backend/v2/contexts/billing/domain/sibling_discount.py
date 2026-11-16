@@ -93,25 +93,6 @@ def is_sibling_discounted(
     return pick.enrollment_id == enrollment.enrollment_id
 
 
-def sibling_discounted_enrollment_ids(
-    family: Sequence[FamilyEnrollment],
-    *,
-    full_price_child: SiblingFullPriceChild,
-    applies_to: SiblingAppliesTo,
-) -> frozenset[str]:
-    """Every discounted enrollment when the whole family is priced together."""
-    if len({row.student_id for row in family}) < 2:
-        return frozenset()
-    full_price = full_price_student(family, full_price_child=full_price_child)
-    if full_price is None:  # pragma: no cover - two children were just counted
-        return frozenset()
-    return frozenset(
-        row.enrollment_id
-        for row in family
-        if is_sibling_discounted(family, row, full_price=full_price, applies_to=applies_to)
-    )
-
-
 def sibling_policy(
     *, enrollment_id: str, student_id: str, period: str, percent_bps: int, period_start: date
 ) -> TuitionDiscount:

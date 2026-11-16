@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, time, timedelta
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeGuard
 from zoneinfo import ZoneInfo
 
 from bson import ObjectId
@@ -23,11 +23,11 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
     GenerateMonthlyPaymentsResult,
     MonthlyGenerationSkippedDetail,
 )
+from backend.v2.contexts.billing.application.use_cases.family_offers import SIBLING_BOUNDS
 from backend.v2.contexts.billing.application.use_cases.invoice_numbering import (
     mint_invoice_number,
 )
 from backend.v2.contexts.billing.domain.billing_settings import (
-    SIBLING_REQUIRED_ON_ENABLE,
     BillingSettings,
     SiblingAppliesTo,
     SiblingDiscount,
@@ -1867,15 +1867,17 @@ async def resolve_sibling_discount(
 
     1. Already billed under any non-void tuition invoice (the run's own
        lookup): no row and no discount, so an invoice is never repriced.
-    2. A sibling's month is already billed at full price (a row that names
-       its own child as the full-price child, or an invoice with no row):
-       that child is the full-price child, so this one is discounted.
+    2. A sibling is already decided at full price: billed with no row, or a
+       row naming its own child as the full-price child that is billed or
+       still in the family (it will reuse that row). That child is the
+       full-price child, so this one is discounted.
     3. Otherwise the owner's rule picks the full-price child among the
-       members not yet billed, this one included.
+       undecided members, this one included.
 
-    So a month never ends with two full-price children because a setting
-    changed mid-run, nor with none while an unbilled member remains. Switched
-    off with no row on record: ``None`` and nothing written.
+    So a month keeps exactly one full-price child whatever the run order or a
+    mid-run setting change, except when a full-price child with a row but no
+    invoice leaves the family after a sibling was decided against it.
+    Switched off with no row on record: ``None`` and nothing written.
     """
     academy_id = current_academy_id()
     enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
@@ -1889,20 +1891,23 @@ async def resolve_sibling_discount(
         offer = await _sibling_offer(db, academy_id)
         if offer is None:
             return None
-        full_price_child = cast("SiblingFullPriceChild", offer.full_price_child)
-        applies_to = cast("SiblingAppliesTo", offer.applies_to)
+        percent_bps, full_price_child, applies_to = offer
         parent_id, family, relatives = await _sibling_family(
             db, enrollment=enrollment, period=period, today=now.date()
         )
-        billed: set[str] = set()
+        in_family = {row.enrollment_id for row in family}
+        decided: set[str] = set()
         paid_full: set[str] = set()
         for member_id, member_student in relatives:
-            if member_id == enrollment_id or not await _existing_period_invoice_id(
-                db, enrollment_id=member_id, period=period
-            ):
+            if member_id == enrollment_id:
                 continue
-            billed.add(member_id)
             row = await decisions.find_one({**key, "enrollment_id": member_id})
+            invoiced = await _existing_period_invoice_id(db, enrollment_id=member_id, period=period)
+            # A row with no invoice still binds while its enrollment stays in the
+            # family: it will reuse that row when billed. Once it leaves, ignore it.
+            if not invoiced and (row is None or member_id not in in_family):
+                continue
+            decided.add(member_id)
             if row is None or (
                 not row.get("discounted") and row.get("full_price_student_id") == member_student
             ):
@@ -1912,8 +1917,8 @@ async def resolve_sibling_discount(
         if own is not None and paid_full:
             full_price = own.student_id if own.student_id in paid_full else min(paid_full)
         elif own is not None:
-            unbilled = [row for row in family if row.enrollment_id not in billed]
-            full_price = full_price_student(unbilled, full_price_child=full_price_child) or ""
+            undecided = [row for row in family if row.enrollment_id not in decided]
+            full_price = full_price_student(undecided, full_price_child=full_price_child) or ""
         discounted = own is not None and is_sibling_discounted(
             family, own, full_price=full_price, applies_to=applies_to
         )
@@ -1922,7 +1927,7 @@ async def resolve_sibling_discount(
             "student_id": student_id,
             "parent_id": parent_id,
             "discounted": discounted,
-            "percent_bps": offer.percent_bps if discounted else None,
+            "percent_bps": percent_bps if discounted else None,
             "full_price_student_id": full_price,
             "full_price_child": full_price_child,
             "applies_to": applies_to,
@@ -1935,13 +1940,14 @@ async def resolve_sibling_discount(
             decision = await decisions.find_one(key)
             if decision is None:  # pragma: no cover - the unique key just refused us
                 raise
-    if not decision.get("discounted"):
+    frozen_bps = _frozen_percent_bps(decision)
+    if frozen_bps is None:
         return None
     return sibling_policy(
         enrollment_id=enrollment_id,
         student_id=student_id,
         period=period,
-        percent_bps=int(decision["percent_bps"]),
+        percent_bps=frozen_bps,
         period_start=period_start,
     )
 
@@ -1951,26 +1957,58 @@ async def sibling_decision_percent_bps(db: Any, *, enrollment_id: str, period: s
     decision = await db[SIBLING_DECISIONS_COLLECTION].find_one(
         {"academy_id": current_academy_id(), "enrollment_id": enrollment_id, "period": period}
     )
-    if decision is None or not decision.get("discounted"):
+    return None if decision is None else _frozen_percent_bps(decision)
+
+
+def _valid_percent_bps(value: Any) -> TypeGuard[int]:
+    low, high = SIBLING_BOUNDS["percent_bps"]
+    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
+
+
+def _frozen_percent_bps(decision: Mapping[str, Any]) -> int | None:
+    """A discounted row's percentage, or ``None``. A hand-edited percentage out
+    of range is paged and prices the month undiscounted rather than failing it."""
+    if not decision.get("discounted"):
         return None
-    return int(decision["percent_bps"])
+    value = decision.get("percent_bps")
+    if _valid_percent_bps(value):
+        return value
+    logging.getLogger(__name__).warning("sibling_decision_invalid_percent")
+    capture_message(
+        "A sibling discount decision has an invalid percentage; "
+        "that month was priced without the sibling discount",
+        level="error",
+    )
+    return None
 
 
-async def _sibling_offer(db: Any, academy_id: str) -> SiblingDiscount | None:
-    """The sibling block when switched on and complete, else ``None``.
+async def _sibling_offer(
+    db: Any, academy_id: str
+) -> tuple[int, SiblingFullPriceChild, SiblingAppliesTo] | None:
+    """``(percent_bps, full_price_child, applies_to)`` when the sibling block is
+    switched on and valid, else ``None``.
 
     Reads the block alone, so a bad value elsewhere in the settings document
-    cannot block the monthly run. A block switched on but unreadable or missing
-    a value (only a hand edit can store one; the API refuses it) is paged and
-    applies no discount.
+    cannot block the monthly run. A block switched on but unreadable, missing a
+    value or with a percentage out of range (only a hand edit can store one;
+    the API refuses it) is paged and applies no discount.
     """
     doc = await db["billing_settings"].find_one({"academy_id": academy_id}, {"sibling_discount": 1})
     try:
         offer = SiblingDiscount.model_validate((doc or {}).get("sibling_discount") or {})
         if not offer.enabled:
             return None
-        if all(getattr(offer, name) is not None for name in SIBLING_REQUIRED_ON_ENABLE):
-            return offer
+        percent_bps, full_price_child, applies_to = (
+            offer.percent_bps,
+            offer.full_price_child,
+            offer.applies_to,
+        )
+        if (
+            _valid_percent_bps(percent_bps)
+            and full_price_child is not None
+            and applies_to is not None
+        ):
+            return percent_bps, full_price_child, applies_to
         logging.getLogger(__name__).warning("sibling_discount_incomplete")
     except ValidationError:
         logging.getLogger(__name__).warning("sibling_discount_unreadable", exc_info=True)
