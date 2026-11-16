@@ -2334,6 +2334,21 @@ export function updateBillingRules(
   });
 }
 
+/** Settings -> Billing rules -> Family offers (L9 C1). The PUT is owner only. */
+export type FamilyOffersView = components["schemas"]["FamilyOffersResponse"];
+export type UpdateFamilyOffersPayload = components["schemas"]["UpdateFamilyOffersRequest"];
+
+export function getFamilyOffers(): Promise<FamilyOffersView> {
+  return apiFetch<FamilyOffersView>("/admin/billing/family-offers", { method: "GET" });
+}
+
+export function updateFamilyOffers(payload: UpdateFamilyOffersPayload): Promise<FamilyOffersView> {
+  return apiFetch<FamilyOffersView>("/admin/billing/family-offers", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 /**
  * The CourtMastr processing markup this academy pays on Stripe-collected
  * payments, with the agreement text and its acceptance (Phase 2 A1).

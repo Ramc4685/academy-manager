@@ -1684,7 +1684,8 @@
           "Save <changed billing rules>",
           "Connect Stripe",
           "New session type",
-          "Archive"
+          "Archive",
+          "Save family offers"
         ],
         "inputs": [
           "Academy name",
@@ -1699,7 +1700,12 @@
           "Session type name",
           "Session type price",
           "Billing period",
-          "Overage rate"
+          "Overage rate",
+          "Sibling discount on/off",
+          "Sibling discount percent",
+          "Who pays full price",
+          "Sibling discount applies to",
+          "Referral credits, hold days, yearly cap, expiry and trigger"
         ],
         "modals": [
           "Stripe gateway",
@@ -1721,7 +1727,8 @@
         "Stripe connect unavailable",
         "Archiving a session type referenced by active billing enrollments",
         "Partial billing-rules save: an early write lands and a later one fails",
-        "Non-owner admin reaching the owner-only billing rules panel, including the legacy ?panel=fees deep link"
+        "Non-owner admin reaching the owner-only billing rules panel, including the legacy ?panel=fees deep link",
+        "Family offers change repricing an invoice that was already issued, or a retry pricing the same month differently"
       ],
       "acceptance": [
         "Each panel saves or shows specific failure",
