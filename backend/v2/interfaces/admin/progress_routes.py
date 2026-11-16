@@ -798,7 +798,6 @@ async def revoke_certificate(
     student_id: str,
     cert_id: str,
     body: RevokeCertificateBody,
-    request: Request,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> object:
@@ -817,23 +816,6 @@ async def revoke_certificate(
             student_id=student_id, cert_id=cert_id, reason=reason, revoked_by=claims.user_id
         )
     )
-    db = getattr(request.app.state, "db", None)
-    if db is not None:
-        await db["audit_logs"].insert_one(
-            {
-                "audit_id": str(new_ulid()),
-                "academy_id": claims.academy_id,
-                "actor_id": claims.user_id,
-                "action": "certificate.revoked",
-                "entity_type": "certificate",
-                "entity_id": cert_id,
-                "reason": reason,
-                "changed_keys": ["status"],
-                "before": {"status": "issued"},
-                "after": {"status": "revoked", "student_id": student_id},
-                "created_at": datetime.now(UTC),
-            }
-        )
     return cert.model_dump(mode="json")
 
 

@@ -520,6 +520,23 @@ def test_coach_engagement_stats_repo_ignores_not_started_placement_rows() -> Non
     )
 
 
+class _FakeCertificateAudit:
+    """Mirrors MongoCertificateAuditLog: one row per certificate, True only when new."""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, object] = {}
+        self.fail_next = False
+
+    async def record_revoked(self, cert) -> bool:
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("audit write failed")
+        if cert.cert_id in self.rows:
+            return False
+        self.rows[cert.cert_id] = cert
+        return True
+
+
 @pytest.fixture()
 def env():
     # --- curriculum: seed the real badminton pathway into fakes ---
@@ -552,6 +569,7 @@ def env():
     attempt_repo = _FakeTestAttemptRepo()
     rec_repo = _FakeRecommendationRepo()
     cert_repo = _FakeCertificateRepo()
+    cert_audit = _FakeCertificateAudit()
     enrollment_lookup = _FakeEnrollmentLookup()
 
     student_progress = SimpleNamespace(
@@ -620,7 +638,7 @@ def env():
         get_certificate_detail=GetCertificateDetail(
             certificates=cert_repo, skill_lookup=skill_lookup
         ),
-        revoke_certificate=RevokeCertificate(certificates=cert_repo),
+        revoke_certificate=RevokeCertificate(certificates=cert_repo, audit=cert_audit),
     )
     # Curriculum + student-name lookups the approve route uses to populate
     # certificate display fields (P1.2). Backed by the same fake repos.
@@ -666,6 +684,7 @@ def env():
         level_repo=level_repo,
         rec_repo=rec_repo,
         cert_repo=cert_repo,
+        cert_audit=cert_audit,
         enrollment_lookup=enrollment_lookup,
         program_id=program.program_id,
         level1=level1,
@@ -1425,8 +1444,6 @@ def _issued_certificate(env, student_id: str) -> str:
 
 def test_revoke_marks_the_certificate_audits_and_keeps_the_student_on_level(env):
     cert_id = _issued_certificate(env, "st-revoke")
-    sink = _AuditSink()
-    env.client.app.state.db = sink
     url = f"/api/v2/admin/students/st-revoke/certificates/{cert_id}"
 
     revoked = env.client.post(f"{url}/revoke", json={"reason": " Approved by mistake "})
@@ -1434,7 +1451,7 @@ def test_revoke_marks_the_certificate_audits_and_keeps_the_student_on_level(env)
     assert revoked.status_code == 200, revoked.text
     assert revoked.json()["status"] == "revoked"
     assert revoked.json()["revoke_reason"] == "Approved by mistake"
-    assert [(r["action"], r["entity_id"]) for r in sink.rows] == [("certificate.revoked", cert_id)]
+    assert list(env.cert_audit.rows) == [cert_id]
     # The admin still sees it, marked; the student was not moved back.
     listed = env.client.get("/api/v2/admin/students/st-revoke/certificates").json()
     assert [c["status"] for c in listed["certificates"]] == ["revoked"]
@@ -1443,7 +1460,22 @@ def test_revoke_marks_the_certificate_audits_and_keeps_the_student_on_level(env)
     # A second revoke is refused, not re-audited.
     again = env.client.post(f"{url}/revoke", json={"reason": "again"})
     assert again.status_code == 409
-    assert len(sink.rows) == 1
+    assert len(env.cert_audit.rows) == 1
+
+
+def test_a_revoke_whose_audit_write_failed_is_audited_on_retry(env):
+    cert_id = _issued_certificate(env, "st-revoke-retry")
+    url = f"/api/v2/admin/students/st-revoke-retry/certificates/{cert_id}/revoke"
+    env.cert_audit.fail_next = True
+    client = TestClient(env.client.app, raise_server_exceptions=False)
+
+    assert client.post(url, json={"reason": "mistake"}).status_code == 500
+
+    retry = env.client.post(url, json={"reason": "mistake"})
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["status"] == "revoked"
+    assert list(env.cert_audit.rows) == [cert_id]
+    assert env.client.post(url, json={"reason": "again"}).status_code == 409
 
 
 def test_revoke_needs_a_reason_and_a_real_certificate(env):

@@ -136,6 +136,9 @@ from backend.v2.contexts.student_progress.domain.logic import format_cert_number
 from backend.v2.contexts.student_progress.infrastructure.curriculum_lookup_adapter import (
     CurriculumSkillLookupAdapter as CurriculumSkillLookup,
 )
+from backend.v2.contexts.student_progress.infrastructure.mongo_certificate_audit import (
+    MongoCertificateAuditLog,
+)
 from backend.v2.contexts.student_progress.infrastructure.mongo_certificate_repo import (
     MongoSkillCertificateRepository as MongoCertificateRepository,
 )
@@ -452,7 +455,9 @@ def compose_student_progress(
         get_certificate_detail=GetCertificateDetail(
             certificates=certificate_repo, skill_lookup=skill_lookup
         ),
-        revoke_certificate=RevokeCertificate(certificates=certificate_repo),
+        revoke_certificate=RevokeCertificate(
+            certificates=certificate_repo, audit=MongoCertificateAuditLog(db)
+        ),
         get_skill_board=GetSkillBoard(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,

@@ -34,9 +34,13 @@ from backend.v2.contexts.student_progress.application.use_cases.revoke_certifica
     RevokeCertificate,
     RevokeCertificateCommand,
 )
+from backend.v2.contexts.student_progress.domain.errors import CertificateAlreadyRevoked
 from backend.v2.contexts.student_progress.domain.models import (
     LevelUpRecommendation,
     SkillCertificate,
+)
+from backend.v2.contexts.student_progress.infrastructure.mongo_certificate_audit import (
+    MongoCertificateAuditLog,
 )
 from backend.v2.contexts.student_progress.infrastructure.mongo_certificate_repo import (
     MongoSkillCertificateRepository,
@@ -154,7 +158,9 @@ async def test_revoke_hides_the_certificate_and_a_re_earned_level_issues_a_fresh
         await real_db["skill_certificates"].update_one(
             {"cert_id": first}, {"$set": {"share_token": "tok-1"}}
         )
-        revoked = await RevokeCertificate(certificates=repo).execute(
+        revoked = await RevokeCertificate(
+            certificates=repo, audit=MongoCertificateAuditLog(real_db)
+        ).execute(
             RevokeCertificateCommand(
                 student_id="kid", cert_id=first, reason="approved by mistake", revoked_by="owner"
             )
@@ -207,3 +213,33 @@ async def test_0234_backfills_status_and_aborts_on_duplicate_issued_certificates
         await M0234.up(real_db)  # later tests in this session lean on the index
 
     assert M0234.ONE_ISSUED_INDEX in await certs.index_information()
+
+
+class _AuditFailsOnce(MongoCertificateAuditLog):
+    failed = False
+
+    async def record_revoked(self, cert: SkillCertificate) -> bool:
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("audit write failed")
+        return await super().record_revoked(cert)
+
+
+async def test_a_failed_audit_write_is_recovered_by_the_retry(real_db: Any) -> None:
+    with tenant_scope(ACADEMY):
+        repo = MongoSkillCertificateRepository(real_db)
+        await repo.save(_cert("c1", "N-1"))
+        revoke = RevokeCertificate(certificates=repo, audit=_AuditFailsOnce(real_db))
+        cmd = RevokeCertificateCommand(
+            student_id="kid", cert_id="c1", reason="mistake", revoked_by="owner"
+        )
+        with pytest.raises(RuntimeError):
+            await revoke.execute(cmd)
+        assert (await revoke.execute(cmd)).status == "revoked"
+        with pytest.raises(CertificateAlreadyRevoked):
+            await revoke.execute(cmd)
+
+    rows = await real_db["audit_logs"].find({"entity_id": "c1"}).to_list(None)
+    assert [(r["action"], r["academy_id"], r["actor_id"], r["reason"]) for r in rows] == [
+        ("certificate.revoked", ACADEMY, "owner", "mistake")
+    ]

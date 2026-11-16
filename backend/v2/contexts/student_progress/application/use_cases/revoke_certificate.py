@@ -3,6 +3,10 @@
 The row stays (status ``revoked``) for the record; every non-admin read skips
 it and its share link stops resolving. The student is not moved: if they earn
 the level again, the approval issues a fresh certificate.
+
+The audit row is written after the revoke. If that write fails, a retry finds
+the certificate already revoked but its audit row missing, writes the row and
+succeeds, so the trail is never lost.
 """
 
 from __future__ import annotations
@@ -10,7 +14,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from backend.v2.contexts.student_progress.application.ports import CertificateRepository
+from backend.v2.contexts.student_progress.application.ports import (
+    CertificateAuditLog,
+    CertificateRepository,
+)
 from backend.v2.contexts.student_progress.domain.errors import (
     CertificateAlreadyRevoked,
     CertificateNotFound,
@@ -27,8 +34,9 @@ class RevokeCertificateCommand:
 
 
 class RevokeCertificate:
-    def __init__(self, *, certificates: CertificateRepository) -> None:
+    def __init__(self, *, certificates: CertificateRepository, audit: CertificateAuditLog) -> None:
         self._certs = certificates
+        self._audit = audit
 
     async def execute(self, cmd: RevokeCertificateCommand) -> SkillCertificate:
         now = datetime.now(UTC)
@@ -47,6 +55,7 @@ class RevokeCertificate:
             raise CertificateNotFound(
                 "certificate not found", student_id=cmd.student_id, cert_id=cmd.cert_id
             )
-        if not revoked:
+        wrote_audit = cert.status == "revoked" and await self._audit.record_revoked(cert)
+        if not revoked and not wrote_audit:
             raise CertificateAlreadyRevoked("certificate is already revoked", cert_id=cmd.cert_id)
         return cert

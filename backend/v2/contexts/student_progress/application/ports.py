@@ -164,6 +164,16 @@ class CertificateRepository(Protocol):
         ...
 
 
+class CertificateAuditLog(Protocol):
+    async def record_revoked(self, cert: SkillCertificate) -> bool:
+        """Write the one ``certificate.revoked`` row for this certificate.
+
+        Idempotent: True only when this call wrote it, so a retry after a
+        failed write can tell it still owes the audit row.
+        """
+        ...
+
+
 class CertificateNumbers(Protocol):
     """Mints the next human-facing certificate number for the current academy."""
 
