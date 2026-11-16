@@ -40601,23 +40601,6 @@
               "title": "Parent Id",
               "type": "string"
             }
-          },
-          {
-            "in": "query",
-            "name": "period",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Period"
-            }
           }
         ],
         "responses": {

@@ -47,11 +47,10 @@ class SiblingDiscountPreview:
 
     db: Any
 
-    async def execute(self, parent_id: str, period: str | None) -> dict[str, Any]:
+    async def execute(self, parent_id: str) -> dict[str, Any]:
         return await preview_family_sibling_discount(
             self.db,
             parent_id=parent_id,
-            period=period,
             now=datetime.now(UTC),
             discounts=MongoTuitionDiscountRepository(self.db),
         )

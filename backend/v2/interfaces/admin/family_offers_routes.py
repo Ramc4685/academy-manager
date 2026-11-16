@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Protocol
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from backend.v2.contexts.billing.application.use_cases.billing_rules import (
@@ -122,7 +122,7 @@ class _Writer(Protocol):
 
 
 class _Previewer(Protocol):
-    async def execute(self, parent_id: str, period: str | None) -> dict[str, Any]: ...
+    async def execute(self, parent_id: str) -> dict[str, Any]: ...
 
 
 class AdminFamilyOffersLike(Protocol):
@@ -198,11 +198,8 @@ async def set_family_offers(
 )
 async def get_family_sibling_discount(
     parent_id: str,
-    period: str | None = Query(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
     claims: AuthClaims = Depends(require_persona("admin")),
     offers: AdminFamilyOffersLike = Depends(get_admin_family_offers),
 ) -> FamilySiblingDiscountView:
     """The same decision the monthly invoice run makes, computed without writing."""
-    return FamilySiblingDiscountView.model_validate(
-        await offers.sibling_preview.execute(parent_id, period)
-    )
+    return FamilySiblingDiscountView.model_validate(await offers.sibling_preview.execute(parent_id))

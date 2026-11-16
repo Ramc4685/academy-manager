@@ -22,7 +22,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
     SIBLING_DECISIONS_COLLECTION,
 )
 from backend.v2.interfaces.admin.router import router as admin_router
-from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
+from backend.v2.shared.auth.claims import AuthClaims, Role, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
 from backend.v2.tests.contract.test_sibling_discount_real_mongo import (
     NOW,
@@ -39,21 +39,24 @@ from backend.v2.tests.contract.test_sibling_discount_real_mongo import (
 
 pytestmark = pytest.mark.asyncio
 
-ROUTE = f"/api/v2/admin/families/parent-1/sibling-discount?period={PERIOD}"
+ROUTE = "/api/v2/admin/families/parent-1/sibling-discount"
 
 
-@pytest.fixture
-async def admin(real_db: Any, acad: str) -> AsyncIterator[httpx.AsyncClient]:
+def _client(real_db: Any, roles: tuple[Role, ...]) -> httpx.AsyncClient:
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(admin_router, prefix="/api/v2")
     claims = AuthClaims(
-        user_id="u-admin", email="a@example.com", academy_id="test-academy", roles=("admin",)
+        user_id="u-1", email="a@example.com", academy_id="test-academy", roles=roles
     )
     app.dependency_overrides[get_auth_claims] = lambda: claims
     app.state.admin_family_offers = compose_admin_family_offers(real_db)
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+
+
+@pytest.fixture
+async def admin(real_db: Any, acad: str) -> AsyncIterator[httpx.AsyncClient]:
+    async with _client(real_db, ("admin",)) as client:
         yield client
 
 
@@ -187,3 +190,26 @@ async def test_a_billed_month_reads_its_invoice_not_a_later_manual_discount(
     assert (await _invoiced_discount_sources(real_db, acad, "enr-b")) == {
         "enr-b": f"sibling-auto-{PERIOD}"
     }
+
+
+async def test_a_billed_month_with_no_discount_line_claims_no_manual_discount(
+    admin: httpx.AsyncClient, real_db: Any, acad: str
+) -> None:
+    await _family(real_db, acad)
+    await _offer(real_db)
+    await _repo(real_db).generate_monthly_payments(PERIOD)
+    # The sibling line was taken off the invoice by hand; no manual discount exists.
+    await real_db["invoice_lines"].delete_many(
+        {"invoice_id": f"inv-monthly-enr-b-{PERIOD}", "source_type": "tuition_discount"}
+    )
+    assert await _invoiced_discount_sources(real_db, acad, "enr-b") == {"enr-b": None}
+
+    assert _by_enrollment(await _badges(admin))["enr-b"] == ("not_eligible", "already_invoiced")
+
+
+async def test_a_parent_persona_gets_404(real_db: Any, acad: str) -> None:
+    await _family(real_db, acad)
+    await _offer(real_db)
+    async with _client(real_db, ("parent",)) as parent:
+        response = await parent.get(ROUTE)
+    assert response.status_code == 404

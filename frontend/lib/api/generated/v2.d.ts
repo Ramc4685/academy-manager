@@ -23661,9 +23661,7 @@ export interface operations {
     };
     get_family_sibling_discount_api_v2_admin_families__parent_id__sibling_discount_get: {
         parameters: {
-            query?: {
-                period?: string | null;
-            };
+            query?: never;
             header?: never;
             path: {
                 parent_id: string;
