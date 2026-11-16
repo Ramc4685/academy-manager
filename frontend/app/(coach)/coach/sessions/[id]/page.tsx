@@ -220,6 +220,13 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   // Why the last "Mark all present" was refused as a whole (#672): the bulk
   // endpoint saves nothing when any row is ineligible, so name the rows.
   const [bulkError, setBulkError] = useState<string | null>(null);
+  // Re-check the time gates (class opens at T-60, 48h correction window)
+  // while the screen stays open, without a reload.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(id);
+  }, []);
   // The students that 422 named. Kept apart from the banner and from row
   // errors: the retry must leave exactly these rows out, and keep leaving
   // them out after the banner clears, until the roster is refetched
@@ -774,7 +781,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
 
   const markAllPending = bulkAttendanceMutation.isPending || queueingAll;
   // A future class cannot be marked (the server refuses it too).
-  const notOpenYet = markingNotOpenYet(session.start_at);
+  const notOpenYet = markingNotOpenYet(session.start_at, now);
 
   return (
     <section data-testid="session-detail">
@@ -892,6 +899,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
                 online={online}
                 supervisor={supervisor}
                 notOpenYet={notOpenYet}
+                now={now}
                 noteOpen={noteOpen === student.student_id}
                 noteText={noteTexts[student.student_id] ?? ""}
                 noteShare={noteShare[student.student_id] ?? false}
@@ -1088,6 +1096,7 @@ function RosterRow({
   online,
   supervisor,
   notOpenYet,
+  now,
   noteOpen,
   noteText,
   noteShare,
@@ -1114,6 +1123,7 @@ function RosterRow({
   supervisor: boolean;
   /** The class starts more than an hour from now: nothing can be marked yet. */
   notOpenYet: boolean;
+  now: Date;
   noteOpen: boolean;
   noteText: string;
   noteShare: boolean;
@@ -1147,7 +1157,7 @@ function RosterRow({
     !supervisor &&
     !local?.status &&
     recordedMark(student) !== null &&
-    correctionWindowClosed(student.attendance_marked_at);
+    correctionWindowClosed(student.attendance_marked_at, now);
   // Offline, only first marks can be queued: a saved mark would need a
   // correction, which the queue cannot replay (docs/offline-policy.md).
   // A row in a held batch is frozen until the window closes: the one control

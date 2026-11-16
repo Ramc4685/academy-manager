@@ -83,6 +83,19 @@ describe("attendanceConflict", () => {
     ).toEqual({ occurrence_id: "occ-1", student_id: "st1", recorded: "present", mine: "absent" });
   });
 
+  it("is null for a mark an admin voided, so the row offers Retry/Dismiss", () => {
+    expect(
+      attendanceConflict({
+        ...base,
+        error: {
+          code: "Coaching.ConflictAttendanceExists",
+          message: "x",
+          details: { existing_status: "voided" },
+        },
+      }),
+    ).toBeNull();
+  });
+
   it("is null for other tray rows", () => {
     expect(
       attendanceConflict({ ...base, error: { code: "Coaching.StudentNotEnrolled", message: "x" } }),

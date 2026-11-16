@@ -6,15 +6,16 @@ import { useQueryClient } from "@tanstack/react-query";
 import { LogOut } from "lucide-react";
 
 import { signOutCurrent } from "@/lib/auth/firebase";
-import { clearAll as clearOfflineQueue, listQueued } from "@/lib/offline/queue";
+import { clearAll as clearOfflineQueue, list as listAllMutations } from "@/lib/offline/queue";
 import { clearPersistedQueryCache } from "@/lib/query/persistence";
 
 /** The service worker's coach read cache (app/sw.ts). */
 const COACH_SW_CACHE = "coach-api-v1";
 
-async function unsentMarkCount(): Promise<number> {
+/** Everything sign-out would delete: queued, in-flight and Needs-review marks. */
+export async function unsentMarkCount(): Promise<number> {
   try {
-    return (await listQueued()).length;
+    return (await listAllMutations()).length;
   } catch {
     return 0; // no IndexedDB: nothing can be queued
   }

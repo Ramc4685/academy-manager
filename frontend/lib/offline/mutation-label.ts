@@ -50,6 +50,8 @@ export function attendanceConflict(m: QueuedMutation): AttendanceConflict | null
   const recorded = m.error.details?.existing_status;
   if (
     typeof recorded !== "string" ||
+    // An admin void cannot be overridden by a coach correction: plain Retry/Dismiss.
+    recorded === "voided" ||
     typeof payload.occurrence_id !== "string" ||
     typeof payload.student_id !== "string" ||
     typeof payload.status !== "string"
