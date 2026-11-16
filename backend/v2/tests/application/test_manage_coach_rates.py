@@ -148,6 +148,37 @@ async def test_a_zero_flat_rate_is_a_volunteer_rate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_an_omitted_flat_amount_is_refused_and_keeps_the_current_rate() -> None:
+    writer = FakeRateWriter([_rate(rate_id="cr-real", amount_minor=5000)])
+    with tenant_scope("acad-1"):
+        with pytest.raises(ValueError, match="amount is required"):
+            await _use_case(writer, now="2026-07-01T00:00:00").execute(
+                SetCoachPayRateCommand(coach_id="coach-A", billing_unit="per_session")
+            )
+    assert writer.rates == [_rate(rate_id="cr-real", amount_minor=5000)]
+
+
+@pytest.mark.asyncio
+async def test_repair_refuses_an_omitted_flat_amount() -> None:
+    writer = FakeRateWriter()
+    with tenant_scope("acad-1"):
+        with pytest.raises(ValueError, match="amount is required"):
+            await RepairCoachRateWindow(
+                rates=writer, audit=FakeRateAudit(), clock=lambda: _dt("2026-06-10T00:00:00")
+            ).execute(
+                RepairCoachRateWindowCommand(
+                    coach_id="coach-A",
+                    billing_unit="per_hour",
+                    effective_from=_dt("2026-05-01T00:00:00"),
+                    effective_until=_dt("2026-06-01T00:00:00"),
+                    reason="gap",
+                    actor_id="admin-1",
+                )
+            )
+    assert writer.rates == []
+
+
+@pytest.mark.asyncio
 async def test_effective_from_must_advance() -> None:
     writer = FakeRateWriter()
     with tenant_scope("acad-1"):

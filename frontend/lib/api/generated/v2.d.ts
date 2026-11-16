@@ -17814,11 +17814,8 @@ export interface components {
         };
         /** RepairCoachPayRateWindowRequest */
         RepairCoachPayRateWindowRequest: {
-            /**
-             * Amount Cents
-             * @default 0
-             */
-            amount_cents: number;
+            /** Amount Cents */
+            amount_cents?: number | null;
             /**
              * Billing Unit
              * @enum {string}
@@ -18282,11 +18279,8 @@ export interface components {
         };
         /** SetCoachPayRateRequest */
         SetCoachPayRateRequest: {
-            /**
-             * Amount Cents
-             * @default 0
-             */
-            amount_cents: number;
+            /** Amount Cents */
+            amount_cents?: number | null;
             /**
              * Billing Unit
              * @enum {string}

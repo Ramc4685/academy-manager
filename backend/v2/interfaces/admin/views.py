@@ -1397,7 +1397,7 @@ class AdminCoachPayRateList(BaseModel):
 
 class SetCoachPayRateRequest(BaseModel):
     billing_unit: Literal["per_session", "per_hour", "percent_of_revenue"]
-    amount_cents: int = Field(default=0, ge=0)
+    amount_cents: int | None = Field(default=None, ge=0)
     percent: float | None = Field(default=None, ge=0, le=100)
     currency: str = Field(default="USD", min_length=3, max_length=3)
     effective_from: datetime | None = None
@@ -1413,7 +1413,7 @@ class SetCoachPayRateRequest(BaseModel):
 
 class RepairCoachPayRateWindowRequest(BaseModel):
     billing_unit: Literal["per_session", "per_hour", "percent_of_revenue"]
-    amount_cents: int = Field(default=0, ge=0)
+    amount_cents: int | None = Field(default=None, ge=0)
     percent: float | None = Field(default=None, ge=0, le=100)
     currency: str = Field(default="USD", min_length=3, max_length=3)
     effective_from: datetime

@@ -45,7 +45,7 @@ class SetCoachPayRateCommand(BaseModel):
 
     coach_id: str
     billing_unit: CoachRateBillingUnit
-    amount_minor: int = Field(default=0, ge=0)
+    amount_minor: int | None = Field(default=None, ge=0)
     percent_bps: int | None = Field(default=None, ge=0, le=10000)
     currency: str = Field(default="USD", min_length=3, max_length=3)
     effective_from: datetime | None = None
@@ -57,7 +57,7 @@ class RepairCoachRateWindowCommand(BaseModel):
 
     coach_id: str
     billing_unit: CoachRateBillingUnit
-    amount_minor: int = Field(default=0, ge=0)
+    amount_minor: int | None = Field(default=None, ge=0)
     percent_bps: int | None = Field(default=None, ge=0, le=10000)
     currency: str = Field(default="USD", min_length=3, max_length=3)
     effective_from: datetime
@@ -239,9 +239,9 @@ class SetCoachPayRate:
         if command.billing_unit == "percent_of_revenue":
             if command.percent_bps is None:
                 raise ValueError("percent is required for percent_of_revenue rates")
-        elif command.amount_minor < 0:
-            # 0 is allowed: a volunteer gets a $0 line (L7).
-            raise ValueError("amount cannot be negative for per_session/per_hour rates")
+        elif command.amount_minor is None:
+            # An omitted amount must not supersede a real rate with $0; 0 must be explicit (volunteer).
+            raise ValueError("amount is required for per_session/per_hour rates")
 
         effective_from = normalize_effective_datetime(command.effective_from or self._clock())
 
@@ -274,7 +274,7 @@ class SetCoachPayRate:
             academy_id=current_academy_id(),
             coach_id=command.coach_id,
             billing_unit=command.billing_unit,
-            amount_minor=command.amount_minor,
+            amount_minor=command.amount_minor or 0,
             percent_bps=(
                 command.percent_bps if command.billing_unit == "percent_of_revenue" else None
             ),
@@ -344,9 +344,9 @@ class RepairCoachRateWindow:
         if command.billing_unit == "percent_of_revenue":
             if command.percent_bps is None:
                 raise ValueError("percent is required for percent_of_revenue rates")
-        elif command.amount_minor < 0:
-            # 0 is allowed: a volunteer gets a $0 line (L7).
-            raise ValueError("amount cannot be negative for per_session/per_hour rates")
+        elif command.amount_minor is None:
+            # An omitted amount must not supersede a real rate with $0; 0 must be explicit (volunteer).
+            raise ValueError("amount is required for per_session/per_hour rates")
 
         start = normalize_effective_datetime(command.effective_from)
         until = normalize_effective_datetime(command.effective_until)
@@ -367,7 +367,7 @@ class RepairCoachRateWindow:
             academy_id=current_academy_id(),
             coach_id=command.coach_id,
             billing_unit=command.billing_unit,
-            amount_minor=command.amount_minor,
+            amount_minor=command.amount_minor or 0,
             percent_bps=(
                 command.percent_bps if command.billing_unit == "percent_of_revenue" else None
             ),

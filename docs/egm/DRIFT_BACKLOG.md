@@ -65,7 +65,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:84-86 omit that `build` runs `--webpack` and `dev` honors `$PORT`.
 - [wording] README:23 mentions coach teaching-plan flows; no such route under `app/(coach)/coach/`.
 
-## `frontend/lib/api/README.md`: 10 items, from `drift/frontend__lib__api.md`
+## `frontend/lib/api/README.md`: 11 items, from `drift/frontend__lib__api.md`
 - [undocumented] README calls `admin.ts` a thin wrapper; `chargeAdminInvoiceAutopay` keeps per-invoice retry state (reused `request_id` for 10 min; kept on 409 only for `charge_in_progress`).
 - [stale-not-built] README says `generated/` holds only `.gitkeep`; `v2.d.ts` and `openapi.snapshot.json` are committed.
 - [stale-not-built] CI "Skipping drift check" path no longer exists; drift check is unconditional.
@@ -75,6 +75,7 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] "When generated types are reintroduced": they already are.
 - [wording] README says every request is deduplicated; `client.ts:195` dedups only when `dedup` is set or the request is a read.
 - [undocumented] `password-reset.ts` (from #1180) is not in the README's wrapper list.
+- [wording] README calls `ApiError` a class; `client.ts` declares it as an interface.
 
 ## `frontend/lib/api/v2/README.md`: 12 items, from `drift/frontend__lib__api__v2.md`
 - [stale-not-built] `memberships.ts` calls `GET /me/memberships`, not a `/me` derivation (README:29-31).

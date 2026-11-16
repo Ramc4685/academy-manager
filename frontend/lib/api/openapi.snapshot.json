@@ -28669,10 +28669,16 @@
       "RepairCoachPayRateWindowRequest": {
         "properties": {
           "amount_cents": {
-            "default": 0,
-            "minimum": 0.0,
-            "title": "Amount Cents",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Cents"
           },
           "billing_unit": {
             "enum": [
@@ -29926,10 +29932,16 @@
       "SetCoachPayRateRequest": {
         "properties": {
           "amount_cents": {
-            "default": 0,
-            "minimum": 0.0,
-            "title": "Amount Cents",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Cents"
           },
           "billing_unit": {
             "enum": [
