@@ -303,7 +303,7 @@ class ProcessDunningRetries:
     async def _park(self, *, state: DunningState, reason: str, now: datetime) -> None:
         parked = await self._dunning.park_attempt(state=state, reason=reason, now=now)
         if parked.suppression_reason == TECHNICAL_FAILURE_CAPPED:
-            # No longer retried; the admin sees it in Failed autopay (A7-6).
+            # Rechecked once a day from now on; shows in Failed autopay and as autopay stuck (A7-6).
             log.error(
                 "dunning_technical_failure_capped invoice=%s since=%s last_reason=%s",
                 state.invoice_id,

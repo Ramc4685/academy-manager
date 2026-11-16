@@ -27,7 +27,10 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     autopay_eligibility,
     invoice_is_chargeable,
 )
-from backend.v2.contexts.billing.domain.dunning import MAX_DUNNING_ATTEMPTS
+from backend.v2.contexts.billing.domain.dunning import (
+    MAX_DUNNING_ATTEMPTS,
+    TECHNICAL_FAILURE_CAPPED,
+)
 from backend.v2.shared.comms.phone_country import DEFAULT_CALLING_CODE
 from backend.v2.shared.comms.whatsapp import dues_reminder_text, whatsapp_deep_link
 
@@ -100,6 +103,7 @@ class InvoiceFacts:
     #: DELIVERY. Defaulted so invoices written before the job existed — and
     #: the fixtures that predate it — read as "never reminded".
     last_reminder_at: datetime | None = None
+    dunning_suppression_reason: str | None = None  # dunning_states.suppression_reason
 
 
 @dataclass(frozen=True)
@@ -204,6 +208,9 @@ def _eligibility(family: FamilyFacts, invoice: InvoiceFacts) -> Eligibility:
 
 def _has_failed_attempt(invoice: InvoiceFacts) -> bool:
     if invoice.dunning_status == _DUNNED_STATUS:
+        return True
+    # Capped after a day of technical failures: no rung spent, but not scheduled (A7-6).
+    if invoice.dunning_suppression_reason == TECHNICAL_FAILURE_CAPPED:
         return True
     return invoice.dunning_status in _FAILED_LADDER_STATUSES and invoice.dunning_attempt_count >= 1
 

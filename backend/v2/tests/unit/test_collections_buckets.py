@@ -147,6 +147,22 @@ def test_dunned_family_is_failed_autopay_with_disabled_flag() -> None:
     assert row.payload["failure"]["attempt_count"] == 4
 
 
+def test_a_ladder_capped_on_its_first_attempt_is_failed_autopay() -> None:
+    """A7-6 review P1: a capped ladder spent no rung, but autopay is not scheduled."""
+    family = _family(
+        invoices=(
+            _autopay_invoice(
+                dunning_status="active",
+                dunning_attempt_count=0,
+                dunning_suppression_reason="technical_failure_capped",
+            ),
+        )
+    )
+    row = classify_family(family, today=TODAY)
+    assert row is not None
+    assert row.bucket == "failed_autopay"
+
+
 def test_past_due_bucket_when_not_eligible_and_due_date_passed() -> None:
     family = _family(
         invoices=(

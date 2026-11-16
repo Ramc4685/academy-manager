@@ -18,6 +18,8 @@ from backend.v2.contexts.billing.domain.dunning import (
     FIRST_ATTEMPT_LOCAL_HOUR,
     NO_SAVED_PAYMENT_METHOD,
     STRIPE_UNAVAILABLE,
+    TECHNICAL_FAILURE_CAPPED,
+    TECHNICAL_PARK_CAP,
     DunningState,
     open_initial_dunning_state,
     record_dunning_attempt_result,
@@ -277,6 +279,14 @@ class MongoDunningStateRepository(TenantScopedRepository):
                         "next_attempt_at": None,
                         "suppression_reason": {"$in": sorted(self.retryable_parked_reasons)},
                     },
+                    # A capped ladder is rechecked once a day (A7-6), so a paid or
+                    # voided invoice stands down and a recovered charge path collects.
+                    {
+                        "status": "active",
+                        "next_attempt_at": None,
+                        "suppression_reason": TECHNICAL_FAILURE_CAPPED,
+                        "suppressed_at": {"$lte": now - TECHNICAL_PARK_CAP},
+                    },
                     {"status": "processing", "lease_expires_at": {"$lte": now}},
                 ],
             }
@@ -286,7 +296,14 @@ class MongoDunningStateRepository(TenantScopedRepository):
             parked_for_retry_recheck = (
                 state.status == "active"
                 and state.next_attempt_at is None
-                and state.suppression_reason in self.retryable_parked_reasons
+                and (
+                    state.suppression_reason in self.retryable_parked_reasons
+                    or (
+                        state.suppression_reason == TECHNICAL_FAILURE_CAPPED
+                        and state.suppressed_at is not None
+                        and state.suppressed_at <= now - TECHNICAL_PARK_CAP
+                    )
+                )
             )
             parked_for_payment_processing = (
                 parked_for_retry_recheck and state.suppression_reason == "payment_processing"
@@ -582,7 +599,8 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 "status": {"$in": ["active", "processing"]},
                 # Waiting on the parent to add a card is not a retry in flight:
                 # the invoice stays due and earns its late fee (A4-1).
-                "suppression_reason": {"$ne": NO_SAVED_PAYMENT_METHOD},
+                # Nor is a ladder capped after a day of technical failures (A7-6).
+                "suppression_reason": {"$nin": [NO_SAVED_PAYMENT_METHOD, TECHNICAL_FAILURE_CAPPED]},
             },
             {"_id": 1},
         )

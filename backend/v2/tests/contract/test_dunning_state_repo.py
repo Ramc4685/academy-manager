@@ -859,9 +859,55 @@ async def test_a_day_of_technical_parks_caps_the_ladder(real_db, acad, caplog) -
     assert "technical_failure_capped" in PARK_REASONS_NEEDING_ATTENTION
     assert any("dunning_technical_failure_capped" in r.getMessage() for r in caplog.records)
 
-    # Not retried any more: the same failing call stops hitting Stripe.
-    await _tick(48)
+    # Backs off to once a day: nothing for the next 23 hours...
+    await _tick(47)
     assert charge.calls == 25
+    # ...then one recheck, which re-caps straight away on another technical failure.
+    await _tick(48)
+    assert charge.calls == 26
+    doc = await real_db["dunning_states"].find_one({"invoice_id": "inv-down"})
+    assert doc["suppression_reason"] == "technical_failure_capped"
+
+
+@pytest.mark.asyncio
+async def test_a_capped_ladder_stands_down_once_the_invoice_is_paid(real_db, acad) -> None:
+    """Review P1: a capped ladder must not stay "stuck" forever after the owner
+    charges the invoice by hand; the daily recheck sees it is no longer chargeable."""
+    repo = MongoDunningStateRepository(real_db)
+    await _seed_invoice(real_db, academy_id=acad, invoice_id="inv-cap", enrollment_id="enr-c")
+    await repo.prepare_due_states(now=NOW, limit=10)
+    await real_db["dunning_states"].update_one(
+        {"invoice_id": "inv-cap"},
+        {
+            "$set": {
+                "next_attempt_at": None,
+                "suppression_reason": "technical_failure_capped",
+                "suppressed_at": NOW,
+            }
+        },
+    )
+    assert await repo.claim_next_due(now=NOW + timedelta(hours=23), worker_id="w") is None
+
+    await real_db["invoices"].update_one(
+        {"invoice_id": "inv-cap"}, {"$set": {"status": "paid", "balance_due_cents": 0}}
+    )
+    assert await repo.claim_next_due(now=NOW + timedelta(hours=24), worker_id="w") is None
+    doc = await real_db["dunning_states"].find_one({"invoice_id": "inv-cap"})
+    assert doc["status"] == "suppressed"
+    assert doc["suppression_reason"] == "invoice_not_chargeable"
+
+
+@pytest.mark.asyncio
+async def test_a_capped_ladder_does_not_hold_back_the_late_fee(real_db, acad) -> None:
+    repo = MongoDunningStateRepository(real_db)
+    await _seed_invoice(real_db, academy_id=acad, invoice_id="inv-fee", enrollment_id="enr-f")
+    await repo.prepare_due_states(now=NOW, limit=10)
+    assert await repo.has_active_retry("inv-fee") is True
+    await real_db["dunning_states"].update_one(
+        {"invoice_id": "inv-fee"},
+        {"$set": {"next_attempt_at": None, "suppression_reason": "technical_failure_capped"}},
+    )
+    assert await repo.has_active_retry("inv-fee") is False
 
 
 @pytest.mark.asyncio
