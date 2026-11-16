@@ -12,7 +12,10 @@ from backend.v2.tests.contract.test_partial_index_planner_usability import _winn
 
 pytestmark = pytest.mark.asyncio
 
-TTL = 90 * 24 * 60 * 60
+# Outbox rows outlive event_audit-style replays and long-open disputes: their
+# deterministic event ids are the producer-side exactly-once guard.
+OUTBOX_TTL = 400 * 24 * 60 * 60
+RUNS_TTL = 90 * 24 * 60 * 60
 
 
 async def test_ttl_indexes_cover_only_finished_rows(real_db) -> None:
@@ -22,17 +25,17 @@ async def test_ttl_indexes_cover_only_finished_rows(real_db) -> None:
     ]
 
     assert outbox["key"] == [("processed_at", 1)]
-    assert outbox["expireAfterSeconds"] == TTL
+    assert outbox["expireAfterSeconds"] == OUTBOX_TTL
     assert outbox["partialFilterExpression"] == {"status": "processed"}
     assert runs["key"] == [("completed_at", 1)]
-    assert runs["expireAfterSeconds"] == TTL
+    assert runs["expireAfterSeconds"] == RUNS_TTL
     assert runs["partialFilterExpression"] == {"status": "succeeded"}
 
 
 async def test_the_claim_query_never_uses_a_ttl_index(real_db) -> None:
     """The dispatcher polls every second; a TTL index must not change its plan."""
     now = datetime.now(UTC)
-    old = now - timedelta(days=200)
+    old = now - timedelta(days=500)
     rows: list[dict[str, Any]] = [
         {
             "event_id": f"done-{i}",
