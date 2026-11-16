@@ -8,7 +8,7 @@ Three collaborators share one repository instance so a correction, a void and
 the read-back all see the same tenant-scoped collection:
 
 - ``correct`` flips a mark between the three real statuses (coach inside the
-  24h window, admin any time).
+  48h window, admin any time).
 - ``void`` annuls a mark, admin-only, reason required (#554).
 - ``list_for_occurrence`` feeds the admin session-detail roster panel.
 """
