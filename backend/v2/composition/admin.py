@@ -702,6 +702,26 @@ class _StudentLoginProvisionerAdapter:
 log = logging.getLogger(__name__)
 
 
+class AcademyPortalUrlAdapter:
+    """Resolves the academy's own portal origin for emailed auth links.
+
+    ADR-0007 resolves the tenant from the request host's first label, so an
+    invite or reset link must point at `<slug>.<apex>` rather than the
+    deployment's generic `frontend_url` — otherwise the parent lands on the
+    wrong tenant (or a host that resolves to no tenant at all). Same rewrite
+    the invoice and digest emails already use.
+    """
+
+    def __init__(self, academies: Any, *, frontend_url: str | None) -> None:
+        self._academies = academies
+        self._frontend_url = frontend_url
+
+    async def get_academy_portal_url(self, academy_id: str) -> str | None:
+        doc = await self._academies.find_by_id(academy_id)
+        slug = str(doc.get("slug") or "") if doc else ""
+        return academy_frontend_url(frontend_url=self._frontend_url, academy_slug=slug) or None
+
+
 def compose_admin(
     db: AsyncIOMotorDatabase[Any],
     outbox: Outbox,
@@ -1966,29 +1986,12 @@ def compose_admin(
         ) -> None:
             await users_r.record_login_invite(user_id, academy_id=academy_id, sent_at=sent_at)
 
-    class _AcademyPortalUrlAdapter:
-        """Resolves the academy's own portal origin for invite links.
-
-        ADR-0007 resolves the tenant from the request host's first label, so
-        an invite must point at `<slug>.<apex>` rather than the deployment's
-        generic `frontend_url` — otherwise the parent lands on the wrong
-        tenant (or a host that resolves to no tenant at all). Same rewrite
-        the invoice and digest emails already use.
-        """
-
-        async def get_academy_portal_url(self, academy_id: str) -> str | None:
-            doc = await academy_repo.find_by_id(academy_id)
-            slug = str(doc.get("slug") or "") if doc else ""
-            return (
-                academy_frontend_url(frontend_url=settings.frontend_url, academy_slug=slug) or None
-            )
-
     send_login_invite = SendLoginInvite(
         users=_MembershipAwareLoginInviteRecorder(),
         links=get_firebase_admin_adapter(),
         sender=LoginInviteEmailAdapter(sender=_email_sender, academies=academy_repo),
         academies=academy_repo,
-        portals=_AcademyPortalUrlAdapter(),
+        portals=AcademyPortalUrlAdapter(academy_repo, frontend_url=settings.frontend_url),
         brands=AcademyEmailBrands(academy_repo),
     )
     # #436: an admin email edit clears Firebase's `email_verified`, so the

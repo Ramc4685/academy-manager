@@ -167,8 +167,13 @@ class _ResetLinks:
 
 
 class _VerifyLinks:
-    async def generate_email_verification_link(self, email: str) -> str:
+    async def generate_email_verification_link(self, email: str, **_: Any) -> str:
         return "https://verify.example.test/?oob=xyz"
+
+
+class _NoUsers:
+    async def get_by_email(self, email: str) -> None:
+        return None
 
 
 class _Verifier:
@@ -355,6 +360,8 @@ async def render_all(doc: dict[str, Any]) -> dict[str, str]:
         sender=verify_sender,
         academies=academies,
         cooldown=_Cooldown(),
+        users=_NoUsers(),
+        password_links=_ResetLinks(),
         **_brand_kwargs(academies),
     ).execute("token", academy_id=ACADEMY_ID)
     bodies["verification"] = verify_sender.sent[0]["body"]

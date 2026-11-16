@@ -100,8 +100,13 @@ export function DeleteAccountSection() {
           <ul className="list-disc space-y-1 pl-5">
             <li>You are signed out right away and cannot sign in again, in any academy.</li>
             <li>
+              Your children are taken off their upcoming classes and automatic payments stop right
+              away. We email you to confirm.
+            </li>
+            <li>
               After 14 days your personal details are removed. Until then, you can contact support
-              at {brand.supportEmail} to restore the account.
+              at {brand.supportEmail} to restore your sign-in; classes and automatic payments are
+              not restored.
             </li>
             <li>
               Invoices and payment records are kept for 7 years, as tax law requires. Any balance

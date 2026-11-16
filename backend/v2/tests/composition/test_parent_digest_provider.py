@@ -226,7 +226,9 @@ async def test_build_view_variant_b_prefills_login_email() -> None:
 
     assert view is not None
     assert view.on_portal is False
-    assert view.activate_url == ("https://app.test/login?email=parent.one%2Ba%40example.test")
+    assert view.activate_url == (
+        "https://app.test/login?email=parent.one%2Ba%40example.test&activate=1"
+    )
 
 
 @pytest.mark.asyncio
@@ -238,7 +240,8 @@ async def test_variant_b_activate_url_is_a_magic_link() -> None:
     """
     issuer = SimpleNamespace(execute=AsyncMock(return_value="tok-xyz"))
     provider = _full_family_provider(
-        user_doc={"display_name": "Parent One"},  # Variant B (never activated)
+        # Variant B (never activated), but provisioned with a Firebase login.
+        user_doc={"display_name": "Parent One", "firebase_uid": "fb-p1"},
         consents=[SimpleNamespace(consent_id="c1")],
         issue_magic_link=issuer,
     )
@@ -260,7 +263,7 @@ async def test_variant_b_activate_url_is_a_magic_link() -> None:
 async def test_variant_b_next_path_is_dashboard_when_no_dues() -> None:
     issuer = SimpleNamespace(execute=AsyncMock(return_value="tok-abc"))
     provider = _full_family_provider(
-        user_doc={"display_name": "Parent One"},
+        user_doc={"display_name": "Parent One", "firebase_uid": "fb-p1"},
         consents=[SimpleNamespace(consent_id="c1")],
         invoices=[],  # nothing owed
         issue_magic_link=issuer,
@@ -281,7 +284,11 @@ async def test_variant_b_falls_back_to_login_when_minting_fails() -> None:
     """A digest must never crash on link minting — fall back to the sign-in URL."""
     issuer = SimpleNamespace(execute=AsyncMock(side_effect=RuntimeError("boom")))
     provider = _full_family_provider(
-        user_doc={"display_name": "Parent One", "email": "parent.one@example.test"},
+        user_doc={
+            "display_name": "Parent One",
+            "email": "parent.one@example.test",
+            "firebase_uid": "fb-p1",
+        },
         consents=[SimpleNamespace(consent_id="c1")],
         issue_magic_link=issuer,
     )
@@ -290,7 +297,8 @@ async def test_variant_b_falls_back_to_login_when_minting_fails() -> None:
         view = await provider.build_view("p1", ON_DATE)
 
     assert view is not None
-    assert view.activate_url == "https://app.test/login?email=parent.one%40example.test"
+    assert view.activate_url == "https://app.test/login?email=parent.one%40example.test&activate=1"
+    issuer.execute.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -553,3 +561,42 @@ async def test_composed_provider_is_not_reused_across_calls() -> None:
         "twice; a caller that composes once and reuses it across academies/ticks "
         "would share the provider's per-run caches across tenants"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_parent_who_has_signed_in_gets_no_magic_link() -> None:
+    """last_login_at (stamped by the login recorder) means the parent is on the
+    portal: Variant A, the absence deep link, and no auto-login token."""
+    issuer = SimpleNamespace(execute=AsyncMock(return_value="tok-unused"))
+    provider = _full_family_provider(
+        user_doc={"display_name": "Parent One", "last_login_at": "2026-11-01T12:00:00Z"},
+        consents=[SimpleNamespace(consent_id="c1")],
+        issue_magic_link=issuer,
+    )
+
+    with tenant_scope(ACADEMY_ID):
+        view = await provider.build_view("p1", ON_DATE)
+
+    assert view is not None
+    assert view.on_portal is True
+    assert view.children[0].cant_make_it_url == "https://app.test/parent/requests"
+    issuer.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_parent_without_a_firebase_login_gets_the_set_password_link() -> None:
+    """A custom token for a parent with no Firebase account would sign in to an
+    empty account and burn the link (identity_auth:3); send /login instead."""
+    issuer = SimpleNamespace(execute=AsyncMock(return_value="tok-unused"))
+    provider = _full_family_provider(
+        user_doc={"display_name": "Parent One", "email": "parent.one@example.test"},
+        consents=[SimpleNamespace(consent_id="c1")],
+        issue_magic_link=issuer,
+    )
+
+    with tenant_scope(ACADEMY_ID):
+        view = await provider.build_view("p1", ON_DATE)
+
+    assert view is not None
+    assert view.activate_url == "https://app.test/login?email=parent.one%40example.test&activate=1"
+    issuer.execute.assert_not_awaited()

@@ -21,7 +21,7 @@ from backend.v2.contexts.identity.domain.errors import (
     MagicLinkExpired,
     MagicLinkInvalid,
 )
-from backend.v2.contexts.identity.domain.models import MagicLinkRecord
+from backend.v2.contexts.identity.domain.models import MagicLinkRecord, User
 
 ACADEMY = "acad-1"
 
@@ -36,6 +36,13 @@ class _FakeRepo:
     async def get_by_hash(self, token_hash: str) -> MagicLinkRecord | None:
         return self.by_hash.get(token_hash)
 
+    async def revoke_unused_for_user(self, *, user_id: str, academy_id: str) -> None:
+        self.by_hash = {
+            h: r
+            for h, r in self.by_hash.items()
+            if not (r.user_id == user_id and r.academy_id == academy_id and r.used_at is None)
+        }
+
     async def mark_used(self, token_hash: str, *, used_at: datetime) -> bool:
         record = self.by_hash.get(token_hash)
         if record is None or record.used_at is not None:
@@ -45,12 +52,40 @@ class _FakeRepo:
 
 
 class _FakeTokens:
-    def __init__(self) -> None:
+    def __init__(self, *, fail: bool = False) -> None:
         self.calls: list[str] = []
+        self.fail = fail
 
     async def create_custom_token(self, uid: str) -> str:
         self.calls.append(uid)
+        if self.fail:
+            raise RuntimeError("firebase admin unavailable")
         return f"custom-{uid}"
+
+
+class _FakeUsers:
+    """The roster id on the link maps to a users row with its own Firebase uid."""
+
+    def __init__(self, users: dict[str, User] | None = None) -> None:
+        self.users = (
+            users
+            if users is not None
+            else {
+                "parent-1": User(
+                    user_id="parent-1",
+                    firebase_uid="fb-parent-1",
+                    email="p@example.com",
+                    display_name="P",
+                )
+            }
+        )
+
+    async def get_by_id(self, user_id: str) -> User | None:
+        return self.users.get(user_id)
+
+
+def _consume(repo: _FakeRepo, tokens: _FakeTokens, users: _FakeUsers | None = None):
+    return ConsumeMagicLink(links=repo, tokens=tokens, users=users or _FakeUsers())
 
 
 def _seed(repo: _FakeRepo, **overrides: object) -> str:
@@ -144,11 +179,11 @@ async def test_consume_happy_path_returns_custom_token_and_next_path() -> None:
     tokens = _FakeTokens()
     raw = _seed(repo, next_path="/parent/payments")
 
-    result = await ConsumeMagicLink(links=repo, tokens=tokens).execute(raw, academy_id=ACADEMY)
+    result = await _consume(repo, tokens).execute(raw, academy_id=ACADEMY)
 
-    assert result.custom_token == "custom-parent-1"
+    assert result.custom_token == "custom-fb-parent-1"
     assert result.next_path == "/parent/payments"
-    assert tokens.calls == ["parent-1"]
+    assert tokens.calls == ["fb-parent-1"]
     # The token is now marked used.
     assert repo.by_hash[_hash_token(raw)].used_at is not None
 
@@ -163,7 +198,7 @@ async def test_consume_is_single_use() -> None:
     repo = _FakeRepo()
     tokens = _FakeTokens()
     raw = _seed(repo)
-    consume = ConsumeMagicLink(links=repo, tokens=tokens)
+    consume = _consume(repo, tokens)
 
     await consume.execute(raw, academy_id=ACADEMY)
 
@@ -171,7 +206,7 @@ async def test_consume_is_single_use() -> None:
         await consume.execute(raw, academy_id=ACADEMY)
     # The Firebase custom token was minted exactly once — the replay never
     # reached the token port.
-    assert tokens.calls == ["parent-1"]
+    assert tokens.calls == ["fb-parent-1"]
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +222,7 @@ async def test_consume_rejects_expired_token() -> None:
     raw = _seed(repo, expires_at=past)
 
     with pytest.raises(MagicLinkExpired):
-        await ConsumeMagicLink(links=repo, tokens=tokens).execute(raw, academy_id=ACADEMY)
+        await _consume(repo, tokens).execute(raw, academy_id=ACADEMY)
     assert tokens.calls == []  # never signed anyone in
 
 
@@ -203,7 +238,7 @@ async def test_consume_rejects_token_from_another_tenant() -> None:
     raw = _seed(repo, academy_id="acad-1")
 
     with pytest.raises(MagicLinkInvalid):
-        await ConsumeMagicLink(links=repo, tokens=tokens).execute(raw, academy_id="acad-2")
+        await _consume(repo, tokens).execute(raw, academy_id="acad-2")
     assert tokens.calls == []
     # A rejected cross-tenant attempt must NOT burn the token.
     assert repo.by_hash[_hash_token(raw)].used_at is None
@@ -215,4 +250,88 @@ async def test_consume_rejects_unknown_token() -> None:
     tokens = _FakeTokens()
 
     with pytest.raises(MagicLinkInvalid):
-        await ConsumeMagicLink(links=repo, tokens=tokens).execute("nope", academy_id=ACADEMY)
+        await _consume(repo, tokens).execute("nope", academy_id=ACADEMY)
+
+
+# ---------------------------------------------------------------------------
+# L4 regressions: real Firebase uid, retryable on Firebase failure, one live link
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_consume_mints_for_the_users_firebase_uid_not_the_roster_id() -> None:
+    repo = _FakeRepo()
+    tokens = _FakeTokens()
+    raw = _seed(repo, user_id="roster-7")
+    users = _FakeUsers(
+        {
+            "roster-7": User(
+                user_id="roster-7",
+                firebase_uid="fb-real",
+                email="p@example.com",
+                display_name="P",
+            )
+        }
+    )
+
+    result = await _consume(repo, tokens, users).execute(raw, academy_id=ACADEMY)
+
+    assert tokens.calls == ["fb-real"]
+    assert result.custom_token == "custom-fb-real"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "users",
+    [
+        {},
+        {"parent-1": User(user_id="parent-1", email="p@example.com", display_name="P")},
+        {
+            "parent-1": User(
+                user_id="parent-1",
+                firebase_uid="fb-1",
+                email="p@example.com",
+                display_name="P",
+                global_status="disabled",
+            )
+        },
+    ],
+    ids=["no-users-row", "no-firebase-account", "disabled"],
+)
+async def test_consume_refuses_without_a_usable_login_and_keeps_the_link(users) -> None:
+    repo = _FakeRepo()
+    tokens = _FakeTokens()
+    raw = _seed(repo)
+
+    with pytest.raises(MagicLinkInvalid):
+        await _consume(repo, tokens, _FakeUsers(users)).execute(raw, academy_id=ACADEMY)
+    assert tokens.calls == []
+    assert repo.by_hash[_hash_token(raw)].used_at is None
+
+
+@pytest.mark.asyncio
+async def test_a_firebase_failure_does_not_burn_the_link() -> None:
+    repo = _FakeRepo()
+    raw = _seed(repo)
+
+    with pytest.raises(RuntimeError):
+        await _consume(repo, _FakeTokens(fail=True)).execute(raw, academy_id=ACADEMY)
+    assert repo.by_hash[_hash_token(raw)].used_at is None
+
+    result = await _consume(repo, _FakeTokens()).execute(raw, academy_id=ACADEMY)
+    assert result.custom_token == "custom-fb-parent-1"
+
+
+@pytest.mark.asyncio
+async def test_issuing_a_new_link_revokes_the_parents_older_unused_links() -> None:
+    repo = _FakeRepo()
+    old = _seed(repo, token="old-token")
+    other_parent = _seed(repo, token="other", user_id="parent-2", magic_link_id="ml-2")
+
+    new = await IssueMagicLink(repo).execute(
+        user_id="parent-1", academy_id=ACADEMY, next_path="/parent/dashboard"
+    )
+
+    assert _hash_token(old) not in repo.by_hash
+    assert _hash_token(other_parent) in repo.by_hash
+    assert _hash_token(new) in repo.by_hash

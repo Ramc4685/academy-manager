@@ -87,6 +87,22 @@ def test_parent_onboarding_public_write_paths_are_rate_limited() -> None:
     assert [response.status_code for response in patch_responses] == [200, 200, 429]
 
 
+def test_forgot_password_is_rate_limited_per_ip() -> None:
+    app = _app()
+
+    @app.post("/api/v2/password-reset", status_code=204)
+    async def _forgot_password() -> None:
+        return None
+
+    with TestClient(app) as client:
+        responses = [
+            client.post("/api/v2/password-reset", json={"email": f"p{i}@example.com"})
+            for i in range(3)
+        ]
+
+    assert [response.status_code for response in responses] == [204, 204, 429]
+
+
 def test_trusted_proxy_keys_on_cf_connecting_ip_with_independent_buckets() -> None:
     app = _app(proxy_shared_secret="s3cret")
 

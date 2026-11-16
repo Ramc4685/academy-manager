@@ -23,12 +23,21 @@ from __future__ import annotations
 from html import escape
 from typing import Protocol
 
-from backend.v2.contexts.identity.application.ports import TokenVerifier
+from backend.v2.contexts.identity.application.ports import (
+    TokenVerifier,
+    UserRepository,
+    VerificationEmailCooldownPort,
+)
 from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
     AcademyBrandLookup,
+    AcademyPortalUrlLookup,
     InviteEmailOutcome,
     InviteEmailPort,
+    PasswordResetLinkPort,
     resolve_email_brand,
+)
+from backend.v2.contexts.identity.application.use_cases.send_password_reset_email import (
+    password_reset_body,
 )
 from backend.v2.contexts.identity.domain.errors import (
     InvalidToken,
@@ -41,17 +50,13 @@ from backend.v2.shared.http.errors import DomainError
 
 
 class EmailVerificationLinkPort(Protocol):
-    async def generate_email_verification_link(self, email: str) -> str: ...
+    async def generate_email_verification_link(
+        self, email: str, *, portal_url: str | None = None
+    ) -> str: ...
 
 
 class AcademyNameLookup(Protocol):
     async def get_academy_name(self, academy_id: str) -> str | None: ...
-
-
-class VerificationEmailCooldownPort(Protocol):
-    """Per-recipient send budget. ``False`` means "throttled, do not send"."""
-
-    async def claim_send(self, email: str) -> bool: ...
 
 
 def _verification_body(
@@ -79,8 +84,14 @@ class SendRegistrationVerificationEmail:
         sender: InviteEmailPort,
         academies: AcademyNameLookup,
         cooldown: VerificationEmailCooldownPort,
+        users: UserRepository,
+        password_links: PasswordResetLinkPort,
         brands: AcademyBrandLookup | None = None,
+        portals: AcademyPortalUrlLookup | None = None,
     ) -> None:
+        self._portals = portals
+        self._users = users
+        self._password_links = password_links
         self._verifier = verifier
         self._links = links
         self._sender = sender
@@ -113,20 +124,44 @@ class SendRegistrationVerificationEmail:
             )
 
         try:
-            verify_link = await self._links.generate_email_verification_link(email)
+            # Re-hosted on the academy's own /auth/action page so the parent
+            # can verify from any browser and continue to that academy's login.
+            portal_url = (
+                await self._portals.get_academy_portal_url(academy_id) if self._portals else None
+            )
+            # An address we already hold (a roster parent who never activated)
+            # gets the set-password mail, never "verify": whoever created this
+            # Firebase account may not own the mailbox, and verifying it would
+            # hand them the parent's account.
+            existing = await self._users.get_by_email(email)
+            if existing is not None:
+                link = await self._password_links.generate_password_reset_link(
+                    email,
+                    uid=existing.user_id,
+                    display_name=existing.display_name,
+                    portal_url=portal_url,
+                )
+            else:
+                link = await self._links.generate_email_verification_link(
+                    email, portal_url=portal_url
+                )
             academy_name = await self._academies.get_academy_name(academy_id) or "your academy"
         except Exception as exc:
             raise LoginInviteSendFailed(f"could not prepare verification email: {exc}") from exc
 
         brand = await resolve_email_brand(self._brands, academy_id, academy_name=academy_name)
+        if existing is not None:
+            subject = f"Set your password for {academy_name}"
+            body = password_reset_body(academy_name=academy_name, reset_link=link, brand=brand)
+        else:
+            subject = f"Verify your email for {academy_name}"
+            body = _verification_body(academy_name=academy_name, verify_link=link, brand=brand)
         outcome: InviteEmailOutcome = await self._sender.send_invite_email(
-            user_id=uid,
+            user_id=existing.user_id if existing is not None else uid,
             email=email,
             display_name=display_name,
-            subject=f"Verify your email for {academy_name}",
-            body=_verification_body(
-                academy_name=academy_name, verify_link=verify_link, brand=brand
-            ),
+            subject=subject,
+            body=body,
         )
         if not outcome.ok:
             raise LoginInviteSendFailed(outcome.failed_reason or "send failed")

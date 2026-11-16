@@ -80,13 +80,18 @@ async def _request_deletion(db: Any, firebase: FakeFirebase) -> str:
         ]
     )
     request = await RequestAccountDeletion(
-        store=MongoAccountDeletionStore(db), firebase=firebase
+        store=MongoAccountDeletionStore(db), firebase=firebase, follow_up=_NoFollowUp()
     ).execute(
         RequestAccountDeletionCommand(user_id="u1", email="p@x.com", signed_in_at=NOW), now=NOW
     )
     assert firebase.disabled == {"fb1": True}
     assert set(await db["academy_memberships"].distinct("status")) == {"removed"}
     return request.request_id
+
+
+class _NoFollowUp:
+    async def on_requested(self, request: Any, *, fresh: bool) -> None:
+        return None
 
 
 def _app(db: Any, firebase: FakeFirebase, claims: AuthClaims) -> FastAPI:

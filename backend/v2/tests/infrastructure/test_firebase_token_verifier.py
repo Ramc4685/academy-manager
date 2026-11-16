@@ -515,3 +515,28 @@ async def test_password_reset_link_without_portal_url_keeps_legacy_behaviour(
 
     assert seen == [("reset_link_plain", {"email": "parent@example.com"})]
     assert link.startswith("https://academy-courtmastr.firebaseapp.com/__/auth/action?")
+
+
+@pytest.mark.asyncio
+async def test_email_verification_link_is_rehosted_on_the_tenant_portal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[object] = []
+
+    class FakeAuth:
+        ActionCodeSettings = SimpleNamespace
+
+        @staticmethod
+        def generate_email_verification_link(email: str, settings: object = None) -> str:
+            seen.append(getattr(settings, "url", None))
+            return "https://proj.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=abc"
+
+    monkeypatch.setattr(adapter_module, "firebase_admin_auth", FakeAuth)
+    monkeypatch.setattr(adapter_module, "_ensure_firebase_app", lambda: object())
+
+    link = await FirebaseAdminAdapter().generate_email_verification_link(
+        "p@example.com", portal_url="https://blno.example.test"
+    )
+
+    assert link == "https://blno.example.test/auth/action?mode=verifyEmail&oobCode=abc"
+    assert seen == ["https://blno.example.test/login"]

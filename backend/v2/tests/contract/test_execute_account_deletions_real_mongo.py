@@ -32,6 +32,8 @@ class RecordingStopAll:
 
     async def execute(self, cmd: Any) -> StopAllClassesResult:
         assert cmd.outcome == "adjustment"
+        # Regression: per-class drop emails went out minutes before erasure.
+        assert cmd.notify_family is False
         self.students.append(cmd.student_id)
         return StopAllClassesResult(student_id=cmd.student_id, results=[])
 
