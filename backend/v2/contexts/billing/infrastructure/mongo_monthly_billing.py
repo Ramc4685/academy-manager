@@ -10,10 +10,12 @@ the legacy adapter keeps shrinking toward deletion.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
+from pydantic import ValidationError
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
@@ -23,7 +25,7 @@ from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import 
 from backend.v2.contexts.billing.application.use_cases.invoice_numbering import (
     mint_invoice_number,
 )
-from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.domain.billing_settings import BillingSettings, SiblingDiscount
 from backend.v2.contexts.billing.domain.ledger import (
     ACCOUNT_CREDIT_SOURCE_TYPE,
     InvoiceLine,
@@ -42,6 +44,11 @@ from backend.v2.contexts.billing.domain.proration import (
     schedule_signature,
     snapshot_charge_denominator,
     snapshot_classes_charged,
+)
+from backend.v2.contexts.billing.domain.sibling_discount import (
+    FamilyEnrollment,
+    sibling_discounted_enrollment_ids,
+    sibling_policy,
 )
 from backend.v2.contexts.billing.domain.tuition_discount import (
     TuitionDiscount,
@@ -1647,12 +1654,26 @@ async def resolve_monthly_charge(
     billing_period = BillingPeriod.from_label(period, timezone_name=timezone_name)
     occurrences = await repo._occurrences_for_session(session_doc, billing_period)
 
-    policy = await repo._discounts.get_active(enrollment_id)
-    mdc = (
-        monthly_discount_cents(policy, monthly_price_cents=amount_cents)
-        if policy is not None and _policy_applies(policy, billing_period)
-        else 0
+    manual = await repo._discounts.get_active(enrollment_id)
+    if manual is not None and not _policy_applies(manual, billing_period):
+        manual = None
+    sibling = await resolve_sibling_discount(
+        repo._db,
+        enrollment=enrollment,
+        period=period,
+        period_start=billing_period.start_at.date(),
+        now=now,
     )
+    # One discount line per invoice: the larger of the manual policy and the
+    # automatic sibling one, never both. Manual wins a tie. Keeping a single
+    # TuitionDiscount means the ACH base, proration, snapshots and recompute
+    # are unchanged.
+    policy = manual
+    if sibling is not None and monthly_discount_cents(sibling, monthly_price_cents=amount_cents) > (
+        monthly_discount_cents(manual, monthly_price_cents=amount_cents) if manual else 0
+    ):
+        policy = sibling
+    mdc = monthly_discount_cents(policy, monthly_price_cents=amount_cents) if policy else 0
 
     # Not a first-month enrollment → full monthly tuition.
     #
@@ -1748,6 +1769,164 @@ async def resolve_monthly_charge(
         policy if mdc > 0 else None,
         _tuition_line_description(period, snapshot),
     )
+
+
+#: Insert-once record of each enrollment-month's sibling decision (migration 0237).
+SIBLING_DECISIONS_COLLECTION = "sibling_discount_decisions"
+_SIBLING_ELIGIBLE_STATUSES = [
+    status for status in MONTHLY_RUN_ENROLLMENT_STATUSES if status not in ("paused", "held")
+]
+
+
+def _resolved_parent_id(enrollment: Mapping[str, Any], student: Mapping[str, Any] | None) -> str:
+    """The family key, resolved exactly as the monthly run resolves it."""
+    return str(
+        enrollment.get("parent_id")
+        or enrollment.get("parent_user_id")
+        or (student or {}).get("parent_id")
+        or (student or {}).get("parent_user_id")
+        or ""
+    )
+
+
+async def resolve_sibling_discount(
+    db: Any,
+    *,
+    enrollment: Mapping[str, Any],
+    period: str,
+    period_start: date,
+    now: datetime,
+) -> TuitionDiscount | None:
+    """The automatic sibling policy for this enrollment-month, or ``None`` (L9 C1).
+
+    Stable by construction, in this order:
+
+    1. A recorded decision is used as is, even if the setting changed since,
+       so orphan recovery and retries price the month exactly as first priced.
+    2. If the month's invoice already exists, no sibling discount: an invoice
+       generated before the change is never repriced.
+    3. Otherwise, with the offer switched on, decide from the family as it
+       stands, insert the decision once, and re-read it if another run won.
+
+    Switched off with no decision on record: ``None`` and nothing written.
+    """
+    academy_id = current_academy_id()
+    enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
+    student_id = str(enrollment.get("student_id") or "")
+    key = {"academy_id": academy_id, "enrollment_id": enrollment_id, "period": period}
+    decisions = db[SIBLING_DECISIONS_COLLECTION]
+    decision = await decisions.find_one(key)
+    if decision is None:
+        invoice_id = MongoMonthlyBillingGenerator._monthly_invoice_id(enrollment_id, period)
+        if await db["invoices"].find_one(
+            {"academy_id": academy_id, "invoice_id": invoice_id}, {"_id": 1}
+        ):
+            return None
+        offer = await _sibling_offer(db, academy_id)
+        if offer is None or not offer.enabled or offer.percent_bps is None:
+            return None
+        assert offer.full_price_child is not None and offer.applies_to is not None
+        parent_id, family = await _sibling_family(db, enrollment=enrollment, period=period)
+        discounted = enrollment_id in sibling_discounted_enrollment_ids(
+            family, full_price_child=offer.full_price_child, applies_to=offer.applies_to
+        )
+        decision = {
+            **key,
+            "student_id": student_id,
+            "parent_id": parent_id,
+            "discounted": discounted,
+            "percent_bps": offer.percent_bps if discounted else None,
+            "full_price_child": offer.full_price_child,
+            "applies_to": offer.applies_to,
+            "family_enrollment_ids": sorted(row.enrollment_id for row in family),
+            "decided_at": now,
+        }
+        try:
+            await decisions.insert_one(dict(decision))
+        except DuplicateKeyError:
+            decision = await decisions.find_one(key)
+            if decision is None:  # pragma: no cover - the unique key just refused us
+                raise
+    if not decision.get("discounted"):
+        return None
+    return sibling_policy(
+        enrollment_id=enrollment_id,
+        student_id=student_id,
+        period=period,
+        percent_bps=int(decision["percent_bps"]),
+        period_start=period_start,
+    )
+
+
+async def _sibling_offer(db: Any, academy_id: str) -> SiblingDiscount | None:
+    """The sibling block alone, so a bad value elsewhere in the settings document
+    cannot block the monthly run (the schedule read degrades the same way)."""
+    doc = await db["billing_settings"].find_one({"academy_id": academy_id}, {"sibling_discount": 1})
+    try:
+        return SiblingDiscount.model_validate((doc or {}).get("sibling_discount") or {})
+    except ValidationError:
+        logging.getLogger(__name__).warning("sibling_discount_unreadable", exc_info=True)
+        # Generating without it would overcharge every sibling family, so page.
+        capture_message(
+            "Monthly generation could not read the sibling discount setting; "
+            "no sibling discount was applied and no decision recorded",
+            level="error",
+        )
+        return None
+
+
+async def _sibling_family(
+    db: Any, *, enrollment: Mapping[str, Any], period: str
+) -> tuple[str, list[FamilyEnrollment]]:
+    """This enrollment's family: eligible enrollments sharing its resolved parent.
+
+    shortcut: siblings are found through ``students.parent_id`` (indexed) plus
+    this enrollment's own student, so a sibling linked to the parent only by
+    ``enrollment.parent_id`` or ``parent_user_id`` is missed (no index on
+    either). Index and widen the lookup if such rows ever appear.
+    """
+    academy_id = current_academy_id()
+    own_student_id = str(enrollment.get("student_id") or "")
+    own_student = await db["students"].find_one(
+        {"academy_id": academy_id, "student_id": own_student_id}
+    )
+    parent_id = _resolved_parent_id(enrollment, own_student)
+    if not parent_id:
+        return "", []
+    students = {own_student_id: own_student}
+    async for doc in db["students"].find({"academy_id": academy_id, "parent_id": parent_id}):
+        students[str(doc.get("student_id") or "")] = doc
+    family: list[FamilyEnrollment] = []
+    cursor = db["enrollments"].find(
+        {
+            "academy_id": academy_id,
+            "student_id": {"$in": sorted(sid for sid in students if sid)},
+            "status": {"$in": _SIBLING_ELIGIBLE_STATUSES},
+        }
+    )
+    async for row in cursor:
+        student_id = str(row.get("student_id") or "")
+        if _resolved_parent_id(row, students.get(student_id)) != parent_id:
+            continue
+        if str(row.get("billing_type") or "standard").lower() not in MONTHLY_INVOICED_BILLING_TYPES:
+            continue
+        session = await db["sessions"].find_one(
+            {"academy_id": academy_id, "session_id": str(row.get("session_id") or "")}
+        )
+        fee = await class_fee_cents_for_period(db, session or {}, period)
+        if fee <= 0:
+            continue
+        family.append(
+            FamilyEnrollment(
+                enrollment_id=str(row.get("enrollment_id") or row.get("_id")),
+                student_id=student_id,
+                list_fee_cents=fee,
+                enrolled_at=_coerce_datetime(
+                    row.get("billing_start_at") or row.get("enrolled_at") or row.get("created_at")
+                ),
+            )
+        )
+    return parent_id, family
 
 
 def _policy_applies(policy: TuitionDiscount, billing_period: BillingPeriod) -> bool:

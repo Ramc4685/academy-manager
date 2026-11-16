@@ -216,6 +216,12 @@ HOT_SHAPED_LOOKUPS: list[tuple[str, dict[str, Any], set[str]]] = [
         },
         {"trial_requests_guest_mailbox_class_unique"},
     ),
+    # L9 C1 sibling discount (migration 0237): the resolver's decision lookup.
+    (
+        "sibling_discount_decisions",
+        {"academy_id": "acad_0", "enrollment_id": "enr-1", "period": "2026-09"},
+        {"sibling_decision_enrollment_period_unique"},
+    ),
 ]
 
 
