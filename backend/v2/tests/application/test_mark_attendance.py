@@ -23,11 +23,12 @@ from backend.v2.contexts.coaching.domain.errors import (
     StudentNotEnrolled,
 )
 from backend.v2.contexts.coaching.domain.models import Attendance
+from backend.v2.tests.idempotency_fakes import ClaimableStore
 
 FIXED_NOW = datetime(2026, 5, 16, 9, 30, tzinfo=UTC)
 
 
-class InMemoryIdempotency:
+class InMemoryIdempotency(ClaimableStore):
     def __init__(self) -> None:
         self.data: dict[str, dict[str, Any]] = {}
 

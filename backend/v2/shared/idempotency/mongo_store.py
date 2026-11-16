@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.errors import DuplicateKeyError
+
+#: A claim older than this belongs to a request that died mid-flight (a crash or
+#: a deploy); the next retry takes it over instead of waiting out the 7-day TTL.
+CLAIM_STALE_AFTER = timedelta(minutes=5)
 
 
 class MongoIdempotencyStore:
@@ -42,3 +47,19 @@ class MongoIdempotencyStore:
                 "created_at": datetime.now(UTC),
             }
         )
+
+    async def claim(self, key: str) -> bool:
+        now = datetime.now(UTC)
+        try:
+            await self._collection.insert_one({"key": key, "claimed_at": now, "created_at": now})
+            return True
+        except DuplicateKeyError:
+            # Take over a stale claim atomically: only one retry can match it.
+            taken = await self._collection.update_one(
+                {"key": key, "claimed_at": {"$lt": now - CLAIM_STALE_AFTER}},
+                {"$set": {"claimed_at": now, "created_at": now}},
+            )
+            return taken.modified_count == 1
+
+    async def release(self, key: str) -> None:
+        await self._collection.delete_one({"key": key})
