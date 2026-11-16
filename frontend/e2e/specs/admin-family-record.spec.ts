@@ -6,6 +6,7 @@ import {
   ADMIN_USER_A,
   fulfillJson,
   stubAcademy,
+  stubFamilySiblingDiscount,
   stubMe,
   stubMemberships,
 } from "../fixtures/saas-stubs";
@@ -220,6 +221,7 @@ async function setup(page: Page) {
   await page.route("**/api/v2/admin/families/parent-1/billing", (route) =>
     fulfillJson(route, BILLING),
   );
+  await stubFamilySiblingDiscount(page);
   await page.route("**/api/v2/admin/families/parent-1/timeline**", (route) =>
     fulfillJson(
       route,

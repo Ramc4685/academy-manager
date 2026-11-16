@@ -18254,6 +18254,43 @@
         "title": "FamilyRegistration",
         "type": "object"
       },
+      "FamilySiblingDiscountView": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "enrollments": {
+            "items": {
+              "$ref": "#/components/schemas/SiblingDiscountEnrollmentView"
+            },
+            "title": "Enrollments",
+            "type": "array"
+          },
+          "percent_bps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent Bps"
+          },
+          "period": {
+            "title": "Period",
+            "type": "string"
+          }
+        },
+        "required": [
+          "period",
+          "enabled",
+          "enrollments"
+        ],
+        "title": "FamilySiblingDiscountView",
+        "type": "object"
+      },
       "FamilyStudent": {
         "properties": {
           "enrollments": {
@@ -30590,6 +30627,66 @@
         "title": "SetupChecklistView",
         "type": "object"
       },
+      "SiblingDiscountEnrollmentView": {
+        "properties": {
+          "enrollment_id": {
+            "title": "Enrollment Id",
+            "type": "string"
+          },
+          "percent_bps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent Bps"
+          },
+          "reason": {
+            "enum": [
+              "sibling_discount",
+              "full_price_child",
+              "manual_discount_larger",
+              "already_invoiced",
+              "not_billed_this_month",
+              "only_one_child",
+              "one_class_per_child",
+              "setting_off"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "discounted",
+              "full_price",
+              "not_eligible",
+              "off"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "student_id",
+          "session_id",
+          "status",
+          "reason"
+        ],
+        "title": "SiblingDiscountEnrollmentView",
+        "type": "object"
+      },
       "SiblingDiscountRequest": {
         "additionalProperties": false,
         "properties": {
@@ -40716,6 +40813,49 @@
         "summary": "Edit Family Note",
         "tags": [
           "admin.families"
+        ]
+      }
+    },
+    "/api/v2/admin/families/{parent_id}/sibling-discount": {
+      "get": {
+        "description": "The same decision the monthly invoice run makes, computed without writing.",
+        "operationId": "get_family_sibling_discount_api_v2_admin_families__parent_id__sibling_discount_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "parent_id",
+            "required": true,
+            "schema": {
+              "title": "Parent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FamilySiblingDiscountView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Who gets the sibling discount on this family's month (read-only)",
+        "tags": [
+          "admin.family-offers"
         ]
       }
     },

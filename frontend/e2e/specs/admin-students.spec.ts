@@ -1,5 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
+import { stubFamilySiblingDiscount } from "../fixtures/saas-stubs";
+
 const ADMIN_ME = {
   user_id: "user-admin-students-e2e",
   email: "admin@example.com",
@@ -81,6 +83,7 @@ async function stubAdminAcademy(page: Page) {
   await page.route("**/api/v2/admin/payments/overdue-families", (route) =>
     fulfillJson(route, { past_due_count: 0, needs_action_count: 0 }),
   );
+  await stubFamilySiblingDiscount(page);
 }
 
 

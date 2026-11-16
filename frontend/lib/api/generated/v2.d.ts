@@ -1887,6 +1887,26 @@ export interface paths {
         patch: operations["edit_family_note_api_v2_admin_families__parent_id__notes__note_id__patch"];
         trace?: never;
     };
+    "/api/v2/admin/families/{parent_id}/sibling-discount": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Who gets the sibling discount on this family's month (read-only)
+         * @description The same decision the monthly invoice run makes, computed without writing.
+         */
+        get: operations["get_family_sibling_discount_api_v2_admin_families__parent_id__sibling_discount_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/families/{parent_id}/timeline": {
         parameters: {
             query?: never;
@@ -14083,6 +14103,17 @@ export interface components {
              */
             state: "registered" | "invited" | "not_invited";
         };
+        /** FamilySiblingDiscountView */
+        FamilySiblingDiscountView: {
+            /** Enabled */
+            enabled: boolean;
+            /** Enrollments */
+            enrollments: components["schemas"]["SiblingDiscountEnrollmentView"][];
+            /** Percent Bps */
+            percent_bps?: number | null;
+            /** Period */
+            period: string;
+        };
         /** FamilyStudent */
         FamilyStudent: {
             /**
@@ -18603,6 +18634,27 @@ export interface components {
             items: components["schemas"]["SetupChecklistItemView"][];
             /** Total */
             total: number;
+        };
+        /** SiblingDiscountEnrollmentView */
+        SiblingDiscountEnrollmentView: {
+            /** Enrollment Id */
+            enrollment_id: string;
+            /** Percent Bps */
+            percent_bps?: number | null;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "sibling_discount" | "full_price_child" | "manual_discount_larger" | "already_invoiced" | "not_billed_this_month" | "only_one_child" | "one_class_per_child" | "setting_off";
+            /** Session Id */
+            session_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "discounted" | "full_price" | "not_eligible" | "off";
+            /** Student Id */
+            student_id: string;
         };
         /** SiblingDiscountRequest */
         SiblingDiscountRequest: {
@@ -23782,6 +23834,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FamilyNoteView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_family_sibling_discount_api_v2_admin_families__parent_id__sibling_discount_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                parent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FamilySiblingDiscountView"];
                 };
             };
             /** @description Validation Error */

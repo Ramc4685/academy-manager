@@ -8,6 +8,7 @@ import {
   fulfillJson,
   stubAcademy,
   stubMe,
+  stubFamilySiblingDiscount,
   stubMemberships,
 } from "../fixtures/saas-stubs";
 import { familyIndexRow, stubFamilyIndex } from "../fixtures/family-index";
@@ -259,7 +260,7 @@ async function stubShell(page: Page, owner: boolean): Promise<void> {
 
 async function setup(
   page: Page,
-  opts: { owner: boolean; view?: unknown; invoiceDueDays?: number },
+  opts: { owner: boolean; view?: unknown; invoiceDueDays?: number; sibling?: unknown },
 ) {
   const errors = collectConsoleErrors(page);
   installTenantGuard(page);
@@ -304,6 +305,7 @@ async function setup(
     }
     return fulfillJson(route, view);
   });
+  await stubFamilySiblingDiscount(page, opts.sibling);
   // The hand-billing dialogs date their invoice from this Billing rule (#739).
   await page.route("**/api/v2/admin/billing/settings/invoice-schedule", (route) =>
     fulfillJson(route, { billing_day: 1, invoice_due_days: opts.invoiceDueDays ?? 7 }),
@@ -387,6 +389,35 @@ test.describe("Family billing", () => {
     );
     await expect(page.getByTestId("timeline-entry-payment_received")).toContainText(
       "$60 received",
+    );
+    expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("the sibling discount line says who pays full price and who is discounted", async ({
+    page,
+  }) => {
+    const row = (enrollment_id: string, student_id: string, status: string) => ({
+      enrollment_id,
+      student_id,
+      session_id: "sess-1",
+      status,
+      reason: status === "discounted" ? "sibling_discount" : "full_price_child",
+      percent_bps: status === "discounted" ? 1000 : null,
+    });
+    const { errors } = await setup(page, {
+      owner: true,
+      sibling: {
+        period: "2026-09",
+        enabled: true,
+        percent_bps: 1000,
+        enrollments: [
+          row("enr-arjun", "stu-arjun", "full_price"),
+          row("enr-hannah", "stu-hannah", "discounted"),
+        ],
+      },
+    });
+    await expect(page.getByTestId("admin-family-sibling-summary")).toHaveText(
+      "Sibling discount this month: Arjun pays full price; Hannah gets 10% off.",
     );
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
