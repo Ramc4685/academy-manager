@@ -4,13 +4,18 @@ import type { Route } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { Skeleton } from "@/components/ds/skeleton";
-import { getParentCertificateDetail } from "@/lib/api/curriculum";
+import {
+  getParentCertificateDetail,
+  shareParentCertificate,
+  unshareParentCertificate,
+  type CertificateDetail,
+} from "@/lib/api/curriculum";
 import { getParentAcademy } from "@/lib/api/parent";
 import { queryKeys } from "@/lib/query/keys";
-import { CertificateScreen, shareCertificate } from "./certificate-screen";
+import { CertificateScreen, PublicCertificateLink, shareCertificate } from "./certificate-screen";
 
 export default function ParentCertificatePage() {
   return (
@@ -29,14 +34,25 @@ function ParentCertificate() {
     studentId ? `/parent/progress?child=${encodeURIComponent(studentId)}` : "/parent/progress"
   ) as Route;
 
+  const queryClient = useQueryClient();
+  const detailKey = ["parent", "certificate", studentId, certId] as const;
   const detail = useQuery({
-    queryKey: ["parent", "certificate", studentId, certId],
+    queryKey: detailKey,
     queryFn: () => getParentCertificateDetail(studentId, certId),
     enabled: Boolean(studentId && certId),
   });
   const academy = useQuery({
     queryKey: queryKeys.parent.academy(),
     queryFn: getParentAcademy,
+  });
+
+  const share = useMutation({
+    mutationFn: (on: boolean) =>
+      on ? shareParentCertificate(studentId, certId) : unshareParentCertificate(studentId, certId),
+    onSuccess: ({ share_token }) =>
+      queryClient.setQueryData<CertificateDetail>(detailKey, (prev) =>
+        prev ? { ...prev, certificate: { ...prev.certificate, share_token } } : prev,
+      ),
   });
 
   if (!studentId || detail.isError) {
@@ -68,7 +84,15 @@ function ParentCertificate() {
       progressHref={progressHref}
       onPrint={() => window.print()}
       onShare={() => void shareCertificate(detail.data, brand?.display_name ?? "")}
-    />
+    >
+      <PublicCertificateLink
+        shareToken={detail.data.certificate.share_token}
+        pending={share.isPending}
+        error={share.isError ? "Could not update the public link. Try again." : null}
+        onCreate={() => share.mutate(true)}
+        onStop={() => share.mutate(false)}
+      />
+    </CertificateScreen>
   );
 }
 

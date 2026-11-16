@@ -20,6 +20,7 @@ from backend.v2.contexts.communications.application.parent_wins import (
     ChildWins,
     FamilyWins,
     LevelUp,
+    MilestoneWin,
     SkillWins,
 )
 from backend.v2.contexts.communications.application.use_cases.send_parent_evening_wins import (
@@ -43,6 +44,7 @@ class _ParentWinsProvider:
         levels: Any,
         academies: Any,
         narratives: Any | None = None,
+        milestones: Any | None = None,
     ) -> None:
         self._progress = skill_progress
         self._certs = certificates
@@ -51,6 +53,7 @@ class _ParentWinsProvider:
         self._levels = levels
         self._academies = academies
         self._narratives = narratives
+        self._milestones = milestones
 
     async def families_with_wins(self, start: datetime, end: datetime) -> list[FamilyWins]:
         passed = await self._progress.list_passed_between(start, end)
@@ -166,6 +169,17 @@ class _ParentWinsProvider:
             )
             if not ups and not skill_wins:
                 continue
+            # L5B: records are insert-once with a deterministic reached_at, so a
+            # milestone lands in exactly one evening's window. Off -> empty.
+            milestones = (
+                tuple(
+                    MilestoneWin(kind=m.kind, count=m.count)
+                    for m in await self._milestones.execute(student_id)
+                    if start <= m.reached_at < end
+                )
+                if self._milestones is not None
+                else ()
+            )
             if not skill_wins and len(ups) == 1:
                 # A level-finish day: the note is drafted from the finished level's rows.
                 (level_id,) = level_ups[student_id]
@@ -197,6 +211,7 @@ class _ParentWinsProvider:
                     level_ups=ups,
                     skill_wins=tuple(skill_wins),
                     narrative=narrative.text if narrative is not None else "",
+                    milestones=milestones,
                 )
             )
         return [
@@ -212,6 +227,7 @@ def compose_send_parent_evening_wins(db: Any) -> SendParentEveningWins:
         _build_email_sender,
         compose_unsubscribe_link_builder,
     )
+    from backend.v2.composition.pathway import compose_record_milestones
     from backend.v2.contexts.ai.infrastructure.mongo_ai_narrative_repo import (
         MongoAiNarrativeRepository,
     )
@@ -254,6 +270,7 @@ def compose_send_parent_evening_wins(db: Any) -> SendParentEveningWins:
             levels=MongoLevelRepository(db),
             academies=academies,
             narratives=MongoAiNarrativeRepository(db),
+            milestones=compose_record_milestones(db),
         ),
         unsubscribe_links=compose_unsubscribe_link_builder(settings),
         academy_slugs=_AcademySlugLookup(academies),

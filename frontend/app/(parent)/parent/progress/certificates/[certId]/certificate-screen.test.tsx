@@ -8,7 +8,12 @@ vi.mock("@/lib/use-native-app", () => ({ useIsNativeApp: () => shell.native }));
 import { certificateAccent } from "@/components/progress/level-certificate";
 import type { CertificateDetail } from "@/lib/api/curriculum";
 
-import { CertificateScreen, shareCertificate } from "./certificate-screen";
+import {
+  CertificateScreen,
+  PublicCertificateLink,
+  publicCertificateUrl,
+  shareCertificate,
+} from "./certificate-screen";
 
 function detail(overrides: Partial<CertificateDetail> = {}): CertificateDetail {
   return {
@@ -148,5 +153,45 @@ describe("shareCertificate", () => {
     const print = vi.fn();
     await shareCertificate(detail(), "Test Academy", {} as Pick<Navigator, "share">, print);
     expect(print).toHaveBeenCalledOnce();
+  });
+});
+
+describe("PublicCertificateLink (L5B)", () => {
+  const noop = () => undefined;
+
+  it("offers to create a link when the certificate is not shared", () => {
+    const html = renderToStaticMarkup(
+      createElement(PublicCertificateLink, {
+        shareToken: null,
+        pending: false,
+        error: null,
+        onCreate: noop,
+        onStop: noop,
+      }),
+    );
+    expect(html).toContain("certificate-public-create");
+    expect(html).not.toContain("certificate-public-url");
+  });
+
+  it("shows the /c link on this host and a stop control when shared", () => {
+    expect(publicCertificateUrl("tok_ABCDEFGHIJKLMNOP", "https://blno.example")).toBe(
+      "https://blno.example/c/tok_ABCDEFGHIJKLMNOP",
+    );
+    vi.stubGlobal("window", { location: { origin: "https://blno.example" } });
+    try {
+      const html = renderToStaticMarkup(
+        createElement(PublicCertificateLink, {
+          shareToken: "tok_ABCDEFGHIJKLMNOP",
+          pending: false,
+          error: null,
+          onCreate: noop,
+          onStop: noop,
+        }),
+      );
+      expect(html).toContain("https://blno.example/c/tok_ABCDEFGHIJKLMNOP");
+      expect(html).toContain("certificate-public-stop");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

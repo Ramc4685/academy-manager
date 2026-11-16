@@ -1,5 +1,6 @@
 import type { Route } from "next";
 import Link from "next/link";
+import { useState, type ReactNode } from "react";
 import {
   CertificatePreview,
   formatCertificateDate,
@@ -44,12 +45,15 @@ export function CertificateScreen({
   progressHref,
   onPrint,
   onShare,
+  children,
 }: {
   detail: CertificateDetail;
   academy: CertificateAcademy;
   progressHref: Route;
   onPrint: () => void;
   onShare: () => void;
+  /** Extra controls under the share buttons (the public link). */
+  children?: ReactNode;
 }) {
   const isNativeApp = useIsNativeApp();
   const cert = detail.certificate;
@@ -139,6 +143,8 @@ export function CertificateScreen({
         </p>
       </div>
 
+      {children}
+
       {detail.next_level && (
         <Link
           href={progressHref}
@@ -167,6 +173,99 @@ export function CertificateScreen({
             />
           </svg>
         </Link>
+      )}
+    </div>
+  );
+}
+
+/** The public page for a shared certificate, on this academy's own host. */
+export function publicCertificateUrl(token: string, origin: string = window.location.origin): string {
+  return `${origin}/c/${encodeURIComponent(token)}`;
+}
+
+/**
+ * Parent opt-in public link (L5B). Off until the parent turns it on; the page
+ * shows the first name (or initial, per the academy) and the level, never
+ * contact details. Turning it off makes the old link a 404 straight away.
+ */
+export function PublicCertificateLink({
+  shareToken,
+  pending,
+  error,
+  onCreate,
+  onStop,
+}: {
+  shareToken: string | null | undefined;
+  pending: boolean;
+  error: string | null;
+  onCreate: () => void;
+  onStop: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const url = shareToken ? publicCertificateUrl(shareToken) : null;
+  return (
+    <div
+      className="space-y-2 rounded-[14px] border border-rally-line bg-white p-3.5"
+      data-testid="certificate-public-link"
+    >
+      <p className="text-sm font-bold text-rally-ink">Public link</p>
+      {url ? (
+        <>
+          <p className="text-xs text-rally-muted">
+            Anyone with this link can see the certificate. Stop sharing at any time.
+          </p>
+          <input
+            readOnly
+            value={url}
+            aria-label="Public certificate link"
+            onFocus={(e) => e.currentTarget.select()}
+            className="w-full rounded-md border border-rally-line px-2 py-1.5 text-[13px] text-rally-ink"
+            data-testid="certificate-public-url"
+          />
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                void navigator.clipboard
+                  ?.writeText(url)
+                  .then(() => setCopied(true))
+                  .catch(() => setCopied(false))
+              }
+              className="min-h-11 rounded-xl bg-rally-volt-400 px-4 text-sm font-bold text-rally-ink"
+            >
+              {copied ? "Copied" : "Copy link"}
+            </button>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={onStop}
+              className="min-h-11 rounded-xl border-[1.5px] border-rally-ink bg-white px-4 text-sm font-bold text-rally-ink disabled:opacity-50"
+              data-testid="certificate-public-stop"
+            >
+              Stop sharing
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-rally-muted">
+            Make a link you can post or send. It shows the first name and level only.
+          </p>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={onCreate}
+            className="min-h-11 rounded-xl border-[1.5px] border-rally-ink bg-white px-4 text-sm font-bold text-rally-ink disabled:opacity-50"
+            data-testid="certificate-public-create"
+          >
+            Create public link
+          </button>
+        </>
+      )}
+      {error && (
+        <p className="text-xs text-red-700" role="alert">
+          {error}
+        </p>
       )}
     </div>
   );

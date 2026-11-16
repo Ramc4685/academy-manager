@@ -19,6 +19,7 @@ import {
   LevelRing,
   LevelStrip,
   PracticeDrillCard,
+  MilestoneList,
   RecentWins,
   SkillChecklist,
 } from "./journey";
@@ -301,6 +302,7 @@ function ChildJourney({ studentId, childName }: { studentId: string; childName: 
           </p>
         </div>
       )}
+      <MilestoneList milestones={journey.milestones ?? []} firstName={firstName} />
       <RecentWins wins={journey.recent_wins} studentId={studentId} />
       {journey.practice_drill && <PracticeDrillCard drill={journey.practice_drill} />}
       {certs && certs.length > 0 && <CertificateList certs={certs} />}

@@ -160,6 +160,11 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def list_passed_for_student(self, student_id: str) -> list[StudentSkillProgress]:
+        """Every skill this student has passed, any level: the milestone count (L5B)."""
+        cursor = self._find_many({"student_id": student_id, "status": "PASSED"})
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_passed_between(
         self, start: datetime, end: datetime
     ) -> list[StudentSkillProgress]:

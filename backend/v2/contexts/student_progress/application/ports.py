@@ -6,6 +6,10 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from backend.v2.contexts.student_progress.domain.milestones import (
+    ProgressSettings,
+    StudentMilestone,
+)
 from backend.v2.contexts.student_progress.domain.models import (
     LevelUpRecommendation,
     SkillCertificate,
@@ -53,6 +57,7 @@ class StudentSkillProgressRepository(Protocol):
     async def list_passed_for_student_level(
         self, student_id: str, level_id: str
     ) -> list[StudentSkillProgress]: ...
+    async def list_passed_for_student(self, student_id: str) -> list[StudentSkillProgress]: ...
     async def list_recent_for_student(
         self, student_id: str, limit: int = 10
     ) -> list[StudentSkillProgress]: ...
@@ -163,6 +168,18 @@ class CertificateRepository(Protocol):
         """Issued -> revoked, dropping the share link. False when nothing was issued."""
         ...
 
+    async def get_issued_by_share_token(self, token: str) -> SkillCertificate | None:
+        """The issued certificate carrying this share link in the current academy."""
+        ...
+
+    async def set_share_token(self, student_id: str, cert_id: str, token: str) -> bool:
+        """Mint the link on an issued certificate that has none. False otherwise."""
+        ...
+
+    async def clear_share_token(self, student_id: str, cert_id: str) -> bool:
+        """Drop the link. False when there was none."""
+        ...
+
 
 class CertificateAuditLog(Protocol):
     async def record_revoked(self, cert: SkillCertificate) -> bool:
@@ -172,6 +189,39 @@ class CertificateAuditLog(Protocol):
         failed write can tell it still owes the audit row.
         """
         ...
+
+
+class ProgressAuditLog(Protocol):
+    async def record(
+        self,
+        *,
+        audit_id: str,
+        action: str,
+        actor_id: str,
+        entity_type: str,
+        entity_id: str,
+        before: dict[str, object],
+        after: dict[str, object],
+        at: datetime,
+    ) -> bool:
+        """Write one audit row keyed by ``audit_id`` (a retry never doubles it)."""
+        ...
+
+
+class ProgressSettingsStore(Protocol):
+    async def get(self) -> ProgressSettings: ...
+
+    async def set(self, settings: ProgressSettings) -> None:
+        """Targeted write of the progress settings block only."""
+        ...
+
+
+class MilestoneRepository(Protocol):
+    async def record(self, milestone: StudentMilestone) -> None:
+        """Insert once per student and key; a repeat is a no-op."""
+        ...
+
+    async def list_for_student(self, student_id: str) -> list[StudentMilestone]: ...
 
 
 class CertificateNumbers(Protocol):

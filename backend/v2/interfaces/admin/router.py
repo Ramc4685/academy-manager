@@ -46,6 +46,7 @@ from .plan_routes import router as plan_router
 from .platform_fee_routes import router as platform_fee_router
 from .pricing_routes import router as pricing_router
 from .progress_routes import router as progress_router
+from .progress_settings_routes import router as progress_settings_router
 from .public_page_routes import router as public_page_router
 from .registration_routes import router as registration_router
 from .reports_routes import router as reports_router
@@ -100,6 +101,7 @@ router.include_router(ai_usage_router)
 router.include_router(ai_import_router)
 router.include_router(waiver_router)
 router.include_router(pathway_router)
+router.include_router(progress_settings_router)
 router.include_router(plan_router)
 router.include_router(progress_router)
 router.include_router(self_service_policy_router)
