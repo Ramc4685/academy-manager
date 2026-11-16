@@ -1,6 +1,6 @@
 # certificate-share-and-milestones
 
-PR: TBD
+PR: #1195
 
 ## What changed
 A parent can now make a public link for their own child's certificate. The certificate page has a "Public link" card with Create public link, Copy link and Stop sharing. The server builds the link as `/c/<token>` on the academy's own address (its `<slug>` subdomain of the deployment's frontend URL, the same rewrite the emails use), so a parent signed in on the shared product host still gets a link that opens. "Share with family" sends that public link once the parent has made one. The page shows only the child's first name (or first initial, if the academy chooses that), the level name, number and colour as they were when the certificate was issued, the certificate number, the issue date and the academy's name and logo. It never shows a surname, parent details, email or internal ids. Stop sharing, a revoked certificate, an unknown link and a link opened on another academy's address all show the same "not found" page. The page is never indexed by search engines, even while shared. The public read is rate limited per visitor across all links, and creating or stopping a link writes a `certificate.share_created` / `certificate.share_revoked` audit row (the token itself is never stored in the audit log).
