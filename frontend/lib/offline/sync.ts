@@ -68,9 +68,10 @@ export async function syncNow(): Promise<void> {
       // "superseded": a fresh tap replaced this mutation while it was in
       // flight. Nothing to count and nothing to write back — the replacement
       // is already in the queue and goes out on the next run.
+      // An exhausted mark stays queued for the next run; it must not hold
+      // back the marks behind it.
       if (outcome === "paused") {
         emit({ kind: "paused", reason: "max attempts exceeded in this run" });
-        break;
       }
     }
 
@@ -118,7 +119,9 @@ async function sendOne(snapshot: QueuedMutation): Promise<SendOutcome> {
   // have committed under this id).
   const m = await patchRecord(snapshot.mutation_id, { status: "in_flight" });
   if (!m) return "superseded";
-  let attempt = m.attempts;
+  // The retry budget is per run (timer, reconnect, app start); `attempts`
+  // persists the lifetime total for the tray and audit only.
+  let attempt = 0;
   while (attempt < MAX_ATTEMPTS) {
     if (RETRY_DELAYS_MS[attempt] > 0) {
       await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
@@ -136,7 +139,7 @@ async function sendOne(snapshot: QueuedMutation): Promise<SendOutcome> {
         endpoint: m.endpoint,
         ts: new Date().toISOString(),
       });
-      emit({ kind: "succeeded", mutation: { ...m, status: "queued", attempts: attempt } });
+      emit({ kind: "succeeded", mutation: { ...m, status: "queued", attempts: m.attempts + attempt } });
       return "succeeded";
     } catch (err) {
       const status = (err as { status?: number }).status;
@@ -144,14 +147,14 @@ async function sendOne(snapshot: QueuedMutation): Promise<SendOutcome> {
         // The server already holds exactly this mark (an earlier send that
         // timed out, or a batch that did land): nothing to review.
         await dropById(m.mutation_id);
-        emit({ kind: "succeeded", mutation: { ...m, status: "queued", attempts: attempt } });
+        emit({ kind: "succeeded", mutation: { ...m, status: "queued", attempts: m.attempts + attempt } });
         return "succeeded";
       }
       if (isTrayStatus(status)) {
         // Domain error — move to tray, unless a fresh tap already replaced it.
         const updated = await patchRecord(m.mutation_id, {
           status: "needs_review",
-          attempts: attempt,
+          attempts: m.attempts + attempt,
           last_attempt_at: new Date().toISOString(),
           error: {
             code: (err as { code?: string }).code ?? "Unknown",
@@ -173,7 +176,7 @@ async function sendOne(snapshot: QueuedMutation): Promise<SendOutcome> {
       // Transient (5xx, network, 401/408/429) — try again.
       emit({
         kind: "transient_error",
-        mutation: { ...m, attempts: attempt },
+        mutation: { ...m, attempts: m.attempts + attempt },
         remaining: MAX_ATTEMPTS - attempt,
       });
     }
@@ -183,7 +186,7 @@ async function sendOne(snapshot: QueuedMutation): Promise<SendOutcome> {
   // overwriting anything a concurrent tap changed.
   const released = await patchRecord(m.mutation_id, {
     status: "queued",
-    attempts: attempt,
+    attempts: m.attempts + attempt,
     last_attempt_at: new Date().toISOString(),
   });
   if (!released) return "superseded";
