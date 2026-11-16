@@ -28,7 +28,10 @@ export function siblingBadgeLabel(row: SiblingDiscountEnrollment | undefined): s
   return null;
 }
 
-/** The family's sibling picture, or `undefined` while loading, off or on error. */
+/**
+ * The family's sibling picture, or `undefined` while loading or on error. Not
+ * gated on `enabled`: a month billed before the setting went off keeps its badge.
+ */
 export function useFamilySiblingDiscount(
   parentId: string | null | undefined,
 ): FamilySiblingDiscount | undefined {
@@ -38,7 +41,7 @@ export function useFamilySiblingDiscount(
     enabled: Boolean(parentId),
     retry: false,
   });
-  return query.data?.enabled ? query.data : undefined;
+  return query.data ?? undefined;
 }
 
 export function SiblingDiscountChip({ row }: { row: SiblingDiscountEnrollment | undefined }) {

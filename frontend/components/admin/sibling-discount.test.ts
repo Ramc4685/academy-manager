@@ -98,6 +98,19 @@ describe("siblingFamilySummary", () => {
     expect(summary).toBe("Sibling discount this month: Ava pays full price; Ben, Cleo get 10% off.");
   });
 
+  it("still names a billed discount after the setting went off", () => {
+    const view = parseFamilySiblingDiscount({
+      period: "2026-11",
+      enabled: false,
+      percent_bps: null,
+      enrollments: [row()],
+    });
+    expect(view && siblingBadgeLabel(view.enrollments[0])).toBe("Sibling discount 10% (automatic)");
+    expect(view && siblingFamilySummary(view, nameOf)).toBe(
+      "Sibling discount this month: Ben gets 10% off.",
+    );
+  });
+
   it("is null when nobody is full price or discounted", () => {
     expect(
       siblingFamilySummary(
