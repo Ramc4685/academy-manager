@@ -160,3 +160,24 @@ async def test_bulk_row_from_another_mutation_still_conflicts(real_db: Any) -> N
                 _bulk("01JREPLAYBULK000000000000B", "stu-a", "stu-b"), COACH
             )
     assert await real_db["attendance"].count_documents({"academy_id": ACADEMY}) == 1
+
+
+@pytest.mark.asyncio
+async def test_marked_at_reads_back_as_utc(real_db: Any) -> None:
+    # Motor returns naive datetimes; a naive marked_at serializes without
+    # ``Z`` and the phone shifts its 48h correction lock by the UTC offset.
+    await _seed(real_db)
+    with tenant_scope(ACADEMY):
+        await MarkAttendance(**_deps(real_db, _LostRecords())).execute(
+            MarkAttendanceCommand(
+                mutation_id="01JREPLAYUTC00000000000000",
+                occurrence_id="occ-replay",
+                session_id="ses-replay",
+                student_id="stu-a",
+                status="present",
+            ),
+            COACH,
+        )
+        [row] = await MongoAttendanceRepository(real_db).list_for_occurrence("occ-replay")
+
+    assert row.marked_at.utcoffset() == timedelta(0)

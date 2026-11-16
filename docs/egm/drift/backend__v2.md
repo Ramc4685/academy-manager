@@ -15,4 +15,4 @@
 - [missing] README:63 says views live in `interfaces/<persona>/views.py`. `views.py` exists only for admin, coach, parent and student (`backend/v2/interfaces/*/views.py`). Platform and owner have none, and README:59 lists no student persona.
 - [wording] README:93-94 and README:5 say all routes mount under `/api/v2/*`. `main.py:2877-2899` does this via `prefix="/api/v2"`, but the platform, student and owner routers are conditional on settings flags (`enable_platform_routes`, `enable_student_login`, `enable_owner_role`).
 
-Re-checked 2026-11-16 against the coach-attendance change (fix/coach-attendance, incl. golden baseline): no new drift; items above still hold.
+Re-checked 2026-11-16 against the coach-attendance change (fix/coach-attendance, incl. review fix round): no new drift; items above still hold.

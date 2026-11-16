@@ -54,6 +54,8 @@ def test_coach_today_hydrates_existing_attendance(coach_client):
     assert by_id["st1"]["attendance_status"] == "present"
     # When it was recorded, so the app can close the 48h correction window.
     assert by_id["st1"]["attendance_marked_at"].startswith("2026-05-16T19:00")
+    # UTC-marked, or the phone reads it as local time and shifts the 48h lock.
+    assert by_id["st1"]["attendance_marked_at"].endswith(("Z", "+00:00"))
     unmarked = [e for sid, e in by_id.items() if sid != "st1"]
     assert all(e["attendance_status"] is None for e in unmarked)
     assert all(e["attendance_marked_at"] is None for e in unmarked)
