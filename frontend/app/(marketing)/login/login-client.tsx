@@ -7,7 +7,6 @@ import { Suspense, useEffect, useState } from "react";
 import {
   completeGoogleRedirectSignIn,
   onAuthChange,
-  sendPasswordReset,
   signInWithApple,
   signInWithEmail,
   signInWithGoogle,
@@ -16,6 +15,7 @@ import {
 import { toAuthErrorMessage } from "@/lib/auth/auth-error";
 import { loginErrorMessage } from "@/lib/auth/login-error";
 import { shouldOfferAppleSignIn, shouldOfferGoogleSignIn } from "@/lib/auth/native-sign-in";
+import { requestPasswordReset } from "@/lib/api/password-reset";
 import { registerPublicParent } from "@/lib/api/registration";
 import {
   clearPendingParentRegistration,
@@ -83,7 +83,13 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
     const prefillEmail = searchParams.get("email");
     if (prefillEmail) {
       setEmail(prefillEmail);
-      setNotice("An account already exists for this email. Sign in to continue.");
+      // `activate=1` is the digest's link for a parent who has never set a
+      // password; "an account already exists, sign in" would strand them.
+      setNotice(
+        searchParams.get("activate") === "1"
+          ? "First time signing in? Press \u201cForgot password?\u201d and we\u2019ll email you a link to set your password."
+          : "An account already exists for this email. Sign in to continue.",
+      );
     }
 
     // A bounce back from post-login / a persona guard carries the backend's
@@ -182,7 +188,7 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
 
     setResetLoading(true);
     try {
-      await sendPasswordReset(trimmedEmail);
+      await requestPasswordReset(trimmedEmail);
       setNotice("If that email exists, we have sent a reset link.");
     } catch (err) {
       setError(toAuthErrorMessage(err, "Password reset failed. Please try again."));

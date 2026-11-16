@@ -153,6 +153,10 @@ class MagicLinkRepository(Protocol):
 
     async def get_by_hash(self, token_hash: str) -> MagicLinkRecord | None: ...
 
+    async def revoke_unused_for_user(self, *, user_id: str, academy_id: str) -> None:
+        """Delete this user's still-unused links in ``academy_id``."""
+        ...
+
     async def mark_used(self, token_hash: str, *, used_at: datetime) -> bool:
         """Atomically stamp ``used_at`` iff still unused.
 
@@ -216,3 +220,9 @@ class UserGovernanceAudit(Protocol):
         reason: str | None = None,
         detail: dict[str, Any] | None = None,
     ) -> None: ...
+
+
+class VerificationEmailCooldownPort(Protocol):
+    """Per-recipient send budget. ``False`` means "throttled, do not send"."""
+
+    async def claim_send(self, email: str) -> bool: ...

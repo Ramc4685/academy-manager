@@ -17,7 +17,9 @@ from backend.v2.contexts.identity.domain.errors import InvalidToken
 # a single-use link, so the identity is ours, not the caller's — there is no
 # attacker-supplied email claim to verify. Firebase provisions those accounts
 # with ``email_verified=False`` (see ``FirebaseAdminAdapter.create_user``), so
-# demanding the claim here would lock out every magic-link parent.
+# demanding the claim here would lock out every magic-link parent. Because the
+# email claim is unverified, ``LoadAuthClaims`` resolves these tokens by uid and
+# ``RegisterPublicParent`` refuses them outright.
 _SERVER_MINTED_PROVIDERS = frozenset({"custom"})
 
 

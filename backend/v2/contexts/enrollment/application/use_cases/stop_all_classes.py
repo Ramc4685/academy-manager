@@ -57,6 +57,8 @@ class StopAllClassesCommand(BaseModel):
     #: command is what lets the Left tab group departures at all.
     reason_code: DepartureReasonCode | None = None
     actor_id: str
+    #: Passed to each withdrawal; see ``WithdrawEnrollmentCommand.notify_family``.
+    notify_family: bool = True
 
 
 class EnrollmentStopResult(BaseModel):
@@ -104,6 +106,7 @@ class StopAllClasses:
                         actor_id=cmd.actor_id,
                         reason=cmd.reason,
                         reason_code=cmd.reason_code,
+                        notify_family=cmd.notify_family,
                     )
                 )
                 results.append(

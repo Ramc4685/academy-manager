@@ -175,3 +175,14 @@ async def test_dots_still_separate_mailboxes_outside_gmail(db) -> None:  # type:
 
     assert await cooldown.claim_send("jane.doe@example.com") is True
     assert await cooldown.claim_send("janedoe@example.com") is True
+
+
+@pytest.mark.asyncio
+async def test_password_reset_budget_is_separate_from_verification(db) -> None:  # type: ignore[no-untyped-def]
+    # A parent who just verified must still be able to ask for a reset link.
+    verify = MongoVerificationEmailCooldown(db)
+    reset = MongoVerificationEmailCooldown(db, purpose="password_reset")
+
+    assert await verify.claim_send("parent@example.com") is True
+    assert await reset.claim_send("parent@example.com") is True
+    assert await reset.claim_send("parent@example.com") is False
