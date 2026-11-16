@@ -105,7 +105,8 @@ export function DeleteAccountSection() {
             </li>
             <li>
               After 14 days your personal details are removed. Until then, you can contact support
-              at {brand.supportEmail} to restore the account.
+              at {brand.supportEmail} to restore your sign-in; classes and automatic payments are
+              not restored.
             </li>
             <li>
               Invoices and payment records are kept for 7 years, as tax law requires. Any balance

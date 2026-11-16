@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -10,6 +11,7 @@ import pytest
 from backend.v2.composition.account_deletion import StopServicesOnDeletionRequest
 from backend.v2.contexts.billing.application.use_cases.pause_family_autopay import NothingToPause
 from backend.v2.contexts.enrollment.application.use_cases.stop_all_classes import (
+    EnrollmentStopResult,
     StopAllClassesResult,
 )
 from backend.v2.contexts.identity.application.use_cases.send_login_invite import (
@@ -42,13 +44,23 @@ class _Students:
 
 
 class _StopAll:
-    def __init__(self) -> None:
+    def __init__(self, *, fail: bool = False) -> None:
         self.cmds: list[Any] = []
+        self._fail = fail
 
     async def execute(self, cmd: Any) -> StopAllClassesResult:
         assert current_academy_id() == "acad-a"
         self.cmds.append(cmd)
-        return StopAllClassesResult(student_id=cmd.student_id, results=[])
+        results = (
+            [
+                EnrollmentStopResult(
+                    enrollment_id="e1", session_id="s1", outcome="failed", error="boom"
+                )
+            ]
+            if self._fail
+            else []
+        )
+        return StopAllClassesResult(student_id=cmd.student_id, results=results)
 
 
 class _Pause:
@@ -75,14 +87,21 @@ class _Academies:
         return "Smash Academy"
 
 
-def _step() -> tuple[StopServicesOnDeletionRequest, _StopAll, _Pause, _Sender]:
-    stop, pause, sender = _StopAll(), _Pause(), _Sender()
+def _step(
+    *, fail: bool = False, tz: str | None = None
+) -> tuple[StopServicesOnDeletionRequest, _StopAll, _Pause, _Sender]:
+    stop, pause, sender = _StopAll(fail=fail), _Pause(), _Sender()
+
+    async def _timezones(academy_id: str) -> str | None:
+        return tz
+
     step = StopServicesOnDeletionRequest(
         stop_all_classes=stop,  # type: ignore[arg-type]
         students=_Students(),  # type: ignore[arg-type]
         pause_autopay=pause,  # type: ignore[arg-type]
         sender=sender,
         academies=_Academies(),
+        timezones=_timezones,
     )
     return step, stop, pause, sender
 
@@ -94,6 +113,7 @@ async def test_fresh_request_drops_classes_pauses_autopay_and_emails() -> None:
 
     assert [c.student_id for c in stop.cmds] == ["kid-1"]
     assert stop.cmds[0].outcome == "adjustment"  # no money moves on the drop
+    assert stop.cmds[0].notify_family is False  # one confirmation, not N drop emails
     assert pause.parents == ["u1", "fb1"]  # NothingToPause is swallowed
     assert len(sender.sent) == 1
     mail = sender.sent[0]
@@ -109,3 +129,26 @@ async def test_a_retry_repeats_the_stop_but_sends_no_second_email() -> None:
 
     assert len(stop.cmds) == 1
     assert sender.sent == []
+
+
+async def test_a_failed_drop_sends_no_confirmation_and_raises_for_the_alert() -> None:
+    # Regression: the email said classes were dropped even when one was not.
+    step, _, pause, sender = _step(fail=True)
+
+    with pytest.raises(RuntimeError, match="kid-1"):
+        await step.on_requested(_request(), fresh=True)
+
+    assert pause.parents == ["u1", "fb1"]  # autopay still paused
+    assert sender.sent == []
+
+
+async def test_erase_date_is_in_the_academy_timezone_and_restore_goes_to_support() -> None:
+    step, _, _, sender = _step(tz="America/Chicago")
+    late_utc = replace(_request(), execute_after=datetime(2026, 12, 4, 3, tzinfo=UTC))
+
+    await step.on_requested(late_utc, fresh=True)
+
+    body = sender.sent[0]["body"]
+    assert "December 3, 2026" in body  # 03:00 UTC is still Dec 3 in Chicago
+    assert "support@marvy-labs.com" in body
+    assert "not your children" in body

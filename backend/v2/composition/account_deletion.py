@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from html import escape
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from backend.v2.contexts.billing.application.use_cases.pause_family_autopay import (
     NothingToPause,
@@ -64,6 +65,11 @@ from backend.v2.shared.comms.email_theme import INK, MUTED, shell
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
 from backend.v2.shared.observability.ops_alerts import capture_message
 from backend.v2.shared.tenancy.context import tenant_scope
+from backend.v2.shared.time.academy_timezone import (
+    AcademyTimezoneReader,
+    academy_timezone_lookup,
+    resolve_academy_clock_timezone,
+)
 
 log = logging.getLogger(__name__)
 
@@ -160,8 +166,9 @@ class StopServicesOnDeletionRequest:
     stop_all_classes: StopAllClasses
     students: MongoStudentRepository
     pause_autopay: PauseFamilyAutopay
-    sender: InviteEmailPort | None = None
-    academies: AcademyNameLookup | None = None
+    sender: InviteEmailPort
+    academies: AcademyNameLookup
+    timezones: AcademyTimezoneReader
 
     async def on_requested(self, request: AccountDeletionRequest, *, fresh: bool) -> None:
         failures: list[str] = []
@@ -180,6 +187,8 @@ class StopServicesOnDeletionRequest:
                             outcome="adjustment",
                             reason="Parent requested account deletion",
                             actor_id=SYSTEM_ACTOR,
+                            # The confirmation below is the family's one message.
+                            notify_family=False,
                         )
                     )
                     if result.failed_count:
@@ -195,44 +204,54 @@ class StopServicesOnDeletionRequest:
                         )
                     except NothingToPause:
                         pass
-        if fresh:
-            await self._send_confirmation(request)
+        # Checked before the email: it says the classes were dropped, so it
+        # must not go out when one was not. The retry (fresh=False) never
+        # sends; the executor drops again at day 14.
         if failures:
             raise RuntimeError(f"could not drop every class for {', '.join(failures)}")
+        if fresh:
+            await self._send_confirmation(request)
 
     async def _send_confirmation(self, request: AccountDeletionRequest) -> None:
-        if self.sender is None or not request.email:
+        if not request.email:
             return
         academy_name = "your academy"
-        if self.academies is not None and request.academy_ids:
-            academy_name = (
-                await self.academies.get_academy_name(request.academy_ids[0]) or academy_name
-            )
+        erase_on = request.execute_after
+        if request.academy_ids:
+            first = request.academy_ids[0]
+            academy_name = await self.academies.get_academy_name(first) or academy_name
+            tz = await resolve_academy_clock_timezone(self.timezones, first)
+            erase_on = erase_on.astimezone(ZoneInfo(tz))
         outcome = await self.sender.send_invite_email(
             user_id=request.user_id,
             email=request.email,
             display_name=request.email,
             subject=f"Your {academy_name} account is being deleted",
-            body=_deletion_confirmation_body(
-                academy_name=academy_name, erase_on=request.execute_after
-            ),
+            body=_deletion_confirmation_body(academy_name=academy_name, erase_on=erase_on),
         )
         if not outcome.ok:
             raise RuntimeError(f"confirmation email not sent: {outcome.failed_reason}")
 
 
+#: shortcut: mirrors frontend/lib/brand.ts `supportEmail`; move to settings if it
+#: ever varies by deployment. Restore is support-only, so the email points here.
+PLATFORM_SUPPORT_EMAIL = "support@marvy-labs.com"
+
+
 def _deletion_confirmation_body(*, academy_name: str, erase_on: datetime) -> str:
     safe_name = escape(academy_name)
+    support = escape(PLATFORM_SUPPORT_EMAIL)
     inner = (
         f'<h2 style="color:{INK};font-size:20px;margin:0 0 12px;">'
         f"We received your request to delete your account</h2>"
         f"<p>Your {safe_name} account is now locked. Your children have been taken off "
         f"their upcoming classes and automatic payments have stopped.</p>"
         f"<p>Your personal information will be permanently erased on "
-        f"{erase_on:%B} {erase_on.day}, {erase_on.year}. Until then, contact {safe_name} if you want to keep "
-        f"your account.</p>"
+        f"{erase_on:%B} {erase_on.day}, {erase_on.year}. Until then, email {support} "
+        f"if you want to keep your account. Restoring it brings back your sign-in, not "
+        f"your children&rsquo;s classes or automatic payments.</p>"
         f'<p style="color:{MUTED};font-size:13px;">If you didn&rsquo;t ask for this, '
-        f"contact {safe_name} right away.</p>"
+        f"email {support} right away.</p>"
     )
     return shell(brand=branded_as(None, academy_name), inner_html=inner)
 
@@ -270,7 +289,7 @@ def compose_execute_account_deletions(
 
 
 def compose_deletion_request_follow_up(
-    db: Any, *, stop_all_classes: StopAllClasses, sender: InviteEmailPort | None
+    db: Any, *, stop_all_classes: StopAllClasses, sender: InviteEmailPort
 ) -> StopServicesOnDeletionRequest:
     return StopServicesOnDeletionRequest(
         stop_all_classes=stop_all_classes,
@@ -282,4 +301,5 @@ def compose_deletion_request_follow_up(
         ),
         sender=sender,
         academies=MongoAcademyRepository(db),
+        timezones=academy_timezone_lookup(db),
     )

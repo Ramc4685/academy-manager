@@ -83,7 +83,7 @@ class RequestAccountDeletionCommand:
 class RequestAccountDeletion:
     store: AccountDeletionStore
     firebase: FirebaseAccountSwitch
-    follow_up: AccountDeletionFollowUp | None = None
+    follow_up: AccountDeletionFollowUp
 
     async def execute(
         self, cmd: RequestAccountDeletionCommand, *, now: datetime | None = None
@@ -127,9 +127,10 @@ class RequestAccountDeletion:
                     "to reassign them, then delete your account"
                 )
 
+        new_id = str(new_ulid())
         request = await self.store.create_request(
             AccountDeletionRequest(
-                request_id=str(new_ulid()),
+                request_id=new_id,
                 user_id=account.user_id,
                 auth_uid=account.auth_uid,
                 email=account.email,
@@ -143,15 +144,15 @@ class RequestAccountDeletion:
         for m in live:
             await self.store.record_audit(academy_id=m.academy_id, request=request, roles=m.roles)
         await self._disable_firebase(request.auth_uid)
-        await self._follow_up(request, fresh=True)
+        # A concurrent double-submit gets the other call's row back from
+        # create_request; only the call that inserted it sends the confirmation.
+        await self._follow_up(request, fresh=request.request_id == new_id)
         return request
 
     async def _follow_up(self, request: AccountDeletionRequest, *, fresh: bool) -> None:
         # Best-effort: the account is already locked, and the executor drops
         # classes again at the end of the grace period, so a failure here is
         # alerted rather than surfaced to the parent as a failed deletion.
-        if self.follow_up is None:
-            return
         try:
             await self.follow_up.on_requested(request, fresh=fresh)
         except Exception:
