@@ -323,8 +323,7 @@ async def render_all(doc: dict[str, Any]) -> dict[str, str]:
             parent_name="Parent One",
             effective_from=date(2027, 1, 1),
             charge_day=1,
-            amount_cents=None,
-            currency="usd",
+            on_invoice_day=True,
             manage_url="https://portal.example.test/parent/payments",
         )
 

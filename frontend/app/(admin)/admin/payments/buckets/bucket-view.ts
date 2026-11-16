@@ -50,7 +50,7 @@ export const BUCKET_META: Record<
   },
   autopay_scheduled: {
     title: "Autopay scheduled",
-    hint: "Autopay charges these cards on the due date at 9:00 AM. Nothing to do unless you skip a month.",
+    hint: "Autopay charges these cards on the scheduled charge day at 9:00 AM. Nothing to do unless you skip a month.",
     stripe: "bg-status-green-500",
     emptyLine: "No autopay scheduled",
   },

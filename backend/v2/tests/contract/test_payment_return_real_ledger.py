@@ -460,3 +460,41 @@ async def test_refund_then_dispute_sum_and_neither_replay_double_counts(real_db,
     )
     audits = await real_db["billing_audit_log"].find({"payment_id": "pay-pi_mix"}).to_list(10)
     assert sorted(a["after"]["refunded_cents"] for a in audits) == [4_000, 7_000]
+
+
+@pytest.mark.asyncio
+async def test_a_plain_refund_after_a_dispute_adds_on_top_and_never_lowers_it(
+    real_db, acad
+) -> None:
+    """Review fix: ``charge.refunded`` carries the charge's own running total, not
+    the payment's. A 3,000 dispute then a 2,000 refund is 5,000 taken back, never 2,000."""
+    repo = MongoBillingLedgerRepository(real_db)
+    await repo.record_payment(_payment(acad, "pi_dr"), idempotency_key="p:dr")
+    uc = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=FakeDedup(),
+        payments=FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=FakeOutbox(),
+        academy_id=acad,
+        billing_ledger=repo,
+        family_autopay=_Family(),
+        billing_audit=_Audit(real_db),
+        clock=lambda: NOW,
+    )
+    payment = await repo.get_payment_by_stripe_payment_intent_id("pi_dr")
+    assert payment is not None
+    await uc._reverse_returned_payment(
+        event_id="evt-d",
+        pi_id="pi_dr",
+        payment=payment,
+        amount_cents=3_000,
+        return_code="dispute:fraudulent",
+        source_key="dispute:dp_9",
+    )
+
+    for _ in range(2):
+        await uc._on_charge_refunded_ledger("pi_dr", {"amount_refunded": 2_000})
+
+    after = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_dr"})
+    assert (after["status"], after["refunded_cents"]) == ("partially_refunded", 5_000)

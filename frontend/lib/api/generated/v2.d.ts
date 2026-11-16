@@ -7526,8 +7526,6 @@ export interface components {
         };
         /** AchNoticeRecipientView */
         AchNoticeRecipientView: {
-            /** Expected Amount Cents */
-            expected_amount_cents?: number | null;
             /** Name */
             name?: string | null;
             /** Parent Id */

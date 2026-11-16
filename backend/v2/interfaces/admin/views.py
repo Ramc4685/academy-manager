@@ -601,7 +601,6 @@ class AchNoticeRecipientView(BaseModel):
     parent_id: str
     name: str | None = None
     payment_method: str | None = None
-    expected_amount_cents: int | None = None
 
 
 class AchNoticePreviewView(BaseModel):

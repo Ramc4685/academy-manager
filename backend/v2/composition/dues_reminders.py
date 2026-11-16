@@ -40,6 +40,9 @@ from backend.v2.contexts.billing.domain.dunning import (
     PARK_REASONS_NEEDING_STRIPE_SETUP,
     RETURN_CODES_NEEDING_MANUAL_REVIEW,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
+    ACTIVE_RETRY_FILTER,
+)
 from backend.v2.contexts.communications.application.use_cases.send_push_to_user import (
     SendPushToUser,
 )
@@ -247,7 +250,8 @@ def compose_dues_reminders(
             docs = [doc async for doc in cursor]
             # An invoice autopay is still collecting (an ACH debit settling, a
             # retry scheduled) is not "past due" to the family: no reminder
-            # while its ladder is live (L8; Jan 1 debits settle after +3).
+            # while its ladder retries, by the same rule that holds off the
+            # late fee (L8; Jan 1 debits settle after +3).
             laddered = (
                 set(
                     await db["dunning_states"].distinct(
@@ -255,7 +259,7 @@ def compose_dues_reminders(
                         {
                             "academy_id": current_academy_id(),
                             "invoice_id": {"$in": [str(d["invoice_id"]) for d in docs]},
-                            "status": {"$in": ["active", "processing"]},
+                            **ACTIVE_RETRY_FILTER,
                         },
                     )
                 )

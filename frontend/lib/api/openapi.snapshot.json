@@ -250,17 +250,6 @@
       },
       "AchNoticeRecipientView": {
         "properties": {
-          "expected_amount_cents": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expected Amount Cents"
-          },
           "name": {
             "anyOf": [
               {

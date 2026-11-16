@@ -213,10 +213,6 @@ def has_failed_attempt(dunning_status: str | None, attempt_count: int) -> bool:
     return dunning_status in _FAILED_LADDER_STATUSES and attempt_count >= 1
 
 
-def _has_failed_attempt(invoice: InvoiceFacts) -> bool:
-    return has_failed_attempt(invoice.dunning_status, invoice.dunning_attempt_count)
-
-
 def _by_due_date(invoices: Iterable[InvoiceFacts]) -> list[InvoiceFacts]:
     return sorted(invoices, key=lambda inv: (inv.due_date, inv.invoice_id))
 
@@ -233,7 +229,9 @@ def _pick_bucket(
 ) -> tuple[str | None, InvoiceFacts | None]:
     """Spec §2 rules, top to bottom. Returns (bucket, triggering invoice)."""
     for inv in owing:
-        if _is_chargeable_owing(inv) and _has_failed_attempt(inv):
+        if _is_chargeable_owing(inv) and has_failed_attempt(
+            inv.dunning_status, inv.dunning_attempt_count
+        ):
             return "failed_autopay", inv
     for inv in owing:
         if not eligibility[inv.invoice_id].eligible and inv.due_date < today:

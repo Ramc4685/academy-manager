@@ -28,16 +28,20 @@ def build_ach_notice_preview(
 ) -> Callable[[str | None], Awaitable[dict[str, Any] | None]]:
     async def preview(parent_id: str | None) -> dict[str, Any] | None:
         """``{subject, html, recipients}`` for ``parent_id`` (the first autopay
-        family when omitted); None when that parent is not on autopay."""
+        family when omitted); None when no charge-day change is set up, or that
+        parent is not on autopay in this academy."""
         academy_id = current_academy_id()
+        settings = await MongoBillingSettingsRepository(db).get()
+        change = settings.schedule_change
+        offset = (change or settings).autopay_charge_offset_days
+        if offset is None:
+            return None  # autopay still charges on the due date: nothing to announce
         recipients = await _autopay_recipients(db, academy_id, users)
         target = next(
             (r for r in recipients if parent_id is None or r["parent_id"] == parent_id), None
         )
         if parent_id is not None and target is None:
             return None
-        settings = await MongoBillingSettingsRepository(db).get()
-        change = settings.schedule_change
         academy_doc = await academies.find_by_id(academy_id)
         base = academy_frontend_url(
             frontend_url=frontend_url,
@@ -47,12 +51,8 @@ def build_ach_notice_preview(
             academies=academies,
             parent_name=target["name"] if target else None,
             effective_from=change.effective_from if change else None,
-            charge_day=settings.billing_day
-            + ((change.autopay_charge_offset_days or 0) if change else 0),
-            # shortcut: no per-family projection of the next charge exists, so the
-            # notice says "your usual monthly tuition"; pass one here when it does.
-            amount_cents=None,
-            currency="usd",
+            charge_day=settings.billing_day + offset,
+            on_invoice_day=offset == 0,
             manage_url=f"{base}/parent/payments" if base else None,
         )
         return {"subject": subject, "html": html, "recipients": recipients}
@@ -90,7 +90,6 @@ async def _autopay_recipients(db: Any, academy_id: str, users: Any) -> list[dict
                 "name": str(getattr(user, "display_name", "") or "") or None,
                 "payment_method": " ".join(p for p in (label, last4 and f"ending {last4}") if p)
                 or None,
-                "expected_amount_cents": None,
             }
         )
     return sorted(out, key=lambda r: ((r["name"] or "").lower(), r["parent_id"]))

@@ -8,6 +8,9 @@ from typing import Any
 import pytest
 
 from backend.v2.composition.dues_reminders import compose_dues_reminders
+from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
+    MongoDunningStateRepository,
+)
 
 
 async def _unused(*_: Any) -> Any:
@@ -77,14 +80,19 @@ async def test_reader_flags_invoices_whose_enrollment_is_on_active_autopay(real_
 @pytest.mark.asyncio
 async def test_reader_skips_invoices_autopay_is_still_collecting(real_db, acad) -> None:
     """L8: a Jan 1 debit is still settling at +3 (bank holiday); no "past due"
-    email while its ladder is live. A finished ladder reminds as before."""
+    email while its ladder retries. A finished ladder, and one parked waiting on
+    the parent to add a card, remind as before: reminders skip exactly what the
+    late-fee pass treats as an active retry."""
     due = datetime(2027, 1, 5, tzinfo=UTC)
-    for invoice_id, ladder in (
-        ("inv-settling", "processing"),
-        ("inv-retrying", "active"),
-        ("inv-dunned", "dunned"),
-        ("inv-no-ladder", None),
-    ):
+    rows_in = (
+        ("inv-settling", "processing", None),
+        ("inv-retrying", "active", None),
+        ("inv-dunned", "dunned", None),
+        ("inv-no-ladder", None, None),
+        ("inv-no-card", "active", "no_saved_payment_method"),
+        ("inv-stripe-setup", "active", "connected_account_not_ready"),
+    )
+    for invoice_id, ladder, park in rows_in:
         await real_db["invoices"].insert_one(
             {
                 "academy_id": acad,
@@ -107,6 +115,7 @@ async def test_reader_skips_invoices_autopay_is_still_collecting(real_db, acad) 
                     "invoice_id": invoice_id,
                     "parent_id": "parent-1",
                     "status": ladder,
+                    "suppression_reason": park,
                     "attempt_count": 1,
                     "created_at": due,
                     "updated_at": due,
@@ -130,7 +139,11 @@ async def test_reader_skips_invoices_autopay_is_still_collecting(real_db, acad) 
         due_from=date(2027, 1, 5), due_to=date(2027, 1, 5)
     )
 
-    assert sorted(row.invoice_id for row in rows) == ["inv-dunned", "inv-no-ladder"]
+    reminded = sorted(row.invoice_id for row in rows)
+    assert reminded == ["inv-dunned", "inv-no-card", "inv-no-ladder"]
+    dunning = MongoDunningStateRepository(real_db)
+    for invoice_id, *_ in rows_in:
+        assert (invoice_id in reminded) is not await dunning.has_active_retry(invoice_id)
 
 
 @pytest.mark.asyncio

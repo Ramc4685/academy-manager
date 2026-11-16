@@ -195,6 +195,13 @@ class MongoMonthlyBillingGenerator:
                 "monthly_generation_billing_settings_unreadable; using default due days",
                 exc_info=True,
             )
+            # A silent default on the 1st would date a whole month of invoices
+            # on the wrong schedule (L8 review), so page someone.
+            capture_message(
+                f"Monthly generation could not read billing settings for {on}; "
+                "invoices use the default due days and no autopay charge date",
+                level="error",
+            )
             settings = BillingSettings.default("")
         return settings.invoice_due_days, settings.autopay_charge_offset_days
 

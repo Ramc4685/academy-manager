@@ -623,6 +623,34 @@ class FakeBillingLedger:
         self.payments[payment_id] = updated
         return updated
 
+    async def apply_payment_return(
+        self,
+        payment_id: str,
+        *,
+        amount_cents: int,
+        source_key: str | None,
+        updated_at: Any,
+    ) -> tuple[LedgerPayment, bool]:
+        """Mirrors the Mongo repo: cumulative charge refunds merge, keyed sources add once."""
+        payment = self.payments[payment_id]
+        sources = self.__dict__.setdefault("return_sources", {}).setdefault(payment_id, {})
+        if source_key is not None and source_key in sources:
+            return payment, False
+        keyed = sum(sources.values())
+        before = payment.refunded_cents
+        if source_key is None:
+            refunded = min(payment.amount_cents, max(before - keyed, amount_cents) + keyed)
+        else:
+            refunded = min(payment.amount_cents, before + amount_cents)
+            sources[source_key] = amount_cents
+        if refunded == before:
+            return payment, False
+        status = "refunded" if refunded >= payment.amount_cents else "partially_refunded"
+        updated = await self.mark_payment_refunded(
+            payment_id, refunded_cents=refunded, status=status, updated_at=updated_at
+        )
+        return updated, True
+
     def _unapplied(self, payment_id: str, refunded_cents: int) -> int:
         """Mongo's rule: amount less refunded less still-allocated, never negative."""
         allocated = sum(

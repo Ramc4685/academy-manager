@@ -38,6 +38,9 @@ from backend.v2.contexts.billing.application.ports import (
     SubscriptionRepository,
     TransactionRunner,
 )
+from backend.v2.contexts.billing.application.use_cases.billing_settings_admin import (
+    BillingAuditAppender,
+)
 from backend.v2.contexts.billing.application.use_cases.checkout_allocation import (
     allocate_checkout_payment_across_invoices,
 )
@@ -242,10 +245,6 @@ PLATFORM_PLAN_EVENT_TYPES = frozenset(
         "customer.subscription.deleted",
     }
 )
-
-
-class BillingAuditAppender(Protocol):
-    async def append(self, entry: BillingAuditEntry) -> None: ...
 
 
 class HandleWebhookEvent:
@@ -2339,16 +2338,17 @@ class HandleWebhookEvent:
         await self._sync_invoice_refunds_for_ledger_payment(
             pi_id=pi_id, payment=payment, total_refunded_cents=total_refunded
         )
-        if total_refunded == payment.refunded_cents:
-            return
-        delta = max(0, total_refunded - payment.refunded_cents)
-        new_status = "refunded" if total_refunded >= payment.amount_cents else "partially_refunded"
-        updated = await self._billing_ledger.mark_payment_refunded(
+        # ``amount_refunded`` is cumulative for the charge only; a keyed dispute
+        # already on the total must not be overwritten by it (L8).
+        updated, total_moved = await self._billing_ledger.apply_payment_return(
             payment.payment_id,
-            refunded_cents=total_refunded,
-            status=new_status,
+            amount_cents=total_refunded,
+            source_key=None,
             updated_at=self._now(),
         )
+        if not total_moved:
+            return
+        delta = updated.refunded_cents - payment.refunded_cents
         await self._outbox.append(
             PaymentRefunded(
                 aggregate_id=updated.payment_id,
@@ -2528,18 +2528,22 @@ class HandleWebhookEvent:
                 # returned part must stop being spendable unapplied money; the
                 # audit entry is the owner's trail (L8). The repo never lowers or
                 # doubles the total: cumulative charge refunds merge, keyed sources add once.
-                updated, total_moved = await ledger.apply_payment_return(
+                updated, _ = await ledger.apply_payment_return(
                     payment.payment_id,
                     amount_cents=amount_cents,
                     source_key=source_key,
                     updated_at=self._now(),
                 )
-                if total_moved and self._billing_audit is not None:
+                # Every pass: ``append`` ignores a duplicate deterministic audit_id,
+                # so a retry after a failed audit write still leaves the trail.
+                if self._billing_audit is not None:
                     await self._billing_audit.append(
                         BillingAuditEntry(
+                            # One row per keyed source, or per cumulative total.
                             audit_id=(
-                                f"baud-payment-return:{pi_id}:{source_key or return_code}:"
-                                f"{updated.refunded_cents}"
+                                f"baud-payment-return:{pi_id}:{source_key}"
+                                if source_key
+                                else f"baud-payment-return:{pi_id}:{return_code}:{amount_cents}"
                             ),
                             academy_id=payment.academy_id,
                             action="payment_return_unreconciled",

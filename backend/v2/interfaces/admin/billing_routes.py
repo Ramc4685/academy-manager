@@ -153,7 +153,10 @@ async def preview_ach_notice(
     use_case = _required_callable(use_cases.preview_ach_notice, "preview_ach_notice")
     rendered = await use_case(parent_id)  # type: ignore[operator]
     if rendered is None:
-        raise HTTPException(status_code=404, detail="Parent is not on autopay")
+        raise HTTPException(
+            status_code=404,
+            detail="No autopay date change is scheduled, or the parent is not on autopay",
+        )
     return AchNoticePreviewView(**rendered)
 
 

@@ -28,6 +28,15 @@ from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
 )
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
+#: A ladder still retrying on our schedule. The late-fee pass and the payment
+#: reminders both read this, so "no late fee yet" and "no reminder yet" cannot
+#: drift apart. Waiting on the parent to add a card is not a retry in flight:
+#: the invoice stays due, earns its late fee and gets its reminders (A4-1, L8).
+ACTIVE_RETRY_FILTER: dict[str, Any] = {
+    "status": {"$in": ["active", "processing"]},
+    "suppression_reason": {"$ne": NO_SAVED_PAYMENT_METHOD},
+}
+
 #: Lower bound that makes the stamped-invoice query match 0230's partial filter.
 _EPOCH = datetime(1970, 1, 1)
 
@@ -594,10 +603,7 @@ class MongoDunningStateRepository(TenantScopedRepository):
             {
                 "academy_id": current_academy_id(),
                 "invoice_id": invoice_id,
-                "status": {"$in": ["active", "processing"]},
-                # Waiting on the parent to add a card is not a retry in flight:
-                # the invoice stays due and earns its late fee (A4-1).
-                "suppression_reason": {"$ne": NO_SAVED_PAYMENT_METHOD},
+                **ACTIVE_RETRY_FILTER,
             },
             {"_id": 1},
         )

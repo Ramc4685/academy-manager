@@ -132,7 +132,7 @@ async def test_stamped_ladder_query_uses_the_0230_index(real_db, acad) -> None:
         .sort([("autopay_charge_date", 1), ("invoice_id", 1)])
         .explain()
     )
-    assert "academy_invoice_status_autopay_charge_date" in str(plan["queryPlanner"])
+    assert "academy_invoice_status_autopay_charge_date" in str(plan["queryPlanner"]["winningPlan"])
 
 
 # --- generation -----------------------------------------------------------------
@@ -286,3 +286,28 @@ async def test_past_due_starts_the_day_after_the_due_date_and_drafts_never_count
 
     assert (await reader(5).counts())["past_due"] == 0
     assert (await reader(6).counts())["past_due"] == 1
+
+
+@pytest.mark.asyncio
+async def test_unreadable_settings_fall_back_and_page_ops(real_db, acad, monkeypatch) -> None:
+    """Review fix: generation must not block on unreadable settings, but a silent
+    default on the 1st would date a month of invoices wrong, so it pages."""
+    from backend.v2.contexts.billing.infrastructure import mongo_monthly_billing
+
+    alerts: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        mongo_monthly_billing,
+        "capture_message",
+        lambda message, level="info", **_: alerts.append((level, message)),
+    )
+
+    async def _boom(self, *, on=None):  # type: ignore[no-untyped-def]
+        raise RuntimeError("settings read failed")
+
+    monkeypatch.setattr(MongoBillingSettingsRepository, "get", _boom)
+    generator = mongo_monthly_billing.MongoMonthlyBillingGenerator(
+        MongoPaymentRepository(real_db, clock=lambda: datetime(2027, 1, 1, 9, tzinfo=UTC))
+    )
+
+    assert await generator._load_schedule(date(2027, 1, 1)) == (7, None)
+    assert [level for level, _ in alerts] == ["error"]
