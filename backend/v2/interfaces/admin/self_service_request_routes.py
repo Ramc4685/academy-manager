@@ -331,7 +331,9 @@ async def cancel_guest_trial_booking(
 ) -> None:
     """L9: staff cancel one approved website guest booking. It goes back to
     the pending queue and the family gets the date-cancelled email."""
-    booking = await use_cases.cancel_guest_trial_booking.execute(request_id)
+    cancel = use_cases.cancel_guest_trial_booking
+    assert cancel is not None  # always composed by compose_admin
+    booking = await cancel.execute(request_id)
     emails = getattr(http.app.state, "trial_emails", None)
     if emails is not None and booking.guest_starts_at is not None:
         background_tasks.add_task(
