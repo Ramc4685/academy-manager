@@ -8,7 +8,9 @@ ever applies going forward.
 
 ``RecordReachedMilestones`` evaluates one student against the settings and
 records each milestone reached (insert-once per student and key) before
-returning that student's records for the thresholds still configured. With
+returning that student's records for the thresholds still configured. A
+record whose count the student no longer holds (an undone mastery, a revoked
+certificate) is deleted, so the journey and the email never show it. With
 milestones off it reads nothing and returns nothing, so every consumer (the
 parent journey, the evening email) stays silent. Skills count only real
 passes (silent placement credits are left out) and levels count issued
@@ -151,10 +153,15 @@ class RecordReachedMilestones:
             completed_at=[cert.completed_at for cert in certs],
         ):
             await self._milestones.record(milestone)
+        # A record the student no longer holds (a mastery undone, a certificate
+        # revoked) is deleted, so a later real crossing records a fresh reached_at.
+        held = {"skills_passed": len(passed), "levels_completed": len(certs)}
         # A removed threshold's records stay on file but are not shown.
         configured = {m.key for m in settings.milestones}
-        return [
-            m
-            for m in await self._milestones.list_for_student(student_id)
-            if m.milestone_key in configured
-        ]
+        shown: list[StudentMilestone] = []
+        for m in await self._milestones.list_for_student(student_id):
+            if held.get(m.kind, 0) < m.count:
+                await self._milestones.delete(student_id, m.milestone_key)
+            elif m.milestone_key in configured:
+                shown.append(m)
+        return shown

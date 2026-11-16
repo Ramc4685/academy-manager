@@ -223,6 +223,10 @@ class MilestoneRepository(Protocol):
 
     async def list_for_student(self, student_id: str) -> list[StudentMilestone]: ...
 
+    async def delete(self, student_id: str, milestone_key: str) -> None:
+        """Drop a record the student no longer holds (an undone pass or a revoke)."""
+        ...
+
 
 class CertificateNumbers(Protocol):
     """Mints the next human-facing certificate number for the current academy."""

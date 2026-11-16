@@ -38,6 +38,9 @@ class MongoStudentMilestoneRepository(TenantScopedRepository):
         except DuplicateKeyError:
             return
 
+    async def delete(self, student_id: str, milestone_key: str) -> None:
+        await self._delete_one({"student_id": student_id, "milestone_key": milestone_key})
+
     async def list_for_student(self, student_id: str) -> list[StudentMilestone]:
         cursor = self._find_many({"student_id": student_id}, sort=[("reached_at", 1)])
         return [self._to_domain(doc) async for doc in cursor]

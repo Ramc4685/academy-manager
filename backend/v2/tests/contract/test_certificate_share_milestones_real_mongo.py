@@ -473,3 +473,51 @@ async def test_share_url_points_at_the_academy_host_not_the_product_host(
     )
     url = await pathway._certificate_share_url(real_db)(ACADEMY, TOKEN)
     assert url == f"https://riverside-academy.courtmastr.com/c/{TOKEN}"
+
+
+async def test_an_undone_mastery_removes_the_milestone_and_a_re_pass_records_it_again(
+    real_db: Any,
+) -> None:
+    # A coach taps mastery by mistake, a read records the milestone, then the
+    # coach undoes it (UnmarkSkillMastered sets the row back to PRACTICING).
+    await _seed_academies(real_db)
+    with tenant_scope(ACADEMY):
+        settings = await _update(real_db, enabled=True, milestones=[("skills_passed", 2)])
+        since = settings.milestones[0].since
+        await _pass_skills(real_db, "kid", [since, since + timedelta(minutes=1)])
+        recorder = _recorder(real_db)
+        assert [m.milestone_key for m in await recorder.execute("kid")] == ["skills_passed:2"]
+
+        skills = MongoStudentSkillProgressRepository(real_db)
+        mistaken = await skills.get("kid", "skill-1")
+        await skills.upsert(mistaken.model_copy(update={"status": "PRACTICING"}))
+        assert await recorder.execute("kid") == []
+        assert await real_db["student_milestones"].count_documents({}) == 0
+
+        re_passed_at = since + timedelta(hours=2)
+        await skills.upsert(
+            mistaken.model_copy(update={"status": "PASSED", "last_updated_at": re_passed_at})
+        )
+        (again,) = await recorder.execute("kid")
+    assert again.milestone_key == "skills_passed:2"
+    # A fresh record: reached when the skill was really passed the second time.
+    assert abs(again.reached_at - re_passed_at) < timedelta(milliseconds=1)
+
+
+async def test_a_revoked_certificate_removes_the_levels_milestone(real_db: Any) -> None:
+    await _seed_academies(real_db)
+    with tenant_scope(ACADEMY):
+        settings = await _update(real_db, enabled=True, milestones=[("levels_completed", 1)])
+        certs = MongoSkillCertificateRepository(real_db)
+        await certs.save(
+            _cert("c-9", "kid").model_copy(
+                update={"cert_number": "RIV-C-0109", "completed_at": settings.milestones[0].since}
+            )
+        )
+        recorder = _recorder(real_db)
+        assert [m.count for m in await recorder.execute("kid")] == [1]
+        await real_db["skill_certificates"].update_one(
+            {"cert_id": "c-9"}, {"$set": {"status": "revoked"}}
+        )
+        assert await recorder.execute("kid") == []
+    assert await real_db["student_milestones"].count_documents({}) == 0
