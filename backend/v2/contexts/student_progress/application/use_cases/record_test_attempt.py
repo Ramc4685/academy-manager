@@ -199,7 +199,7 @@ class RecordTestAttempt:
             new_status = "PASSED"
         elif passed and pass_rule == "N_TRIES":
             # A passing attempt is one try; the skill passes on the Nth.
-            needed: int = skill_meta.pass_tries  # type: ignore[attr-defined]
+            needed: int = skill_meta.pass_tries  # type: ignore[union-attr]
             if existing_prog is None:
                 await self._skill_progress.insert_if_missing(
                     StudentSkillProgress(

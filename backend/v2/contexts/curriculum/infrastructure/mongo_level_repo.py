@@ -19,7 +19,7 @@ class SequencedRepository(TenantScopedRepository):
     async def _next_sequence(self, scope: dict[str, object]) -> int:
         """One past the highest sequence in ``scope``, retired rows included."""
         cursor = self._find_many(scope, sort=[("sequence", -1)], limit=1)
-        top = [int(doc["sequence"]) async for doc in cursor]  # type: ignore[call-overload]
+        top = [int(doc["sequence"]) async for doc in cursor]
         return (top[0] if top else 0) + 1
 
     async def _insert_sequenced(self, doc: dict[str, object]) -> None:
@@ -42,7 +42,7 @@ class SequencedRepository(TenantScopedRepository):
         cursor = self._find_many(
             {self.id_field: {"$in": ordered_ids}}, sort=[("sequence", -1)], limit=1
         )
-        top = [int(doc["sequence"]) async for doc in cursor]  # type: ignore[call-overload]
+        top = [int(doc["sequence"]) async for doc in cursor]
         lift = (top[0] if top else 0) + 1
         now = datetime.now(UTC)
         for i, item_id in enumerate(ordered_ids):
