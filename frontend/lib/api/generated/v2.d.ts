@@ -4304,6 +4304,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/students/{student_id}/certificates/{cert_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke Certificate
+         * @description Take back a certificate issued in error. The student stays on their level.
+         */
+        post: operations["revoke_certificate_api_v2_admin_students__student_id__certificates__cert_id__revoke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/students/{student_id}/change-parent": {
         parameters: {
             query?: never;
@@ -17912,6 +17932,11 @@ export interface components {
             /** Reason */
             reason?: string | null;
         };
+        /** RevokeCertificateBody */
+        RevokeCertificateBody: {
+            /** Reason */
+            reason: string;
+        };
         /** RevokeSupportAccessPayload */
         RevokeSupportAccessPayload: {
             /** Academy Id */
@@ -28081,6 +28106,42 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_certificate_api_v2_admin_students__student_id__certificates__cert_id__revoke_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                student_id: string;
+                cert_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RevokeCertificateBody"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

@@ -107,6 +107,12 @@ HOT_LOOKUPS: list[tuple[str, dict[str, Any], str]] = [
         {"academy_id": "acad_0", "dedupe_key": "dk"},
         "crm_contacts_academy_dedupe_unique",
     ),
+    # The public certificate share page resolves a token (0234).
+    (
+        "skill_certificates",
+        {"academy_id": "acad_0", "share_token": "tok"},
+        "certs_share_token_per_academy_uq",
+    ),
 ]
 
 

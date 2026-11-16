@@ -43,6 +43,7 @@ from backend.v2.contexts.student_progress.domain.models import (
     TestAttempt as StudentTestAttempt,
 )
 from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.tests.fixtures.certificate_fakes import SequentialCertNumbers
 
 
 class _AlwaysEnrolled:
@@ -50,6 +51,9 @@ class _AlwaysEnrolled:
     exercised in test_level_up_lifecycle.py; the coach route 404s first)."""
 
     async def has_active_or_paused_enrollment(self, student_id: str) -> bool:
+        return True
+
+    async def student_exists(self, student_id: str) -> bool:
         return True
 
     async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
@@ -333,6 +337,9 @@ class _SkillLookup:
                 return level
         return None
 
+    async def list_levels_for_program(self, program_id: str) -> list[object]:
+        return [lvl for lvl in self.levels.values() if lvl.program_id == program_id]
+
 
 _NOW = datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
 
@@ -376,6 +383,7 @@ async def test_place_student_emits_student_placed_event() -> None:
         skill_progress=skill_progress,
         skill_lookup=_SkillLookup(),
         recommendations=_RecommendationRepo(),
+        enrollment_lookup=_AlwaysEnrolled(),
         outbox=outbox,
     )
 
@@ -593,6 +601,7 @@ async def test_review_level_up_approve_emits_leveled_up_and_certificate_events()
         level_progress=level_progress,
         skill_progress=skill_progress,
         certificates=certs,
+        cert_numbers=SequentialCertNumbers(),
         skill_lookup=_SkillLookup(),
         enrollment_lookup=_AlwaysEnrolled(),
         outbox=outbox,
@@ -659,6 +668,7 @@ async def test_review_level_up_replayed_approve_is_rejected_without_side_effects
         level_progress=level_progress,
         skill_progress=skill_progress,
         certificates=certs,
+        cert_numbers=SequentialCertNumbers(),
         skill_lookup=_SkillLookup(),
         enrollment_lookup=_AlwaysEnrolled(),
         outbox=outbox,
@@ -740,6 +750,7 @@ def _review_use_case(
         level_progress=level_progress,
         skill_progress=skill_progress,
         certificates=certs,
+        cert_numbers=SequentialCertNumbers(),
         skill_lookup=_SkillLookup(),
         enrollment_lookup=_AlwaysEnrolled(),
         outbox=outbox,
@@ -910,6 +921,7 @@ async def test_lost_review_race_reports_the_post_claim_status() -> None:
         level_progress=level_progress,
         skill_progress=skill_progress,
         certificates=certs,
+        cert_numbers=SequentialCertNumbers(),
         skill_lookup=_SkillLookup(),
         enrollment_lookup=_RejectsFirst(),
     )

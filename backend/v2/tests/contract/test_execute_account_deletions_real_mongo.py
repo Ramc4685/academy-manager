@@ -84,6 +84,26 @@ async def _seed(db: Any, *, guardian_active: bool = False) -> None:
             {"academy_id": A, "student_id": "stu-other", "parent_id": "u9", "full_name": "Other"},
         ]
     )
+    await db["skill_certificates"].insert_one(
+        {
+            "academy_id": A,
+            "cert_id": "cert-1",
+            "student_id": "stu-abcd",
+            "student_name": "Kid One",
+            "program_id": "prog",
+            "level_id": "L1",
+            "cert_number": "C-0001",
+            "level_name": "One",
+            "program_name": "Badminton",
+            "completed_at": NOW,
+            "issued_by": "owner",
+            "issued_at": NOW,
+            "status": "issued",
+            "share_token": "tok-1",
+            "share_enabled_at": NOW,
+            "share_enabled_by": "u1",
+        }
+    )
     await db["family_contacts"].insert_one(
         {"academy_id": A, "parent_id": "u1", "contact_id": "c1", "email": "g@example.com"}
     )
@@ -150,6 +170,9 @@ async def test_erases_the_account_and_keeps_what_the_academy_must_keep(real_db: 
     assert "date_of_birth" not in kid and "dob" not in kid and "medical_notes" not in kid
     other = await real_db["students"].find_one({"student_id": "stu-other"})
     assert other["full_name"] == "Other"
+    cert = await real_db["skill_certificates"].find_one({"cert_id": "cert-1"})
+    assert cert["student_name"] == "Student ABCD"
+    assert not {"share_token", "share_enabled_at", "share_enabled_by"} & cert.keys()
     for name in ("family_contacts", "family_notes", "crm_contacts", "email_preferences"):
         assert await real_db[name].count_documents({}) == 0, name
     message = await real_db["messages"].find_one({"message_id": "m1"})
@@ -179,6 +202,8 @@ async def test_children_stay_when_another_guardian_still_signs_in(real_db: Any) 
     assert stop_all.students == ["stu-abcd"]  # classes still dropped: billing was the parent's
     kid = await real_db["students"].find_one({"student_id": "stu-abcd"})
     assert kid["full_name"] == "Kid One"
+    cert = await real_db["skill_certificates"].find_one({"cert_id": "cert-1"})
+    assert cert["student_name"] == "Kid One"
     assert await real_db["family_contacts"].count_documents({}) == 1
     user = await real_db["users"].find_one({"user_id": "u1"})
     assert user["display_name"] == "Deleted user"

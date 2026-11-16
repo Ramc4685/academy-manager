@@ -9,12 +9,16 @@ from pydantic import BaseModel
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.student_progress.application.ports import (
+    CertificateNumbers,
     CertificateRepository,
     EnrollmentStatusLookup,
     LevelUpRecommendationRepository,
     SkillLookup,
     StudentLevelProgressRepository,
     StudentSkillProgressRepository,
+)
+from backend.v2.contexts.student_progress.application.use_cases.get_certificate_detail import (
+    read_level_ladder,
 )
 from backend.v2.contexts.student_progress.application.use_cases.place_student import (
     SUPERSEDED_BY_PLACEMENT_REASON,
@@ -32,7 +36,6 @@ from backend.v2.contexts.student_progress.domain.events import (
     StudentLeveledUp,
     StudentLeveledUpPayload,
 )
-from backend.v2.contexts.student_progress.domain.logic import generate_cert_number
 from backend.v2.contexts.student_progress.domain.models import (
     CLAIMABLE_LEVEL_UP_STATUSES,
     LevelUpRecommendation,
@@ -83,6 +86,7 @@ class ReviewLevelUpRecommendation:
         level_progress: StudentLevelProgressRepository,
         skill_progress: StudentSkillProgressRepository,
         certificates: CertificateRepository,
+        cert_numbers: CertificateNumbers,
         skill_lookup: SkillLookup,
         enrollment_lookup: EnrollmentStatusLookup,
         outbox: Outbox | None = None,
@@ -91,6 +95,7 @@ class ReviewLevelUpRecommendation:
         self._level_progress = level_progress
         self._skill_progress = skill_progress
         self._certs = certificates
+        self._cert_numbers = cert_numbers
         self._skill_lookup = skill_lookup
         self._enrollments = enrollment_lookup
         self._outbox = outbox
@@ -328,15 +333,18 @@ class ReviewLevelUpRecommendation:
             )
 
         # One certificate per completed level: reuse the one a partial approval
-        # already issued rather than minting a second.
+        # already issued rather than minting a second. A revoked one is not
+        # listed, so re-earning the level issues a fresh certificate.
         existing = await self._existing_certificate(rec)
         if existing is not None:
             return existing.cert_id, existing.cert_number, progress_id
 
         cert_id = str(new_ulid())
-        timestamp_ms = int(now.timestamp() * 1000)
-        cert_number = generate_cert_number(
-            rec.academy_id, rec.student_id, cmd.level_sequence, timestamp_ms
+        cert_number = await self._cert_numbers.next_number()
+        # Snapshot what the certificate says, so a later curriculum edit
+        # (a renamed skill, a recoloured level) never rewrites it.
+        levels, index, skill_names = await read_level_ladder(
+            self._skill_lookup, rec.program_id, rec.from_level_id
         )
         await self._certs.save(
             SkillCertificate(
@@ -352,6 +360,11 @@ class ReviewLevelUpRecommendation:
                 completed_at=now,
                 issued_by=cmd.reviewed_by,
                 issued_at=now,
+                skill_names=skill_names,
+                level_number=None if index is None else index + 1,
+                level_color=None
+                if index is None
+                else getattr(levels[index], "display_color", None),
             )
         )
         return cert_id, cert_number, progress_id

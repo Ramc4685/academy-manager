@@ -131,8 +131,14 @@ class _FakeCertificateRepo:
     async def save(self, cert: SkillCertificate) -> None:
         self._store.append(cert)
 
-    async def list_for_student(self, student_id: str) -> list[SkillCertificate]:
-        return [c for c in self._store if c.student_id == student_id]
+    async def list_for_student(
+        self, student_id: str, *, include_revoked: bool = False
+    ) -> list[SkillCertificate]:
+        return [
+            c
+            for c in self._store
+            if c.student_id == student_id and (include_revoked or c.status != "revoked")
+        ]
 
 
 class _FakeLevelUpRepo:

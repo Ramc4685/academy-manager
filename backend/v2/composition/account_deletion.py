@@ -64,6 +64,9 @@ from backend.v2.contexts.identity.infrastructure.mongo_account_deletion_store im
 from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import (
     MongoApplicationRepository,
 )
+from backend.v2.contexts.student_progress.infrastructure.mongo_certificate_repo import (
+    MongoSkillCertificateRepository,
+)
 from backend.v2.shared.comms.email_brand import branded_as
 from backend.v2.shared.comms.email_theme import INK, MUTED, shell
 from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
@@ -91,6 +94,7 @@ class FamilyErasureStep:
     family: MongoFamilyErasure
     applications: MongoApplicationRepository
     identity: MongoAccountDeletionStore
+    certificates: MongoSkillCertificateRepository
     name: str = "family"
 
     async def erase(self, request: AccountDeletionRequest, *, now: datetime) -> None:
@@ -130,6 +134,11 @@ class FamilyErasureStep:
                     continue
                 for student_id in children:
                     await self.students.anonymise(student_id, now=now)
+                    # Certificates copy the name at issue; they take the anonymised one.
+                    kid = await self.students.get_by_id(student_id)
+                    await self.certificates.anonymise_student(
+                        student_id, student_name=kid.full_name if kid else ""
+                    )
                 await self.family.erase_family(academy_id=academy_id, parent_ids=parent_ids)
                 await self.applications.delete_for_parent(
                     academy_id=academy_id, parent_user_ids=parent_ids
@@ -288,6 +297,7 @@ def compose_execute_account_deletions(
                 family=MongoFamilyErasure(db),
                 applications=MongoApplicationRepository(db),
                 identity=store,
+                certificates=MongoSkillCertificateRepository(db),
             ),
             BillingErasureStep(
                 remove_cards=RemoveSavedPaymentMethods(

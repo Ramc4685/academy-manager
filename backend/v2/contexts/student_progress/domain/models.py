@@ -54,6 +54,8 @@ ACTIVE_LEVEL_UP_STATUSES = frozenset({"RECOMMENDED", "APPROVING", "REJECTING"})
 
 LevelProgressStatus = Literal["active", "completed", "withdrawn"]
 
+CertificateStatus = Literal["issued", "revoked"]
+
 ProgressNextAction = Literal[
     "place_in_level",
     "continue_practice",
@@ -172,6 +174,20 @@ class SkillCertificate(BaseModel):
     completed_at: datetime
     issued_by: str
     issued_at: datetime
+    #: A revoked certificate stays on file for the admin; every other read skips it.
+    status: CertificateStatus = "issued"
+    revoked_at: datetime | None = None
+    revoked_by: str | None = None
+    revoke_reason: str | None = None
+    #: Snapshot taken at issue, so a later curriculum edit cannot rewrite an
+    #: issued certificate. None on rows issued before the snapshot existed.
+    skill_names: list[str] | None = None
+    level_number: int | None = None
+    level_color: str | None = None
+    #: Public share link (the share page lands separately); unset on revoke.
+    share_token: str | None = None
+    share_enabled_at: datetime | None = None
+    share_enabled_by: str | None = None
 
 
 # ---------------------------------------------------------------------------

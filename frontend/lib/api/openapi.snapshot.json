@@ -28964,6 +28964,22 @@
         "title": "ReturnFromHoldRequest",
         "type": "object"
       },
+      "RevokeCertificateBody": {
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RevokeCertificateBody",
+        "type": "object"
+      },
       "RevokeSupportAccessPayload": {
         "properties": {
           "academy_id": {
@@ -46942,6 +46958,68 @@
           }
         },
         "summary": "Get Certificate Detail",
+        "tags": [
+          "admin-progress"
+        ]
+      }
+    },
+    "/api/v2/admin/students/{student_id}/certificates/{cert_id}/revoke": {
+      "post": {
+        "description": "Take back a certificate issued in error. The student stays on their level.",
+        "operationId": "revoke_certificate_api_v2_admin_students__student_id__certificates__cert_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "cert_id",
+            "required": true,
+            "schema": {
+              "title": "Cert Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeCertificateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Revoke Certificate Api V2 Admin Students  Student Id  Certificates  Cert Id  Revoke Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Certificate",
         "tags": [
           "admin-progress"
         ]

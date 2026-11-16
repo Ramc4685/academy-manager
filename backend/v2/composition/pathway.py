@@ -8,6 +8,12 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from backend.v2.composition.level_up_lifecycle import enrollment_status_lookup
+from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo import (
+    MongoBillingCounterRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
+    MongoBillingSettingsRepository,
+)
 from backend.v2.contexts.curriculum.application.use_cases.get_pathway import GetFullPathway
 from backend.v2.contexts.curriculum.application.use_cases.manage_criteria import AddSkillCriterion
 from backend.v2.contexts.curriculum.application.use_cases.manage_lesson_cards import (
@@ -114,6 +120,9 @@ from backend.v2.contexts.student_progress.application.use_cases.record_test_atte
 from backend.v2.contexts.student_progress.application.use_cases.review_level_up import (
     ReviewLevelUpRecommendation,
 )
+from backend.v2.contexts.student_progress.application.use_cases.revoke_certificate import (
+    RevokeCertificate,
+)
 from backend.v2.contexts.student_progress.application.use_cases.set_mastery_note import (
     SetMasteryNote,
 )
@@ -123,6 +132,7 @@ from backend.v2.contexts.student_progress.application.use_cases.unmark_skill_mas
 from backend.v2.contexts.student_progress.application.use_cases.update_skill_status import (
     UpdateSkillStatus,
 )
+from backend.v2.contexts.student_progress.domain.logic import format_cert_number
 from backend.v2.contexts.student_progress.infrastructure.curriculum_lookup_adapter import (
     CurriculumSkillLookupAdapter as CurriculumSkillLookup,
 )
@@ -213,6 +223,24 @@ class SeedLessonCards:
         )
 
 
+class CertificateNumberAdapter:
+    """``CertificateNumbers`` over the academy's billing counter and invoice prefix.
+
+    Both repositories read the tenant at call time; the counter's ``$inc`` is
+    what keeps concurrent approvals from sharing a number.
+    """
+
+    def __init__(
+        self, counters: MongoBillingCounterRepository, settings: MongoBillingSettingsRepository
+    ) -> None:
+        self._counters = counters
+        self._settings = settings
+
+    async def next_number(self) -> str:
+        prefix = (await self._settings.get()).invoice_number_prefix
+        return format_cert_number(prefix, await self._counters.next_value(scope="certificate"))
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
@@ -255,6 +283,7 @@ class StudentProgressComposition:
     get_level_up_queue: GetLevelUpQueue
     get_certificates: GetStudentCertificates
     get_certificate_detail: GetCertificateDetail
+    revoke_certificate: RevokeCertificate
     get_skill_board: GetSkillBoard
     get_teaching_focus: GetTeachingFocus
     get_recent_skill_updates: GetRecentSkillUpdates
@@ -361,6 +390,9 @@ def compose_student_progress(
         level_progress=level_progress_repo,
         skill_progress=skill_progress_repo,
         certificates=certificate_repo,
+        cert_numbers=CertificateNumberAdapter(
+            MongoBillingCounterRepository(db), MongoBillingSettingsRepository(db)
+        ),
         skill_lookup=skill_lookup,
         enrollment_lookup=enrollment_lookup,
         outbox=outbox,
@@ -372,6 +404,7 @@ def compose_student_progress(
             skill_progress=skill_progress_repo,
             skill_lookup=skill_lookup,
             recommendations=recommendation_repo,
+            enrollment_lookup=enrollment_lookup,
             outbox=outbox,
         ),
         update_skill_status=UpdateSkillStatus(
@@ -419,6 +452,7 @@ def compose_student_progress(
         get_certificate_detail=GetCertificateDetail(
             certificates=certificate_repo, skill_lookup=skill_lookup
         ),
+        revoke_certificate=RevokeCertificate(certificates=certificate_repo),
         get_skill_board=GetSkillBoard(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
@@ -476,6 +510,8 @@ def compose_student_progress(
         ),
         curriculum_change_checks=CurriculumChangeChecks(
             level_progress=level_progress_repo,
+            skill_progress=skill_progress_repo,
+            skill_lookup=skill_lookup,
             recommendations=recommendation_repo,
             recommend_level_up=recommend_level_up,
         ),
