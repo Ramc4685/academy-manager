@@ -17,6 +17,10 @@ from pydantic import BaseModel, Field
 
 from backend.v2.contexts.billing.application.ports import BillingSettingsRepository
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
+from backend.v2.contexts.billing.domain.billing_settings import (
+    BillingScheduleChange,
+    BillingSettings,
+)
 from backend.v2.shared.ids import new_ulid
 
 
@@ -63,6 +67,9 @@ class InvoiceScheduleResult(BaseModel):
     billing_day: int
     invoice_due_days: int
     reminder_days: tuple[int, ...] = ()
+    #: Read-only here (L8): shown on Billing rules, set by migration.
+    autopay_charge_offset_days: int | None = None
+    schedule_change: BillingScheduleChange | None = None
 
 
 class GetInvoiceScheduleSettings:
@@ -75,6 +82,8 @@ class GetInvoiceScheduleSettings:
             billing_day=current.billing_day,
             invoice_due_days=current.invoice_due_days,
             reminder_days=current.reminder_days,
+            autopay_charge_offset_days=current.autopay_charge_offset_days,
+            schedule_change=current.schedule_change,
         )
 
 
@@ -116,6 +125,16 @@ class SetInvoiceScheduleSettings:
                 invoice_due_days=cmd.invoice_due_days,
                 reminder_days=reminder_days,
             )
+        # Validated, not model_copy'd: a due window shorter than the autopay
+        # charge offset must be refused before the audit, never stored.
+        updated = BillingSettings.model_validate(
+            {
+                **current.model_dump(),
+                "billing_day": cmd.billing_day,
+                "invoice_due_days": cmd.invoice_due_days,
+                "reminder_days": reminder_days,
+            }
+        )
         # Audit BEFORE the write: the schedule must never change unaudited, and a failed upsert leaves
         # the values unchanged so the retry isn't swallowed by the no-op check.
         if self._audit is not None:
@@ -139,13 +158,6 @@ class SetInvoiceScheduleSettings:
                     },
                 )
             )
-        updated = current.model_copy(
-            update={
-                "billing_day": cmd.billing_day,
-                "invoice_due_days": cmd.invoice_due_days,
-                "reminder_days": reminder_days,
-            }
-        )
         await self._settings.upsert(updated)
         return InvoiceScheduleResult(
             billing_day=cmd.billing_day,

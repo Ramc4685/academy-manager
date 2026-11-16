@@ -6,9 +6,9 @@ off unless an academy admin explicitly opts in.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 #: Upper bound on the platform's per-academy application fee, in basis points
 #: (1 bps = 0.01%). 1,000 bps = 10% of the charge: a guard rail against a
@@ -45,6 +45,48 @@ class ApplicationFeeAgreementAcceptance(BaseModel):
     version: str = Field(min_length=1)
     accepted_by: str = Field(min_length=1)
     accepted_at: datetime
+
+
+def _clean_reminder_days(value: object) -> tuple[int, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, int):
+        value = (value,)
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(sorted({int(day) for day in value}))
+
+
+def _check_charge_offset(offset: int | None, invoice_due_days: int) -> None:
+    # A charge after the due date would put an autopay invoice past due before
+    # it is ever charged.
+    if offset is not None and offset > invoice_due_days:
+        raise ValueError("autopay_charge_offset_days must not exceed invoice_due_days")
+
+
+class BillingScheduleChange(BaseModel):
+    """Schedule values that replace the base ones from ``effective_from`` on (L8).
+
+    A date rather than an owner flip on the day: a forgotten flip is a missed
+    charge. ``BillingSettings.effective`` applies it once matured.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    effective_from: date
+    invoice_due_days: int = Field(ge=0, le=60)
+    autopay_charge_offset_days: int | None = Field(default=None, ge=0, le=60)
+    reminder_days: tuple[int, ...] = ()
+
+    @field_validator("reminder_days", mode="before")
+    @classmethod
+    def _clean_reminder_days(cls, value: object) -> tuple[int, ...]:
+        return _clean_reminder_days(value)
+
+    @model_validator(mode="after")
+    def _offset_within_due_window(self) -> BillingScheduleChange:
+        _check_charge_offset(self.autopay_charge_offset_days, self.invoice_due_days)
+        return self
 
 
 class BillingSettings(BaseModel):
@@ -87,6 +129,13 @@ class BillingSettings(BaseModel):
     # makes its first autopay charge attempt (DUNNING_SCHEDULE_DAYS starts at 0).
     billing_day: int = Field(default=1, ge=1, le=28)
     invoice_due_days: int = Field(default=7, ge=0, le=60)
+    # Days after the generation date on which the monthly generator stamps an
+    # invoice's autopay charge (L8). ``None`` charges on the due date, as
+    # before, so no academy changes at deploy. Never past invoice_due_days.
+    autopay_charge_offset_days: int | None = Field(default=None, ge=0, le=60)
+    # A dated change to the three schedule values above, applied on read by
+    # ``effective``. Base fields stay as they are until it matures.
+    schedule_change: BillingScheduleChange | None = None
 
     # Automated past-due reminders (issue #774). Each entry is a number of days
     # AFTER an invoice's due date on which the reminder job emails the parent,
@@ -116,13 +165,27 @@ class BillingSettings(BaseModel):
     @field_validator("reminder_days", mode="before")
     @classmethod
     def _clean_reminder_days(cls, value: object) -> tuple[int, ...]:
-        if value is None:
-            return ()
-        if isinstance(value, int):
-            value = (value,)
-        if not isinstance(value, list | tuple):
-            return ()
-        return tuple(sorted({int(day) for day in value}))
+        return _clean_reminder_days(value)
+
+    @model_validator(mode="after")
+    def _offset_within_due_window(self) -> BillingSettings:
+        _check_charge_offset(self.autopay_charge_offset_days, self.invoice_due_days)
+        return self
+
+    def effective(self, on: date) -> BillingSettings:
+        """These settings as they stand on ``on``: a matured schedule change replaces
+        the base schedule values and is cleared, so the next write persists them."""
+        change = self.schedule_change
+        if change is None or on < change.effective_from:
+            return self
+        return self.model_copy(
+            update={
+                "invoice_due_days": change.invoice_due_days,
+                "autopay_charge_offset_days": change.autopay_charge_offset_days,
+                "reminder_days": change.reminder_days,
+                "schedule_change": None,
+            }
+        )
 
     @classmethod
     def default(cls, academy_id: str) -> BillingSettings:

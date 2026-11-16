@@ -105,7 +105,12 @@ async def _return(uc: HandleWebhookEvent, repo: MongoBillingLedgerRepository, pi
     payment = await repo.get_payment_by_stripe_payment_intent_id(pi)
     assert payment is not None
     await uc._reverse_returned_payment(
-        event_id="evt", pi_id=pi, payment=payment, amount_cents=10_000, return_code="R01"
+        event_id="evt",
+        pi_id=pi,
+        payment=payment,
+        amount_cents=10_000,
+        return_code="R01",
+        source_key=None,
     )
 
 
@@ -254,3 +259,320 @@ async def test_return_naming_an_invoice_without_an_allocation_is_left_for_a_manu
     assert payment is not None and payment.status == "succeeded"
     attempt = await real_db["payment_attempts"].find_one({"invoice_id": "inv-pi_meta"})
     assert attempt is not None and attempt["failure_code"] == "unreconciled_payment_return"
+
+
+class _Audit:
+    def __init__(self, db) -> None:
+        from backend.v2.contexts.billing.infrastructure.mongo_billing_audit_log import (
+            MongoBillingAuditLogRepository,
+        )
+
+        self._repo = MongoBillingAuditLogRepository(db)
+
+    async def append(self, entry) -> None:
+        await self._repo.append(entry)
+
+
+@pytest.mark.asyncio
+async def test_partial_return_of_unallocated_money_stops_it_being_spendable(real_db, acad) -> None:
+    """L8: with no allocation there is no invoice for an attempt row, and the old
+    branch returned before marking the payment, so the returned part stayed
+    spendable. It is now marked partially refunded, with an audit entry, and a
+    replay converges."""
+    repo = MongoBillingLedgerRepository(real_db)
+    await repo.record_payment(_payment(acad, "pi_part"), idempotency_key="p:part")
+    uc = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=FakeDedup(),
+        payments=FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=FakeOutbox(),
+        academy_id=acad,
+        billing_ledger=repo,
+        family_autopay=_Family(),
+        billing_audit=_Audit(real_db),
+        clock=lambda: NOW,
+    )
+
+    for _ in range(2):
+        payment = await repo.get_payment_by_stripe_payment_intent_id("pi_part")
+        assert payment is not None
+        await uc._reverse_returned_payment(
+            event_id="evt",
+            pi_id="pi_part",
+            payment=payment,
+            amount_cents=4_000,
+            return_code="R01",
+            source_key=None,
+        )
+
+    after = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_part"})
+    # The 6,000 the bank did not take back is still the family's money.
+    assert (after["status"], after["refunded_cents"], after["unapplied_amount_cents"]) == (
+        "partially_refunded",
+        4_000,
+        6_000,
+    )
+    audits = await real_db["billing_audit_log"].find({"payment_id": "pay-pi_part"}).to_list(10)
+    assert [a["action"] for a in audits] == ["payment_return_unreconciled"]
+
+
+@pytest.mark.asyncio
+async def test_second_partial_return_raises_the_total_and_stale_events_never_lower_it(
+    real_db, acad
+) -> None:
+    """Stripe's ``charge.amount_refunded`` is cumulative: a 4,000 return and then a
+    3,000 return arrive as 4,000 and 7,000. The total ends at 7,000 whether the
+    events replay or arrive out of order."""
+    repo = MongoBillingLedgerRepository(real_db)
+    await repo.record_payment(_payment(acad, "pi_two"), idempotency_key="p:two")
+    uc = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=FakeDedup(),
+        payments=FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=FakeOutbox(),
+        academy_id=acad,
+        billing_ledger=repo,
+        family_autopay=_Family(),
+        billing_audit=_Audit(real_db),
+        clock=lambda: NOW,
+    )
+
+    for cumulative in (4_000, 7_000, 7_000, 4_000):
+        payment = await repo.get_payment_by_stripe_payment_intent_id("pi_two")
+        assert payment is not None
+        await uc._reverse_returned_payment(
+            event_id="evt",
+            pi_id="pi_two",
+            payment=payment,
+            amount_cents=cumulative,
+            return_code="R01",
+            source_key=None,
+        )
+
+    after = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_two"})
+    assert (after["status"], after["refunded_cents"], after["unapplied_amount_cents"]) == (
+        "partially_refunded",
+        7_000,
+        3_000,
+    )
+    audits = await real_db["billing_audit_log"].find({"payment_id": "pay-pi_two"}).to_list(10)
+    assert sorted(a["after"]["returned_cents"] for a in audits) == [4_000, 7_000]
+
+
+@pytest.mark.asyncio
+async def test_reopened_invoice_moves_both_dates_and_no_ladder_opens_before_then(
+    real_db, acad
+) -> None:
+    """L8: reopen day + 5 for the due date AND the autopay charge stamp, or the old
+    Jan 1 stamp re-arms the ladder the moment autopay resumes."""
+    from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
+        MongoDunningStateRepository,
+    )
+
+    repo = MongoBillingLedgerRepository(real_db)
+    invoice = _invoice(acad, "inv-pi_reopen").model_copy(
+        update={
+            "enrollment_id": "enr-reopen",
+            "due_date": date(2026, 11, 5),
+            "autopay_charge_date": date(2026, 11, 1),
+        }
+    )
+    await repo.create_invoice(invoice, lines=[], idempotency_key="i:reopen")
+    payment = await repo.record_payment(_payment(acad, "pi_reopen"), idempotency_key="p:reopen")
+    await repo.allocate_payment(
+        payment_id=payment.payment_id,
+        invoice_id="inv-pi_reopen",
+        amount_cents=10_000,
+        idempotency_key="autopay-alloc:pi_reopen",
+    )
+    await real_db["student_billing_enrollments"].insert_one(
+        {
+            "academy_id": acad,
+            "enrollment_id": "enr-reopen",
+            "student_id": "student-1",
+            "parent_id": "parent-1",
+            "session_type_id": "st-1",
+            "autopay_enrollment_status": "active",
+        }
+    )
+    uc = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=FakeDedup(),
+        payments=FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=FakeOutbox(),
+        academy_id=acad,
+        billing_ledger=repo,
+        family_autopay=_Family(),
+        clock=lambda: NOW,
+    )
+
+    await _return(uc, repo, "pi_reopen")
+
+    reopened = await repo.get_invoice("inv-pi_reopen")
+    assert reopened is not None and reopened.status == "open"
+    assert (reopened.due_date, reopened.autopay_charge_date) == (
+        date(2026, 11, 20),
+        date(2026, 11, 20),
+    )
+    ladder = MongoDunningStateRepository(real_db)
+    assert await ladder.prepare_due_states(now=datetime(2026, 11, 19, 12, tzinfo=UTC), limit=5) == 0
+    assert await ladder.prepare_due_states(now=datetime(2026, 11, 20, 12, tzinfo=UTC), limit=5) == 1
+
+
+@pytest.mark.asyncio
+async def test_refund_then_dispute_sum_and_neither_replay_double_counts(real_db, acad) -> None:
+    """A dispute amount is not cumulative: a 4,000 refund then a 3,000 dispute on
+    the same payment is 7,000 taken back. Replaying either, in any order, keeps it."""
+    repo = MongoBillingLedgerRepository(real_db)
+    await repo.record_payment(_payment(acad, "pi_mix"), idempotency_key="p:mix")
+    uc = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=FakeDedup(),
+        payments=FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=FakeOutbox(),
+        academy_id=acad,
+        billing_ledger=repo,
+        family_autopay=_Family(),
+        billing_audit=_Audit(real_db),
+        clock=lambda: NOW,
+    )
+    refund = {"amount_cents": 4_000, "return_code": "R01", "source_key": None}
+    dispute = {
+        "amount_cents": 3_000,
+        "return_code": "dispute:fraudulent",
+        "source_key": "dispute:dp_1",
+    }
+
+    for step in (refund, dispute, dispute, refund, dispute):
+        payment = await repo.get_payment_by_stripe_payment_intent_id("pi_mix")
+        assert payment is not None
+        await uc._reverse_returned_payment(event_id="evt", pi_id="pi_mix", payment=payment, **step)
+
+    after = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_mix"})
+    assert (after["status"], after["refunded_cents"], after["unapplied_amount_cents"]) == (
+        "partially_refunded",
+        7_000,
+        3_000,
+    )
+    audits = await real_db["billing_audit_log"].find({"payment_id": "pay-pi_mix"}).to_list(10)
+    assert sorted(a["after"]["returned_cents"] for a in audits) == [3_000, 4_000]
+
+
+@pytest.mark.asyncio
+async def test_a_plain_refund_after_a_dispute_adds_on_top_and_never_lowers_it(
+    real_db, acad
+) -> None:
+    """Review fix: ``charge.refunded`` carries the charge's own running total, not
+    the payment's. A 3,000 dispute then a 2,000 refund is 5,000 taken back, never 2,000."""
+    repo = MongoBillingLedgerRepository(real_db)
+    await repo.record_payment(_payment(acad, "pi_dr"), idempotency_key="p:dr")
+    uc = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=FakeDedup(),
+        payments=FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=FakeOutbox(),
+        academy_id=acad,
+        billing_ledger=repo,
+        family_autopay=_Family(),
+        billing_audit=_Audit(real_db),
+        clock=lambda: NOW,
+    )
+    payment = await repo.get_payment_by_stripe_payment_intent_id("pi_dr")
+    assert payment is not None
+    await uc._reverse_returned_payment(
+        event_id="evt-d",
+        pi_id="pi_dr",
+        payment=payment,
+        amount_cents=3_000,
+        return_code="dispute:fraudulent",
+        source_key="dispute:dp_9",
+    )
+
+    for _ in range(2):
+        await uc._on_charge_refunded_ledger("pi_dr", {"amount_refunded": 2_000})
+
+    after = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_dr"})
+    assert (after["status"], after["refunded_cents"]) == ("partially_refunded", 5_000)
+
+
+class _AuditFailingOnce(_Audit):
+    """The audit write dies once, as if the worker crashed mid-return."""
+
+    def __init__(self, db) -> None:
+        super().__init__(db)
+        self.failed = False
+
+    async def append(self, entry) -> None:
+        if not self.failed and entry.audit_id.endswith("dispute:dp_60"):
+            self.failed = True
+            raise RuntimeError("audit write failed")
+        await super().append(entry)
+
+
+@pytest.mark.asyncio
+async def test_a_return_that_completes_the_refund_keeps_its_audit_and_alert_on_retry(
+    real_db, acad, monkeypatch
+) -> None:
+    """PR #1181 review: $40 refunded, then a $60 dispute takes the payment to fully
+    refunded. Once it reads refunded a replay stops early, so the audit row and
+    alert must land before the money moves, or a failed audit write loses them."""
+    from backend.v2.contexts.billing.application.use_cases import handle_webhook_event
+
+    alerts: list[str] = []
+    monkeypatch.setattr(
+        handle_webhook_event,
+        "capture_message",
+        lambda message, level="error", **_: alerts.append(message),
+    )
+    repo = MongoBillingLedgerRepository(real_db)
+    await repo.record_payment(_payment(acad, "pi_full"), idempotency_key="p:full")
+    audit = _AuditFailingOnce(real_db)
+    uc = HandleWebhookEvent(
+        stripe=FakeStripeGateway(),
+        dedup=FakeDedup(),
+        payments=FakePaymentRepo(),
+        subscriptions=FakeSubscriptionRepo(),
+        outbox=FakeOutbox(),
+        academy_id=acad,
+        billing_ledger=repo,
+        family_autopay=_Family(),
+        billing_audit=audit,
+        clock=lambda: NOW,
+    )
+
+    async def _return(amount: int, code: str, key: str | None) -> None:
+        payment = await repo.get_payment_by_stripe_payment_intent_id("pi_full")
+        assert payment is not None
+        await uc._reverse_returned_payment(
+            event_id="evt",
+            pi_id="pi_full",
+            payment=payment,
+            amount_cents=amount,
+            return_code=code,
+            source_key=key,
+        )
+
+    await _return(4_000, "R01", None)
+    with pytest.raises(RuntimeError):
+        await _return(6_000, "dispute:fraudulent", "dispute:dp_60")
+    mid = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_full"})
+    assert mid["refunded_cents"] == 4_000  # nothing moved before the trail was written
+    await _return(6_000, "dispute:fraudulent", "dispute:dp_60")
+    await _return(6_000, "dispute:fraudulent", "dispute:dp_60")  # later replay: a no-op
+
+    after = await real_db["ledger_payments"].find_one({"payment_id": "pay-pi_full"})
+    assert (after["status"], after["refunded_cents"], after["unapplied_amount_cents"]) == (
+        "refunded",
+        10_000,
+        0,
+    )
+    dispute_rows = await real_db["billing_audit_log"].count_documents(
+        {"audit_id": "baud-payment-return:pi_full:dispute:dp_60"}
+    )
+    assert dispute_rows == 1
+    assert len([a for a in alerts if "6000 of 10000" in a]) == 1

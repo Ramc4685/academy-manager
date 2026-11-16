@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 from pydantic import ValidationError
 
-from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.domain.billing_settings import (
+    BillingScheduleChange,
+    BillingSettings,
+)
 
 
 def test_default_is_fail_safe_all_discounts_off() -> None:
@@ -52,3 +55,44 @@ def test_can_construct_with_explicit_discount_config() -> None:
     assert settings.ach_discount_percent == 2.5
     assert settings.disclosure_version == "v1"
     assert settings.invoice_number_prefix == "INV"
+
+
+# --- L8 billing calendar: charge offset and dated schedule change -------------
+
+_JAN_CHANGE = {
+    "effective_from": date(2027, 1, 1),
+    "invoice_due_days": 4,
+    "autopay_charge_offset_days": 0,
+    "reminder_days": (7, 0, 3),
+}
+
+
+def test_charge_offset_defaults_to_none_so_no_academy_moves_at_deploy() -> None:
+    settings = BillingSettings.default("acad-1")
+    assert settings.autopay_charge_offset_days is None
+    assert settings.schedule_change is None
+
+
+def test_charge_offset_may_not_exceed_the_due_window() -> None:
+    BillingSettings(academy_id="a", invoice_due_days=4, autopay_charge_offset_days=4)
+    with pytest.raises(ValidationError):
+        BillingSettings(academy_id="a", invoice_due_days=4, autopay_charge_offset_days=5)
+    with pytest.raises(ValidationError):
+        BillingScheduleChange(**{**_JAN_CHANGE, "autopay_charge_offset_days": 5})
+
+
+def test_schedule_change_applies_from_its_day_and_clears_itself() -> None:
+    settings = BillingSettings(
+        academy_id="a", invoice_due_days=7, reminder_days=(15, 20), schedule_change=_JAN_CHANGE
+    )
+
+    dec31 = settings.effective(date(2026, 12, 31))
+    assert dec31 is settings
+    assert (dec31.invoice_due_days, dec31.autopay_charge_offset_days) == (7, None)
+
+    jan1 = settings.effective(date(2027, 1, 1))
+    assert jan1.invoice_due_days == 4
+    assert jan1.autopay_charge_offset_days == 0
+    assert jan1.reminder_days == (0, 3, 7)
+    assert jan1.schedule_change is None
+    assert jan1.billing_day == settings.billing_day

@@ -28,6 +28,7 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     invoice_is_chargeable,
 )
 from backend.v2.contexts.billing.domain.dunning import MAX_DUNNING_ATTEMPTS
+from backend.v2.contexts.billing.domain.ledger import charge_date
 from backend.v2.shared.comms.phone_country import DEFAULT_CALLING_CODE
 from backend.v2.shared.comms.whatsapp import dues_reminder_text, whatsapp_deep_link
 
@@ -100,6 +101,9 @@ class InvoiceFacts:
     #: DELIVERY. Defaulted so invoices written before the job existed — and
     #: the fixtures that predate it — read as "never reminded".
     last_reminder_at: datetime | None = None
+    #: The monthly generator's autopay charge stamp (L8); None charges on the
+    #: due date. Read through ``charge_date``.
+    autopay_charge_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -202,10 +206,11 @@ def _eligibility(family: FamilyFacts, invoice: InvoiceFacts) -> Eligibility:
     )
 
 
-def _has_failed_attempt(invoice: InvoiceFacts) -> bool:
-    if invoice.dunning_status == _DUNNED_STATUS:
+def has_failed_attempt(dunning_status: str | None, attempt_count: int) -> bool:
+    """A ladder that has failed at least once, or gave up (the Failed autopay rule)."""
+    if dunning_status == _DUNNED_STATUS:
         return True
-    return invoice.dunning_status in _FAILED_LADDER_STATUSES and invoice.dunning_attempt_count >= 1
+    return dunning_status in _FAILED_LADDER_STATUSES and attempt_count >= 1
 
 
 def _by_due_date(invoices: Iterable[InvoiceFacts]) -> list[InvoiceFacts]:
@@ -224,7 +229,9 @@ def _pick_bucket(
 ) -> tuple[str | None, InvoiceFacts | None]:
     """Spec §2 rules, top to bottom. Returns (bucket, triggering invoice)."""
     for inv in owing:
-        if _is_chargeable_owing(inv) and _has_failed_attempt(inv):
+        if _is_chargeable_owing(inv) and has_failed_attempt(
+            inv.dunning_status, inv.dunning_attempt_count
+        ):
             return "failed_autopay", inv
     for inv in owing:
         if not eligibility[inv.invoice_id].eligible and inv.due_date < today:
@@ -252,13 +259,13 @@ def _autopay_payload(
     if not owing:
         return None
     if bucket == "autopay_scheduled":
-        # The charge date is the ELIGIBLE invoice's due date (the one the worker
-        # will take), not the earliest owing one, which may not be chargeable.
+        # The charge date is the ELIGIBLE invoice's (the one the worker will
+        # take), not the earliest owing one, which may not be chargeable.
         charged = trigger or owing[0]
         return {
             "status": "eligible",
             "card_last4": family.card_last4,
-            "charge_on": charged.due_date.isoformat(),
+            "charge_on": charge_date(charged.due_date, charged.autopay_charge_date).isoformat(),
             "notice_sent_at": _iso(charged.last_sent_at),
         }
     if bucket not in {"past_due", "awaiting"}:
@@ -271,7 +278,7 @@ def _autopay_payload(
             return {
                 "status": elig.reason or elig.status,
                 "card_last4": family.card_last4,
-                "charge_on": inv.due_date.isoformat(),
+                "charge_on": charge_date(inv.due_date, inv.autopay_charge_date).isoformat(),
                 "notice_sent_at": _iso(inv.last_sent_at),
             }
     return None

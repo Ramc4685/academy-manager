@@ -22,7 +22,7 @@ from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopa
 from backend.v2.contexts.billing.application.use_cases.process_dunning_retries import (
     ProcessDunningRetries,
 )
-from backend.v2.contexts.billing.domain.ledger import record_delivery
+from backend.v2.contexts.billing.domain.ledger import charge_date, record_delivery
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 
@@ -51,7 +51,7 @@ def build_send_autopay_notice(
             period=invoice.period,
             amount_cents=invoice.balance_due_cents,
             currency=invoice.currency,
-            charge_on=invoice.due_date,
+            charge_on=charge_date(invoice.due_date, invoice.autopay_charge_date),
             portal_url=f"{base}/parent/payments" if base else None,
         )
         delivered = record_delivery(

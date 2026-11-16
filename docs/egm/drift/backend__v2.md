@@ -10,3 +10,5 @@
 - [undocumented] `shared/` subpackages `comms/`, `profile/`, `scheduling/`, `security/`, `time/`, and the top-level modules `caching.py`, `ids.py`, `money.py`, `names.py`, `occurrences.py` are not listed (README:14-21).
 - [undocumented] Test directories `tests/composition`, `tests/contexts`, `tests/infrastructure`, `tests/shared`, `tests/seed`, `tests/fixtures` are not listed (README:24-29). The structural tier also holds many policy tests beyond layering and event rules (e.g. `test_openapi_snapshot.py`, `test_no_duplicate_routes.py`).
 - [undocumented] `scripts/` also contains `reconcile_membership_roles.py` (README:23 names only `replay_event.py` as an example, so this is minor).
+
+Re-checked 2026-11-16 (L8 PR #1181 return-audit fix): all 12 prior items re-verified and still hold; none fixed, no new divergences.

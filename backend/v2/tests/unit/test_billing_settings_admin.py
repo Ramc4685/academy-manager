@@ -157,6 +157,41 @@ async def test_set_invoice_schedule_preserves_other_settings() -> None:
     assert (written.billing_day, written.invoice_due_days) == (28, 0)
 
 
+@pytest.mark.asyncio
+async def test_set_invoice_schedule_refuses_a_due_window_shorter_than_the_charge_offset() -> None:
+    """L8: an autopay invoice must never fall past due before it is charged."""
+    repo = _SettingsRepo(
+        BillingSettings(academy_id="acad-1", invoice_due_days=4, autopay_charge_offset_days=3)
+    )
+    audit = _Audit()
+    uc = SetInvoiceScheduleSettings(settings=repo, audit=audit, clock=lambda: NOW)
+
+    with pytest.raises(ValidationError):
+        await uc.execute(
+            SetInvoiceScheduleCommand(billing_day=1, invoice_due_days=2, actor_id="admin-1")
+        )
+
+    assert repo.upserts == []
+    assert audit.entries == []
+
+
+@pytest.mark.asyncio
+async def test_invoice_schedule_read_carries_the_charge_offset_and_pending_change() -> None:
+    settings = BillingSettings(
+        academy_id="acad-1",
+        schedule_change={
+            "effective_from": "2027-01-01",
+            "invoice_due_days": 4,
+            "autopay_charge_offset_days": 0,
+            "reminder_days": [0, 3, 7],
+        },
+    )
+    result = await GetInvoiceScheduleSettings(settings=_SettingsRepo(settings)).execute()
+
+    assert result.autopay_charge_offset_days is None
+    assert result.schedule_change == settings.schedule_change
+
+
 @pytest.mark.parametrize("billing_day", [0, 29, 31])
 def test_billing_day_outside_1_to_28_is_rejected(billing_day: int) -> None:
     """29-31 are rejected rather than clamped: an academy that asked for the

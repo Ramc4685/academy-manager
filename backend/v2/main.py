@@ -2526,7 +2526,7 @@ async def _resolve_billing_day(
 
     Settings are advisory for generation: the billing context's own rule is
     that a missing or unreadable billing_settings doc "must never block the
-    monthly run" (see MongoMonthlyBilling._load_invoice_due_days). Skipping the
+    monthly run" (see MongoMonthlyBillingGenerator._load_schedule). Skipping the
     academy on a read failure would make an unreadable settings doc a permanent
     silent skip — the exact failure mode issue #431 set out to remove.
     """
