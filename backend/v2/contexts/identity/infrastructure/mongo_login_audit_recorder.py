@@ -50,6 +50,12 @@ class MongoLoginAuditRecorder:
             # is the same session, not a new login.
             return
 
+        # Once per session (not per request): the parent digest reads this to
+        # tell a parent who has signed in from one who never activated.
+        await self._db["users"].update_one(
+            {"$or": [{"user_id": user_id}, {"auth_uid": user_id}, {"_id": user_id}]},
+            {"$set": {"last_login_at": now}},
+        )
         await self._db["audit_logs"].insert_one(
             {
                 "audit_id": f"audit_{new_ulid()}",

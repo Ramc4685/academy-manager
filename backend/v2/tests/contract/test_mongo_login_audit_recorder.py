@@ -64,3 +64,16 @@ async def test_a_fresh_token_writes_a_fresh_row(mongo_db) -> None:
 
     rows = [doc async for doc in mongo_db["audit_logs"].find({"academy_id": ACADEMY})]
     assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_new_session_stamps_last_login_at_on_the_users_row(mongo_db) -> None:
+    # The parent digest decides "has this parent ever signed in?" from
+    # users.last_login_at; nothing wrote it before, so every parent looked
+    # never-activated and got a fresh auto-login link every day.
+    await mongo_db["users"].insert_one({"user_id": "u-coach", "email": "c@example.com"})
+
+    await _record(MongoLoginAuditRecorder(mongo_db), dedupe_key="u-coach:1")
+
+    user = await mongo_db["users"].find_one({"user_id": "u-coach"})
+    assert user["last_login_at"] is not None

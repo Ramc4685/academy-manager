@@ -979,6 +979,10 @@ class _ParentDigestProvider:
         fallback = self._login_url(frontend, user_doc)
         if on_portal or not frontend or self._issue_magic_link is None:
             return fallback
+        # No Firebase account yet: a custom token could only sign in to an empty
+        # account. The login page's set-password flow provisions one instead.
+        if not ((user_doc or {}).get("firebase_uid") or (user_doc or {}).get("auth_uid")):
+            return fallback
         try:
             academy_id = current_academy_id()
             next_path = "/parent/payments" if dues is not None else "/parent/dashboard"
@@ -1001,7 +1005,8 @@ class _ParentDigestProvider:
         email = str((user_doc or {}).get("email") or "").strip()
         if not email:
             return f"{frontend}/login"
-        return f"{frontend}/login?email={quote(email, safe='')}"
+        # activate=1 tells the login page this parent has no password yet.
+        return f"{frontend}/login?email={quote(email, safe='')}&activate=1"
 
     @staticmethod
     def _is_on_portal(user_doc: dict[str, Any] | None) -> bool:
