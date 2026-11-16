@@ -259,7 +259,13 @@ export function FamilyOffersCard() {
     queryKey: queryKeys.admin.familyOffers(),
     queryFn: getFamilyOffers,
   });
-  const view = query.data;
+  // A response missing either block (an old or stubbed backend) shows the
+  // load error instead of crashing the Billing rules panel.
+  const view =
+    query.data?.sibling_discount && query.data.referral_program
+      ? query.data
+      : undefined;
+  const unreadable = query.isError || (query.isSuccess && !view);
   const [sibling, setSibling] = useState<SiblingForm | null>(() =>
     view ? siblingFormFrom(view.sibling_discount) : null,
   );
@@ -310,7 +316,7 @@ export function FamilyOffersCard() {
         Optional offers for families. Changes apply to invoices generated after
         you save; invoices already issued keep their amounts.
       </p>
-      {query.isError && (
+      {unreadable && (
         <p className="mt-3 text-sm text-red-700" role="alert">
           Could not load the family offers.
         </p>

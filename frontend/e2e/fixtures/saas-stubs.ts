@@ -166,6 +166,20 @@ export async function stubNurtureSequence(page: Page): Promise<void> {
 }
 
 /**
+ * Settings > Billing rules renders the Family offers card; a catch-all `{}`
+ * for its read leaves it without `sibling_discount` / `referral_program`.
+ */
+export async function stubFamilyOffers(page: Page): Promise<void> {
+  await page.route("**/api/v2/admin/billing/family-offers", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      sibling_discount: { enabled: false },
+      referral_program: { enabled: false },
+    });
+  });
+}
+
+/**
  * The parent waivers page and the admin waivers page both render an AI video
  * consent lane; unstubbed, their reads 502 and fail clean-console specs.
  */

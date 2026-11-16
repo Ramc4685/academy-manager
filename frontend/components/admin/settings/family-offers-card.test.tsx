@@ -174,6 +174,14 @@ describe("FamilyOffersCard form", () => {
 });
 
 describe("FamilyOffersCard", () => {
+  it("shows the load error instead of crashing on a response missing a block", () => {
+    for (const partial of [{}, { sibling_discount: { enabled: false } }]) {
+      const out = html(partial as FamilyOffersView);
+      expect(out).toContain("Could not load the family offers.");
+      expect(out).not.toContain('data-testid="family-offers-sibling"');
+    }
+  });
+
   it("renders both offers with the referral switch disabled and marked coming soon", () => {
     const out = html(STORED);
     expect(out).toContain("Sibling discount");

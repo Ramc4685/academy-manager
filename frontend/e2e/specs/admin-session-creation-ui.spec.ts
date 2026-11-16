@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 import { billingRulesFixture } from "../fixtures/billing-rules";
+import { stubFamilyOffers } from "../fixtures/saas-stubs";
 
 const ADMIN_ME = {
   user_id: "user-admin-session-ui-e2e",
@@ -319,6 +320,7 @@ test.describe("admin session creation and billing-rules settings UI", () => {
     page,
   }) => {
     await stubAdminShell(page);
+    await stubFamilyOffers(page);
     let rulesPut: unknown = null;
 
     await page.route("**/api/v2/admin/billing/rules", (route) => {
