@@ -28396,7 +28396,7 @@
       },
       "ReferralProgramRequest": {
         "additionalProperties": false,
-        "description": "Partial: only the keys sent change. No bounds here on purpose; the use\ncase owns them so one path names the offending field in the 422.\n``effective_from`` is server-stamped and refused.",
+        "description": "Partial: only the keys sent change. No bounds here on purpose; the use\ncase owns them so one path names the offending field in the 422.",
         "properties": {
           "credit_expiry_days": {
             "anyOf": [
@@ -28495,17 +28495,6 @@
               }
             ],
             "title": "Credit Expiry Days"
-          },
-          "effective_from": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Effective From"
           },
           "enabled": {
             "title": "Enabled",

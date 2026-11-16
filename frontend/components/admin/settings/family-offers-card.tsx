@@ -140,11 +140,19 @@ function numberError(
   label: string,
   text: string,
   stored: number | null | undefined,
-  { min, max, integer = false, blankMeansNone = false }: {
+  {
+    min,
+    max,
+    integer = false,
+    blankMeansNone = false,
+    maxDecimals,
+  }: {
     min: number;
     max: number;
     integer?: boolean;
     blankMeansNone?: boolean;
+    /** Cents and basis points: more digits would be rounded away silently. */
+    maxDecimals?: number;
   },
 ): string | null {
   if (text.trim() === "") {
@@ -158,6 +166,10 @@ function numberError(
     (integer && !Number.isInteger(value))
   ) {
     return `${label[0].toUpperCase()}${label.slice(1)} must be ${integer ? "a whole number " : ""}between ${min} and ${max}.`;
+  }
+  const decimals = text.trim().split(".")[1] ?? "";
+  if (maxDecimals !== undefined && decimals.length > maxDecimals) {
+    return `${label[0].toUpperCase()}${label.slice(1)} can have at most ${maxDecimals} decimal places.`;
   }
   return null;
 }
@@ -174,7 +186,7 @@ export function siblingError(
     "the sibling discount (%)",
     form.percent,
     stored.percent_bps,
-    { min: 0.01, max: 100 },
+    { min: 0.01, max: 100, maxDecimals: 2 },
   );
 }
 
@@ -188,13 +200,13 @@ export function referralError(
       "the credit for the referring family",
       form.referrerCreditDollars,
       stored.referrer_credit_cents,
-      { min: 0.01, max: 500 },
+      { min: 0.01, max: 500, maxDecimals: 2 },
     ) ??
     numberError(
       "the credit for the new family",
       form.referredCreditDollars,
       stored.referred_credit_cents,
-      { min: 0.01, max: 500 },
+      { min: 0.01, max: 500, maxDecimals: 2 },
     ) ??
     numberError("the days to hold the credit", form.holdDays, stored.hold_days, {
       min: 0,

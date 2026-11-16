@@ -137,6 +137,9 @@ describe("FamilyOffersCard form", () => {
     expect(
       siblingError({ ...base, enabled: true, percent: "0.01" }, unset),
     ).toBeNull();
+    expect(
+      siblingError({ ...base, enabled: true, percent: "12.345" }, unset),
+    ).toMatch(/at most 2 decimal places/);
   });
 
   it("blocks a cleared or invalid number instead of sending null over a stored value", () => {
@@ -162,6 +165,9 @@ describe("FamilyOffersCard form", () => {
     expect(
       referralError({ ...referral, referrerCreditDollars: "abc" }, stored),
     ).toMatch(/credit for the referring family/);
+    expect(
+      referralError({ ...referral, referredCreditDollars: "10.005" }, stored),
+    ).toMatch(/at most 2 decimal places/);
     // Blank expiry means "never expires", so it may clear the stored value.
     expect(referralError({ ...referral, expiryDays: "" }, stored)).toBeNull();
   });

@@ -17697,7 +17697,6 @@ export interface components {
          * ReferralProgramRequest
          * @description Partial: only the keys sent change. No bounds here on purpose; the use
          *     case owns them so one path names the offending field in the 422.
-         *     ``effective_from`` is server-stamped and refused.
          */
         ReferralProgramRequest: {
             /** Credit Expiry Days */
@@ -17719,8 +17718,6 @@ export interface components {
         ReferralProgramView: {
             /** Credit Expiry Days */
             credit_expiry_days?: number | null;
-            /** Effective From */
-            effective_from?: string | null;
             /** Enabled */
             enabled: boolean;
             /** Hold Days */
