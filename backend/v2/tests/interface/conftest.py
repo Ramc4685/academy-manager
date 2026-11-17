@@ -1021,6 +1021,7 @@ from typing import Any
 
 import pytest
 
+from backend.v2.composition.occurrence_cancellation import OccurrenceAttendanceAdapter
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
     GenerateMonthlyPayments,
@@ -1587,7 +1588,15 @@ class FakeOccurrenceBilling:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def apply(self, *, occurrence_id, session_id, start_at, reason, actor_id):
+    async def apply(self, *, occurrence_id, session_id, start_at, reason, actor_id, dry_run=False):
+        if dry_run:
+            return {
+                "families": [
+                    {"enrollment_id": "enr-1", "amount_cents": 3000, "outcome": "would_credit"}
+                ],
+                "credited_cents": 3000,
+                "skip_counts": {},
+            }
         self.calls.append(
             {
                 "occurrence_id": occurrence_id,
@@ -1601,6 +1610,8 @@ class FakeOccurrenceBilling:
             "billing_policy": "cancelled_date_credited",
             "billing_result": "credited=1,override=written",
             "credits": {"enr-1": "credit-671"},
+            "credited_cents": 3000,
+            "skip_counts": {"covered_by_free_classes": 1},
         }
 
 
@@ -2363,7 +2374,9 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         approved payout period so the owner-override path (#821) is reachable
         from the route tests; every other coach's window is open."""
 
-        async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None:
+        async def locked_status_for(
+            self, *, coach_id: str, at: datetime, include_draft: bool = False
+        ) -> str | None:
             return "approved" if coach_id == "coach-frozen" else None
 
     _coach_attendance_audit = seed["coach_attendance_audit"]
@@ -2386,6 +2399,19 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             student_id="st-1",
             marked_by="coach-1",
             marked_at=datetime(2026, 5, 16, 9, 5, tzinfo=UTC),
+            status="present",
+        )
+    )
+    # #1207: occ-admin-held is seeded only by test_admin_credit_missed_class.
+    _student_attendance.saved.append(
+        Attendance(
+            attendance_id="att-held-1",
+            academy_id="acad",
+            occurrence_id="occ-admin-held",
+            session_id="sess-1",
+            student_id="st-1",
+            marked_by="coach-1",
+            marked_at=datetime(2026, 5, 2, 9, 5, tzinfo=UTC),
             status="present",
         )
     )
@@ -2769,6 +2795,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         enrollments=enrollments_q,
         enrollment_events=enrollment_events,
         billing_sync=_occurrence_billing,
+        attendance=OccurrenceAttendanceAdapter(_student_attendance),  # type: ignore[arg-type]
         clock=lambda: datetime(2026, 5, 15, 12, 0, tzinfo=UTC),
     )
 

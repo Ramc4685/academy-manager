@@ -69,10 +69,13 @@ from backend.v2.interfaces.admin.views import (
     ClosureDateView,
     CorrectStudentAttendanceRequest,
     CreateSessionRequest,
+    CreditMissedClassRequest,
+    CreditMissedClassResponse,
     EditRosterAddRequest,
     EditSessionRequest,
     EnrollmentEventDto,
     EnrollmentEventsResponse,
+    MissedClassFamilyView,
     OverrideEnrollmentFeeRequest,
     PauseEnrollmentRequest,
     RemoveEnrollmentRequest,
@@ -439,7 +442,7 @@ async def cancel_session_occurrence(
 ) -> CancelSessionOccurrenceResponse:
     if use_cases.cancel_session_occurrence is None:
         raise HTTPException(status_code=503, detail="Class-date cancellation is not configured")
-    result = await use_cases.cancel_session_occurrence.execute(  # type: ignore[attr-defined]
+    result = await use_cases.cancel_session_occurrence.execute(
         CancelSessionOccurrenceCommand(
             occurrence_id=occurrence_id,
             reason=body.reason,
@@ -466,9 +469,80 @@ async def cancel_session_occurrence(
         makeups_reopened=result.makeups_reopened,
         trials_reopened=result.trials_reopened,
         credits_issued=result.credits_issued,
+        credit_total_cents=result.credit_total_cents,
+        credit_skips=dict(result.credit_skips),
         billing_result=result.billing_result,
         notified=result.notified,
     )
+
+
+@router.post(
+    "/session-occurrences/{occurrence_id}/credit-missed",
+    response_model=CreditMissedClassResponse,
+    summary="Credit a missed class: record a past date as no class (#1207)",
+)
+async def credit_missed_class(
+    occurrence_id: str,
+    body: CreditMissedClassRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> CreditMissedClassResponse:
+    """Same path and rule as calling the date off before class: ``dry_run``
+    prices every family, the confirm cancels the date and credits them. No
+    email goes out; families see the credit on Payments."""
+    cancel = use_cases.cancel_session_occurrence
+    if cancel is None:
+        raise HTTPException(status_code=503, detail="Class-date cancellation is not configured")
+    if body.dry_run:
+        preview = await cancel.preview_missed(occurrence_id)
+        names = await _student_names(use_cases, [f.student_id for f in preview.families])
+        return CreditMissedClassResponse(
+            occurrence_id=preview.occurrence.occurrence_id,
+            start_at=preview.occurrence.start_at,
+            dry_run=True,
+            families=[
+                MissedClassFamilyView(**f.model_dump(), student_name=names.get(f.student_id or ""))
+                for f in preview.families
+            ],
+            credits_issued=sum(1 for f in preview.families if f.amount_cents > 0),
+            credit_total_cents=preview.credit_total_cents,
+            credit_skips=dict(preview.credit_skips),
+            payroll_flag=preview.payroll_flag,
+            schedule_changed=preview.schedule_changed,
+        )
+    result = await cancel.execute(
+        CancelSessionOccurrenceCommand(
+            occurrence_id=occurrence_id,
+            reason=body.reason,
+            actor_id=claims.user_id,
+            notify=False,
+            missed=True,
+        )
+    )
+    return CreditMissedClassResponse(
+        occurrence_id=result.occurrence.occurrence_id,
+        start_at=result.occurrence.start_at,
+        dry_run=False,
+        credits_issued=result.credits_issued,
+        credit_total_cents=result.credit_total_cents,
+        credit_skips=dict(result.credit_skips),
+        payroll_flag=result.payroll_flag,
+        billing_result=result.billing_result,
+    )
+
+
+async def _student_names(use_cases: AdminUseCases, student_ids: list[str | None]) -> dict[str, str]:
+    """Best-effort names for the preview; a missing student shows without one."""
+    names: dict[str, str] = {}
+    if use_cases.get_admin_student is None:
+        return names
+    for student_id in {s for s in student_ids if s}:
+        try:
+            student = await use_cases.get_admin_student.execute(student_id)
+        except Exception:  # a name is decoration, never a 500
+            continue
+        names[student_id] = student.full_name
+    return names
 
 
 @router.post(

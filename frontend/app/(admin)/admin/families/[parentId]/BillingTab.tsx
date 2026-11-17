@@ -36,6 +36,7 @@ import { queryKeys } from "@/lib/query/keys";
 
 import { RecordPaymentDialog } from "../../payments/buckets/RecordPaymentDialog";
 import { VoidPaymentDialog } from "../../payments/dialogs";
+import { CreditsPanel } from "./CreditsPanel";
 import { FamilyHeader } from "./FamilyHeader";
 import { FixSomethingPanel } from "./FixSomethingPanel";
 import { InvoicesPanel } from "./InvoicesPanel";
@@ -335,6 +336,7 @@ export function BillingTab({ parentId }: { parentId: string }) {
           })
         }
       />
+      <CreditsPanel credits={view.credits} balanceCents={view.header.available_credit_cents ?? 0} />
       <FixSomethingPanel
         invoices={view.invoices}
         isOwner={isOwner}

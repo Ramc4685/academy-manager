@@ -1,5 +1,6 @@
 import type { AdminSessionOccurrenceView } from "@/lib/api/admin";
 import { formatAcademyDate } from "@/lib/format/academy-time";
+import { formatCents } from "@/lib/money";
 import { sessionDateKey } from "@/lib/time/session-time";
 
 export interface MonthDateClass {
@@ -151,4 +152,49 @@ export function monthCompleteFrom(month: string, now: Date, timeZone: string): s
   const from = new Date(`${lastDay}T12:00:00Z`);
   from.setUTCDate(from.getUTCDate() - SCHEDULE_HORIZON_DAYS);
   return from.toISOString().slice(0, 10);
+}
+
+/** Why a family got no credit for a called-off date, in the owner's words (#1207). */
+const SKIP_TEXT: Record<string, string> = {
+  covered_by_free_classes: "the month's free extra class covered it",
+  first_month_proration_excludes_date: "not invoiced yet, so the date is left out of their first month's price",
+  paused_not_invoiced: "paused and not charged that month",
+  not_invoiced: "not invoiced for that month",
+  free_tuition: "free tuition",
+};
+
+const families = (n: number) => `${n} ${n === 1 ? "family" : "families"}`;
+
+/**
+ * One date's money outcome: who was credited and how much, and plainly why
+ * anyone was not. `skips` is skip reason → families from the cancel response.
+ */
+export function creditOutcome(credited: number, totalCents: number, skips: unknown): string {
+  const parts: string[] = [];
+  if (credited > 0) parts.push(`${families(credited)} credited, ${formatCents(totalCents)} in total.`);
+  let other = 0;
+  if (skips && typeof skips === "object") {
+    for (const [reason, count] of Object.entries(skips as Record<string, unknown>)) {
+      const n = Number(count) || 0;
+      if (!n) continue;
+      if (SKIP_TEXT[reason]) parts.push(`${families(n)} not credited: ${SKIP_TEXT[reason]}.`);
+      else other += n;
+    }
+  }
+  if (other) parts.push(`${families(other)} not credited: they were not charged for this date.`);
+  return parts.length ? parts.join(" ") : "No credits: no family was charged for this date.";
+}
+
+/** A finished date still marked as class: one an admin can credit as missed (#1207). */
+export function isMissable(o: AdminSessionOccurrenceView, now: Date): boolean {
+  return o.status === "scheduled" && new Date(o.end_at).getTime() <= now.getTime();
+}
+
+/** One family's line in the "credit a missed class" preview. */
+export function familyOutcome(amountCents: number, outcome: string): string {
+  if (outcome === "already_credited") return `Already credited ${formatCents(amountCents)}`;
+  if (outcome.startsWith("skipped:")) {
+    return `No credit: ${SKIP_TEXT[outcome.slice("skipped:".length)] ?? "they were not charged for this date"}`;
+  }
+  return formatCents(amountCents);
 }

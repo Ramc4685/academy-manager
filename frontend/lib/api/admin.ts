@@ -1949,6 +1949,9 @@ export interface CancelSessionOccurrenceResponse {
   roster_entries_removed: number;
   makeups_reopened: number;
   credits_issued: number;
+  /** #1207: the date's credits in total, and skip reason → families. */
+  credit_total_cents?: number;
+  credit_skips?: Record<string, number>;
   billing_result: string | null;
   notified: boolean;
 }
@@ -1968,6 +1971,24 @@ export function cancelSessionOccurrence(
       method: "POST",
       body: JSON.stringify(payload),
     }
+  );
+}
+
+export type CreditMissedClassResponse = components["schemas"]["CreditMissedClassResponse"];
+
+/**
+ * #1207: credit a PAST class date found missed only after it passed.
+ * `dry_run` previews the families and amounts and writes nothing; the confirm
+ * marks the date No class and issues the same credits a call-off would.
+ * 409 when the date is cancelled already, in the future, or had attendance.
+ */
+export function creditMissedClass(
+  occurrenceId: string,
+  payload: { reason: string; dry_run: boolean }
+): Promise<CreditMissedClassResponse> {
+  return apiFetch<CreditMissedClassResponse>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/credit-missed`,
+    { method: "POST", body: JSON.stringify(payload) }
   );
 }
 

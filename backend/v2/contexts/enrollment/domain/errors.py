@@ -273,3 +273,24 @@ class InvalidClassPublicFields(DomainError):
 
     code = "Enrollment.InvalidClassPublicFields"
     status_code = 422
+
+
+class OccurrenceNotPast(DomainError):
+    """A date that has not happened yet is called off, not credited as missed (#1207)."""
+
+    code = "Enrollment.OccurrenceNotPast"
+    status_code = 409
+
+
+class MissedClassScheduleChanged(DomainError):
+    """Billing never laid out this date, so it cannot price the credits (#1207)."""
+
+    code = "Enrollment.MissedClassScheduleChanged"
+    status_code = 409
+
+
+class MissedClassHadAttendance(DomainError):
+    """Students were marked present, so the class ran and cannot be credited (#1207)."""
+
+    code = "Enrollment.MissedClassHadAttendance"
+    status_code = 409

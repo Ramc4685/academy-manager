@@ -781,10 +781,15 @@ async def test_the_flip_keeps_legacy_fee_fields_in_step(real_db, acad) -> None:
 # ------------------------------------------------- cancellation credit amount
 
 
+#: "Now" for the credit runs: before October, so October and November are not
+#: yet past (a past un-invoiced month is never credited, #1207).
+_PRICED_AT = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+
+
 async def _credit_for(db: Any, acad: str, start_at: datetime) -> dict[str, int]:
     token = _tenant.set(acad)
     try:
-        result = await compose_apply_occurrence_cancellation(db).execute(
+        result = await compose_apply_occurrence_cancellation(db, clock=lambda: _PRICED_AT).execute(
             ApplyOccurrenceCancellationCommand(
                 occurrence_id=f"occ-{start_at:%Y%m%d}",
                 session_id="juniors",
@@ -939,6 +944,7 @@ async def test_a_credit_priced_across_a_cancel_is_resized_to_the_old_price(real_
         credits=MongoCreditLedgerRepository(real_db),
         price_fence=MongoClassFeeResolver(real_db),
         fence_retry_delay=0,
+        clock=lambda: _PRICED_AT,
     )
     token = _tenant.set(acad)
     try:

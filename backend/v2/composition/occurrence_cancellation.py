@@ -17,7 +17,9 @@ structural cap, so admin wires this feature in one call.
 
 from __future__ import annotations
 
-from datetime import datetime
+import logging
+from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.v2.composition.payout_input_lock import compose_payout_input_lock
@@ -37,6 +39,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_occurrence_cancellation im
 )
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     MongoClassFeeResolver,
+)
+from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
+    MongoAttendanceRepository,
 )
 from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
     CancelSessionOccurrence,
@@ -69,6 +74,8 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo impo
     MongoTrialRequestRepository,
 )
 
+log = logging.getLogger(__name__)
+
 
 class OccurrenceBillingSyncAdapter:
     """``OccurrenceBillingSync`` implementation backed by the billing use case."""
@@ -84,6 +91,7 @@ class OccurrenceBillingSyncAdapter:
         start_at: datetime,
         reason: str,
         actor_id: str | None,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         result = await self._use_case.execute(
             ApplyOccurrenceCancellationCommand(
@@ -92,6 +100,7 @@ class OccurrenceBillingSyncAdapter:
                 start_at=start_at,
                 reason=reason[:500],
                 actor_id=actor_id,
+                dry_run=dry_run,
             )
         )
         return {
@@ -99,12 +108,51 @@ class OccurrenceBillingSyncAdapter:
             "billing_result": result.billing_result,
             "period": result.period,
             "override_written": result.override_written,
+            "schedule_matched": result.schedule_matched,
             "credits": result.credits,
+            "credited_cents": result.credited_cents,
+            "skip_counts": result.skip_counts,
+            "families": [
+                {
+                    "enrollment_id": d.enrollment_id,
+                    "amount_cents": d.amount_cents,
+                    "outcome": d.outcome,
+                }
+                for d in result.decisions
+            ],
         }
 
 
-def compose_apply_occurrence_cancellation(db: Any) -> ApplyOccurrenceCancellation:
+#: Marks that mean the student was there (``voided`` counts as unmarked, #554).
+_PRESENT_STATUSES = frozenset({"present", "late"})
+
+
+class OccurrenceAttendanceAdapter:
+    """``OccurrenceAttendanceCheck`` over coaching's attendance rows (#1207)."""
+
+    def __init__(self, attendance: MongoAttendanceRepository) -> None:
+        self._attendance = attendance
+
+    async def present_count(self, occurrence_id: str) -> int | None:
+        """``None`` when attendance can't be read: the caller refuses then."""
+        try:
+            rows = await self._attendance.list_for_occurrence(occurrence_id)
+        except Exception:
+            log.warning(
+                "missed_class_attendance_unreadable",
+                extra={"occurrence_id": occurrence_id},
+                exc_info=True,
+            )
+            return None
+        return sum(1 for row in rows if row.status in _PRESENT_STATUSES)
+
+
+def compose_apply_occurrence_cancellation(
+    db: Any, *, clock: Callable[[], datetime] | None = None
+) -> ApplyOccurrenceCancellation:
+    """``clock`` pins "now" for tests: whether a month is past decides crediting."""
     return ApplyOccurrenceCancellation(
+        clock=clock or (lambda: datetime.now(UTC)),
         reader=MongoOccurrenceCancellationReader(db),
         overrides=MongoOccurrenceOverrideRepository(db),
         invoices=MongoBillingLedgerRepository(db),
@@ -137,6 +185,8 @@ def compose_cancel_session_occurrence(
         notifier=notifier,
         # #787: refuse to call off a date whose payout is already frozen.
         payout_lock=compose_payout_input_lock(db),
+        # #1207: a missed class is only credited when nobody was marked present.
+        attendance=OccurrenceAttendanceAdapter(MongoAttendanceRepository(db)),
     )
 
 

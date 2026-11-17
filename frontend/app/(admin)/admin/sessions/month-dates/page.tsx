@@ -5,7 +5,8 @@
  * publishes the month so parents see it as final (portal calendar, phone
  * calendar feed, optional email). Unticking a date cancels it through the
  * same path as "cancel this date" on a class (#671): coach not paid, families
- * credited only when they fall below the classes they paid for.
+ * credited only when they fall below the classes they paid for. A past date
+ * found missed only afterwards can be credited too (#1207): preview, then confirm.
  */
 
 import { useState } from "react";
@@ -17,6 +18,7 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import {
   cancelSessionOccurrence,
+  creditMissedClass,
   getSchedulePublish,
   listAdminSessions,
   listSessionOccurrences,
@@ -25,9 +27,12 @@ import {
 } from "@/lib/api/admin";
 import { postSessionAnnouncement } from "@/lib/api/v2/announcements";
 import {
+  creditOutcome,
   datesToCancel,
+  familyOutcome,
   groupMonthDates,
   isEditable,
+  isMissable,
   monthCompleteFrom,
   plainDatesInMonth,
   scheduleAnnouncement,
@@ -40,6 +45,7 @@ import {
   monthLabel,
 } from "@/lib/format/academy-time";
 import { isMonthPublished } from "@/lib/parent/schedule-events";
+import { formatCents } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
 
 const PUBLISH_KEY = ["admin", "schedule", "publish"] as const;
@@ -61,6 +67,11 @@ export default function AdminMonthDatesPage() {
   const [pasted, setPasted] = useState("");
   const [suggested, setSuggested] = useState<Map<string, string>>(new Map());
   const [suggestNote, setSuggestNote] = useState<string | null>(null);
+  // #1207: what each called-off date credited, shown until the next action.
+  const [credits, setCredits] = useState<{ id: string; label: string; outcome: string }[]>([]);
+  // #1207: the past date being credited as missed, and its preview.
+  const [missed, setMissed] = useState<{ id: string; sessionId: string; label: string } | null>(null);
+  const [missedReason, setMissedReason] = useState("");
 
   const sessions = useQuery({
     queryKey: queryKeys.admin.sessions("window-all"),
@@ -151,16 +162,27 @@ export default function AdminMonthDatesPage() {
       const failed: string[] = [];
       let creditNotSynced = 0;
       let oneTimeSeatsRemoved = 0;
+      const outcomes: { id: string; label: string; outcome: string }[] = [];
+      const byId = new Map(dates.flatMap((d) => d.classes).map((c) => [c.occurrence.occurrence_id, c]));
       for (const id of toCancel) {
         try {
           const result = await cancelSessionOccurrence(id, { reason: reason.trim(), notify: false });
-          if (result.billing_result && NOT_CREDITED.has(result.billing_result)) creditNotSynced += 1;
+          const syncFailed = Boolean(result.billing_result && NOT_CREDITED.has(result.billing_result));
+          if (syncFailed) creditNotSynced += 1;
           oneTimeSeatsRemoved += result.roster_entries_removed;
+          const c = byId.get(id);
+          outcomes.push({
+            id,
+            label: c ? `${formatAcademyDate(c.occurrence.start_at, timeZone)} · ${c.sessionTitle}` : id,
+            outcome: syncFailed
+              ? "Billing did not run, so nobody was credited yet."
+              : creditOutcome(result.credits_issued, result.credit_total_cents ?? 0, result.credit_skips),
+          });
         } catch {
           failed.push(id);
         }
       }
-      return { failed, creditNotSynced, oneTimeSeatsRemoved };
+      return { failed, creditNotSynced, oneTimeSeatsRemoved, outcomes };
     },
     onSettled: async (outcome) => {
       setNotice(null);
@@ -175,6 +197,7 @@ export default function AdminMonthDatesPage() {
       setReason("");
       setSuggested(new Map());
       setSuggestNote(null);
+      setCredits(outcome?.outcomes ?? []);
       const failed = outcome?.failed ?? [];
       const problems: string[] = [];
       if (failed.length) {
@@ -197,6 +220,43 @@ export default function AdminMonthDatesPage() {
       }
     },
   });
+
+  const missedPreview = useMutation({
+    mutationFn: (id: string) => creditMissedClass(id, { reason: missedReason.trim(), dry_run: true }),
+  });
+  const missedConfirm = useMutation({
+    mutationFn: (id: string) => creditMissedClass(id, { reason: missedReason.trim(), dry_run: false }),
+    onSuccess: async (result) => {
+      if (!missed) return;
+      await queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionOccurrences(missed.sessionId) });
+      const outcome =
+        result.billing_result && NOT_CREDITED.has(result.billing_result)
+          ? "Billing did not update, so families were not credited yet. Check Billing Health."
+          : creditOutcome(result.credits_issued, result.credit_total_cents, result.credit_skips);
+      setCredits([
+        { id: missed.id, label: missed.label, outcome: result.payroll_flag ? `${outcome} ${result.payroll_flag}` : outcome },
+      ]);
+      setError(null);
+      setNotice(`Saved. ${missed.label} is now marked "No class".`);
+      closeMissed();
+    },
+  });
+  // A preview that can't be priced (malformed, or a date billing never laid
+  // out) is no preview: the dialog keeps asking to preview, never to confirm.
+  const quote = missedPreview.data;
+  const scheduleChanged = Boolean(quote?.schedule_changed);
+  const preview = quote && typeof quote.credit_total_cents === "number" && !scheduleChanged ? quote : null;
+  const previewFamilies = Array.isArray(preview?.families) ? preview.families : [];
+  const missedError = scheduleChanged
+    ? "The class schedule changed since this date, so billing can't price it. Credit these families by hand."
+    : ((missedPreview.error ?? missedConfirm.error)?.message ?? null);
+
+  function closeMissed() {
+    setMissed(null);
+    setMissedReason("");
+    missedPreview.reset();
+    missedConfirm.reset();
+  }
 
   const publishThrough = (() => {
     const current = publish.data?.published_through ?? null;
@@ -269,6 +329,7 @@ export default function AdminMonthDatesPage() {
               setSuggestNote(null);
               setNotice(null);
               setError(null);
+              setCredits([]);
             }}
             className="ml-2 min-h-touch rounded-lg border border-rally-line px-3 text-sm"
             data-testid="month-dates-month"
@@ -288,6 +349,22 @@ export default function AdminMonthDatesPage() {
         <p role="alert" className="rounded-lg bg-status-red-50 px-3 py-2 text-sm text-status-red-800">
           {error}
         </p>
+      )}
+      {credits.length > 0 && (
+        <Card p={16} data-testid="month-dates-credits">
+          <h2 className="text-base font-semibold text-rally-ink">Credits for the dates you called off</h2>
+          <p className="mt-1 text-sm text-rally-muted">
+            Credits come off each family&apos;s next invoice. A family&apos;s record shows every credit under Billing.
+          </p>
+          <ul className="mt-2 divide-y divide-rally-line">
+            {credits.map((c) => (
+              <li key={c.id} className="py-2 text-sm" data-testid="month-dates-credit-row">
+                <p className="font-semibold text-rally-ink">{c.label}</p>
+                <p className="text-rally-muted">{c.outcome}</p>
+              </li>
+            ))}
+          </ul>
+        </Card>
       )}
 
       <Card p={16}>
@@ -376,6 +453,7 @@ export default function AdminMonthDatesPage() {
                       const cancelled = o.status === "cancelled";
                       const canEdit = isEditable(o, now);
                       const off = cancelled || noClass.has(o.occurrence_id);
+                      const label = `${formatAcademyDate(o.start_at, timeZone)} · ${sessionTitle}`;
                       return (
                         <li key={o.occurrence_id} className="flex items-center justify-between gap-3 text-sm">
                           <label className={`flex items-center gap-2 ${canEdit ? "" : "text-rally-subtle"}`}>
@@ -390,12 +468,25 @@ export default function AdminMonthDatesPage() {
                               {sessionTitle} · {formatAcademyTimeRange(o.start_at, o.end_at, timeZone).split(" · ")[1]}
                             </span>
                           </label>
-                          <span
-                            className={`shrink-0 rounded px-2 py-0.5 text-xs font-semibold ${
-                              off ? "bg-status-red-50 text-status-red-800" : "bg-status-green-50 text-status-green-800"
-                            }`}
-                          >
-                            {cancelled ? `No class${o.cancellation_reason ? ` · ${o.cancellation_reason}` : ""}` : off ? "No class (unsaved)" : "Class"}
+                          <span className="flex shrink-0 items-center gap-2">
+                            {isMissable(o, now) && (
+                              <button
+                                type="button"
+                                className="min-h-touch text-xs font-semibold text-rally-cobalt-700 underline"
+                                onClick={() => setMissed({ id: o.occurrence_id, sessionId: o.session_id, label })}
+                                aria-label={`Credit ${label} as a missed class`}
+                                data-testid={`credit-missed-${o.occurrence_id}`}
+                              >
+                                Credit as missed
+                              </button>
+                            )}
+                            <span
+                              className={`rounded px-2 py-0.5 text-xs font-semibold ${
+                                off ? "bg-status-red-50 text-status-red-800" : "bg-status-green-50 text-status-green-800"
+                              }`}
+                            >
+                              {cancelled ? `No class${o.cancellation_reason ? ` · ${o.cancellation_reason}` : ""}` : off ? "No class (unsaved)" : "Class"}
+                            </span>
                           </span>
                         </li>
                       );
@@ -417,6 +508,9 @@ export default function AdminMonthDatesPage() {
             {toCancel.length ? `Call off ${toCancel.length} date(s)` : "No changes"}
           </Button>
         </div>
+        <p className="mt-3 text-xs text-rally-subtle">
+          Found out after the day that a class did not happen? Use &ldquo;Credit as missed&rdquo; on that past date.
+        </p>
       </Card>
 
       <Card p={16}>
@@ -474,6 +568,58 @@ export default function AdminMonthDatesPage() {
           }}
           onConfirm={() => save.mutate()}
         />
+      )}
+
+      {missed && (
+        <ConfirmActionDialog
+          open
+          onOpenChange={(open) => !open && closeMissed()}
+          overline="Credit a missed class"
+          title={`Credit ${missed.label} as missed?`}
+          consequence={
+            preview
+              ? `Check who gets what. Confirming marks the date No class and credits these families on their next invoice. No email goes out.${
+                  preview.payroll_flag ? "" : " The coach is not paid for it."
+                }`
+              : "Preview who would be credited first. Nothing changes until you confirm."
+          }
+          confirmLabel={preview ? "Credit and mark No class" : "Preview credits"}
+          pending={missedPreview.isPending || missedConfirm.isPending}
+          error={missedError}
+          reason={{
+            label: "Reason families see",
+            value: missedReason,
+            onChange: setMissedReason,
+            required: true,
+            placeholder: "Gym closed",
+          }}
+          onConfirm={() => (preview ? missedConfirm.mutate(missed.id) : missedPreview.mutate(missed.id))}
+        >
+          {preview && (
+            <div data-testid="credit-missed-families" className="rounded-md border border-rally-line px-3 py-2 text-sm">
+              {previewFamilies.length === 0 ? (
+                <p className="text-rally-muted">No family was enrolled and charged for this date, so nobody is credited.</p>
+              ) : (
+                <ul className="divide-y divide-rally-line">
+                  {previewFamilies.map((f) => (
+                    <li key={f.enrollment_id} className="flex justify-between gap-3 py-1">
+                      <span className="text-rally-ink">{f.student_name ?? "Student"}</span>
+                      <span className="text-right text-rally-muted">{familyOutcome(f.amount_cents, f.outcome)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-2 font-semibold text-rally-ink">
+                Total {formatCents(preview.credit_total_cents)}
+              </p>
+              {preview.payroll_flag && (
+                <p role="alert" className="mt-2 rounded bg-status-amber-50 px-2 py-1 text-status-amber-800">
+                  {preview.payroll_flag}
+                </p>
+              )}
+            </div>
+          )}
+        </ConfirmActionDialog>
       )}
     </section>
   );

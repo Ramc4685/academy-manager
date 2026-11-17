@@ -42,6 +42,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import 
 from backend.v2.contexts.billing.infrastructure.mongo_tuition_discount_repo import (
     MongoTuitionDiscountRepository,
 )
+from backend.v2.shared.billing_type import is_not_billed
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 from backend.v2.shared.time import LEGACY_FALLBACK_TIMEZONE
 
@@ -237,6 +238,9 @@ class MongoOccurrenceCancellationReader:
                         if policy is not None
                         else 0
                     ),
+                    # Same predicate as BILLED_ENROLLMENT_FILTER; kept in the
+                    # read so the preview can say "free tuition" for the child.
+                    billed=not is_not_billed(row),
                 )
             )
         return out

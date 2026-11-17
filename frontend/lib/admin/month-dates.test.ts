@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import type { AdminSessionOccurrenceView } from "@/lib/api/admin";
-import { datesToCancel, groupMonthDates, monthCompleteFrom, plainDatesInMonth, scheduleAnnouncement } from "./month-dates";
+import {
+  creditOutcome,
+  datesToCancel,
+  familyOutcome,
+  groupMonthDates,
+  isMissable,
+  monthCompleteFrom,
+  plainDatesInMonth,
+  scheduleAnnouncement,
+} from "./month-dates";
 
 const TZ = "America/Chicago";
 const NOW = new Date("2026-11-17T12:00:00Z");
@@ -120,5 +129,48 @@ describe("monthCompleteFrom", () => {
   it("names the day a later month becomes complete", () => {
     expect(monthCompleteFrom("2027-01", now, "America/Chicago")).toBe("2026-12-02");
     expect(monthCompleteFrom("2027-03", now, "America/Chicago")).toBe("2027-01-30");
+  });
+});
+
+describe("creditOutcome", () => {
+  it("names the families credited and the total", () => {
+    expect(creditOutcome(2, 3500, {})).toBe("2 families credited, $35.00 in total.");
+  });
+
+  it("says plainly when the free extra class or a first month covered the date", () => {
+    expect(creditOutcome(0, 0, { covered_by_free_classes: 3 })).toBe(
+      "3 families not credited: the month's free extra class covered it.",
+    );
+    expect(creditOutcome(1, 1750, { first_month_proration_excludes_date: 1, invoice_void: 2 })).toBe(
+      "1 family credited, $17.50 in total. 1 family not credited: not invoiced yet, so the date is left out of their first month's price. 2 families not credited: they were not charged for this date.",
+    );
+  });
+
+  it("survives a missing or odd skip map", () => {
+    expect(creditOutcome(0, 0, undefined)).toBe("No credits: no family was charged for this date.");
+    expect(creditOutcome(0, 0, "x")).toBe("No credits: no family was charged for this date.");
+  });
+});
+
+describe("isMissable", () => {
+  it("is a past date still marked as class", () => {
+    expect(isMissable(occ("a", "2026-11-10T23:00:00Z"), NOW)).toBe(true);
+    expect(isMissable(occ("b", "2026-11-20T23:00:00Z"), NOW)).toBe(false);
+    expect(isMissable(occ("c", "2026-11-10T23:00:00Z", { status: "cancelled" }), NOW)).toBe(false);
+    // Still in progress: started, not finished.
+    expect(isMissable(occ("d", "2026-11-17T11:30:00Z", { end_at: "2026-11-17T12:30:00Z" }), NOW)).toBe(false);
+  });
+});
+
+describe("familyOutcome", () => {
+  it("shows the amount, an existing credit, or why there is none", () => {
+    expect(familyOutcome(1750, "would_credit")).toBe("$17.50");
+    expect(familyOutcome(1750, "already_credited")).toBe("Already credited $17.50");
+    expect(familyOutcome(0, "skipped:covered_by_free_classes")).toBe(
+      "No credit: the month's free extra class covered it",
+    );
+    expect(familyOutcome(0, "skipped:no_invoice")).toBe("No credit: they were not charged for this date");
+    expect(familyOutcome(0, "skipped:not_invoiced")).toBe("No credit: not invoiced for that month");
+    expect(familyOutcome(0, "skipped:free_tuition")).toBe("No credit: free tuition");
   });
 });

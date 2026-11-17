@@ -646,8 +646,45 @@ class CancelSessionOccurrenceResponse(BaseModel):
     #: Approved trials that were assigned to this date and are pending again (#671).
     trials_reopened: int = 0
     credits_issued: int = 0
+    #: #1207: the date's credits in total, and skip reason → families, so the
+    #: admin sees "nobody was owed" (a free extra class) as plainly as a credit.
+    credit_total_cents: int = 0
+    credit_skips: dict[str, int] = Field(default_factory=dict)
     billing_result: str | None = None
     notified: bool = False
+
+
+class CreditMissedClassRequest(BaseModel):
+    """Credit a missed class (#1207): record a PAST date as no class."""
+
+    reason: str = Field(min_length=1, max_length=500)
+    #: Preview only: price every family, write nothing.
+    dry_run: bool = False
+
+
+class MissedClassFamilyView(BaseModel):
+    enrollment_id: str
+    student_id: str | None = None
+    student_name: str | None = None
+    amount_cents: int = 0
+    #: would_credit | already_credited | skipped:<reason>
+    outcome: str
+
+
+class CreditMissedClassResponse(BaseModel):
+    occurrence_id: str
+    start_at: datetime
+    dry_run: bool
+    #: Per family on a preview; empty once confirmed (the totals below say it).
+    families: list[MissedClassFamilyView] = Field(default_factory=list)
+    credits_issued: int = 0
+    credit_total_cents: int = 0
+    credit_skips: dict[str, int] = Field(default_factory=dict)
+    #: The coach's payout covering the date needs a hand fix or a recompute.
+    payroll_flag: str | None = None
+    #: Preview only: billing never laid out this date; confirming is refused.
+    schedule_changed: bool = False
+    billing_result: str | None = None
 
 
 class CloseAcademyDatesRequest(BaseModel):

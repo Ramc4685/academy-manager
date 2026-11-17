@@ -79,8 +79,10 @@ class PayoutPeriodRepository(Protocol):
         *,
         coach_id: str,
         at: datetime,
+        include_draft: bool = False,
     ) -> str | None:
-        """Status of the approved/paid period whose window contains ``at``.
+        """Status of the approved/paid (or, with ``include_draft``, draft)
+        period whose window contains ``at``.
 
         ``None`` when the instant falls in no frozen period. Issue #787:
         coaching and enrollment ask this (through their own ports, wired at

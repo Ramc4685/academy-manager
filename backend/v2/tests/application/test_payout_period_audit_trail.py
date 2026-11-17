@@ -73,11 +73,14 @@ class FakeRepo:
     async def find_by_id(self, period_id: str) -> PayoutPeriod | None:
         return self._by_id.get(period_id)
 
-    async def find_locked_status_for_coach(self, *, coach_id: str, at: datetime) -> str | None:
+    async def find_locked_status_for_coach(
+        self, *, coach_id: str, at: datetime, include_draft: bool = False
+    ) -> str | None:
+        statuses = {"approved", "paid"} | ({"draft"} if include_draft else set())
         for period in self._by_id.values():
             if (
                 period.coach_id == coach_id
-                and period.status in {"approved", "paid"}
+                and period.status in statuses
                 and period.period_start <= at < period.period_end
             ):
                 return period.status
