@@ -23,7 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -251,7 +251,9 @@ class SendCampaign:
             body=command.body,
             created_at=created_at,
             idempotency_key=idempotency_key,
-            background=self.background,
+            # Claimed inline: the worker must not see this campaign until every
+            # delivery row exists, or it would close it half-queued.
+            background=False,
         ).mark_sending()
 
         claimed = await self.campaigns.try_claim(campaign)
@@ -288,6 +290,10 @@ class SendCampaign:
         await self.deliveries.save_many(queued)
 
         if self.background:
+            # Only now, with the whole queue persisted, hand it to the worker.
+            # A crash before this line leaves an inline SENDING campaign that no
+            # worker resumes and that sent nothing, which an admin can see.
+            await self.campaigns.save(replace(campaign, background=True))
             return SendCampaignResult(
                 campaign_id=campaign.campaign_id,
                 total_recipients=len(recipients),
@@ -356,6 +362,9 @@ class SendCampaign:
 #: delivery's idempotency scope, so the provider drops a copy that did go out
 #: (Resend keeps keys 24 hours, far longer than this).
 CLAIM_STALE_AFTER = timedelta(minutes=10)
+#: A delivery whose send keeps killing its worker is given up after this many
+#: claims, so the campaign can close.
+MAX_CLAIM_ATTEMPTS = 5
 
 
 @dataclass
@@ -388,8 +397,13 @@ class ProcessCampaignQueue:
             brand = await _lookup_brand(self.brands, campaign.academy_id)
             while True:
                 now = self.now()
+                token = new_ulid()
                 row = await self.deliveries.claim_next_queued(
-                    campaign.campaign_id, now=now, stale_before=now - CLAIM_STALE_AFTER
+                    campaign.campaign_id,
+                    now=now,
+                    stale_before=now - CLAIM_STALE_AFTER,
+                    token=token,
+                    max_attempts=MAX_CLAIM_ATTEMPTS,
                 )
                 if row is None:
                     break
@@ -412,7 +426,15 @@ class ProcessCampaignQueue:
                     if outcome.ok
                     else row.mark_failed(reason=outcome.failed_reason or "unknown")
                 )
-                await self.deliveries.save_many([done])
+                # Conditional on our claim token: a worker whose claim went stale
+                # and was taken over must not overwrite the newer result.
+                await self.deliveries.finish_claimed(done, token=token)
+            now = self.now()
+            await self.deliveries.fail_exhausted(
+                campaign.campaign_id,
+                max_attempts=MAX_CLAIM_ATTEMPTS,
+                stale_before=now - CLAIM_STALE_AFTER,
+            )
             rows = await self.deliveries.list_for_campaign(campaign.campaign_id)
             if not any(r.status == DeliveryStatus.QUEUED for r in rows):
                 await self.campaigns.save(campaign.mark_sent(sent_at=self.now()))

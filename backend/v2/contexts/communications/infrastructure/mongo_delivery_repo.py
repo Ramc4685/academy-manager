@@ -33,25 +33,75 @@ class MongoDeliveryRepository(TenantScopedRepository, DeliveryRepository):
         return [self._from_doc(d) async for d in cursor]
 
     async def claim_next_queued(
-        self, campaign_id: str, *, now: datetime, stale_before: datetime
+        self,
+        campaign_id: str,
+        *,
+        now: datetime,
+        stale_before: datetime,
+        token: str,
+        max_attempts: int,
     ) -> Delivery | None:
         doc = await self._find_one_and_update(
             {
                 "campaign_id": campaign_id,
                 "status": str(DeliveryStatus.QUEUED),
-                "$or": [
-                    {"claimed_at": {"$exists": False}},
-                    {"claimed_at": None},
-                    {"claimed_at": {"$lt": stale_before}},
+                "$and": [
+                    {
+                        "$or": [
+                            {"claimed_at": {"$exists": False}},
+                            {"claimed_at": None},
+                            {"claimed_at": {"$lt": stale_before}},
+                        ]
+                    },
+                    {
+                        "$or": [
+                            {"claim_attempts": {"$exists": False}},
+                            {"claim_attempts": {"$lt": max_attempts}},
+                        ]
+                    },
                 ],
             },
-            {"$set": {"claimed_at": now}},
+            {"$set": {"claimed_at": now, "claim_token": token}, "$inc": {"claim_attempts": 1}},
         )
         return self._from_doc(doc) if doc else None
 
+    async def finish_claimed(self, delivery: Delivery, *, token: str) -> bool:
+        doc = self._to_doc(delivery)
+        result = await self._update_one(
+            {
+                "delivery_id": delivery.delivery_id,
+                "status": str(DeliveryStatus.QUEUED),
+                "claim_token": token,
+            },
+            {"$set": {k: v for k, v in doc.items() if k != "academy_id"}},
+        )
+        return bool(result.modified_count)
+
+    async def fail_exhausted(
+        self, campaign_id: str, *, max_attempts: int, stale_before: datetime
+    ) -> int:
+        result = await self.collection.update_many(
+            self._scoped(
+                {
+                    "campaign_id": campaign_id,
+                    "status": str(DeliveryStatus.QUEUED),
+                    "claim_attempts": {"$gte": max_attempts},
+                    "claimed_at": {"$lt": stale_before},
+                }
+            ),
+            {"$set": {"status": str(DeliveryStatus.FAILED), "failed_reason": "send_gave_up"}},
+        )
+        return int(result.modified_count)
+
     async def list_failed(self, *, limit: int) -> list[Delivery]:
+        # Gate refusals carry a shared-suppression reason; never list them.
         cursor = self._find_many(
-            {"status": str(DeliveryStatus.FAILED)}, sort=[("_id", -1)], limit=limit
+            {
+                "status": str(DeliveryStatus.FAILED),
+                "failed_reason": {"$not": {"$regex": "^(suppressed|unsubscribed):"}},
+            },
+            sort=[("_id", -1)],
+            limit=limit,
         )
         return [self._from_doc(d) async for d in cursor]
 

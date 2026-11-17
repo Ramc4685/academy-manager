@@ -1,6 +1,6 @@
 """Admin "Delivery problems" (L11 item 3). The suppression list is shared by
-every academy, so the academy view lists only its own people, shows reason and
-dates only for suppressions recorded under this academy, and offers no clear."""
+every academy, so the academy view lists only its own people, never a reason
+or date, and hides send-time gate refusals and provider text in failed sends."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 from backend.v2.contexts.communications.application.ports import ResolvedRecipient
 from backend.v2.contexts.communications.application.use_cases.delivery_problems import (
+    FailedSend,
     GetDeliveryProblems,
 )
 from backend.v2.contexts.communications.domain.email_suppression import (
@@ -19,7 +20,7 @@ from backend.v2.contexts.communications.domain.models import (
     Delivery,
     DeliveryStatus,
 )
-from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.shared.tenancy import current_academy_id, tenant_scope
 
 T = datetime(2026, 11, 1, tzinfo=UTC)
 
@@ -34,40 +35,21 @@ class _Resolver:
     """Tenant-scoped like the real resolver: reads the academy in scope."""
 
     async def resolve_academy_audience(self, audience: AcademyAudience) -> list[ResolvedRecipient]:
-        from backend.v2.shared.tenancy import current_academy_id
-
         if audience.role != "parent":
             return []
-        return [
-            ResolvedRecipient(user_id=uid, email=email)
-            for uid, email in MEMBERS[current_academy_id()]
-        ]
-
-
-def _sup(email: str, reason: SuppressionReason, academy: str | None) -> EmailSuppression:
-    return EmailSuppression(
-        email=email,
-        reason=reason,
-        first_seen_at=T,
-        last_seen_at=T,
-        bounce_subtype="General",
-        first_seen_academy_id=academy,
-        last_seen_academy_id=academy,
-    )
+        return [ResolvedRecipient(user_id=u, email=e) for u, e in MEMBERS[current_academy_id()]]
 
 
 class _Suppressions:
     def __init__(self) -> None:
         self.asked: list[list[str]] = []
         self.rows = {
-            "mine@example.test": _sup("mine@example.test", SuppressionReason.HARD_BOUNCE, "acad-a"),
-            # The shared family complained about acad-b's mail.
-            "shared@example.test": _sup(
-                "shared@example.test", SuppressionReason.COMPLAINT, "acad-b"
-            ),
-            "theirs@example.test": _sup(
-                "theirs@example.test", SuppressionReason.HARD_BOUNCE, "acad-b"
-            ),
+            e: EmailSuppression(email=e, reason=r, first_seen_at=T, last_seen_at=T)
+            for e, r in [
+                ("mine@example.test", SuppressionReason.HARD_BOUNCE),
+                ("shared@example.test", SuppressionReason.COMPLAINT),
+                ("theirs@example.test", SuppressionReason.HARD_BOUNCE),
+            ]
         }
 
     async def list_active_for(self, emails: list[str]) -> list[EmailSuppression]:
@@ -75,22 +57,30 @@ class _Suppressions:
         return [self.rows[e] for e in emails if e in self.rows]
 
 
+def _failed(delivery_id: str, reason: str) -> Delivery:
+    return Delivery(
+        delivery_id=delivery_id,
+        academy_id="acad-a",
+        campaign_id="c1",
+        recipient_user_id="a1",
+        recipient_email="mine@example.test",
+        status=DeliveryStatus.FAILED,
+        provider_message_id=None,
+        sent_at=None,
+        opened_at=None,
+        failed_reason=reason,
+    )
+
+
 class _Deliveries:
+    """Returns a gate refusal too, as a repository that forgot the filter would."""
+
     async def list_failed(self, *, limit: int) -> list[Delivery]:
         return [
-            Delivery(
-                delivery_id="d1",
-                academy_id="acad-a",
-                campaign_id="c1",
-                recipient_user_id="a1",
-                recipient_email="mine@example.test",
-                status=DeliveryStatus.FAILED,
-                provider_message_id=None,
-                sent_at=None,
-                opened_at=None,
-                failed_reason="provider 422",
-            )
-        ][:limit]
+            _failed("d1", "Resend 422: The to address is invalid"),
+            _failed("d2", "suppressed:complaint"),
+            _failed("d3", "unsubscribed:campaigns"),
+        ]
 
 
 def _use_case(store: _Suppressions) -> GetDeliveryProblems:
@@ -101,34 +91,22 @@ def _use_case(store: _Suppressions) -> GetDeliveryProblems:
     )
 
 
-async def test_academy_a_sees_its_own_people_and_detail_only_for_its_own_events() -> None:
+async def test_lists_only_this_academys_people_with_no_reason() -> None:
     store = _Suppressions()
     with tenant_scope("acad-a"):
         result = await _use_case(store).execute()
     # Only acad-a's addresses were ever asked for: theirs@ never leaves the store.
     assert store.asked == [["mine@example.test", "shared@example.test"]]
-    by_email = {row.email: row for row in result.suppressed}
-    assert set(by_email) == {"mine@example.test", "shared@example.test"}
-    assert by_email["mine@example.test"].reason == "hard_bounce"
-    assert by_email["mine@example.test"].last_seen_at == T
-    # acad-b's complaint: listed as not receiving, with no reason or dates.
-    shared = by_email["shared@example.test"]
-    assert (shared.reason, shared.bounce_subtype, shared.last_seen_at) == (None, None, None)
-    assert [d.delivery_id for d in result.failed] == ["d1"]
+    assert result.suppressed_emails == ["mine@example.test", "shared@example.test"]
 
 
-async def test_academy_b_sees_the_complaint_it_caused() -> None:
-    with tenant_scope("acad-b"):
-        result = await _use_case(_Suppressions()).execute()
-    by_email = {row.email: row for row in result.suppressed}
-    assert set(by_email) == {"theirs@example.test", "shared@example.test"}
-    assert by_email["shared@example.test"].reason == "complaint"
-
-
-async def test_an_unattributed_suppression_shows_no_detail() -> None:
-    store = _Suppressions()
-    store.rows["mine@example.test"] = _sup("mine@example.test", SuppressionReason.HARD_BOUNCE, None)
+async def test_failed_sends_hide_gate_refusals_and_provider_text() -> None:
     with tenant_scope("acad-a"):
-        result = await _use_case(store).execute()
-    mine = next(r for r in result.suppressed if r.email == "mine@example.test")
-    assert mine.reason is None
+        result = await _use_case(_Suppressions()).execute()
+    assert result.failed == [
+        FailedSend(
+            delivery_id="d1",
+            recipient_email="mine@example.test",
+            failed_reason="email_delivery_failed",
+        )
+    ]

@@ -2448,6 +2448,9 @@ class SendCampaignResponse(BaseModel):
     # True when this request matched an already-sent campaign via its
     # idempotency key and no new email was sent.
     deduplicated: bool = False
+    # True when the send went to the background queue: the counts are zero
+    # and the emails go out over the next few minutes.
+    queued: bool = False
 
 
 class AdminSignedWaiverCopyView(BaseModel):

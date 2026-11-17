@@ -12,6 +12,7 @@ from backend.v2.contexts.communications.domain.models import (
     AcademyAudience,
     Campaign,
     Delivery,
+    DeliveryStatus,
 )
 from backend.v2.contexts.communications.infrastructure.mongo_campaign_repo import (
     MongoCampaignRepository,
@@ -59,7 +60,11 @@ async def test_concurrent_claims_never_share_a_row(real_db) -> None:
     async def claim():
         with tenant_scope("acad-a"):
             return await repo.claim_next_queued(
-                "c-acad-a", now=NOW, stale_before=NOW - timedelta(minutes=10)
+                "c-acad-a",
+                now=NOW,
+                stale_before=NOW - timedelta(minutes=10),
+                token="t",
+                max_attempts=5,
             )
 
     rows = await asyncio.gather(*(claim() for _ in range(5)))
@@ -72,13 +77,19 @@ async def test_a_stale_claim_is_reclaimable_and_a_fresh_one_is_not(real_db) -> N
     repo = MongoDeliveryRepository(real_db)
     with tenant_scope("acad-a"):
         for _ in range(3):
-            await repo.claim_next_queued("c-acad-a", now=NOW, stale_before=NOW)
+            await repo.claim_next_queued(
+                "c-acad-a", now=NOW, stale_before=NOW, token="t", max_attempts=5
+            )
         fresh = await repo.claim_next_queued(
-            "c-acad-a", now=NOW, stale_before=NOW - timedelta(minutes=10)
+            "c-acad-a", now=NOW, stale_before=NOW - timedelta(minutes=10), token="t", max_attempts=5
         )
         later = NOW + timedelta(minutes=11)
         stale = await repo.claim_next_queued(
-            "c-acad-a", now=later, stale_before=later - timedelta(minutes=10)
+            "c-acad-a",
+            now=later,
+            stale_before=later - timedelta(minutes=10),
+            token="t2",
+            max_attempts=5,
         )
     assert fresh is None
     assert stale is not None
@@ -91,7 +102,7 @@ async def test_listing_and_claims_stay_in_the_request_academy(real_db) -> None:
     with tenant_scope("acad-a"):
         listed = await MongoCampaignRepository(real_db).list_background_sending()
         other = await MongoDeliveryRepository(real_db).claim_next_queued(
-            "c-acad-b", now=NOW, stale_before=NOW
+            "c-acad-b", now=NOW, stale_before=NOW, token="t", max_attempts=5
         )
     with tenant_scope("acad-c"):
         inline = await MongoCampaignRepository(real_db).list_background_sending()
@@ -99,3 +110,55 @@ async def test_listing_and_claims_stay_in_the_request_academy(real_db) -> None:
     assert listed[0].background is True
     assert other is None
     assert inline == []
+
+
+async def test_only_the_current_claim_holder_can_finish_and_exhausted_rows_fail(real_db) -> None:
+    await _seed(real_db, "acad-a")
+    repo = MongoDeliveryRepository(real_db)
+    later = NOW + timedelta(minutes=11)
+    with tenant_scope("acad-a"):
+        old = await repo.claim_next_queued(
+            "c-acad-a", now=NOW, stale_before=NOW, token="old", max_attempts=2
+        )
+        assert old is not None
+        new = await repo.claim_next_queued(
+            "c-acad-a",
+            now=later,
+            stale_before=NOW + timedelta(minutes=1),
+            token="new",
+            max_attempts=2,
+        )
+        assert new is not None and new.delivery_id == old.delivery_id
+        sent = new.mark_sent(provider_message_id="pm", sent_at=later)
+        assert not await repo.finish_claimed(old.mark_failed(reason="late"), token="old")
+        assert await repo.finish_claimed(sent, token="new")
+        # A second holder can no longer overwrite a finished row either.
+        assert not await repo.finish_claimed(old.mark_failed(reason="late"), token="new")
+
+        # The other two rows reach a cap of 1: never claimable again, then given up.
+        much_later = later + timedelta(minutes=30)
+        claims = [
+            await repo.claim_next_queued(
+                "c-acad-a", now=much_later, stale_before=much_later, token=t, max_attempts=1
+            )
+            for t in ("a", "b", "c")
+        ]
+        assert [c is not None for c in claims] == [True, True, False]
+        assert (
+            await repo.claim_next_queued(
+                "c-acad-a",
+                now=much_later + timedelta(hours=1),
+                stale_before=much_later + timedelta(minutes=50),
+                token="d",
+                max_attempts=1,
+            )
+            is None
+        )
+        failed = await repo.fail_exhausted(
+            "c-acad-a", max_attempts=1, stale_before=much_later + timedelta(minutes=1)
+        )
+        rows = {d.delivery_id: d for d in await repo.list_for_campaign("c-acad-a")}
+    assert rows[old.delivery_id].status == DeliveryStatus.SENT
+    assert failed == 2
+    gave_up = [d for d in rows.values() if d.failed_reason == "send_gave_up"]
+    assert len(gave_up) == 2

@@ -15729,16 +15729,16 @@
             "title": "Failed",
             "type": "array"
           },
-          "suppressed": {
+          "suppressed_emails": {
             "items": {
-              "$ref": "#/components/schemas/SuppressedMemberView"
+              "type": "string"
             },
-            "title": "Suppressed",
+            "title": "Suppressed Emails",
             "type": "array"
           }
         },
         "required": [
-          "suppressed",
+          "suppressed_emails",
           "failed"
         ],
         "title": "DeliveryProblemsView",
@@ -16969,24 +16969,13 @@
       },
       "FailedDeliveryView": {
         "properties": {
-          "campaign_id": {
-            "title": "Campaign Id",
-            "type": "string"
-          },
           "delivery_id": {
             "title": "Delivery Id",
             "type": "string"
           },
           "failed_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Failed Reason"
+            "title": "Failed Reason",
+            "type": "string"
           },
           "recipient_email": {
             "anyOf": [
@@ -16998,16 +16987,10 @@
               }
             ],
             "title": "Recipient Email"
-          },
-          "recipient_user_id": {
-            "title": "Recipient User Id",
-            "type": "string"
           }
         },
         "required": [
           "delivery_id",
-          "campaign_id",
-          "recipient_user_id",
           "recipient_email",
           "failed_reason"
         ],
@@ -30347,6 +30330,11 @@
             "title": "Failed Count",
             "type": "integer"
           },
+          "queued": {
+            "default": false,
+            "title": "Queued",
+            "type": "boolean"
+          },
           "sent_count": {
             "title": "Sent Count",
             "type": "integer"
@@ -32559,61 +32547,6 @@
           "created_at"
         ],
         "title": "SupportImpersonationResponse",
-        "type": "object"
-      },
-      "SuppressedMemberView": {
-        "properties": {
-          "bounce_subtype": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Bounce Subtype"
-          },
-          "email": {
-            "title": "Email",
-            "type": "string"
-          },
-          "last_seen_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Seen At"
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          },
-          "user_id": {
-            "title": "User Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "user_id",
-          "email",
-          "reason",
-          "bounce_subtype",
-          "last_seen_at"
-        ],
-        "title": "SuppressedMemberView",
         "type": "object"
       },
       "SuppressionListResponse": {
@@ -39119,20 +39052,8 @@
     },
     "/api/v2/admin/comms/delivery-problems": {
       "get": {
-        "description": "Suppressed addresses and failed campaign sends for this academy's own\npeople only. Read-only: the suppression list is shared by every academy, so\nclearing an address stays a platform action (L11 item 3).",
+        "description": "Suppressed addresses and failed campaign sends for this academy's own\npeople only. Read-only: clearing an address stays a platform action (L11).",
         "operationId": "get_delivery_problems_api_v2_admin_comms_delivery_problems_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 100,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "content": {
@@ -39143,16 +39064,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "summary": "Get Delivery Problems",

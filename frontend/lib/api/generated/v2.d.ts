@@ -1163,8 +1163,7 @@ export interface paths {
         /**
          * Get Delivery Problems
          * @description Suppressed addresses and failed campaign sends for this academy's own
-         *     people only. Read-only: the suppression list is shared by every academy, so
-         *     clearing an address stays a platform action (L11 item 3).
+         *     people only. Read-only: clearing an address stays a platform action (L11).
          */
         get: operations["get_delivery_problems_api_v2_admin_comms_delivery_problems_get"];
         put?: never;
@@ -13450,8 +13449,8 @@ export interface components {
         DeliveryProblemsView: {
             /** Failed */
             failed: components["schemas"]["FailedDeliveryView"][];
-            /** Suppressed */
-            suppressed: components["schemas"]["SuppressedMemberView"][];
+            /** Suppressed Emails */
+            suppressed_emails: string[];
         };
         /** DenyMakeupRequestBody */
         DenyMakeupRequestBody: {
@@ -13801,16 +13800,12 @@ export interface components {
         };
         /** FailedDeliveryView */
         FailedDeliveryView: {
-            /** Campaign Id */
-            campaign_id: string;
             /** Delivery Id */
             delivery_id: string;
             /** Failed Reason */
-            failed_reason: string | null;
+            failed_reason: string;
             /** Recipient Email */
             recipient_email: string | null;
-            /** Recipient User Id */
-            recipient_user_id: string;
         };
         /** FailedPaymentRowDto */
         FailedPaymentRowDto: {
@@ -18639,6 +18634,11 @@ export interface components {
             deduplicated: boolean;
             /** Failed Count */
             failed_count: number;
+            /**
+             * Queued
+             * @default false
+             */
+            queued: boolean;
             /** Sent Count */
             sent_count: number;
             /** Total Recipients */
@@ -19437,19 +19437,6 @@ export interface components {
             status: string;
             /** Target User Id */
             target_user_id: string;
-        };
-        /** SuppressedMemberView */
-        SuppressedMemberView: {
-            /** Bounce Subtype */
-            bounce_subtype: string | null;
-            /** Email */
-            email: string;
-            /** Last Seen At */
-            last_seen_at: string | null;
-            /** Reason */
-            reason: string | null;
-            /** User Id */
-            user_id: string;
         };
         /** SuppressionListResponse */
         SuppressionListResponse: {
@@ -22564,9 +22551,7 @@ export interface operations {
     };
     get_delivery_problems_api_v2_admin_comms_delivery_problems_get: {
         parameters: {
-            query?: {
-                limit?: number;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -22580,15 +22565,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeliveryProblemsView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

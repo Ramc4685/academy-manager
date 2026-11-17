@@ -3339,6 +3339,8 @@ export interface SendEmailCampaignResponse {
   total_recipients: number;
   sent_count: number;
   failed_count: number;
+  /** True when the send went to the background queue (counts are still zero). */
+  queued?: boolean;
 }
 
 export function sendEmailCampaign(

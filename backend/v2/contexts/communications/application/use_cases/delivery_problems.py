@@ -1,24 +1,21 @@
 """Admin "Delivery problems" (L11 item 3). Read-only.
 
 The suppression list is global (see ``MongoSuppressionRepository``): one row
-per address, shared by every academy. So the academy view is limited twice:
+per address, shared by every academy, and the bounce webhook records no
+academy. So the academy view shows only *which of its own people* are not
+receiving email, never why or since when: a reason could describe a bounce or
+complaint about another academy's mail.
 
-* only the academy's own people are listed (the list is intersected with the
-  academy's members, and the store is asked for those addresses alone);
-* the reason and dates are shown only when the event that set the current
-  reason was recorded under this academy (``last_seen_academy_id``). Otherwise the
-  row says only that the address is not receiving email, so an admin cannot
-  learn that a family bounced or complained about another academy's mail.
+Failed campaign sends are this academy's own rows, minus send-time gate
+refusals (``suppressed:`` / ``unsubscribed:``, which would leak the same
+reason), with provider text mapped to a safe code.
 
-There is no academy-side clear. Membership is not ownership of a global row,
-and the bounce webhook records no academy today, so a clear here would lift a
-suppression another academy depends on. Clearing stays a platform action.
+There is no academy-side clear: membership is not ownership of a global row.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 
 from backend.v2.contexts.communications.application.ports import (
     AudienceResolver,
@@ -26,39 +23,33 @@ from backend.v2.contexts.communications.application.ports import (
     SuppressionRepository,
 )
 from backend.v2.contexts.communications.domain.email_suppression import normalize_email
-from backend.v2.contexts.communications.domain.models import (
-    AcademyAudience,
-    AudienceRole,
-    Delivery,
-)
-from backend.v2.shared.tenancy import current_academy_id
+from backend.v2.contexts.communications.domain.models import AcademyAudience, AudienceRole
+from backend.v2.shared.comms.public_failure import GATE_REFUSAL, public_failure
 
 _ROLES: tuple[AudienceRole, ...] = ("parent", "coach", "admin", "owner")
+_FAILED_LIMIT = 100
 
 
 @dataclass(frozen=True, slots=True)
-class SuppressedMember:
-    user_id: str
-    email: str
-    #: ``None`` (with the dates) when the suppression was caused elsewhere.
-    reason: str | None
-    bounce_subtype: str | None
-    last_seen_at: datetime | None
+class FailedSend:
+    delivery_id: str
+    recipient_email: str | None
+    failed_reason: str
 
 
 @dataclass(frozen=True, slots=True)
 class DeliveryProblems:
-    suppressed: list[SuppressedMember]
-    failed: list[Delivery]
+    #: This academy's people whose address is suppressed (no reason, no dates).
+    suppressed_emails: list[str]
+    failed: list[FailedSend]
 
 
-async def _members(resolver: AudienceResolver) -> dict[str, str]:
-    """Normalized email -> user id for everyone in the current academy."""
-    out: dict[str, str] = {}
+async def _member_emails(resolver: AudienceResolver) -> set[str]:
+    out: set[str] = set()
     for role in _ROLES:
         for r in await resolver.resolve_academy_audience(AcademyAudience(role=role)):
             if r.email:
-                out.setdefault(normalize_email(r.email), r.user_id)
+                out.add(normalize_email(r.email))
     return out
 
 
@@ -68,25 +59,20 @@ class GetDeliveryProblems:
     suppressions: SuppressionRepository
     deliveries: DeliveryRepository
 
-    async def execute(self, *, limit: int = 100) -> DeliveryProblems:
-        academy_id = current_academy_id()
-        members = await _members(self.resolver)
+    async def execute(self) -> DeliveryProblems:
+        members = await _member_emails(self.resolver)
         rows = await self.suppressions.list_active_for(sorted(members))
-        suppressed = []
-        for row in rows:
-            if row.email not in members:
-                continue
-            ours = row.last_seen_academy_id == academy_id
-            suppressed.append(
-                SuppressedMember(
-                    user_id=members[row.email],
-                    email=row.email,
-                    reason=str(row.reason) if ours else None,
-                    bounce_subtype=row.bounce_subtype if ours else None,
-                    last_seen_at=row.last_seen_at if ours else None,
-                )
+        failed = [
+            FailedSend(
+                delivery_id=d.delivery_id,
+                recipient_email=d.recipient_email,
+                failed_reason=public_failure(d.failed_reason, "email_delivery_failed"),
             )
+            for d in await self.deliveries.list_failed(limit=_FAILED_LIMIT)
+            # Belt and braces: the repository already excludes these.
+            if not GATE_REFUSAL.match(d.failed_reason or "")
+        ]
         return DeliveryProblems(
-            suppressed=suppressed,
-            failed=await self.deliveries.list_failed(limit=max(1, min(limit, 200))),
+            suppressed_emails=sorted(row.email for row in rows if row.email in members),
+            failed=failed,
         )

@@ -30,6 +30,7 @@ from backend.v2.shared.tenancy import current_academy_id
 log = logging.getLogger(__name__)
 
 _PREVIEW = 140
+_PARENT_INBOX = "/parent/messages"
 
 
 def _preview(body: str) -> str:
@@ -42,19 +43,30 @@ class NotifyMessageByPush:
     push: SendPushToUser
     audiences: AudienceResolver
     preferences: EmailPreferenceRepository
+    # (academy_id, user_id) -> the inbox that user's shell opens. DMs reach
+    # coaches and staff as well as parents; broadcasts only reach parents.
+    inbox_path: Callable[[str, str], Awaitable[str]] | None = None
 
-    async def direct_message(self, message: Message, *, title: str = "New message") -> None:
+    async def direct_message(self, message: Message) -> None:
         if not message.recipient_id or not self.push.allows(PushEvent.DIRECT_MESSAGE):
             return
-        await self._send([message.recipient_id], PushEvent.DIRECT_MESSAGE, title, message.body)
+        url = _PARENT_INBOX
+        if self.inbox_path is not None:
+            try:
+                url = await self.inbox_path(current_academy_id(), message.recipient_id)
+            except Exception:
+                log.warning("message push inbox lookup failed", exc_info=True)
+        await self._send(
+            [message.recipient_id], PushEvent.DIRECT_MESSAGE, "New message", message.body, url
+        )
 
-    async def academy_broadcast(self, message: Message, *, title: str = "Announcement") -> None:
+    async def academy_broadcast(self, message: Message) -> None:
         if not self.push.allows(PushEvent.ACADEMY_BROADCAST):
             return
         await self._fan_out(
             lambda: self.audiences.resolve_academy_audience(AcademyAudience(role="parent")),
             PushEvent.ACADEMY_BROADCAST,
-            title,
+            "Announcement",
             message.body,
         )
 
@@ -89,9 +101,11 @@ class NotifyMessageByPush:
             return
         # shortcut: sends inline in the request, one device lookup per person;
         # move to the background queue if academies grow past a few hundred.
-        await self._send(list(dict.fromkeys(user_ids)), event, title, body)
+        await self._send(list(dict.fromkeys(user_ids)), event, title, body, _PARENT_INBOX)
 
-    async def _send(self, user_ids: list[str], event: PushEvent, title: str, body: str) -> None:
+    async def _send(
+        self, user_ids: list[str], event: PushEvent, title: str, body: str, url: str
+    ) -> None:
         academy_id = current_academy_id()
         for user_id in user_ids:
             await self.push.execute(
@@ -99,6 +113,6 @@ class NotifyMessageByPush:
                 user_id=user_id,
                 title=title,
                 body=_preview(body),
-                data={"url": "/parent/messages"},
+                data={"url": url},
                 event=event,
             )

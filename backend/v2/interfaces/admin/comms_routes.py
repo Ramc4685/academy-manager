@@ -4,7 +4,6 @@ delivery problems."""
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -143,6 +142,7 @@ async def send_email_campaign(
         sent_count=result.sent_count,
         failed_count=result.failed_count,
         deduplicated=result.deduplicated,
+        queued=result.queued,
     )
 
 
@@ -207,51 +207,32 @@ async def get_coach_digest_log(
     )
 
 
-class SuppressedMemberView(BaseModel):
-    user_id: str
-    email: str
-    #: Reason and dates are null when the suppression was caused by another
-    #: academy's mail: the row then only says the address is not receiving email.
-    reason: str | None
-    bounce_subtype: str | None
-    last_seen_at: datetime | None
-
-
 class FailedDeliveryView(BaseModel):
     delivery_id: str
-    campaign_id: str
-    recipient_user_id: str
     recipient_email: str | None
-    failed_reason: str | None
+    #: A safe code (``email_delivery_failed``), never provider text.
+    failed_reason: str
 
 
 class DeliveryProblemsView(BaseModel):
-    suppressed: list[SuppressedMemberView]
+    #: This academy's people whose address is not receiving email. No reason or
+    #: date: the suppression list is shared, so either could describe another
+    #: academy's mail.
+    suppressed_emails: list[str]
     failed: list[FailedDeliveryView]
 
 
 @router.get("/comms/delivery-problems", response_model=DeliveryProblemsView)
 async def get_delivery_problems(
     request: Request,
-    limit: int = 100,
     claims: AuthClaims = Depends(require_persona("admin")),
 ) -> DeliveryProblemsView:
     """Suppressed addresses and failed campaign sends for this academy's own
-    people only. Read-only: the suppression list is shared by every academy, so
-    clearing an address stays a platform action (L11 item 3)."""
-    result = await request.app.state.delivery_problems.execute(limit=limit)
+    people only. Read-only: clearing an address stays a platform action (L11)."""
+    result = await request.app.state.delivery_problems.execute()
     return DeliveryProblemsView(
-        suppressed=[SuppressedMemberView(**asdict(row)) for row in result.suppressed],
-        failed=[
-            FailedDeliveryView(
-                delivery_id=d.delivery_id,
-                campaign_id=d.campaign_id,
-                recipient_user_id=d.recipient_user_id,
-                recipient_email=d.recipient_email,
-                failed_reason=d.failed_reason,
-            )
-            for d in result.failed
-        ],
+        suppressed_emails=result.suppressed_emails,
+        failed=[FailedDeliveryView(**asdict(d)) for d in result.failed],
     )
 
 

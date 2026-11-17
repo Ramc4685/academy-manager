@@ -36,9 +36,11 @@ class _Devices:
 class _Sender:
     def __init__(self) -> None:
         self.sent: list[tuple[list[str], str]] = []
+        self.urls: list[str] = []
 
     async def send(self, *, tokens: list[str], title: str, body: str, data: dict[str, str]):
         self.sent.append((tokens, body))
+        self.urls.append(data["url"])
         return PushSendResult(attempted=len(tokens), sent=len(tokens))
 
 
@@ -133,3 +135,26 @@ async def test_legacy_callers_without_an_event_still_push() -> None:
     push = SendPushToUser(devices=_Devices(), sender=sender)  # type: ignore[arg-type]
     await push.execute(academy_id="acad", user_id="p1", title="t", body="b")
     assert len(sender.sent) == 1
+
+
+async def test_dm_push_opens_the_recipients_own_inbox() -> None:
+    from backend.v2.composition.push import message_inbox_path
+
+    notifier, sender, _ = _notifier("direct_message,academy_broadcast")
+    roles = {"coach1": ("coach",), "p1": ("parent", "coach"), "staff": ("billing",)}
+
+    async def inbox_path(academy_id: str, user_id: str) -> str:
+        assert academy_id == "acad"
+        return message_inbox_path(roles[user_id])
+
+    notifier.inbox_path = inbox_path
+    with tenant_scope("acad"):
+        for who in ("coach1", "p1", "staff"):
+            await notifier.direct_message(_msg("dm", recipient_id=who))
+        await notifier.academy_broadcast(_msg())
+    assert sender.urls == [
+        "/coach/messages",
+        "/parent/messages",
+        "/admin/messages",
+        "/parent/messages",
+    ]

@@ -278,15 +278,37 @@ class DeliveryRepository(Protocol):
     async def list_for_campaign(self, campaign_id: str) -> list[Delivery]: ...
 
     async def claim_next_queued(
-        self, campaign_id: str, *, now: datetime, stale_before: datetime
+        self,
+        campaign_id: str,
+        *,
+        now: datetime,
+        stale_before: datetime,
+        token: str,
+        max_attempts: int,
     ) -> Delivery | None:
         """Atomically claim one QUEUED delivery that is unclaimed, or whose claim
-        is older than ``stale_before`` (a worker died mid-send). Two workers can
-        never hold the same row (L11 item 7)."""
+        is older than ``stale_before`` (a worker died mid-send) and has been
+        claimed fewer than ``max_attempts`` times. Stamps ``token`` on the row and
+        counts the attempt. Two workers can never hold the same row (L11 item 7)."""
+        ...
+
+    async def finish_claimed(self, delivery: Delivery, *, token: str) -> bool:
+        """Write the final SENT/FAILED state only if the row is still QUEUED under
+        ``token``. False means another worker reclaimed it: drop this result, so a
+        stale worker can never overwrite the newer state."""
+        ...
+
+    async def fail_exhausted(
+        self, campaign_id: str, *, max_attempts: int, stale_before: datetime
+    ) -> int:
+        """Mark FAILED the QUEUED rows already claimed ``max_attempts`` times whose
+        last claim is stale, so a delivery that keeps crashing its worker cannot
+        hold the campaign open forever. Returns how many were failed."""
         ...
 
     async def list_failed(self, *, limit: int) -> list[Delivery]:
-        """The academy's most recent FAILED campaign deliveries (L11 item 3)."""
+        """The academy's most recent FAILED campaign deliveries, excluding
+        send-time gate refusals (``suppressed:`` / ``unsubscribed:``) (L11 item 3)."""
         ...
 
 

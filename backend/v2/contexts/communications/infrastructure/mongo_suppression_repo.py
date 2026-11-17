@@ -87,7 +87,6 @@ class MongoSuppressionRepository:
                 "first_seen_at": now,
                 "last_seen_at": now,
                 "first_seen_academy_id": _best_effort_academy_id(),
-                "last_seen_academy_id": _best_effort_academy_id(),
                 "active": True,
                 "released_at": None,
                 "released_by": None,
@@ -110,10 +109,6 @@ class MongoSuppressionRepository:
         updates: dict[str, Any] = {
             "last_seen_at": now,
             "reason": next_reason.value,
-            # This event's academy owns the row's current state only when the
-            # event set the reason; otherwise the reason came from an earlier
-            # event (maybe another academy's), so attribution becomes unknown.
-            "last_seen_academy_id": (_best_effort_academy_id() if next_reason == reason else None),
             # A fresh provider event re-suppresses an address an admin had
             # released: the release was a judgement call, the bounce is a fact.
             "active": True,
@@ -178,7 +173,6 @@ def _to_model(doc: dict[str, Any]) -> EmailSuppression:
         provider=str(doc.get("provider") or "resend"),
         provider_event_id=doc.get("provider_event_id"),
         first_seen_academy_id=doc.get("first_seen_academy_id"),
-        last_seen_academy_id=doc.get("last_seen_academy_id"),
         released_at=_as_utc(doc.get("released_at")),
         released_by=doc.get("released_by"),
     )
