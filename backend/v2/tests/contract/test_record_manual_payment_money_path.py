@@ -316,6 +316,42 @@ async def test_keyed_retry_after_a_failed_recording_runs_at_once(
     assert invoice["balance_due_cents"] == TOTAL - 3_000
 
 
+async def test_retry_after_a_failure_with_the_same_key_and_another_amount_is_rejected(
+    real_db, boot_academy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The failed run released its claim, but the key stays bound to its payload:
+    a retry with another amount is a 422, and the original payload still records."""
+    from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
+        MongoBillingLedgerRepository,
+    )
+
+    await _seed_invoice(real_db)
+    admin = _admin(real_db)
+    real_allocate = MongoBillingLedgerRepository.allocate_payment
+    calls = 0
+
+    async def _allocate_down_once(self: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("primary stepped down after the payment was written")
+        return await real_allocate(self, *args, **kwargs)
+
+    monkeypatch.setattr(MongoBillingLedgerRepository, "allocate_payment", _allocate_down_once)
+    with tenant_scope(ACAD):
+        with pytest.raises(RuntimeError):
+            await _pay(admin, key="k-bound", amount=3_000)
+        with pytest.raises(ValueError, match="different payload"):
+            await _pay(admin, key="k-bound", amount=4_000)
+        retried = await _pay(admin, key="k-bound", amount=3_000)
+        payments, allocations, invoice = await _ledger_state(real_db)
+
+    assert len(payments) == 1 and payments[0]["amount_cents"] == 3_000
+    assert payments[0]["payment_id"] == retried["payment_id"]
+    assert [a["amount_cents"] for a in allocations] == [3_000]
+    assert invoice["balance_due_cents"] == TOTAL - 3_000
+
+
 async def test_keyless_retry_after_a_crash_never_records_twice_even_when_stale(
     real_db, boot_academy
 ) -> None:

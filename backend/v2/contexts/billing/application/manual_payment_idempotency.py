@@ -191,6 +191,8 @@ async def record_manual_payment_once(
             return cached
         raise ValueError(_IN_PROGRESS if keyed else _POSSIBLE_DUPLICATE)
     try:
+        if keyed:
+            await _bind_key_to_payload(store, storage_key, fingerprint)
         result = await RecordManualPayment(ledger=ledger, clock=clock).execute(
             RecordManualPaymentCommand(
                 invoice_id=invoice_id,
@@ -250,6 +252,17 @@ _POSSIBLE_DUPLICATE = (
     "possible duplicate: an identical manual payment was recorded "
     "recently; resend with an Idempotency-Key header to confirm"
 )
+
+
+async def _bind_key_to_payload(store: IdempotencyStore, storage_key: str, fingerprint: str) -> None:
+    """Pin a key to the first payload that claimed it, durably: the claim is given
+    back on failure, and the key-derived payment id must never record another
+    amount or method on a retry."""
+    marker = f"{storage_key}:fp"
+    try:
+        await store.put(marker, {"fingerprint": fingerprint})
+    except DuplicateKeyError:
+        _reject_other_payload(await store.get(marker) or {}, fingerprint)
 
 
 def _reject_other_payload(entry: dict[str, Any], payload_fingerprint: str) -> None:
