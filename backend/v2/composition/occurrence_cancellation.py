@@ -139,7 +139,9 @@ class OccurrenceAttendanceAdapter:
             rows = await self._attendance.list_for_occurrence(occurrence_id)
         except Exception:
             log.warning(
-                "missed_class_attendance_unreadable", extra={"occurrence_id": occurrence_id}
+                "missed_class_attendance_unreadable",
+                extra={"occurrence_id": occurrence_id},
+                exc_info=True,
             )
             return None
         return sum(1 for row in rows if row.status in _PRESENT_STATUSES)

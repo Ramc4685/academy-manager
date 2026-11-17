@@ -773,13 +773,14 @@ async def test_a_past_un_invoiced_month_and_a_free_tuition_child_are_never_credi
 
 
 @pytest.mark.asyncio
-async def test_an_invoiced_free_tuition_child_is_still_not_credited() -> None:
+async def test_a_child_marked_not_billed_after_paying_is_still_credited() -> None:
+    """Not billed never touches an invoice already charged, so that money is real."""
     reader = FakeReader(enrollments=[_enrollment("enr-1", billed=False)])
     invoices = FakeInvoices({"enr-1": _invoice("enr-1", subtotal=12000)})
     credits = FakeCredits()
     result = await _build(reader, invoices, credits, FakeOverrides()).execute(_cmd())
-    assert [d.outcome for d in result.decisions] == ["skipped:free_tuition"]
-    assert credits.rows == []
+    assert [d.outcome for d in result.decisions] == ["credited"]
+    assert len(credits.rows) == 1
 
 
 @pytest.mark.asyncio

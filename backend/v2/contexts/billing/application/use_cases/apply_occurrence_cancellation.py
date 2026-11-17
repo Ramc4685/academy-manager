@@ -325,6 +325,7 @@ class ApplyOccurrenceCancellation:
                 period=period_of(cmd.start_at, None),
                 billing_occurrence_id=None,
                 override_written=False,
+                schedule_matched=False,  # no class to price: a missed-class credit must refuse
             )
         period = period_of(cmd.start_at, pricing.timezone)
         # Read the change fence BEFORE the month's fee (see the module notes).
@@ -563,9 +564,6 @@ class ApplyOccurrenceCancellation:
             )
         if enrollment.status not in {"active", "paused"}:
             return _skip(enrollment, "enrollment_not_active"), False, 0
-        if not enrollment.billed:
-            return _skip(enrollment, "free_tuition"), False, 0
-
         billing_start = enrollment.billing_start_at
         if billing_start is not None and target.start_at < billing_start:
             return _skip(enrollment, "before_billing_start"), False, 0
@@ -596,6 +594,10 @@ class ApplyOccurrenceCancellation:
             # academy called off (#671).
             charge = max(basis.final_amount_cents, 0)
         else:
+            if not enrollment.billed:
+                # No charge to give back. A real invoice above still wins: marking a
+                # child not billed never touches a month already charged.
+                return _skip(enrollment, "free_tuition"), False, 0
             if enrollment.status == "paused":
                 return _skip(enrollment, "paused_not_invoiced"), False, 0
             if billing_start is not None and period_of(billing_start, pricing.timezone) == period:
