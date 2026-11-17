@@ -2190,7 +2190,7 @@ def compose_admin(
     send_add_card_reminder = SendAddCardReminder(
         contacts=_BillingSetupParentContactAdapter(users_r),
         links=_BillingSetupCardSetupLinkAdapter(),
-        sender=AddCardReminderEmailAdapter(sender=_email_sender),
+        sender=AddCardReminderEmailAdapter(sender=_email_sender, academies=academy_repo),
         academies=academy_repo,
         return_url_for=_billing_setup_return_url,
         brands=AcademyEmailBrands(academy_repo),

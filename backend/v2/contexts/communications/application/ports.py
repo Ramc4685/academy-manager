@@ -111,6 +111,9 @@ class EmailSendPort(Protocol):
     ``sender_name`` is the academy's display name for the From header (see
     ``shared/comms/sender_identity.py``). It is a name only: the From
     *address* is owned by the adapter and never varies per academy.
+
+    ``unsubscribe_url`` (L11 item 8) is the recipient's RFC 8058 one-click
+    endpoint; the provider adapter turns it into ``List-Unsubscribe`` headers.
     """
 
     async def send(
@@ -124,6 +127,7 @@ class EmailSendPort(Protocol):
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
         sender_name: str | None = None,
+        unsubscribe_url: str | None = None,
     ) -> SendOutcome: ...
 
 

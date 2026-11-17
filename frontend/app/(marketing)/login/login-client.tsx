@@ -23,7 +23,7 @@ import {
 } from "@/lib/auth/parent-registration-continuation";
 import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 import { clearPersonaHintCookie } from "@/lib/auth/persona-hint-cookie";
-import { sanitizeReturnPath } from "@/lib/auth/persona-route-guard";
+import { postLoginHandOff } from "@/lib/auth/persona-route-guard";
 import { BrandLockup } from "@/components/marketing/brand-lockup";
 
 // Self-hosted: a CSS gradient, not a hotlinked third-party image, so the
@@ -49,6 +49,10 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
   const [hydrated, setHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Every sign-in route hands the deep link on, not only the still-signed-in bounce.
+  const handOff = postLoginHandOff(searchParams.get("returnTo")) as Parameters<
+    typeof router.push
+  >[0];
 
   useEffect(() => {
     setHydrated(true);
@@ -62,16 +66,11 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
     // /post-login is outside the gate's matcher, so this cannot loop. The deep
     // link rides along so post-login can land them on the page they asked for
     // instead of their persona home.
-    const bouncedFrom = searchParams.get("returnTo");
     let unsubscribeBounce: (() => void) | undefined;
-    if (bouncedFrom) {
-      const safeReturn = sanitizeReturnPath(bouncedFrom);
-      const handOff = safeReturn
-        ? `/post-login?returnTo=${encodeURIComponent(safeReturn)}`
-        : "/post-login";
+    if (searchParams.get("returnTo")) {
       unsubscribeBounce = onAuthChange((user) => {
         if (!cancelled && user) {
-          router.replace(handOff as Parameters<typeof router.replace>[0]);
+          router.replace(handOff);
         }
       });
     }
@@ -101,7 +100,7 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
     completeGoogleRedirectSignIn()
       .then((user) => {
         if (!cancelled && user) {
-          router.push("/post-login");
+          router.push(handOff);
         }
       })
       .catch((err) => {
@@ -136,7 +135,7 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
         router.push("/parent/onboarding");
         return;
       }
-      router.push("/post-login");
+      router.push(handOff);
     } catch (err) {
       setError(toAuthErrorMessage(err, "Sign-in failed. Please try again."));
     } finally {
@@ -152,7 +151,7 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
       clearBffIdentityCookie();
       clearPersonaHintCookie();
       const user = await signInWithGoogle();
-      if (user) router.push("/post-login");
+      if (user) router.push(handOff);
     } catch (err) {
       setError(toAuthErrorMessage(err, "Google sign-in failed. Please try again."));
     } finally {
@@ -168,7 +167,7 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
       clearBffIdentityCookie();
       clearPersonaHintCookie();
       await signInWithApple();
-      router.push("/post-login");
+      router.push(handOff);
     } catch (err) {
       setError(toAuthErrorMessage(err, "Apple sign-in failed. Please try again."));
     } finally {

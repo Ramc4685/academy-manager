@@ -59,6 +59,8 @@ class EmailBrand:
     #: send path's previous behaviour.
     sender_name: str | None = None
     reply_to: str | None = None
+    #: The academy's mailing address, for the marketing footer (L11 item 8).
+    postal_address: str | None = None
 
     def accent(self) -> str:
         """The academy's colour if it is a valid hex, else cobalt. Free text

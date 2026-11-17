@@ -38,6 +38,10 @@ from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 
 _VERSION = "u1"
 
+#: The RFC 8058 endpoint mailbox providers POST to (``interfaces/unsubscribe_routes``),
+#: reached through the frontend's same-origin ``/api/v2`` proxy on the academy host.
+ONE_CLICK_UNSUBSCRIBE_PATH = "/api/v2/unsubscribe/one-click"
+
 
 def _b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")

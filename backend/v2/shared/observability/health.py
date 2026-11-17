@@ -57,6 +57,7 @@ async def build_health_report(
     scheduler: Any | None = None,
     dispatcher: Any | None = None,
     now: datetime | None = None,
+    config_warnings: list[str] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Return ``(report, healthy)``.
 
@@ -75,6 +76,9 @@ async def build_health_report(
         "status": OK if healthy else DEGRADED,
         "checks": checks,
     }
+    if config_warnings:
+        # Informational, like job heartbeats: a restart cannot fix a missing secret.
+        report["warnings"] = list(config_warnings)
     # Only read heartbeats once the ping proved Mongo is answering. Against a
     # dead Mongo this query would block on the driver's server-selection
     # timeout (30s by default) — six times Fly's check budget — turning a
