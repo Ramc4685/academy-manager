@@ -56,13 +56,69 @@ export function quickAddCsv(form: QuickAddForm): string {
   return `${IMPORT_COLUMNS.join(",")}\r\n${cells.join(",")}\r\n`;
 }
 
-type StepResult = { family: ImportRow; enrolled: boolean | null; invited: boolean | null; failure?: string };
+export type StepResult = {
+  family: ImportRow;
+  enrolled: boolean | null;
+  invited: boolean | null;
+  failure?: string;
+  /** The commit created no child (it was already on file): nothing else ran. */
+  existed?: boolean;
+};
 
 const INPUT =
   "rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900";
 
 function message(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+/**
+ * Steps 2-4 of quick add. Stops after the commit when it created no child, so
+ * the form never claims "Added" or skips the enrollment silently.
+ */
+export async function runQuickAdd({
+  batchId,
+  sessionId,
+  invite,
+}: {
+  batchId: string;
+  sessionId: string;
+  invite: boolean;
+}): Promise<StepResult> {
+  const committed = await commitFamilyImport(batchId);
+  const family = committed.rows[0];
+  if (!family) throw new Error("The import returned no row; check the Families list.");
+  const out: StepResult = { family, enrolled: null, invited: null };
+  const parentId = family.family_id;
+  if (family.status !== "create" || !family.student_id || !parentId) {
+    return { ...out, existed: true };
+  }
+  if (sessionId) {
+    try {
+      await createEnrollment({
+        session_id: sessionId,
+        student_id: family.student_id,
+        parent_id: parentId,
+        full_name: family.student_name,
+      });
+      out.enrolled = true;
+    } catch (error) {
+      out.enrolled = false;
+      out.failure = message(error, "The class enrollment failed.");
+      return out;
+    }
+  }
+  if (invite) {
+    try {
+      const sent = await inviteBillingSetupParent(parentId);
+      out.invited = sent.ok;
+      if (!sent.ok) out.failure = sent.failed_reason ?? "The login invite was not sent.";
+    } catch (error) {
+      out.invited = false;
+      out.failure = message(error, "The login invite was not sent.");
+    }
+  }
+  return out;
 }
 
 export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
@@ -88,38 +144,12 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
   });
 
   const add = useMutation({
-    mutationFn: async (): Promise<StepResult> => {
-      const committed = await commitFamilyImport(checked!.import_batch_id);
-      const family = committed.rows[0]!;
-      const out: StepResult = { family, enrolled: null, invited: null };
-      const parentId = family.family_id;
-      if (sessionId && family.student_id && parentId) {
-        try {
-          await createEnrollment({
-            session_id: sessionId,
-            student_id: family.student_id,
-            parent_id: parentId,
-            full_name: family.student_name,
-          });
-          out.enrolled = true;
-        } catch (error) {
-          out.enrolled = false;
-          out.failure = message(error, "The class enrollment failed.");
-          return out;
-        }
-      }
-      if (invite && form.parent_email.trim() && parentId) {
-        try {
-          const sent = await inviteBillingSetupParent(parentId);
-          out.invited = sent.ok;
-          if (!sent.ok) out.failure = sent.failed_reason ?? "The login invite was not sent.";
-        } catch (error) {
-          out.invited = false;
-          out.failure = message(error, "The login invite was not sent.");
-        }
-      }
-      return out;
-    },
+    mutationFn: () =>
+      runQuickAdd({
+        batchId: checked!.import_batch_id,
+        sessionId,
+        invite: invite && Boolean(form.parent_email.trim()),
+      }),
     onSuccess: (data) => {
       setChecked(null);
       setResult(data);
@@ -266,8 +296,23 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
   );
 }
 
-function QuickAddResult({ result }: { result: StepResult }) {
+export function QuickAddResult({ result }: { result: StepResult }) {
   const { family } = result;
+  const familyHref = family.family_link ?? (family.family_id ? `/admin/families/${encodeURIComponent(family.family_id)}` : null);
+  if (result.existed) {
+    return (
+      <div className="mt-3 text-sm" role="status" data-testid="quick-add-result">
+        <p className="text-rally-ink">
+          {family.student_name} already existed, so nothing was added.{" "}
+          {familyHref && (
+            <Link className="text-rally-cobalt underline" href={familyHref as Route}>
+              Open the family to enroll
+            </Link>
+          )}
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="mt-3 text-sm" role="status" data-testid="quick-add-result">
       <p className="text-rally-ink">

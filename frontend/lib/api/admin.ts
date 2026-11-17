@@ -1985,6 +1985,9 @@ export function closeAcademyDates(
   return apiFetch<CloseAcademyDatesResponse>("/admin/closures", {
     method: "POST",
     body: JSON.stringify(payload),
+    // A closure cancels date by date on the server; the default 20 s abort
+    // would report a failure while the server keeps cancelling.
+    timeoutMs: 120_000,
   });
 }
 
