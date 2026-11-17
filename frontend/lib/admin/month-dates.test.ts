@@ -157,6 +157,8 @@ describe("isMissable", () => {
     expect(isMissable(occ("a", "2026-11-10T23:00:00Z"), NOW)).toBe(true);
     expect(isMissable(occ("b", "2026-11-20T23:00:00Z"), NOW)).toBe(false);
     expect(isMissable(occ("c", "2026-11-10T23:00:00Z", { status: "cancelled" }), NOW)).toBe(false);
+    // Still in progress: started, not finished.
+    expect(isMissable(occ("d", "2026-11-17T11:30:00Z", { end_at: "2026-11-17T12:30:00Z" }), NOW)).toBe(false);
   });
 });
 
@@ -168,5 +170,7 @@ describe("familyOutcome", () => {
       "No credit: the month's free extra class covered it",
     );
     expect(familyOutcome(0, "skipped:no_invoice")).toBe("No credit: they were not charged for this date");
+    expect(familyOutcome(0, "skipped:not_invoiced")).toBe("No credit: not invoiced for that month");
+    expect(familyOutcome(0, "skipped:free_tuition")).toBe("No credit: free tuition");
   });
 });

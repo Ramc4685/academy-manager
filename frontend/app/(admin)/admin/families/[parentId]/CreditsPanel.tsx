@@ -12,6 +12,16 @@ const TYPE_LABEL: Record<string, string> = {
   REFERRAL_CREDIT: "Referral",
 };
 
+/** Only an approved credit with money left comes off the next invoice. */
+function creditState(c: FamilyAccountCredit): { label: string; spendable: boolean } {
+  if (c.status === "PENDING") return { label: "Waiting for approval", spendable: false };
+  if (c.status === "EXPIRED") return { label: "Expired", spendable: false };
+  if (c.status === "APPROVED" && c.remaining_amount_cents > 0) {
+    return { label: `${formatCents(c.remaining_amount_cents)} left`, spendable: true };
+  }
+  return { label: "Used", spendable: false };
+}
+
 /**
  * #1207: every credit the family holds or held, so the owner can answer "did
  * they get their money back for the 25th?" — what, why, who approved it, what
@@ -40,10 +50,8 @@ export function CreditsPanel({ credits, balanceCents }: { credits: unknown; bala
                 <p className="font-semibold text-rally-ink">
                   {TYPE_LABEL[c.type] ?? "Credit"} · {formatCents(c.amount_cents)}
                 </p>
-                <p className={c.remaining_amount_cents > 0 ? "text-status-green-800" : "text-rally-muted"}>
-                  {c.remaining_amount_cents > 0
-                    ? `${formatCents(c.remaining_amount_cents)} left`
-                    : "Used"}
+                <p className={creditState(c).spendable ? "text-status-green-800" : "text-rally-muted"}>
+                  {creditState(c).label}
                 </p>
               </div>
               <p className="mt-0.5 text-rally-muted">{c.reason}</p>

@@ -38,7 +38,7 @@ const occ = (id: string, start: string, status = "scheduled", reason: string | n
   coach_attendance: [],
 });
 
-async function setup(page: Page, month: string) {
+async function setup(page: Page, month: string, missedOver: Record<string, unknown> = {}) {
   const errors = collectConsoleErrors(page);
   installTenantGuard(page);
   await stubMe(page, ADMIN_USER_A);
@@ -103,6 +103,7 @@ async function setup(page: Page, month: string) {
       credit_skips: { covered_by_free_classes: 1 },
       payroll_flag: "Adjust the coach's pay for this date by hand.",
       billing_result: body.dry_run ? null : "credited=1,skipped=1,override=written",
+      ...missedOver,
     });
   });
   await page.goto("/admin/sessions/month-dates");
@@ -145,6 +146,35 @@ test.describe("Month dates credits", () => {
       [true, "Gym closed, found out late"],
       [false, "Gym closed, found out late"],
     ]);
+    expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("a date billing never laid out cannot be confirmed", async ({ page }) => {
+    const { errors, posts } = await setup(page, PAST.slice(0, 7), {
+      families: [],
+      credit_total_cents: 0,
+      schedule_changed: true,
+    });
+    await page.getByTestId("credit-missed-occ-past").click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("textbox").fill("Gym closed");
+    await dialog.getByTestId("confirm-action-submit").click();
+    await expect(dialog.getByRole("alert")).toContainText("schedule changed");
+    await expect(dialog.getByTestId("confirm-action-submit")).toHaveText("Preview credits");
+    await expect(page.getByTestId("credit-missed-families")).toHaveCount(0);
+    expect(posts.every((p) => p.body.dry_run === true)).toBe(true);
+    expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("a confirm whose billing did not run says so instead of no credits", async ({ page }) => {
+    const { errors } = await setup(page, PAST.slice(0, 7), { billing_result: "billing_sync_failed" });
+    await page.getByTestId("credit-missed-occ-past").click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("textbox").fill("Gym closed");
+    await dialog.getByTestId("confirm-action-submit").click();
+    await expect(page.getByTestId("credit-missed-families")).toBeVisible();
+    await dialog.getByTestId("confirm-action-submit").click();
+    await expect(page.getByTestId("month-dates-credit-row")).toContainText("Check Billing Health");
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
 });

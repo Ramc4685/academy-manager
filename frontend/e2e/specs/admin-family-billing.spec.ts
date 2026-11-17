@@ -453,6 +453,7 @@ test.describe("Family billing", () => {
         credits: [
           credit({}),
           credit({ credit_id: "cr-2", remaining_amount_cents: 0, applied_invoices: ["INV-2026-09-002"] }),
+          credit({ credit_id: "cr-3", status: "PENDING" }),
         ],
       },
     });
@@ -460,6 +461,8 @@ test.describe("Family billing", () => {
     await expect(page.getByTestId("family-credit-cr-1")).toContainText("Gym closed");
     await expect(page.getByTestId("family-credit-cr-1")).toContainText("Owner Pat");
     await expect(page.getByTestId("family-credit-cr-2")).toContainText("INV-2026-09-002");
+    await expect(page.getByTestId("family-credit-cr-3")).toContainText("Waiting for approval");
+    await expect(page.getByTestId("family-credit-cr-3")).not.toContainText("left");
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
 

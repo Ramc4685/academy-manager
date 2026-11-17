@@ -159,6 +159,8 @@ const SKIP_TEXT: Record<string, string> = {
   covered_by_free_classes: "the month's free extra class covered it",
   first_month_proration_excludes_date: "not invoiced yet, so the date is left out of their first month's price",
   paused_not_invoiced: "paused and not charged that month",
+  not_invoiced: "not invoiced for that month",
+  free_tuition: "free tuition",
 };
 
 const families = (n: number) => `${n} ${n === 1 ? "family" : "families"}`;
@@ -183,9 +185,9 @@ export function creditOutcome(credited: number, totalCents: number, skips: unkno
   return parts.length ? parts.join(" ") : "No credits: no family was charged for this date.";
 }
 
-/** A past date still marked as class: one an admin can credit as missed (#1207). */
+/** A finished date still marked as class: one an admin can credit as missed (#1207). */
 export function isMissable(o: AdminSessionOccurrenceView, now: Date): boolean {
-  return o.status === "scheduled" && new Date(o.start_at).getTime() <= now.getTime();
+  return o.status === "scheduled" && new Date(o.end_at).getTime() <= now.getTime();
 }
 
 /** One family's line in the "credit a missed class" preview. */

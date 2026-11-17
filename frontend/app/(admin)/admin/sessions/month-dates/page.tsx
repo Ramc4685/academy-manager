@@ -229,7 +229,10 @@ export default function AdminMonthDatesPage() {
     onSuccess: async (result) => {
       if (!missed) return;
       await queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionOccurrences(missed.sessionId) });
-      const outcome = creditOutcome(result.credits_issued, result.credit_total_cents, result.credit_skips);
+      const outcome =
+        result.billing_result && NOT_CREDITED.has(result.billing_result)
+          ? "Billing did not update, so families were not credited yet. Check Billing Health."
+          : creditOutcome(result.credits_issued, result.credit_total_cents, result.credit_skips);
       setCredits([
         { id: missed.id, label: missed.label, outcome: result.payroll_flag ? `${outcome} ${result.payroll_flag}` : outcome },
       ]);
@@ -238,7 +241,15 @@ export default function AdminMonthDatesPage() {
       closeMissed();
     },
   });
-  const previewFamilies = Array.isArray(missedPreview.data?.families) ? missedPreview.data.families : [];
+  // A preview that can't be priced (malformed, or a date billing never laid
+  // out) is no preview: the dialog keeps asking to preview, never to confirm.
+  const quote = missedPreview.data;
+  const scheduleChanged = Boolean(quote?.schedule_changed);
+  const preview = quote && typeof quote.credit_total_cents === "number" && !scheduleChanged ? quote : null;
+  const previewFamilies = Array.isArray(preview?.families) ? preview.families : [];
+  const missedError = scheduleChanged
+    ? "The class schedule changed since this date, so billing can't price it. Credit these families by hand."
+    : ((missedPreview.error ?? missedConfirm.error)?.message ?? null);
 
   function closeMissed() {
     setMissed(null);
@@ -566,13 +577,15 @@ export default function AdminMonthDatesPage() {
           overline="Credit a missed class"
           title={`Credit ${missed.label} as missed?`}
           consequence={
-            missedPreview.data
-              ? "Check who gets what. Confirming marks the date No class, credits these families on their next invoice, and does not pay the coach for it. No email goes out."
+            preview
+              ? `Check who gets what. Confirming marks the date No class and credits these families on their next invoice. No email goes out.${
+                  preview.payroll_flag ? "" : " The coach is not paid for it."
+                }`
               : "Preview who would be credited first. Nothing changes until you confirm."
           }
-          confirmLabel={missedPreview.data ? "Credit and mark No class" : "Preview credits"}
+          confirmLabel={preview ? "Credit and mark No class" : "Preview credits"}
           pending={missedPreview.isPending || missedConfirm.isPending}
-          error={(missedPreview.error ?? missedConfirm.error)?.message ?? null}
+          error={missedError}
           reason={{
             label: "Reason families see",
             value: missedReason,
@@ -580,9 +593,9 @@ export default function AdminMonthDatesPage() {
             required: true,
             placeholder: "Gym closed",
           }}
-          onConfirm={() => (missedPreview.data ? missedConfirm.mutate(missed.id) : missedPreview.mutate(missed.id))}
+          onConfirm={() => (preview ? missedConfirm.mutate(missed.id) : missedPreview.mutate(missed.id))}
         >
-          {missedPreview.data && (
+          {preview && (
             <div data-testid="credit-missed-families" className="rounded-md border border-rally-line px-3 py-2 text-sm">
               {previewFamilies.length === 0 ? (
                 <p className="text-rally-muted">No family was enrolled and charged for this date, so nobody is credited.</p>
@@ -597,11 +610,11 @@ export default function AdminMonthDatesPage() {
                 </ul>
               )}
               <p className="mt-2 font-semibold text-rally-ink">
-                Total {formatCents(missedPreview.data.credit_total_cents)}
+                Total {formatCents(preview.credit_total_cents)}
               </p>
-              {missedPreview.data.payroll_flag && (
+              {preview.payroll_flag && (
                 <p role="alert" className="mt-2 rounded bg-status-amber-50 px-2 py-1 text-status-amber-800">
-                  {missedPreview.data.payroll_flag}
+                  {preview.payroll_flag}
                 </p>
               )}
             </div>
