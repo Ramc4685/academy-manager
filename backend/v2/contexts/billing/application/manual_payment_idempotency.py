@@ -198,9 +198,12 @@ async def record_manual_payment_once(
     try:
         if keyed:
             # A claim written before the shared store carries its fingerprint in
-            # its value; a taken-over legacy claim keeps it.
-            _reject_other_payload(await store.get(claim_key) or {}, fingerprint)
-            await _bind_key_to_payload(store, storage_key, fingerprint)
+            # its value. Pin that fingerprint to the durable marker BEFORE any
+            # rejection: releasing the claim below would otherwise drop the only
+            # record of the original payload and let the next retry rebind the key.
+            legacy = await store.get(claim_key) or {}
+            await _bind_key_to_payload(store, storage_key, legacy.get("fingerprint") or fingerprint)
+            _reject_other_payload(legacy, fingerprint)
         result = await RecordManualPayment(ledger=ledger, clock=clock).execute(
             RecordManualPaymentCommand(
                 invoice_id=invoice_id,

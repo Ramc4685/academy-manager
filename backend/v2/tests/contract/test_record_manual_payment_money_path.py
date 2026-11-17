@@ -413,8 +413,11 @@ async def test_a_claim_left_before_the_shared_store_is_taken_over_and_keeps_its_
     )
     admin = _admin(real_db)
     with tenant_scope(ACAD):
-        with pytest.raises(ValueError, match="different payload"):
-            await _pay(admin, key="k-legacy", amount=4_000)
+        # Twice: the first rejection gives the claim back, and the second must still
+        # see the legacy payload instead of binding the key to the new amount.
+        for _ in range(2):
+            with pytest.raises(ValueError, match="different payload"):
+                await _pay(admin, key="k-legacy", amount=4_000)
         result = await _pay(admin, key="k-legacy", amount=3_000)
         payments, _, _ = await _ledger_state(real_db)
     assert [p["payment_id"] for p in payments] == [result["payment_id"]]
