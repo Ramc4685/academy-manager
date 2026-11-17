@@ -67,6 +67,7 @@ const config: CapacitorConfig = {
         packageOptions: {
           "@capacitor-firebase/authentication": { symlink: true },
           "@capacitor-firebase/messaging": { symlink: true },
+          "@capgo/capacitor-native-biometric": { symlink: true },
         },
       },
     },

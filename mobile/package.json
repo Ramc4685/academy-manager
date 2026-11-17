@@ -16,6 +16,7 @@
     "@capacitor/android": "8.5.1",
     "@capacitor/core": "8.5.1",
     "@capacitor/ios": "8.5.1",
+    "@capgo/capacitor-native-biometric": "8.9.3",
     "firebase": "12.18.0"
   },
   "devDependencies": {

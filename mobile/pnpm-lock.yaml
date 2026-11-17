@@ -30,6 +30,9 @@ importers:
       '@capacitor/ios':
         specifier: 8.5.1
         version: 8.5.1(@capacitor/core@8.5.1)
+      '@capgo/capacitor-native-biometric':
+        specifier: 8.9.3
+        version: 8.9.3(@capacitor/core@8.5.1)
       firebase:
         specifier: 12.18.0
         version: 12.18.0
@@ -91,6 +94,11 @@ packages:
     resolution: {integrity: sha512-0EVqwCYf3RUp2JAjUGZ04xmG6dSpIsPmPacI9zKxn6mu9RSiHhmFF230ghe00HrkyB6ig6SfNdoADvVODxYhlQ==}
     peerDependencies:
       '@capacitor/core': ^8.5.0
+
+  '@capgo/capacitor-native-biometric@8.9.3':
+    resolution: {integrity: sha512-bH3ZupGr3ocetX546rBvYSuccWy2P45kWu+RXVPXBVpXidQVF/iX8mB0pzPzDCJhEa7XZBi8qKyoaowpmb3sbw==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
 
   '@emnapi/runtime@1.11.3':
     resolution: {integrity: sha512-Xz4Tpyki7XyrpbUK1jR1AhdAdaXyhhY4lZ3neLodmhpuWfy2PAQN5B46sAiU4liOXGLkHypn/qU+jvfWSCYYLA==}
@@ -1249,6 +1257,10 @@ snapshots:
       tslib: 2.9.1
 
   '@capacitor/ios@8.5.1(@capacitor/core@8.5.1)':
+    dependencies:
+      '@capacitor/core': 8.5.1
+
+  '@capgo/capacitor-native-biometric@8.9.3(@capacitor/core@8.5.1)':
     dependencies:
       '@capacitor/core': 8.5.1
 

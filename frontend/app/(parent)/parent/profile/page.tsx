@@ -8,6 +8,7 @@ import { FormField, fieldDescribedBy } from "@/components/ds/form-field";
 import { Skeleton } from "@/components/ds/skeleton";
 import { useToast } from "@/components/ds/toast";
 import { ReferralCard } from "@/components/parent/referral-card";
+import { AppLockSetting } from "@/components/persona/app-lock-setting";
 import { DeleteAccountSection } from "@/components/persona/delete-account-section";
 import { queryKeys } from "@/lib/query/keys";
 import {
@@ -67,6 +68,7 @@ export default function ParentProfilePage() {
           {data.children.map((child) => (
             <ChildCard key={child.student_id} child={child} />
           ))}
+          <AppLockSetting />
           <DeleteAccountSection />
         </div>
       )}

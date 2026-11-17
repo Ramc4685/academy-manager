@@ -88,5 +88,7 @@
 		<string>localhost</string>
 		<string>checkout.stripe.com</string>
 	</array>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Face ID unlocks the app when you turn on app lock.</string>
 </dict>
 </plist>

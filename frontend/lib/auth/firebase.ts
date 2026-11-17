@@ -41,6 +41,7 @@ import {
 import { getReadyIdToken } from "@/lib/auth/token-readiness";
 import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 import { clearPersonaHintCookie } from "@/lib/auth/persona-hint-cookie";
+import { disableBiometricLock } from "@/lib/auth/native-biometric";
 import { stopPushNotifications } from "@/lib/auth/native-push";
 
 const firebaseConfig = {
@@ -325,6 +326,8 @@ export async function reauthenticate(method: ReauthMethod, password = ""): Promi
 export async function signOutCurrent(): Promise<void> {
   // App shell only (no-op in browsers); needs the session, so it runs first.
   await stopPushNotifications();
+  // The next person on a shared phone must not inherit this app lock.
+  disableBiometricLock();
   clearBffIdentityCookie();
   // Leave no persona hint behind for the next user of a shared device (#451).
   clearPersonaHintCookie();

@@ -6,6 +6,7 @@ import { publicPageBrand } from "@/lib/public-page/metadata";
 import { loadPublicAcademyPage } from "@/lib/public-page/server-fetch";
 import { Providers } from "@/lib/providers";
 import { SentryInit } from "@/components/observability/sentry-init";
+import { BiometricLockLoader } from "@/components/persona/biometric-lock-loader";
 
 // Self-hosted (latin subset of the Google Fonts variable files): next/font/google
 // fetched and parsed Google's CSS at build time, and an unparseable response
@@ -72,6 +73,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       >
         <SentryInit />
         <Providers>{children}</Providers>
+        <BiometricLockLoader />
       </body>
     </html>
   );
