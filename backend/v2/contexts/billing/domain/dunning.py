@@ -39,9 +39,10 @@ TECHNICAL_PARK_CAP = timedelta(hours=24)
 TECHNICAL_FAILURE_CAPPED = "technical_failure_capped"
 
 #: A capped recheck found a PaymentIntent on the invoice that is not cleanly this
-#: charge (refunded, disputed, another amount or source). Parked once for a person
-#: to decide and never retried: rechecking would find it again every day, and
-#: charging on top of it could take money a person already refunded.
+#: charge (refunded, disputed, another amount or source), or a found charge that
+#: left a balance. Parked for a person to decide and never charged again: charging
+#: on top of it could take money a person already refunded. It is rechecked once a
+#: day without calling Stripe, so a paid or voided invoice stands the ladder down.
 EXISTING_CHARGE_NEEDS_REVIEW = "existing_charge_needs_review"
 
 #: Park reasons that mean "we could not ask the bank" because of something on our

@@ -135,7 +135,6 @@ async def test_a_new_rung_gets_a_new_key(real_db, acad) -> None:
         clock=lambda: NOW,
     )
     seen: list[str] = []
-    create = stripe.create_off_session_payment_intent
 
     async def spy(**kwargs: Any) -> tuple[str, str, str | None]:
         seen.append(kwargs["idempotency_key"])
@@ -145,5 +144,4 @@ async def test_a_new_rung_gets_a_new_key(real_db, acad) -> None:
     await charge.execute("inv-a", retry_scope="dunning-attempt:1")
     await charge.execute("inv-a", retry_scope="dunning-attempt:2")
     await charge.execute("inv-a", retry_scope="dunning-attempt:1")
-    assert create is not None
     assert seen[0] != seen[1] and seen[0] == seen[2]
