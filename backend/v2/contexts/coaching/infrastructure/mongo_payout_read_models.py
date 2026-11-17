@@ -24,6 +24,7 @@ from backend.v2.contexts.coaching.domain.payout import (
 from backend.v2.contexts.coaching.infrastructure.mongo_coach_rate_repo import (
     coach_rate_from_mongo_doc,
 )
+from backend.v2.shared.billing_type import is_not_billed
 from backend.v2.shared.occurrences import (
     effective_occurrence_status,
     occurrence_session_id,
@@ -216,7 +217,11 @@ class MongoPayableOccurrenceQuery:
         for session_id, month in sorted(set(month_of.values())):
             tuition = basis.amounts.get((session_id, month))
             if tuition is None:
-                if basis.missing_invoices != "pay_zero":
+                # A class whose only children are not billed has nothing to
+                # invoice: its base is $0, not a missing invoice.
+                if basis.missing_invoices != "pay_zero" and not (
+                    await self._only_not_billed_children(academy_id, session_id)
+                ):
                     continue
                 tuition = 0
             month_start, month_end = _local_month_bounds(month, tz)
@@ -244,6 +249,30 @@ class MongoPayableOccurrenceQuery:
             for occurrence_id in month_of
             if occurrence_id in share_of
         }, assistants_paid
+
+    async def _only_not_billed_children(self, academy_id: str, session_id: str) -> bool:
+        """True when the class has enrolled children and none of them is billed.
+
+        Active, paused and held rows count; one billed child among them keeps
+        the missing-invoice warning (the class should have been invoiced).
+        """
+        rows = [
+            row
+            async for row in self._db["enrollments"].find(
+                {
+                    "academy_id": academy_id,
+                    "session_id": session_id,
+                    "status": {"$in": list(_PAYROLL_ROSTER_STATUSES)},
+                    "is_deleted": {"$ne": True},
+                },
+                {"billing_type": 1},
+            )
+        ]
+        return bool(rows) and all(is_not_billed(row) for row in rows)
+
+
+#: Enrollment statuses that put a child in a class for payroll's not-billed check.
+_PAYROLL_ROSTER_STATUSES = ("active", "paused", "held")
 
 
 def _as_utc(value: datetime) -> datetime:

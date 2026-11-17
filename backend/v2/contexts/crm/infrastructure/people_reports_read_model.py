@@ -64,6 +64,7 @@ class MongoAttendanceRiskSource:
                 student_id=student_id,
                 state=snap.state,
                 live_session_ids=tuple(snap.live_session_ids),
+                not_billed=snap.not_billed,
             )
             for student_id, snap in snapshots.items()
         )

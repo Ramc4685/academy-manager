@@ -29,6 +29,7 @@ from backend.v2.contexts.crm.domain.family_stage import (
     FAMILY_STAGE_PRECEDENCE,
     FAMILY_STAGES,
     SCOPE_STAGES,
+    roll_up_family_stage,
     stage_rank,
 )
 
@@ -109,6 +110,9 @@ class FamilyIndexSummary:
     #: The Overdue chip's count: the families ``overdue=true`` keeps. Money
     #: derived, so the view drops it for a caller who may not see money.
     overdue_families: int = 0
+    #: Families on no scope tile only because their enrolled children are all
+    #: not billed: the tiles show them as "+N not billed".
+    not_billed_families: int = 0
 
 
 def _primary_key(sort: str, money_visible: bool) -> Callable[[FamilyIndexRow], Any] | None:
@@ -178,10 +182,22 @@ def query_family_index(
 
 def summarize_family_index(index: FamilyIndex) -> FamilyIndexSummary:
     counts: dict[str, int] = {stage: 0 for stage in FAMILY_STAGE_PRECEDENCE}
+    tile_counts: dict[str, int] = {stage: 0 for stage in FAMILY_STAGE_PRECEDENCE}
+    tiled = {stage for stages in SCOPE_STAGES.values() for stage in stages}
+    not_billed_families = 0
     for record in index.families:
         counts[record.stage] = counts.get(record.stage, 0) + 1
+        # Tiles are headcounts: a not-billed child does not put its family on one.
+        tile_stage = (
+            roll_up_family_stage(c.lifecycle for c in record.children if not c.not_billed)
+            if any(c.not_billed for c in record.children)
+            else record.stage
+        )
+        tile_counts[tile_stage] = tile_counts.get(tile_stage, 0) + 1
+        if record.stage in tiled and tile_stage not in tiled:
+            not_billed_families += 1
     tiles = {
-        scope: sum(counts.get(stage, 0) for stage in stages)
+        scope: sum(tile_counts.get(stage, 0) for stage in stages)
         for scope, stages in SCOPE_STAGES.items()
     }
     return FamilyIndexSummary(
@@ -194,6 +210,7 @@ def summarize_family_index(index: FamilyIndex) -> FamilyIndexSummary:
         overdue_families=sum(
             1 for r in index.families if r.money is not None and r.money.overdue_invoice_count > 0
         ),
+        not_billed_families=not_billed_families,
     )
 
 

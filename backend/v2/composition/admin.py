@@ -580,6 +580,7 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_re
     MongoStudentSkillProgressRepository,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases
+from backend.v2.shared.billing_type import NOT_BILLED_ENROLLMENT_FILTER, is_not_billed
 from backend.v2.shared.comms import CommsService, MongoMessageRepository
 from backend.v2.shared.comms.email_brand import AcademyEmailBrands
 from backend.v2.shared.comms.phone_country import academy_calling_code_lookup
@@ -2210,12 +2211,15 @@ def compose_admin(
             # count it. Filtering on a bare "active" made a class full of holds
             # advertise open spots, and the resulting Add silently reclaimed the
             # longest-held child's seat.
-            enrolled_count = await enrollments_r.collection.count_documents(
-                {
-                    "academy_id": request_academy_id,
-                    "session_id": session_id,
-                    "status": {"$in": sorted(SEAT_HOLDING)},
-                }
+            seats = {
+                "academy_id": request_academy_id,
+                "session_id": session_id,
+                "status": {"$in": sorted(SEAT_HOLDING)},
+            }
+            enrolled_count = await enrollments_r.collection.count_documents(seats)
+            # Not-billed children still take a seat; the list notes how many.
+            not_billed_count = await enrollments_r.collection.count_documents(
+                {**seats, **NOT_BILLED_ENROLLMENT_FILTER}
             )
             waitlist_count = await waitlist.collection.count_documents(
                 {
@@ -2237,6 +2241,7 @@ def compose_admin(
                     else str(doc.get("status") or "scheduled"),
                     "coach_id": str(doc.get("coach_id") or ""),
                     "enrolled_count": enrolled_count,
+                    "not_billed_count": not_billed_count,
                     "waitlist_count": waitlist_count,
                     "days_of_week": list(doc.get("days_of_week") or []),
                     "start_time": doc.get("start_time"),
@@ -2913,6 +2918,7 @@ def compose_admin(
                     "level": student_doc.get("level"),
                     **placement_fields,
                     "dues_status": dues_status_by_id.get(e.student_id, "current"),
+                    "not_billed": is_not_billed(doc),
                     "latest_event_type": latest_event_by_id.get(e.enrollment_id, {}).get("t"),
                     "latest_event_date": str(
                         latest_event_by_id.get(e.enrollment_id, {}).get("d") or ""

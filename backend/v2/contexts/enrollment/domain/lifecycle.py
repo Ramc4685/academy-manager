@@ -121,6 +121,8 @@ class StudentLifecycleSnapshot(BaseModel):
     state: PersonLifecycle
     as_of: date | None = None
     live_session_ids: tuple[str, ...] = ()
+    #: Every live class is not billed: keeps its label, left out of headcounts.
+    not_billed: bool = False
 
 
 #: Recorded absences in a row that make an attending student "at risk".

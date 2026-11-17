@@ -47,6 +47,7 @@ from backend.v2.contexts.billing.infrastructure.cash_received import cash_receiv
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     MongoProjectedClassFees,
 )
+from backend.v2.shared.billing_type import is_not_billed
 from backend.v2.shared.occurrences import occurrence_session_id
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.time import academy_timezone_lookup, resolve_reporting_timezone
@@ -1085,11 +1086,22 @@ def make_projected_income_report(
                 "status": "active",
                 "is_deleted": {"$ne": True},
             },
-            {"enrollment_id": 1, "session_id": 1, "parent_id": 1, "student_id": 1},
+            {
+                "enrollment_id": 1,
+                "session_id": 1,
+                "parent_id": 1,
+                "student_id": 1,
+                "billing_type": 1,
+            },
         )
+        not_billed_count = 0
         async for enrollment in enrollments_cursor:
             session_id = str(enrollment.get("session_id") or "")
             if not session_id:
+                continue
+            if is_not_billed(enrollment):
+                # Never invoiced, so never income; reported as "+N not billed".
+                not_billed_count += 1
                 continue
             session_ids.add(session_id)
             enrollment_rows.append(
@@ -1193,6 +1205,7 @@ def make_projected_income_report(
             "enrollment_count": autopay_count + manual_count,
             "autopay_enrollment_count": autopay_count,
             "manual_enrollment_count": manual_count,
+            "not_billed_enrollment_count": not_billed_count,
             "by_session": rows,
             "empty": not rows,
         }
@@ -1765,6 +1778,7 @@ def make_session_economics_report(
             session_id: 0 for session_id in session_ids
         }
         enrollment_to_session: dict[str, str] = {}
+        not_billed_by_session: dict[str, int] = {}
         if session_ids:
             enrollments_cursor = db["enrollments"].find(
                 {
@@ -1773,12 +1787,16 @@ def make_session_economics_report(
                     "status": "active",
                     "is_deleted": {"$ne": True},
                 },
-                {"enrollment_id": 1, "session_id": 1},
+                {"enrollment_id": 1, "session_id": 1, "billing_type": 1},
             )
             async for enrollment in enrollments_cursor:
                 session_id = str(enrollment.get("session_id") or "")
                 enrollment_id = str(enrollment.get("enrollment_id") or "")
                 if not session_id:
+                    continue
+                if is_not_billed(enrollment):
+                    # Not billed: no expected tuition, not in the paying headcount.
+                    not_billed_by_session[session_id] = not_billed_by_session.get(session_id, 0) + 1
                     continue
                 active_enrollments_by_session[session_id] = (
                     active_enrollments_by_session.get(session_id, 0) + 1
@@ -1966,6 +1984,7 @@ def make_session_economics_report(
                     ),
                     "coach_name": str(session.get("coach_name") or "") or None,
                     "active_enrollment_count": active_enrollments_by_session.get(session_id, 0),
+                    "not_billed_enrollment_count": not_billed_by_session.get(session_id, 0),
                     "paid_student_count": paid_student_count,
                     "unpaid_student_count": unpaid_student_count,
                     "monthly_fee_cents": monthly_fee_by_session.get(session_id, 0),

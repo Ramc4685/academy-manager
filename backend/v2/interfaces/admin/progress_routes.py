@@ -482,6 +482,7 @@ async def get_pathway_dashboard(
                         student_id=s.student_id,  # type: ignore[attr-defined]
                         student_name=s.full_name,  # type: ignore[attr-defined]
                         parent_id=s.parent_id,  # type: ignore[attr-defined]
+                        not_billed=bool(getattr(s, "not_billed", False)),
                     )
                     for s in students
                 ],

@@ -82,6 +82,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo impo
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     class_fee_cents_for_period,
 )
+from backend.v2.shared.billing_type import MONTHLY_INVOICED_BILLING_TYPES
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.observability.ops_alerts import capture_message
 from backend.v2.shared.tenancy import current_academy_id
@@ -109,8 +110,6 @@ MONTHLY_KEY_STATUS_REPAIR_FAILED = "repair_failed"
 #: be skipped (#651), so ``active`` is the one status that is invoiced.
 MONTHLY_RUN_ENROLLMENT_STATUSES: tuple[str, ...] = ("active", "paused")
 MONTHLY_INVOICED_ENROLLMENT_STATUS = "active"
-#: ``billing_type`` values the monthly run invoices (missing reads "standard").
-MONTHLY_INVOICED_BILLING_TYPES: frozenset[str] = frozenset({"", "standard", "monthly", "manual"})
 MONTHLY_KEY_STATUS_REVIEWED = "reviewed"
 
 
@@ -2125,6 +2124,12 @@ async def _sibling_preview_row(
         "exclusion": exclusion,
         "billing_type": (
             str(enrollment.get("billing_type") or "") if exclusion == "billing_type" else None
+        ),
+        # Why the owner marked it not billed (the badge says "not billed (Owner's child)").
+        "not_billed_reason": (
+            str(enrollment.get("not_billed_reason") or "") or None
+            if exclusion == "billing_type"
+            else None
         ),
     }
 

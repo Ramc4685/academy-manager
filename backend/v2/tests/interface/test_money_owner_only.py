@@ -56,6 +56,7 @@ OWNER_ONLY_MONEY_WRITES: tuple[tuple[str, str], ...] = (
     ("POST", "/enrollments/enr-1/fee"),  # per-enrollment fee
     ("PUT", "/enrollments/enr-1/tuition-discount"),
     ("DELETE", "/enrollments/enr-1/tuition-discount"),
+    ("PUT", "/enrollments/enr-1/billing"),  # not billed / start billing
     ("POST", "/payments/pay-1/discount"),
 )
 

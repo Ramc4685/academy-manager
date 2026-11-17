@@ -20,10 +20,10 @@ from backend.v2.contexts.billing.application.use_cases.pricing_page import (
 )
 from backend.v2.contexts.billing.domain.session_type import SessionType
 from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
-    MONTHLY_INVOICED_BILLING_TYPES,
     MONTHLY_INVOICED_ENROLLMENT_STATUS,
     session_amount_cents,
 )
+from backend.v2.shared.billing_type import MONTHLY_INVOICED_BILLING_TYPES
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 #: Enough for any academy's class list and override review; the page is not

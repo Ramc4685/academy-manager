@@ -82,6 +82,9 @@ class ChildLifecycle(Protocol):
     @property
     def live_session_ids(self) -> tuple[str, ...]: ...
 
+    @property
+    def not_billed(self) -> bool: ...
+
 
 class ChildLifecycleReader(Protocol):
     """Enrollment: the ``/admin/students`` lifecycle derivation, batched."""

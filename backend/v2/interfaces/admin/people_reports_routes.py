@@ -161,6 +161,8 @@ class AttendanceRiskView(BaseModel):
     by_coach: list[CoachRiskView]
     students: int
     at_risk: int
+    #: Seated students left out because every class is not billed.
+    not_billed: int = 0
 
 
 class ReasonCountView(BaseModel):
@@ -297,6 +299,7 @@ async def attendance_risk(
         by_coach=[_coach_risk(row) for row in report.by_coach],
         students=report.students,
         at_risk=report.at_risk,
+        not_billed=report.not_billed,
     )
 
 

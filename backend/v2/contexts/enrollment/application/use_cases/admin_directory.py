@@ -62,6 +62,8 @@ class AdminStudentSummary(BaseModel):
     last_seen_at: datetime | None = None
     attendance_rate: float | None = None
     dues_status: DuesStatus = "current"
+    #: Every live class is not billed: listed, but out of the headcount tiles.
+    not_billed: bool = False
 
 
 class AdminStudentSessionSummary(BaseModel):
@@ -78,6 +80,11 @@ class AdminStudentSessionSummary(BaseModel):
     payment_mode: str | None = None
     subscription_status: str | None = None
     amount_cents: int | None = None
+    #: Not billed (``billing_type`` outside the invoiced types, e.g. ``NoCharge``):
+    #: the child attends but is never invoiced; reason/note when an admin set it.
+    not_billed: bool = False
+    not_billed_reason: str | None = None
+    not_billed_note: str | None = None
     # Issue #674: billing's per-enrollment autopay axis
     # (``autopay_enrollment_status``: active / paused / disabled / setup
     # states). Filled by ``GetAdminStudent`` through ``EnrollmentAutopayLookup``

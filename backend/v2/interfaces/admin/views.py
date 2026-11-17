@@ -103,6 +103,8 @@ class AdminStudentView(BaseModel):
     last_seen_at: datetime | None = None
     attendance_rate: float | None = None
     dues_status: Literal["current", "due", "overdue"] = "current"
+    #: Every live class is not billed: listed, but out of the headcount tiles.
+    not_billed: bool = False
 
 
 class AdminStudentSessionDiscountView(BaseModel):
@@ -132,6 +134,11 @@ class AdminStudentSessionSummaryView(BaseModel):
     payment_mode: str | None = None
     subscription_status: str | None = None
     amount_cents: int | None = None
+    #: Not billed (``billing_type`` outside the invoiced types, e.g. ``NoCharge``):
+    #: the child attends but is never invoiced; reason/note when an admin set it.
+    not_billed: bool = False
+    not_billed_reason: str | None = None
+    not_billed_note: str | None = None
     discount: AdminStudentSessionDiscountView | None = None
     # Issue #674: billing autopay axis on current rows; lifecycle facts on past rows.
     autopay_status: str | None = None
@@ -408,7 +415,10 @@ class AdminSessionView(BaseModel):
     capacity: int
     amount_cents: int | None = None
     status: Literal["scheduled", "cancelled", "completed"]
+    #: Seats taken, not-billed children included (they still take a seat).
     enrolled_count: int = 0
+    #: How many of ``enrolled_count`` are not billed.
+    not_billed_count: int = 0
     waitlist_count: int = 0
     days_of_week: list[str] = Field(default_factory=list)
     start_time: str | None = None
@@ -680,6 +690,9 @@ class AdminEnrollmentView(BaseModel):
     pathway_completion_percentage: int = 0
     pathway_next_action: str = "place_in_level"
     dues_status: Literal["current", "due", "overdue"] = "current"
+    #: Attends but is never invoiced (``billing_type`` NoCharge/Waived): on the
+    #: roster, out of the "In session" headcount.
+    not_billed: bool = False
     #: Latest lifecycle event on this seat (L2 A0-12), so the roster needs no
     #: per-row history request. None when the seat has no events.
     latest_event_type: str | None = None
@@ -2299,6 +2312,8 @@ class AdminProjectedIncomeResponse(BaseModel):
     enrollment_count: int = 0
     autopay_enrollment_count: int = 0
     manual_enrollment_count: int = 0
+    #: Active enrollments left out because they are not billed.
+    not_billed_enrollment_count: int = 0
     by_session: list[AdminProjectedIncomeSessionRow] = []
     empty: bool = True
 
@@ -2319,6 +2334,8 @@ class AdminSessionEconomicsRow(BaseModel):
     title: str
     coach_name: str | None = None
     active_enrollment_count: int = 0
+    #: Active enrollments left out of the count and expected total: not billed.
+    not_billed_enrollment_count: int = 0
     paid_student_count: int = 0
     unpaid_student_count: int = 0
     monthly_fee_cents: int = 0
