@@ -1,6 +1,6 @@
 # messaging-reliability
 
-PR: TBD
+PR: #1201
 
 ## What changed
 Billing emails (invoice, dunning, autopay notice, receipt, payment reminders, add-card, and the invoice copies sent to a family's extra contacts) now show the academy's name as the From display name and use its reply-to (or support email), like every other email already did. Digests and campaigns read the academy brand through the same shared lookup, so the campaign footer gets the academy postal address. Every email sent from an outbox event carries a Resend `Idempotency-Key`, so a retried event no longer mails a family twice (Resend drops the duplicate and answers as for the first send). Any other 409 from Resend is a failure and goes to the outbox retry ladder and dead letter. Production now warns at boot (log and Sentry, naming the missing secret) and on the public `/api/v2/healthz` (`warnings`, opaque codes only: `email_bounce_ingestion_off`, `email_unsubscribe_links_off`) when bounce ingestion or unsubscribe secrets are missing. A parent sent to sign in from a deep link (for example a billing email's pay page) lands back on it after signing in with a password, Google or Apple, not only when already signed in. New, all off by default: bounded send retry, a separate marketing sender for campaigns, RFC 8058 one-click `List-Unsubscribe` plus the academy postal address on campaigns. The autopay-failed email keeps its plain pay-page button (a signed-out parent goes through login and back); no sign-in token is ever put in a billing email.
