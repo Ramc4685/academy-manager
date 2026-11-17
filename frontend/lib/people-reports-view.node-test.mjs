@@ -172,7 +172,7 @@ test("attendance risk tolerates a stub payload", () => {
   assert.equal(normalizeAttendanceRisk({}), null);
   assert.equal(normalizeAttendanceRisk(null), null);
   const view = normalizeAttendanceRisk({ by_class: [null, 3], by_coach: [] });
-  assert.deepEqual(view, { byClass: [], byCoach: [], students: 0, atRisk: 0 });
+  assert.deepEqual(view, { byClass: [], byCoach: [], students: 0, atRisk: 0, notBilled: 0 });
 });
 
 test("studentsText pluralises", () => {
