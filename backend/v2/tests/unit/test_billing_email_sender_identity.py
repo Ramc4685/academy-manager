@@ -154,51 +154,42 @@ async def test_an_academy_lookup_failure_never_costs_the_send() -> None:
     assert sender.calls[0]["reply_to"] is None
 
 
-# -- item 1: signed pay link on the dunning notice -----------------------------
+# -- item 1: the dunning button is a plain pay-page link, never a sign-in token ---
 
 
-async def test_dunning_button_uses_the_signed_link_when_wired() -> None:
-    seen: list[tuple[str, str]] = []
+@pytest.mark.parametrize("roles", [("parent",), ("parent", "admin", "coach")])
+async def test_dunning_link_carries_no_sign_in_token(roles: tuple[str, ...]) -> None:
+    """Security review (L11): a forwarded or leaked billing email must not
+    yield a session, least of all for a parent who is also staff. The button
+    is the bare pay page; nothing in the email can be redeemed for a login."""
+    import re
 
-    async def signed(parent_id: str, target: str) -> str | None:
-        seen.append((parent_id, target))
-        return "https://synthetic.example.test/auth/magic?t=tok"
+    from backend.v2.contexts.identity.domain.models import AcademyMembership
 
-    sender = _FakeSender()
-    with tenant_scope("acad"):
-        await _invoices(sender, signed_pay_link=signed).send_dunning_notice(**_DUNNING)
-    assert seen == [("parent-1", "https://synthetic.example.test/parent/payments?pay=inv-1")]
-    assert "https://synthetic.example.test/auth/magic?t=tok" in sender.calls[0]["body"]
-    assert "parent/payments?pay=inv-1" not in sender.calls[0]["body"]
-
-
-@pytest.mark.parametrize("failure", ["none", "raises"])
-async def test_dunning_button_falls_back_to_the_plain_link(failure: str) -> None:
-    async def signed(parent_id: str, target: str) -> str | None:
-        if failure == "raises":
-            raise RuntimeError("magic link store down")
-        return None
+    class _Memberships:
+        async def get_membership(self, academy_id: str, user_id: str) -> AcademyMembership:
+            return AcademyMembership(
+                membership_id="m",
+                academy_id=academy_id,
+                user_id=user_id,
+                roles=roles,
+                status="active",
+            )
 
     sender = _FakeSender()
+    adapter = InvoiceEmailAdapter(
+        memberships=_Memberships(),  # type: ignore[arg-type]
+        users=_FakeUsers(),  # type: ignore[arg-type]
+        academies=_Academies(),  # type: ignore[arg-type]
+        sender=sender,
+        pay_link=_pay_link,
+    )
     with tenant_scope("acad"):
-        await _invoices(sender, signed_pay_link=signed).send_dunning_notice(**_DUNNING)
-    assert "https://synthetic.example.test/parent/payments?pay=inv-1" in sender.calls[0]["body"]
-
-
-async def test_signed_pay_link_issues_a_magic_link_for_the_pay_page() -> None:
-    from backend.v2.composition.email_adapters import build_signed_pay_link
-
-    issued: list[dict[str, str]] = []
-
-    class _Issue:
-        async def execute(self, *, user_id: str, academy_id: str, next_path: str) -> str:
-            issued.append({"user_id": user_id, "academy_id": academy_id, "next_path": next_path})
-            return "a+b"
-
-    link = build_signed_pay_link(_Issue())
-    with tenant_scope("acad"):
-        url = await link("parent-1", "https://synthetic.example.test/parent/payments?pay=inv-1")
-    assert url == "https://synthetic.example.test/auth/magic?t=a%2Bb"
-    assert issued == [
-        {"user_id": "parent-1", "academy_id": "acad", "next_path": "/parent/payments?pay=inv-1"}
-    ]
+        await adapter.send_dunning_notice(**_DUNNING)
+    body = sender.calls[0]["body"]
+    hrefs = re.findall(r'href="([^"]+)"', body)
+    pay = [h for h in hrefs if "synthetic.example.test" in h]
+    assert pay == ["https://synthetic.example.test/parent/payments?pay=inv-1"]
+    assert "/auth/magic" not in body
+    assert "t=" not in pay[0]
+    assert not hasattr(adapter, "_signed_pay_link")

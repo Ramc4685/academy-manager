@@ -49,7 +49,7 @@ def test_settings_defaults_are_inert() -> None:
     assert fields["marketing_sender_email"].default is None
     assert fields["email_send_max_retries"].default == 0
     assert fields["email_list_unsubscribe_enabled"].default is False
-    assert fields["dunning_signed_pay_link_enabled"].default is False
+    assert "dunning_signed_pay_link_enabled" not in fields
 
 
 def _construct(**values: object) -> Settings:
@@ -89,14 +89,3 @@ async def test_healthz_reports_config_warnings_without_failing() -> None:
 
     report, _ = await build_health_report()
     assert "warnings" not in report
-
-
-def test_signed_dunning_link_is_wired_only_when_enabled() -> None:
-    from backend.v2.composition.email_adapters import compose_signed_pay_link
-
-    assert compose_signed_pay_link(object(), _settings()) is None
-    assert callable(
-        compose_signed_pay_link(
-            {"parent_magic_links": None}, _settings(dunning_signed_pay_link_enabled=True)
-        )
-    )

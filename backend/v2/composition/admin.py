@@ -53,7 +53,6 @@ from backend.v2.composition.email_adapters import (
     AddCardReminderEmailAdapter,
     InvoiceEmailAdapter,
     LoginInviteEmailAdapter,
-    compose_signed_pay_link,
 )
 from backend.v2.composition.event_handlers import (
     install_dispute_notifier,
@@ -1286,7 +1285,6 @@ def compose_admin(
             contact_copies=build_invoice_contact_copies(db, sender=_email_sender),
             pay_page_url=pay_page_url,
             pay_link=parent_payments_link(db),
-            signed_pay_link=compose_signed_pay_link(db, settings),
         )
 
     async def send_billing_invoice(invoice_id: str) -> dict[str, Any]:

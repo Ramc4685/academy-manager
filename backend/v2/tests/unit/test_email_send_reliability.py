@@ -65,14 +65,20 @@ def _port(script: _Script, **kwargs: Any) -> ResendEmailSendPort:
     )
 
 
-def _recipient() -> ResolvedRecipient:
-    return ResolvedRecipient(user_id="u1", email="family@example.com")
+def _recipient(email: str = "family@example.com") -> ResolvedRecipient:
+    return ResolvedRecipient(user_id="u1", email=email)
+
+
+def _who(email: str = "family@example.com") -> str:
+    import hashlib
+
+    return hashlib.sha256(email.encode()).hexdigest()[:16]
 
 
 # -- idempotency keys ---------------------------------------------------------
 
 
-async def test_sends_inside_a_scope_carry_ordered_idempotency_keys() -> None:
+async def test_sends_inside_a_scope_carry_per_recipient_keys() -> None:
     script = _Script()
     port = _port(script)
     with send_idempotency_scope("outbox:evt-1:handler"):
@@ -81,7 +87,22 @@ async def test_sends_inside_a_scope_carry_ordered_idempotency_keys() -> None:
     await port.send(recipient=_recipient(), subject="c", body="<p>c</p>")
 
     keys = [r.headers.get("Idempotency-Key") for r in script.requests]
-    assert keys == ["outbox:evt-1:handler:1", "outbox:evt-1:handler:2", None]
+    assert keys == [f"outbox:evt-1:handler:{_who()}:1", f"outbox:evt-1:handler:{_who()}:2", None]
+
+
+async def test_a_retry_in_a_different_order_keeps_each_familys_key() -> None:
+    """Otherwise a reordered audience could hand family B family A's key and
+    the provider would answer "already sent" for a mail B never got."""
+    script = _Script()
+    port = _port(script)
+    for order in (["a@example.com", "b@example.com"], ["b@example.com", "a@example.com"]):
+        with send_idempotency_scope("outbox:evt-5:h"):
+            for email in order:
+                await port.send(recipient=_recipient(email), subject="s", body="<p>s</p>")
+    keys = [r.headers["Idempotency-Key"] for r in script.requests]
+    assert keys[0] == keys[3] == f"outbox:evt-5:h:{_who('a@example.com')}:1"
+    assert keys[1] == keys[2] == f"outbox:evt-5:h:{_who('b@example.com')}:1"
+    assert "a@example.com" not in keys[0]
 
 
 async def test_a_replayed_scope_mints_the_same_keys() -> None:
@@ -93,8 +114,8 @@ async def test_a_replayed_scope_mints_the_same_keys() -> None:
         with send_idempotency_scope("outbox:evt-9:h"):
             await port.send(recipient=_recipient(), subject="a", body="<p>a</p>")
     assert [r.headers["Idempotency-Key"] for r in script.requests] == [
-        "outbox:evt-9:h:1",
-        "outbox:evt-9:h:1",
+        f"outbox:evt-9:h:{_who()}:1",
+        f"outbox:evt-9:h:{_who()}:1",
     ]
 
 
@@ -171,8 +192,8 @@ async def test_server_error_is_retried_only_with_an_idempotency_key() -> None:
         )
     assert outcome.ok is True
     assert [r.headers["Idempotency-Key"] for r in keyed.requests] == [
-        "outbox:evt-3:h:1",
-        "outbox:evt-3:h:1",
+        f"outbox:evt-3:h:{_who()}:1",
+        f"outbox:evt-3:h:{_who()}:1",
     ]
 
 

@@ -218,13 +218,6 @@ class Settings(BaseSettings):
             "postal address in its footer (L11). Needs unsubscribe_token_secret."
         ),
     )
-    dunning_signed_pay_link_enabled: bool = Field(
-        default=False,
-        description=(
-            "The autopay-failed email's button is a one-time sign-in link that lands on "
-            "the invoice's pay page (L11). Off => the plain pay-page link, as before."
-        ),
-    )
     ai_enabled: bool = Field(
         default=False,
         description=(

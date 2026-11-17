@@ -286,7 +286,7 @@ class ResendEmailSendPort(EmailSendPort):
         # ``GatedEmailSendPort``; here it only picks the marketing sender.
         if not recipient.email:
             return SendOutcome(ok=False, provider_message_id=None, failed_reason="no email address")
-        idempotency_key = next_send_idempotency_key()
+        idempotency_key = next_send_idempotency_key(recipient.email)
         from_address = (
             self._marketing_from_address
             if category == EmailCategory.CAMPAIGN and self._marketing_from_address

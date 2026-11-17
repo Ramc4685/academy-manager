@@ -20,7 +20,7 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import date, datetime
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 from pydantic import BaseModel
 
@@ -106,38 +106,6 @@ async def _identity(academies: Any) -> dict[str, str | None]:
     mail joined in L11). Never raises: a failed lookup sends with neither."""
     identity = await sender_identity_for_current_academy(academies)
     return {"sender_name": identity.sender_name, "reply_to": identity.reply_to}
-
-
-SignedPayLink = Callable[[str, str], Awaitable[str | None]]
-
-
-def build_signed_pay_link(issue_magic_link: Any) -> SignedPayLink:
-    """``(parent_id, pay_url) -> one-time sign-in URL`` that lands on ``pay_url``
-    (L11 item 1). Reuses the digest's magic link: single use, 72 hours, bound
-    to the current academy. Note a new link revokes the parent's previous
-    unused one (one live link per parent), so the latest email's link wins."""
-
-    async def link(parent_id: str, pay_url: str) -> str | None:
-        parts = urlsplit(pay_url)
-        next_path = parts.path + (f"?{parts.query}" if parts.query else "")
-        token = await issue_magic_link.execute(
-            user_id=parent_id, academy_id=current_academy_id(), next_path=next_path
-        )
-        return f"{parts.scheme}://{parts.netloc}/auth/magic?t={quote(token, safe='')}"
-
-    return link
-
-
-def compose_signed_pay_link(db: Any, settings: Any) -> SignedPayLink | None:
-    """The signed dunning link, when ``dunning_signed_pay_link_enabled``."""
-    if not getattr(settings, "dunning_signed_pay_link_enabled", False):
-        return None
-    from backend.v2.contexts.identity.application.use_cases.magic_link import IssueMagicLink
-    from backend.v2.contexts.identity.infrastructure.mongo_magic_link_repo import (
-        MongoMagicLinkRepository,
-    )
-
-    return build_signed_pay_link(IssueMagicLink(MongoMagicLinkRepository(db)))
 
 
 def due_phrase(days_past_due: int) -> str:
@@ -398,7 +366,6 @@ class InvoiceEmailAdapter:
         self_service_policies: Any | None = None,
         pay_page_url: str | None = None,
         pay_link: Callable[[str], Awaitable[tuple[str | None, str]]] | None = None,
-        signed_pay_link: SignedPayLink | None = None,
     ) -> None:
         self._memberships = memberships
         self._users = users
@@ -411,9 +378,6 @@ class InvoiceEmailAdapter:
         # Per-academy /parent/payments resolver for notices built outside a
         # request (the dunning worker and outbox handler): academy_id -> (url, name).
         self._pay_link = pay_link
-        # L11 item 1, behind DUNNING_SIGNED_PAY_LINK_ENABLED: wraps the dunning
-        # button in a one-time sign-in link. Unwired keeps the plain link.
-        self._signed_pay_link = signed_pay_link
         # Issue #659: resolves student / class / invoice number for one
         # invoice id. Unwired (or failing) degrades to month-only copy.
         self._naming = naming
@@ -683,12 +647,14 @@ class InvoiceEmailAdapter:
             )
             button_label = "Pay now or update your card"
         pay_url, _ = await self._pay_link(academy_id) if self._pay_link else (None, "")
-        pay_button = ""
-        if pay_url:
-            target = f"{pay_url}?pay={quote(invoice_id, safe='')}"
-            pay_button = _branded_button(
-                label=button_label, url=await self._signed(parent_id, target)
-            )
+        # A plain pay-page link, never a sign-in token: a forwarded or leaked
+        # billing email must not hand out a session (L11 security review). A
+        # signed-out parent is sent through /login?returnTo= and lands back here.
+        pay_button = (
+            _branded_button(label=button_label, url=f"{pay_url}?pay={quote(invoice_id, safe='')}")
+            if pay_url
+            else ""
+        )
         inner = f"<h2 style='{heading_style}'>{heading}</h2>{message}{pay_button}{number_html}"
         body = _branded_shell(
             academy_name=academy_name,
@@ -709,17 +675,6 @@ class InvoiceEmailAdapter:
             raise UndeliverableNotice(outcome.failed_reason or "dunning email suppressed")
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "dunning email delivery failed")
-
-    async def _signed(self, parent_id: str, target: str) -> str:
-        """``target`` wrapped in a one-time sign-in link, else ``target``. A
-        failed issue costs the email its shortcut, never its button."""
-        if self._signed_pay_link is None:
-            return target
-        try:
-            return await self._signed_pay_link(parent_id, target) or target
-        except Exception:
-            log.warning("dunning_signed_pay_link_failed", exc_info=True)
-            return target
 
     async def _parent_recipient(self, parent_id: str, *, what: str) -> ResolvedRecipient:
         academy_id = current_academy_id()
