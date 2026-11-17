@@ -40,6 +40,7 @@ def redact_secret_path(path: str) -> str:
             return prefix + "[redacted]"
     return path
 
+
 _request_log = logging.getLogger("backend.v2.http.request")
 
 # Inbound ids are client-controlled: only accept short, log/tag-safe values
