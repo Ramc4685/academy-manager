@@ -1,6 +1,6 @@
 # messaging-and-campaigns
 
-PR: TBD
+PR: #1203
 
 ## What changed
 Campaigns can now send from a resumable background job instead of inside the admin's request. With the setting on, a new campaign is saved with its recipient queue and the request returns straight away; a leased job claims one queued delivery at a time, sends it under a per-delivery idempotency key, and closes the campaign when the queue is empty. A crash or redeploy resumes where it stopped, and a stale claim is reclaimed after 10 minutes without mailing the family twice. Only the worker holding the current claim can record a result, and a delivery whose worker dies five times is marked failed (`send_gave_up`) so the campaign can still close. The campaign becomes visible to the job only after its whole queue is saved. The composer shows "Queued for N" for a queued campaign instead of a delivered count, including when a retried send lands while the queue drains. The daily ops digest flags any campaign still sending after 30 minutes (one whose request died before the hand-off, or a very large campaign still draining). `V2_MARKETING_SENDER_EMAIL` is now checked once when settings load. Campaigns created before the switch, or with it off, send inline exactly as today.
