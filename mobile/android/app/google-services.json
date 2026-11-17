@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "953230788846",
+    "project_id": "academy-courtmastr",
+    "storage_bucket": "academy-courtmastr.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:953230788846:android:0ec21fb75aea0f61860bff",
+        "android_client_info": {
+          "package_name": "com.courtmastr.academy"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "953230788846-gqljom7q2sqhfpmhcjan7c2t3go3pl0h.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD00TR0mzuD2AY27OEuC7TkwTvC24jaTVw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "953230788846-gqljom7q2sqhfpmhcjan7c2t3go3pl0h.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "953230788846-33dg4j2q64rqum7vmpt9va6fsupgfcbh.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.courtmastr.academy",
+                "app_store_id": "6830235532"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
