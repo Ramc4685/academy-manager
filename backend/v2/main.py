@@ -573,6 +573,13 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "checkin_margin": 30,
         "max_runtime": 30,
     },
+    # L11 item 7: the background campaign queue, every minute. Each delivery is
+    # claimed before it is sent, so an extra run never sends twice.
+    "process_campaign_queue": {
+        "schedule": {"type": "interval", "value": 1, "unit": "minute"},
+        "checkin_margin": 5,
+        "max_runtime": 10,
+    },
     # L9 C2: the referral sweep; a no-op while the programme is off, and every
     # write is exactly-once, so an extra run grants nothing twice.
     "process_referrals": {
@@ -2217,15 +2224,17 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         replace_existing=True,
         max_instances=1,
     )
-    if settings.campaign_background_send_enabled:
-        scheduler.add_job(
-            _process_campaign_queue,
-            "interval",
-            minutes=1,
-            id="process_campaign_queue",
-            replace_existing=True,
-            max_instances=1,
-        )
+    # Always registered: with the setting off nothing is queued, so a tick is
+    # one empty read per academy, and a campaign queued before a switch-off
+    # still drains instead of sitting in "sending".
+    scheduler.add_job(
+        _process_campaign_queue,
+        "interval",
+        minutes=1,
+        id="process_campaign_queue",
+        replace_existing=True,
+        max_instances=1,
+    )
     scheduler.add_job(
         _sweep_expired_waitlist_offers,
         "cron",

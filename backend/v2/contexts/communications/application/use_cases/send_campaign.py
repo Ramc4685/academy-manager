@@ -146,7 +146,7 @@ class _CampaignMail:
     unsubscribe_links: UnsubscribeLinkBuilder
     list_unsubscribe: bool
 
-    async def send(
+    async def deliver(
         self,
         *,
         academy_id: str,
@@ -303,7 +303,7 @@ class SendCampaign:
         sent_count = 0
         failed_count = 0
         for base, recipient in zip(queued, recipients, strict=True):
-            outcome = await mail.send(
+            outcome = await mail.deliver(
                 academy_id=command.academy_id,
                 subject=command.subject,
                 body=command.body,
@@ -395,7 +395,7 @@ class ProcessCampaignQueue:
                     break
                 attempted += 1
                 with send_idempotency_scope(f"campaign:{row.delivery_id}"):
-                    outcome = await mail.send(
+                    outcome = await mail.deliver(
                         academy_id=campaign.academy_id,
                         subject=campaign.subject,
                         body=campaign.body,
