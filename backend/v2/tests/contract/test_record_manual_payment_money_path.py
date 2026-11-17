@@ -352,6 +352,74 @@ async def test_retry_after_a_failure_with_the_same_key_and_another_amount_is_rej
     assert invoice["balance_due_cents"] == TOTAL - 3_000
 
 
+async def test_a_concurrent_submit_with_the_same_key_and_another_amount_is_a_422(
+    real_db, boot_academy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While the first submission still holds the claim, the same key with another
+    amount is a client error (422), not "in progress, retry" (409)."""
+    from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
+        MongoBillingLedgerRepository,
+    )
+
+    await _seed_invoice(real_db)
+    admin = _admin(real_db)
+    real_allocate = MongoBillingLedgerRepository.allocate_payment
+    inside, go_on = asyncio.Event(), asyncio.Event()
+
+    async def _allocate_slowly(self: Any, *args: Any, **kwargs: Any) -> Any:
+        inside.set()
+        await go_on.wait()
+        return await real_allocate(self, *args, **kwargs)
+
+    monkeypatch.setattr(MongoBillingLedgerRepository, "allocate_payment", _allocate_slowly)
+    with tenant_scope(ACAD):
+        first = asyncio.create_task(_pay(admin, key="k-held", amount=3_000))
+        await inside.wait()
+        with pytest.raises(ValueError, match="different payload"):
+            await _pay(admin, key="k-held", amount=4_000)
+        with pytest.raises(ValueError, match="in progress"):
+            await _pay(admin, key="k-held", amount=3_000)
+        go_on.set()
+        await first
+        payments, _, _ = await _ledger_state(real_db)
+    assert [p["amount_cents"] for p in payments] == [3_000]
+
+
+async def test_a_claim_left_before_the_shared_store_is_taken_over_and_keeps_its_payload(
+    real_db, boot_academy
+) -> None:
+    """A keyed claim written by the old code (no ``claimed_at``) must not block the key
+    forever: a retry takes it over, but only with the payload it was claimed for."""
+    from backend.v2.contexts.billing.application.manual_payment_idempotency import (
+        manual_payment_keys,
+    )
+
+    await _seed_invoice(real_db)
+    storage_key, _, fingerprint = manual_payment_keys(
+        academy_id=ACAD,
+        invoice_id="inv-money-1",
+        amount_cents=3_000,
+        payment_method="cash",
+        reference_number=None,
+        notes="",
+        idempotency_key="k-legacy",
+    )
+    await real_db["idempotency_keys"].insert_one(
+        {
+            "key": f"{storage_key}:claim",
+            "value": {"started_at": NOW.isoformat(), "fingerprint": fingerprint},
+            "created_at": NOW,
+        }
+    )
+    admin = _admin(real_db)
+    with tenant_scope(ACAD):
+        with pytest.raises(ValueError, match="different payload"):
+            await _pay(admin, key="k-legacy", amount=4_000)
+        result = await _pay(admin, key="k-legacy", amount=3_000)
+        payments, _, _ = await _ledger_state(real_db)
+    assert [p["payment_id"] for p in payments] == [result["payment_id"]]
+
+
 async def test_keyless_retry_after_a_crash_never_records_twice_even_when_stale(
     real_db, boot_academy
 ) -> None:

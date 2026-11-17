@@ -59,9 +59,16 @@ class MongoIdempotencyStore:
         except DuplicateKeyError:
             if not takeover:
                 return None
-            # Take over a stale claim atomically: only one retry can match it.
+            # Take over a stale claim atomically: only one retry can match it. A
+            # claim written by put() before claims existed has no claimed_at.
             taken = await self._collection.update_one(
-                {"key": key, "claimed_at": {"$lt": now - CLAIM_STALE_AFTER}},
+                {
+                    "key": key,
+                    "$or": [
+                        {"claimed_at": {"$lt": now - CLAIM_STALE_AFTER}},
+                        {"claimed_at": {"$exists": False}},
+                    ],
+                },
                 {"$set": {"claimed_at": now, "created_at": now}},
             )
             return now if taken.modified_count == 1 else None

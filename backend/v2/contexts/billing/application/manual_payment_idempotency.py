@@ -189,9 +189,17 @@ async def record_manual_payment_once(
         )
         if cached is not None:
             return cached
+        if keyed:
+            # A different payload under a held key is a client error (422), not
+            # "wait and retry" (409): retrying it would never succeed.
+            _reject_other_payload(await store.get(f"{storage_key}:fp") or {}, fingerprint)
+            _reject_other_payload(await store.get(claim_key) or {}, fingerprint)
         raise ValueError(_IN_PROGRESS if keyed else _POSSIBLE_DUPLICATE)
     try:
         if keyed:
+            # A claim written before the shared store carries its fingerprint in
+            # its value; a taken-over legacy claim keeps it.
+            _reject_other_payload(await store.get(claim_key) or {}, fingerprint)
             await _bind_key_to_payload(store, storage_key, fingerprint)
         result = await RecordManualPayment(ledger=ledger, clock=clock).execute(
             RecordManualPaymentCommand(
