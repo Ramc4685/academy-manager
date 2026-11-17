@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import type { AdminSessionOccurrenceView } from "@/lib/api/admin";
-import { creditOutcome, datesToCancel, groupMonthDates, monthCompleteFrom, plainDatesInMonth, scheduleAnnouncement } from "./month-dates";
+import {
+  creditOutcome,
+  datesToCancel,
+  familyOutcome,
+  groupMonthDates,
+  isMissable,
+  monthCompleteFrom,
+  plainDatesInMonth,
+  scheduleAnnouncement,
+} from "./month-dates";
 
 const TZ = "America/Chicago";
 const NOW = new Date("2026-11-17T12:00:00Z");
@@ -140,5 +149,24 @@ describe("creditOutcome", () => {
   it("survives a missing or odd skip map", () => {
     expect(creditOutcome(0, 0, undefined)).toBe("No credits: no family was charged for this date.");
     expect(creditOutcome(0, 0, "x")).toBe("No credits: no family was charged for this date.");
+  });
+});
+
+describe("isMissable", () => {
+  it("is a past date still marked as class", () => {
+    expect(isMissable(occ("a", "2026-11-10T23:00:00Z"), NOW)).toBe(true);
+    expect(isMissable(occ("b", "2026-11-20T23:00:00Z"), NOW)).toBe(false);
+    expect(isMissable(occ("c", "2026-11-10T23:00:00Z", { status: "cancelled" }), NOW)).toBe(false);
+  });
+});
+
+describe("familyOutcome", () => {
+  it("shows the amount, an existing credit, or why there is none", () => {
+    expect(familyOutcome(1750, "would_credit")).toBe("$17.50");
+    expect(familyOutcome(1750, "already_credited")).toBe("Already credited $17.50");
+    expect(familyOutcome(0, "skipped:covered_by_free_classes")).toBe(
+      "No credit: the month's free extra class covered it",
+    );
+    expect(familyOutcome(0, "skipped:no_invoice")).toBe("No credit: they were not charged for this date");
   });
 });

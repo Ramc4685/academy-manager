@@ -5,7 +5,8 @@
  * publishes the month so parents see it as final (portal calendar, phone
  * calendar feed, optional email). Unticking a date cancels it through the
  * same path as "cancel this date" on a class (#671): coach not paid, families
- * credited only when they fall below the classes they paid for.
+ * credited only when they fall below the classes they paid for. A past date
+ * found missed only afterwards can be credited too (#1207): preview, then confirm.
  */
 
 import { useState } from "react";
@@ -17,6 +18,7 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import {
   cancelSessionOccurrence,
+  creditMissedClass,
   getSchedulePublish,
   listAdminSessions,
   listSessionOccurrences,
@@ -27,8 +29,10 @@ import { postSessionAnnouncement } from "@/lib/api/v2/announcements";
 import {
   creditOutcome,
   datesToCancel,
+  familyOutcome,
   groupMonthDates,
   isEditable,
+  isMissable,
   monthCompleteFrom,
   plainDatesInMonth,
   scheduleAnnouncement,
@@ -41,6 +45,7 @@ import {
   monthLabel,
 } from "@/lib/format/academy-time";
 import { isMonthPublished } from "@/lib/parent/schedule-events";
+import { formatCents } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
 
 const PUBLISH_KEY = ["admin", "schedule", "publish"] as const;
@@ -64,6 +69,9 @@ export default function AdminMonthDatesPage() {
   const [suggestNote, setSuggestNote] = useState<string | null>(null);
   // #1207: what each called-off date credited, shown until the next action.
   const [credits, setCredits] = useState<{ id: string; label: string; outcome: string }[]>([]);
+  // #1207: the past date being credited as missed, and its preview.
+  const [missed, setMissed] = useState<{ id: string; sessionId: string; label: string } | null>(null);
+  const [missedReason, setMissedReason] = useState("");
 
   const sessions = useQuery({
     queryKey: queryKeys.admin.sessions("window-all"),
@@ -212,6 +220,32 @@ export default function AdminMonthDatesPage() {
       }
     },
   });
+
+  const missedPreview = useMutation({
+    mutationFn: (id: string) => creditMissedClass(id, { reason: missedReason.trim(), dry_run: true }),
+  });
+  const missedConfirm = useMutation({
+    mutationFn: (id: string) => creditMissedClass(id, { reason: missedReason.trim(), dry_run: false }),
+    onSuccess: async (result) => {
+      if (!missed) return;
+      await queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionOccurrences(missed.sessionId) });
+      const outcome = creditOutcome(result.credits_issued, result.credit_total_cents, result.credit_skips);
+      setCredits([
+        { id: missed.id, label: missed.label, outcome: result.payroll_flag ? `${outcome} ${result.payroll_flag}` : outcome },
+      ]);
+      setError(null);
+      setNotice(`Saved. ${missed.label} is now marked "No class".`);
+      closeMissed();
+    },
+  });
+  const previewFamilies = Array.isArray(missedPreview.data?.families) ? missedPreview.data.families : [];
+
+  function closeMissed() {
+    setMissed(null);
+    setMissedReason("");
+    missedPreview.reset();
+    missedConfirm.reset();
+  }
 
   const publishThrough = (() => {
     const current = publish.data?.published_through ?? null;
@@ -408,6 +442,7 @@ export default function AdminMonthDatesPage() {
                       const cancelled = o.status === "cancelled";
                       const canEdit = isEditable(o, now);
                       const off = cancelled || noClass.has(o.occurrence_id);
+                      const label = `${formatAcademyDate(o.start_at, timeZone)} · ${sessionTitle}`;
                       return (
                         <li key={o.occurrence_id} className="flex items-center justify-between gap-3 text-sm">
                           <label className={`flex items-center gap-2 ${canEdit ? "" : "text-rally-subtle"}`}>
@@ -422,12 +457,25 @@ export default function AdminMonthDatesPage() {
                               {sessionTitle} · {formatAcademyTimeRange(o.start_at, o.end_at, timeZone).split(" · ")[1]}
                             </span>
                           </label>
-                          <span
-                            className={`shrink-0 rounded px-2 py-0.5 text-xs font-semibold ${
-                              off ? "bg-status-red-50 text-status-red-800" : "bg-status-green-50 text-status-green-800"
-                            }`}
-                          >
-                            {cancelled ? `No class${o.cancellation_reason ? ` · ${o.cancellation_reason}` : ""}` : off ? "No class (unsaved)" : "Class"}
+                          <span className="flex shrink-0 items-center gap-2">
+                            {isMissable(o, now) && (
+                              <button
+                                type="button"
+                                className="min-h-touch text-xs font-semibold text-rally-cobalt-700 underline"
+                                onClick={() => setMissed({ id: o.occurrence_id, sessionId: o.session_id, label })}
+                                aria-label={`Credit ${label} as a missed class`}
+                                data-testid={`credit-missed-${o.occurrence_id}`}
+                              >
+                                Credit as missed
+                              </button>
+                            )}
+                            <span
+                              className={`rounded px-2 py-0.5 text-xs font-semibold ${
+                                off ? "bg-status-red-50 text-status-red-800" : "bg-status-green-50 text-status-green-800"
+                              }`}
+                            >
+                              {cancelled ? `No class${o.cancellation_reason ? ` · ${o.cancellation_reason}` : ""}` : off ? "No class (unsaved)" : "Class"}
+                            </span>
                           </span>
                         </li>
                       );
@@ -449,6 +497,9 @@ export default function AdminMonthDatesPage() {
             {toCancel.length ? `Call off ${toCancel.length} date(s)` : "No changes"}
           </Button>
         </div>
+        <p className="mt-3 text-xs text-rally-subtle">
+          Found out after the day that a class did not happen? Use &ldquo;Credit as missed&rdquo; on that past date.
+        </p>
       </Card>
 
       <Card p={16}>
@@ -506,6 +557,56 @@ export default function AdminMonthDatesPage() {
           }}
           onConfirm={() => save.mutate()}
         />
+      )}
+
+      {missed && (
+        <ConfirmActionDialog
+          open
+          onOpenChange={(open) => !open && closeMissed()}
+          overline="Credit a missed class"
+          title={`Credit ${missed.label} as missed?`}
+          consequence={
+            missedPreview.data
+              ? "Check who gets what. Confirming marks the date No class, credits these families on their next invoice, and does not pay the coach for it. No email goes out."
+              : "Preview who would be credited first. Nothing changes until you confirm."
+          }
+          confirmLabel={missedPreview.data ? "Credit and mark No class" : "Preview credits"}
+          pending={missedPreview.isPending || missedConfirm.isPending}
+          error={(missedPreview.error ?? missedConfirm.error)?.message ?? null}
+          reason={{
+            label: "Reason families see",
+            value: missedReason,
+            onChange: setMissedReason,
+            required: true,
+            placeholder: "Gym closed",
+          }}
+          onConfirm={() => (missedPreview.data ? missedConfirm.mutate(missed.id) : missedPreview.mutate(missed.id))}
+        >
+          {missedPreview.data && (
+            <div data-testid="credit-missed-families" className="rounded-md border border-rally-line px-3 py-2 text-sm">
+              {previewFamilies.length === 0 ? (
+                <p className="text-rally-muted">No family was enrolled and charged for this date, so nobody is credited.</p>
+              ) : (
+                <ul className="divide-y divide-rally-line">
+                  {previewFamilies.map((f) => (
+                    <li key={f.enrollment_id} className="flex justify-between gap-3 py-1">
+                      <span className="text-rally-ink">{f.student_name ?? "Student"}</span>
+                      <span className="text-right text-rally-muted">{familyOutcome(f.amount_cents, f.outcome)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-2 font-semibold text-rally-ink">
+                Total {formatCents(missedPreview.data.credit_total_cents)}
+              </p>
+              {missedPreview.data.payroll_flag && (
+                <p role="alert" className="mt-2 rounded bg-status-amber-50 px-2 py-1 text-status-amber-800">
+                  {missedPreview.data.payroll_flag}
+                </p>
+              )}
+            </div>
+          )}
+        </ConfirmActionDialog>
       )}
     </section>
   );

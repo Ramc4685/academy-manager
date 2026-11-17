@@ -182,3 +182,17 @@ export function creditOutcome(credited: number, totalCents: number, skips: unkno
   if (other) parts.push(`${families(other)} not credited: they were not charged for this date.`);
   return parts.length ? parts.join(" ") : "No credits: no family was charged for this date.";
 }
+
+/** A past date still marked as class: one an admin can credit as missed (#1207). */
+export function isMissable(o: AdminSessionOccurrenceView, now: Date): boolean {
+  return o.status === "scheduled" && new Date(o.start_at).getTime() <= now.getTime();
+}
+
+/** One family's line in the "credit a missed class" preview. */
+export function familyOutcome(amountCents: number, outcome: string): string {
+  if (outcome === "already_credited") return `Already credited ${formatCents(amountCents)}`;
+  if (outcome.startsWith("skipped:")) {
+    return `No credit: ${SKIP_TEXT[outcome.slice("skipped:".length)] ?? "they were not charged for this date"}`;
+  }
+  return formatCents(amountCents);
+}

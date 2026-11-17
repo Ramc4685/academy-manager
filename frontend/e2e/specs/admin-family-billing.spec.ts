@@ -432,6 +432,37 @@ test.describe("Family billing", () => {
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
 
+  test("credits list why, who, what is left and where each went (#1207)", async ({ page }) => {
+    const credit = (over: Record<string, unknown>) => ({
+      credit_id: "cr-1",
+      type: "CLASS_CANCELLATION_CREDIT",
+      status: "APPROVED",
+      amount_cents: 1750,
+      remaining_amount_cents: 1750,
+      reason: "Class cancelled on 2026-09-24: Gym closed",
+      created_at: "2026-09-25T15:00:00Z",
+      approved_by_name: "Owner Pat",
+      applied_invoices: [],
+      ...over,
+    });
+    const { errors } = await setup(page, {
+      owner: true,
+      view: {
+        ...FAMILY,
+        header: { ...FAMILY.header, available_credit_cents: 1750 },
+        credits: [
+          credit({}),
+          credit({ credit_id: "cr-2", remaining_amount_cents: 0, applied_invoices: ["INV-2026-09-002"] }),
+        ],
+      },
+    });
+    await expect(page.getByTestId("family-credit-balance")).toContainText("$17.50");
+    await expect(page.getByTestId("family-credit-cr-1")).toContainText("Gym closed");
+    await expect(page.getByTestId("family-credit-cr-1")).toContainText("Owner Pat");
+    await expect(page.getByTestId("family-credit-cr-2")).toContainText("INV-2026-09-002");
+    expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
   test("a sibling family is marked, and a month billed before the setting says what comes next", async ({
     page,
   }) => {
