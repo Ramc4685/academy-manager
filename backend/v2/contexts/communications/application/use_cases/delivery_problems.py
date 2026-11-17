@@ -26,10 +26,14 @@ from backend.v2.contexts.communications.application.ports import (
     SuppressionRepository,
 )
 from backend.v2.contexts.communications.domain.email_suppression import normalize_email
-from backend.v2.contexts.communications.domain.models import AcademyAudience, Delivery
+from backend.v2.contexts.communications.domain.models import (
+    AcademyAudience,
+    AudienceRole,
+    Delivery,
+)
 from backend.v2.shared.tenancy import current_academy_id
 
-_ROLES = ("parent", "coach", "admin", "owner")
+_ROLES: tuple[AudienceRole, ...] = ("parent", "coach", "admin", "owner")
 
 
 @dataclass(frozen=True, slots=True)
