@@ -61,7 +61,12 @@ class FakeRepo:
         return None
 
     async def find_overlapping(
-        self, *, coach_id: str, period_start: datetime, period_end: datetime
+        self,
+        *,
+        coach_id: str,
+        period_start: datetime,
+        period_end: datetime,
+        exclude_period_id: str | None = None,
     ) -> PayoutPeriod | None:
         return None
 
@@ -197,7 +202,7 @@ async def test_generate_writes_a_generated_audit_entry() -> None:
     entries = await audit.list_for_period(period.period_id)
     assert [entry.action for entry in entries] == ["generated"]
     assert entries[0].actor_id == "owner-1"
-    assert entries[0].after == {"total_minor": 5_000, "line_count": 1}
+    assert entries[0].after == {"total_minor": 5_000, "line_count": 1, "version": 0}
 
 
 @pytest.mark.asyncio
@@ -238,7 +243,7 @@ async def test_approve_writes_an_approved_audit_entry() -> None:
     entries = await audit.list_for_period("pp-1")
     assert [entry.action for entry in entries] == ["approved"]
     assert entries[0].before == {"status": "draft"}
-    assert entries[0].after == {"status": "approved", "total_minor": 5_000}
+    assert entries[0].after == {"status": "approved", "total_minor": 5_000, "version": 1}
 
     # Idempotent re-approve must not append a second entry.
     await use_case.execute(period_id="pp-1", actor_id="owner-1")
@@ -270,6 +275,7 @@ async def test_mark_paid_writes_a_marked_paid_audit_entry() -> None:
         "paid_method": "ach",
         "paid_reference": "ref-9",
         "status": "paid",
+        "version": 1,
     }
 
 

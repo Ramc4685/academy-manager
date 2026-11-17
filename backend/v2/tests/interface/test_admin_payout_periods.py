@@ -8,6 +8,9 @@ from io import BytesIO
 
 from openpyxl import load_workbook
 
+from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
+    OverlappingPayoutPeriodError,
+)
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     PayoutPeriodConflictError,
@@ -82,9 +85,13 @@ class _ApprovePayoutPeriod:
     def __init__(self, period: PayoutPeriod) -> None:
         self.period = period
         self.calls: list[str] = []
+        self.expected_versions: list[int | None] = []
 
-    async def execute(self, *, period_id: str, actor_id: str = "system") -> PayoutPeriod:
+    async def execute(
+        self, *, period_id: str, actor_id: str = "system", expected_version: int | None = None
+    ) -> PayoutPeriod:
         self.calls.append(period_id)
+        self.expected_versions.append(expected_version)
         if self.period.unpaid_occurrence_ids:
             raise PayoutPeriodStateError("unresolved unpaid occurrences remain")
         self.period = self.period.model_copy(
@@ -94,7 +101,7 @@ class _ApprovePayoutPeriod:
 
 
 class _ApprovePayoutPeriodRaises:
-    async def execute(self, *, period_id: str, actor_id: str = "system") -> PayoutPeriod:
+    async def execute(self, *, period_id: str, actor_id: str = "system", **_) -> PayoutPeriod:
         raise PayoutPeriodStateError("cannot approve payout period with unresolved payout warnings")
 
 
@@ -102,9 +109,13 @@ class _MarkPayoutPaid:
     def __init__(self, period: PayoutPeriod) -> None:
         self.period = period
         self.calls: list[object] = []
+        self.expected_versions: list[int | None] = []
 
-    async def execute(self, command, *, actor_id: str = "system") -> PayoutPeriod:
+    async def execute(
+        self, command, *, actor_id: str = "system", expected_version: int | None = None
+    ) -> PayoutPeriod:
         self.calls.append(command)
+        self.expected_versions.append(expected_version)
         if self.period.status == "paid":
             return self.period
         self.period = self.period.model_copy(
@@ -390,7 +401,7 @@ def test_payout_period_routes_wrong_persona_404(coach_on_admin_client):
 
 
 class _MarkPaidLosesRace:
-    async def execute(self, command, *, actor_id: str = "system") -> PayoutPeriod:
+    async def execute(self, command, *, actor_id: str = "system", **_) -> PayoutPeriod:
         raise PayoutPeriodConflictError("payout period 'pp-1' changed since it was loaded")
 
 
@@ -434,3 +445,83 @@ def test_period_export_labels_the_basis_column_per_period(admin_client):
 
     assert "Tuition basis" in header(_period(revenue_basis="invoiced"))
     assert "Expected revenue (legacy)" in header(_period(revenue_basis="expected"))
+
+
+def test_the_view_carries_the_version_and_writes_forward_the_one_the_screen_saw(admin_client):
+    _wire(admin_client, _period(version=3))
+
+    assert admin_client.get("/api/v2/admin/payout-periods/pp-1").json()["version"] == 3
+    approved = admin_client.post(
+        "/api/v2/admin/payout-periods/pp-1/approve", json={"expected_version": 3}
+    )
+    assert approved.status_code == 200, approved.text
+    paid = admin_client.post(
+        "/api/v2/admin/payout-periods/pp-1/mark-paid",
+        json={
+            "method": "check",
+            "paid_at": "2026-06-03T10:00:00Z",
+            "amount_cents": 7500,
+            "expected_version": 4,
+        },
+    )
+    assert paid.status_code == 200, paid.text
+    # No body (an older client): the write is still guarded load-to-write.
+    assert admin_client.post("/api/v2/admin/payout-periods/pp-1/approve").status_code == 200
+
+    assert admin_client.use_cases.approve_payout_period.expected_versions == [3, None]
+    assert admin_client.use_cases.mark_payout_paid.expected_versions == [4]
+
+
+class _RecordsVersion:
+    """Fake reopen/recompute/override: records the expected_version it was given."""
+
+    def __init__(self, period: PayoutPeriod) -> None:
+        self.period = period
+        self.expected_versions: list[int | None] = []
+
+    async def execute(self, *, expected_version: int | None = None, **_) -> PayoutPeriod:
+        self.expected_versions.append(expected_version)
+        return self.period
+
+
+def test_reopen_recompute_and_line_override_forward_the_version_the_screen_saw(admin_client):
+    period = _period(version=7)
+    _wire(admin_client, period)
+    uc = admin_client.use_cases
+    uc.reopen_payout_period = _RecordsVersion(period)
+    uc.recompute_payout_period = _RecordsVersion(period)
+    uc.override_payout_line = _RecordsVersion(period)
+    base = "/api/v2/admin/payout-periods/pp-1"
+
+    assert (
+        admin_client.post(
+            f"{base}/reopen", json={"reason": "fix", "expected_version": 7}
+        ).status_code
+        == 200
+    )
+    assert admin_client.post(f"{base}/recompute", json={"expected_version": 8}).status_code == 200
+    assert admin_client.post(f"{base}/recompute").status_code == 200
+    override = admin_client.patch(
+        f"{base}/lines/occ-pay-1",
+        json={"amount_cents": 100, "reason": "typo", "expected_version": 9},
+    )
+    assert override.status_code == 200, override.text
+
+    assert uc.reopen_payout_period.expected_versions == [7]
+    assert uc.recompute_payout_period.expected_versions == [8, None]
+    assert uc.override_payout_line.expected_versions == [9]
+
+
+class _ApproveOverlaps:
+    async def execute(self, **_) -> PayoutPeriod:
+        raise OverlappingPayoutPeriodError(_period(period_id="pp-2"))
+
+
+def test_approving_a_period_that_overlaps_another_is_a_409(admin_client):
+    _wire(admin_client, _period())
+    admin_client.use_cases.approve_payout_period = _ApproveOverlaps()
+
+    response = admin_client.post("/api/v2/admin/payout-periods/pp-1/approve")
+
+    assert response.status_code == 409, response.text
+    assert "Finance.PayoutPeriodOverlap" in response.text and "pp-2" in response.text

@@ -74,6 +74,8 @@ export interface AdminUnpaidOccurrenceView {
 
 export interface AdminPayoutPeriodView {
   period_id: string;
+  /** Bumped by every write; sent back as `expected_version` so a stale screen gets a 409. */
+  version: number;
   coach_id: string;
   period_start: string;
   period_end: string;
@@ -140,27 +142,44 @@ export async function getPayoutPeriod(periodId: string): Promise<AdminPayoutPeri
   );
 }
 
-export async function recomputePayoutPeriod(periodId: string): Promise<AdminPayoutPeriodView> {
+export const PAYOUT_CONFLICT_MESSAGE = "Someone else changed this payout — reload to see it.";
+
+/** The message a failed payout write shows; a lost race gets the reload prompt. */
+export function payoutErrorMessage(err: Error): string {
+  return (err as { code?: string }).code === "Finance.PayoutPeriodConflict"
+    ? PAYOUT_CONFLICT_MESSAGE
+    : err.message;
+}
+
+/** `expectedVersion` is the version on screen; a stale one is a 409. */
+export async function recomputePayoutPeriod(
+  periodId: string,
+  expectedVersion: number,
+): Promise<AdminPayoutPeriodView> {
   return apiFetch<AdminPayoutPeriodView>(
     `/admin/payout-periods/${encodeURIComponent(periodId)}/recompute`,
-    { method: "POST" },
+    { method: "POST", body: JSON.stringify({ expected_version: expectedVersion }) },
   );
 }
 
 export async function reopenPayoutPeriod(
   periodId: string,
   reason: string,
+  expectedVersion: number,
 ): Promise<AdminPayoutPeriodView> {
   return apiFetch<AdminPayoutPeriodView>(
     `/admin/payout-periods/${encodeURIComponent(periodId)}/reopen`,
-    { method: "POST", body: JSON.stringify({ reason }) },
+    { method: "POST", body: JSON.stringify({ reason, expected_version: expectedVersion }) },
   );
 }
 
-export async function approvePayoutPeriod(periodId: string): Promise<AdminPayoutPeriodView> {
+export async function approvePayoutPeriod(
+  periodId: string,
+  expectedVersion: number,
+): Promise<AdminPayoutPeriodView> {
   return apiFetch<AdminPayoutPeriodView>(
     `/admin/payout-periods/${encodeURIComponent(periodId)}/approve`,
-    { method: "POST" },
+    { method: "POST", body: JSON.stringify({ expected_version: expectedVersion }) },
   );
 }
 
@@ -168,7 +187,7 @@ export async function approvePayoutPeriod(periodId: string): Promise<AdminPayout
 export async function overridePayoutLine(
   periodId: string,
   occurrenceId: string,
-  input: { amount_cents: number | null; reason: string },
+  input: { amount_cents: number | null; reason: string; expected_version: number },
 ): Promise<AdminPayoutPeriodView> {
   return apiFetch<AdminPayoutPeriodView>(
     `/admin/payout-periods/${encodeURIComponent(periodId)}/lines/${encodeURIComponent(occurrenceId)}`,
@@ -195,6 +214,7 @@ export interface MarkPayoutPaidInput {
   paid_at: string;
   amount_cents: number;
   reference?: string | null;
+  expected_version: number;
 }
 
 export async function markPayoutPeriodPaid(
@@ -205,4 +225,21 @@ export async function markPayoutPeriodPaid(
     `/admin/payout-periods/${encodeURIComponent(periodId)}/mark-paid`,
     { method: "POST", body: JSON.stringify(input) },
   );
+}
+
+/** The mark-paid body from the dialog's fields and the version it opened on. */
+export function markPaidInput(fields: {
+  method: MarkPayoutPaidInput["method"];
+  paidAt: string;
+  amount: string;
+  reference: string;
+  versionAtOpen: number;
+}): MarkPayoutPaidInput {
+  return {
+    method: fields.method,
+    paid_at: new Date(fields.paidAt).toISOString(),
+    amount_cents: Math.round(parseFloat(fields.amount) * 100),
+    reference: fields.reference || null,
+    expected_version: fields.versionAtOpen,
+  };
 }

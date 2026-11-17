@@ -200,6 +200,20 @@ class PayoutPeriodConflictError(Exception):
     """
 
 
+def require_version(period: PayoutPeriod, expected: int | None) -> None:
+    """Refuse a write decided on a screen that showed an older version.
+
+    The repository's compare-and-set only covers load-to-write inside one
+    request; this covers the human who looked at a total before someone else
+    changed it. ``None`` means the caller did not send one (system callers).
+    """
+    if expected is not None and expected != period.version:
+        raise PayoutPeriodConflictError(
+            f"payout period {period.period_id!r} is at version {period.version}, "
+            f"not the version {expected} you were looking at; reload and try again"
+        )
+
+
 def blocking_warnings(warnings: list[PayoutWarning]) -> list[PayoutWarning]:
     """The warnings that stop approval and payment; ``warning`` severity only informs."""
     return [w for w in warnings if w.severity == "blocking"]

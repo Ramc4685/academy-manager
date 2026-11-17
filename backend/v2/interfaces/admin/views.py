@@ -1219,11 +1219,20 @@ class GeneratePayoutPeriodRequest(BaseModel):
     period_end: datetime
 
 
+class PayoutPeriodWriteRequest(BaseModel):
+    """Optional body of approve and recompute."""
+
+    expected_version: int | None = Field(default=None, ge=0)
+    """The period ``version`` the screen showed; a stale one is a 409."""
+
+
 class MarkPayoutPeriodPaidRequest(BaseModel):
     method: Literal["bank_transfer", "cash", "check", "other"]
     paid_at: datetime
     amount_cents: int = Field(ge=0)
     reference: str | None = None
+    expected_version: int | None = Field(default=None, ge=0)
+    """The period ``version`` the screen showed; a stale one is a 409."""
 
 
 class AdminPayoutPeriodLineView(BaseModel):
@@ -1297,6 +1306,8 @@ class AdminPayoutWarningView(BaseModel):
 
 class AdminPayoutPeriodView(BaseModel):
     period_id: str
+    version: int
+    """Bumped by every write; send it back as ``expected_version``."""
     coach_id: str
     period_start: datetime
     period_end: datetime
@@ -1359,12 +1370,16 @@ class ReopenPayoutPeriodRequest(BaseModel):
     """Required to reopen a period already marked paid (#787): the money is
     out, so reopening it means clawing the payment back or netting it off a
     later period. Ignored for an approved (unpaid) period."""
+    expected_version: int | None = Field(default=None, ge=0)
+    """The period ``version`` the screen showed; a stale one is a 409."""
 
 
 class OverridePayoutLineRequest(BaseModel):
     amount_cents: int | None = Field(default=None, ge=0)
     """New amount for the line; ``None`` clears an existing override."""
     reason: str = Field(min_length=1)
+    expected_version: int | None = Field(default=None, ge=0)
+    """The period ``version`` the screen showed; a stale one is a 409."""
 
 
 class PayoutAuditEntryView(BaseModel):
