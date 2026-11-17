@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
 from backend.v2.contexts.communications.application.whatsapp_groups_block import (
@@ -259,6 +260,10 @@ class CampaignRepository(Protocol):
         """Look up the campaign that holds the given idempotency claim."""
         ...
 
+    async def list_background_sending(self) -> list[Campaign]:
+        """SENDING campaigns queued for the background worker (L11 item 7)."""
+        ...
+
 
 class DeliveryRepository(Protocol):
     async def save_many(self, deliveries: list[Delivery]) -> None:
@@ -271,6 +276,14 @@ class DeliveryRepository(Protocol):
         ...
 
     async def list_for_campaign(self, campaign_id: str) -> list[Delivery]: ...
+
+    async def claim_next_queued(
+        self, campaign_id: str, *, now: datetime, stale_before: datetime
+    ) -> Delivery | None:
+        """Atomically claim one QUEUED delivery that is unclaimed, or whose claim
+        is older than ``stale_before`` (a worker died mid-send). Two workers can
+        never hold the same row (L11 item 7)."""
+        ...
 
 
 class DigestSendRepository(Protocol):

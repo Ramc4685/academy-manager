@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from backend.v2.contexts.communications.application.ports import DeliveryRepository
@@ -30,6 +31,23 @@ class MongoDeliveryRepository(TenantScopedRepository, DeliveryRepository):
     async def list_for_campaign(self, campaign_id: str) -> list[Delivery]:
         cursor = self._find_many({"campaign_id": campaign_id})
         return [self._from_doc(d) async for d in cursor]
+
+    async def claim_next_queued(
+        self, campaign_id: str, *, now: datetime, stale_before: datetime
+    ) -> Delivery | None:
+        doc = await self._find_one_and_update(
+            {
+                "campaign_id": campaign_id,
+                "status": str(DeliveryStatus.QUEUED),
+                "$or": [
+                    {"claimed_at": {"$exists": False}},
+                    {"claimed_at": None},
+                    {"claimed_at": {"$lt": stale_before}},
+                ],
+            },
+            {"$set": {"claimed_at": now}},
+        )
+        return self._from_doc(doc) if doc else None
 
     @staticmethod
     def _to_doc(d: Delivery) -> dict[str, Any]:

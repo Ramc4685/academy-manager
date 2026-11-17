@@ -43,6 +43,7 @@ from backend.v2.composition.digests import (
     compose_ingest_email_provider_event,
     compose_list_email_suppressions,
     compose_ops_digest_sender,
+    compose_process_campaign_queue,
     compose_release_email_suppression,
     compose_send_coach_daily_digest,
     compose_send_parent_daily_digest,
@@ -1301,6 +1302,27 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if totals["expired"]:
             log.info("waitlist_offers_swept", extra=totals)
 
+    async def _process_campaign_queue() -> None:
+        await _run_leased_job(
+            "process_campaign_queue", timedelta(minutes=5), _process_campaign_queue_body
+        )
+
+    async def _process_campaign_queue_body() -> None:
+        # L11 item 7: background campaigns. Each delivery is claimed before it
+        # is sent, so a crash here resumes on the next tick without a resend.
+        worker = compose_process_campaign_queue(db, settings)
+        attempted = 0
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db), scheduler_fallback_academy_id
+        ):
+            try:
+                with tenant_scope(academy_id):
+                    attempted += await worker.execute()
+            except Exception:
+                log.exception("campaign_queue_failed", extra={"academy_id": academy_id})
+        if attempted:
+            log.info("campaign_queue_processed", extra={"attempted": attempted})
+
     async def _execute_account_deletions() -> None:
         await _run_leased_job(
             "execute_account_deletions",
@@ -2192,6 +2214,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         replace_existing=True,
         max_instances=1,
     )
+    if settings.campaign_background_send_enabled:
+        scheduler.add_job(
+            _process_campaign_queue,
+            "interval",
+            minutes=1,
+            id="process_campaign_queue",
+            replace_existing=True,
+            max_instances=1,
+        )
     scheduler.add_job(
         _sweep_expired_waitlist_offers,
         "cron",

@@ -313,6 +313,7 @@ deploy performs lives in `scripts/ops/`:
 | Fly env | `V2_EMAIL_SEND_MAX_RETRIES` | Optional, default 0. Retries after a Resend 429 or a keyed 5xx. |
 | Fly env | `V2_MARKETING_SENDER_EMAIL` | Optional. From address for campaigns (verified domain). |
 | Fly env | `V2_EMAIL_LIST_UNSUBSCRIBE_ENABLED` | Optional, default false. One-click `List-Unsubscribe` and postal address on campaigns. |
+| Fly env | `V2_CAMPAIGN_BACKGROUND_SEND_ENABLED` | Optional, default false. Campaigns queue and send from a resumable 1-minute background job. |
 | Fly env (optional) | `V2_SENTRY_CRON_JOBS` | Comma-separated scheduler job ids that send Sentry Crons check-ins. Default `generate_monthly_invoices`. |
 | GitHub repo secret | `SENTRY_AUTH_TOKEN` | Lets the deploy workflow create the Sentry release `courtmastr-fastapi@<sha>` (org `blno-badmintion`). Token scopes: `project:releases`, `org:read`. Missing token skips the step; events then fall back to `FLY_IMAGE_REF` as the release. |
 | GitHub repo variable | `NEXT_PUBLIC_SENTRY_DSN` | Browser-side Sentry DSN for the Next.js app; the `deploy-frontend` job forwards it (with `NEXT_PUBLIC_APP_ENV=production` and `NEXT_PUBLIC_SENTRY_RELEASE=courtmastr-frontend@<sha>`) into the Worker build, where it is baked in. Unset (current) means the frontend only logs to the console; the deploy step prints a `::notice::` saying which state it built. Use a separate Sentry project or the same DSN with `environment` set; either way do not reuse it server-side. |

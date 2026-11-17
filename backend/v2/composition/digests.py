@@ -56,6 +56,7 @@ from backend.v2.contexts.communications.application.use_cases.list_email_suppres
     ReleaseEmailSuppression,
 )
 from backend.v2.contexts.communications.application.use_cases.send_campaign import (
+    ProcessCampaignQueue,
     SendCampaign,
 )
 from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
@@ -1244,6 +1245,23 @@ def compose_send_campaign(
         deliveries=MongoDeliveryRepository(db),
         resolver=MongoAudienceResolver(db=db),
         sender=sender,
+        unsubscribe_links=compose_unsubscribe_link_builder(settings),
+        academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
+        brands=_AcademyBrandLookup(MongoAcademyRepository(db)),
+        list_unsubscribe=bool(getattr(settings, "email_list_unsubscribe_enabled", False)),
+        background=bool(getattr(settings, "campaign_background_send_enabled", False)),
+    )
+
+
+def compose_process_campaign_queue(
+    db: AsyncIOMotorDatabase[Any], settings: Any
+) -> ProcessCampaignQueue:
+    """The background campaign worker (L11 item 7): same gated sender, footer,
+    brand and one-click settings as ``compose_send_campaign``."""
+    return ProcessCampaignQueue(
+        campaigns=MongoCampaignRepository(db),
+        deliveries=MongoDeliveryRepository(db),
+        sender=_build_email_sender(settings, db),
         unsubscribe_links=compose_unsubscribe_link_builder(settings),
         academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
         brands=_AcademyBrandLookup(MongoAcademyRepository(db)),

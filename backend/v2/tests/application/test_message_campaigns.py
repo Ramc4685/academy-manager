@@ -17,7 +17,7 @@ Stream L):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -178,10 +178,14 @@ class InMemoryCampaignRepository(CampaignRepository):
                 return c
         return None
 
+    async def list_background_sending(self) -> list[Campaign]:
+        return [c for c in self.saved if c.status == CampaignStatus.SENDING and c.background]
+
 
 @dataclass
 class InMemoryDeliveryRepository(DeliveryRepository):
     saved: list[Delivery] = field(default_factory=list)
+    claimed: dict[str, datetime] = field(default_factory=dict)
 
     async def save_many(self, deliveries: list[Delivery]) -> None:
         # mimic upsert keyed by delivery_id
@@ -191,6 +195,19 @@ class InMemoryDeliveryRepository(DeliveryRepository):
 
     async def list_for_campaign(self, campaign_id: str) -> list[Delivery]:
         return [d for d in self.saved if d.campaign_id == campaign_id]
+
+    async def claim_next_queued(
+        self, campaign_id: str, *, now: datetime, stale_before: datetime
+    ) -> Delivery | None:
+        # mimic the conditional find_one_and_update on (status, claimed_at)
+        for d in self.saved:
+            if d.campaign_id != campaign_id or d.status != DeliveryStatus.QUEUED:
+                continue
+            at = self.claimed.get(d.delivery_id)
+            if at is None or at < stale_before:
+                self.claimed[d.delivery_id] = now
+                return d
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -905,3 +922,107 @@ async def test_postal_address_is_escaped_in_the_footer() -> None:
     use_case, sender = _compliance_use_case(list_unsubscribe=True, address="<b>1 Court</b>")
     await use_case.execute(_parent_command())
     assert "&lt;b&gt;1 Court&lt;/b&gt;" in sender.sent[0]["body"]
+
+
+# -- L11 item 7: resumable background campaign send ----------------------------
+
+
+def _background(sender: Any = None, recipients: int = 3):
+    from backend.v2.contexts.communications.application.use_cases.send_campaign import (
+        ProcessCampaignQueue,
+    )
+
+    resolver = FakeAudienceResolver(by_academy=[_recipient(f"p{i}") for i in range(recipients)])
+    use_case, _, sender, campaigns, deliveries = _build_use_case(resolver=resolver, sender=sender)
+    use_case.background = True
+    clock = {"now": datetime(2026, 5, 21, 12, 0, tzinfo=UTC)}
+    worker = ProcessCampaignQueue(
+        campaigns=campaigns,
+        deliveries=deliveries,
+        sender=sender,
+        now=lambda: clock["now"],
+    )
+    return use_case, worker, sender, campaigns, deliveries, clock
+
+
+@pytest.mark.asyncio
+async def test_background_campaign_queues_without_sending() -> None:
+    use_case, _, sender, campaigns, deliveries, _ = _background()
+    result = await use_case.execute(_parent_command())
+    assert result.queued is True
+    assert (result.total_recipients, result.sent_count) == (3, 0)
+    assert sender.sent == []
+    assert campaigns.saved[0].status == CampaignStatus.SENDING
+    assert campaigns.saved[0].background is True
+    assert {d.status for d in deliveries.saved} == {DeliveryStatus.QUEUED}
+
+
+@pytest.mark.asyncio
+async def test_worker_sends_each_person_once_and_closes_the_campaign() -> None:
+    use_case, worker, sender, campaigns, deliveries, _ = _background()
+    await use_case.execute(_parent_command())
+    await worker.execute()
+    await worker.execute()  # a second tick finds nothing to do
+    assert sorted(r["user_id"] for r in sender.sent) == ["p0", "p1", "p2"]
+    assert all("Unsubscribe" in r["body"] or "email preferences" in r["body"] for r in sender.sent)
+    assert {d.status for d in deliveries.saved} == {DeliveryStatus.SENT}
+    assert campaigns.saved[0].status == CampaignStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_a_crashed_tick_resumes_without_double_sending() -> None:
+    from backend.v2.shared.comms.send_idempotency import current_send_idempotency_scope
+
+    @dataclass
+    class _CrashOnce(StubEmailSendPort):
+        crashed: bool = False
+        scopes: list[str | None] = field(default_factory=list)
+
+        async def send(self, **kwargs: Any) -> SendOutcome:
+            self.scopes.append(current_send_idempotency_scope())
+            if len(self.sent) == 1 and not self.crashed:
+                self.crashed = True
+                raise RuntimeError("process died mid-send")
+            return await super().send(**kwargs)
+
+    sender = _CrashOnce()
+    use_case, worker, _, campaigns, deliveries, clock = _background(sender=sender)
+    await use_case.execute(_parent_command())
+    with pytest.raises(RuntimeError):
+        await worker.execute()
+    assert [r["user_id"] for r in sender.sent] == ["p0"]
+
+    await worker.execute()  # the crashed row is still claimed: skipped, not resent
+    assert sorted(r["user_id"] for r in sender.sent) == ["p0", "p2"]
+    assert campaigns.saved[0].status == CampaignStatus.SENDING
+
+    clock["now"] = clock["now"] + timedelta(minutes=30)  # claim goes stale
+    await worker.execute()
+    assert sorted(r["user_id"] for r in sender.sent) == ["p0", "p1", "p2"]
+    assert campaigns.saved[0].status == CampaignStatus.SENT
+    # the re-attempt reuses the crashed attempt's provider idempotency scope
+    p1_delivery = next(d for d in deliveries.saved if d.recipient_user_id == "p1")
+    assert sender.scopes.count(f"campaign:{p1_delivery.delivery_id}") == 2
+
+
+@pytest.mark.asyncio
+async def test_worker_ignores_inline_campaigns() -> None:
+    """An inline send records its delivery states only after its loop, so a
+    crashed inline campaign must never be resumed: its QUEUED rows may
+    already have been mailed."""
+    use_case, worker, sender, campaigns, deliveries, _ = _background()
+    use_case.background = False
+    await use_case.execute(_parent_command())
+    sender.sent.clear()
+    campaigns.saved = [c.mark_sending() for c in campaigns.saved]
+    deliveries.saved = [
+        Delivery.queued(
+            delivery_id=d.delivery_id,
+            academy_id=d.academy_id,
+            campaign_id=d.campaign_id,
+            recipient=_recipient(d.recipient_user_id),
+        )
+        for d in deliveries.saved
+    ]
+    await worker.execute()
+    assert sender.sent == []

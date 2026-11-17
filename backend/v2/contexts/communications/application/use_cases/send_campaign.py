@@ -24,7 +24,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from backend.v2.contexts.communications.application.ports import (
     AcademyBrandLookup,
@@ -34,6 +34,7 @@ from backend.v2.contexts.communications.application.ports import (
     DeliveryRepository,
     EmailSendPort,
     ResolvedRecipient,
+    SendOutcome,
 )
 from backend.v2.contexts.communications.application.unsubscribe_footer import (
     append_unsubscribe_footer,
@@ -60,6 +61,7 @@ from backend.v2.contexts.communications.domain.models import (
     audience_descriptor,
 )
 from backend.v2.shared.comms.email_theme import EmailBrand
+from backend.v2.shared.comms.send_idempotency import send_idempotency_scope
 from backend.v2.shared.ids import new_ulid
 
 
@@ -80,6 +82,8 @@ class SendCampaignResult:
     sent_count: int
     failed_count: int
     deduplicated: bool = False
+    #: Handed to ``ProcessCampaignQueue``; the counts fill in as it sends.
+    queued: bool = False
 
 
 def derive_idempotency_key(command: SendCampaignCommand) -> str:
@@ -133,6 +137,71 @@ def _dedupe_recipients(recipients: list[ResolvedRecipient]) -> list[ResolvedReci
 
 
 @dataclass
+class _CampaignMail:
+    """One recipient's copy: footer, one-click header, brand. Shared by the
+    inline loop and the background worker so both send the same email."""
+
+    sender: EmailSendPort
+    unsubscribe_links: UnsubscribeLinkBuilder
+    list_unsubscribe: bool
+
+    async def send(
+        self,
+        *,
+        academy_id: str,
+        subject: str,
+        body: str,
+        recipient: ResolvedRecipient,
+        academy_slug: str | None,
+        brand: EmailBrand | None,
+    ) -> SendOutcome:
+        postal_address = brand.postal_address if brand and self.list_unsubscribe else None
+        footer_url = self.unsubscribe_links.build(
+            academy_id=academy_id, user_id=recipient.user_id, academy_slug=academy_slug
+        )
+        one_click = (
+            self.unsubscribe_links.build(
+                academy_id=academy_id,
+                user_id=recipient.user_id,
+                academy_slug=academy_slug,
+                path=ONE_CLICK_UNSUBSCRIBE_PATH,
+            )
+            if self.list_unsubscribe
+            else None
+        )
+        return await self.sender.send(
+            recipient=recipient,
+            subject=subject,
+            body=append_unsubscribe_footer(body, footer_url, postal_address),
+            category=EmailCategory.CAMPAIGN,
+            reply_to=brand.reply_to if brand else None,
+            sender_name=brand.sender_name if brand else None,
+            # Only when set, like GatedEmailSendPort: older ports lack it.
+            **({"unsubscribe_url": one_click} if one_click else {}),
+        )
+
+
+async def _lookup_slug(lookup: AcademySlugLookup | None, academy_id: str) -> str | None:
+    """Resolved once per run, never per recipient. A lookup failure degrades
+    the footer to the generic host rather than losing the whole send."""
+    if lookup is None:
+        return None
+    try:
+        return await lookup.slug_for(academy_id)
+    except Exception:
+        return None
+
+
+async def _lookup_brand(lookup: AcademyBrandLookup | None, academy_id: str) -> EmailBrand | None:
+    if lookup is None:
+        return None
+    try:
+        return await lookup.brand_for(academy_id)
+    except Exception:
+        return None
+
+
+@dataclass
 class SendCampaign:
     campaigns: CampaignRepository
     deliveries: DeliveryRepository
@@ -155,26 +224,11 @@ class SendCampaign:
     # List-Unsubscribe headers and the academy's postal address in the footer.
     # Off keeps every campaign byte-for-byte as before.
     list_unsubscribe: bool = False
+    # L11 item 7 (CAMPAIGN_BACKGROUND_SEND_ENABLED): persist the queue and
+    # return; ``ProcessCampaignQueue`` sends it. Off keeps the inline loop.
+    background: bool = False
     now: Callable[[], datetime] = field(default=_utcnow)
     new_id: Callable[[], str] = field(default=new_ulid)
-
-    async def _academy_slug(self, academy_id: str) -> str | None:
-        """Resolved once per run, never per recipient. A lookup failure degrades
-        the footer to the generic host rather than losing the whole send."""
-        if self.academy_slugs is None:
-            return None
-        try:
-            return await self.academy_slugs.slug_for(academy_id)
-        except Exception:
-            return None
-
-    async def _brand(self, academy_id: str) -> EmailBrand | None:
-        if self.brands is None:
-            return None
-        try:
-            return await self.brands.brand_for(academy_id)
-        except Exception:
-            return None
 
     async def execute(self, command: SendCampaignCommand) -> SendCampaignResult:
         recipients = _dedupe_recipients(await self._resolve(command.audience))
@@ -195,6 +249,7 @@ class SendCampaign:
             body=command.body,
             created_at=created_at,
             idempotency_key=idempotency_key,
+            background=self.background,
         ).mark_sending()
 
         claimed = await self.campaigns.try_claim(campaign)
@@ -230,41 +285,29 @@ class SendCampaign:
         ]
         await self.deliveries.save_many(queued)
 
-        academy_slug = await self._academy_slug(command.academy_id)
-        brand = await self._brand(command.academy_id)
+        if self.background:
+            return SendCampaignResult(
+                campaign_id=campaign.campaign_id,
+                total_recipients=len(recipients),
+                sent_count=0,
+                failed_count=0,
+                queued=True,
+            )
+
+        academy_slug = await _lookup_slug(self.academy_slugs, command.academy_id)
+        brand = await _lookup_brand(self.brands, command.academy_id)
+        mail = _CampaignMail(self.sender, self.unsubscribe_links, self.list_unsubscribe)
         deliveries: list[Delivery] = []
         sent_count = 0
         failed_count = 0
-        postal_address = brand.postal_address if brand and self.list_unsubscribe else None
         for base, recipient in zip(queued, recipients, strict=True):
-            body = append_unsubscribe_footer(
-                command.body,
-                self.unsubscribe_links.build(
-                    academy_id=command.academy_id,
-                    user_id=recipient.user_id,
-                    academy_slug=academy_slug,
-                ),
-                postal_address,
-            )
-            one_click = (
-                self.unsubscribe_links.build(
-                    academy_id=command.academy_id,
-                    user_id=recipient.user_id,
-                    academy_slug=academy_slug,
-                    path=ONE_CLICK_UNSUBSCRIBE_PATH,
-                )
-                if self.list_unsubscribe
-                else None
-            )
-            outcome = await self.sender.send(
-                recipient=recipient,
+            outcome = await mail.send(
+                academy_id=command.academy_id,
                 subject=command.subject,
-                body=body,
-                category=EmailCategory.CAMPAIGN,
-                reply_to=brand.reply_to if brand else None,
-                sender_name=brand.sender_name if brand else None,
-                # Only when set, like GatedEmailSendPort: older ports lack it.
-                **({"unsubscribe_url": one_click} if one_click else {}),
+                body=command.body,
+                recipient=recipient,
+                academy_slug=academy_slug,
+                brand=brand,
             )
             if outcome.ok:
                 deliveries.append(
@@ -305,3 +348,70 @@ class SendCampaign:
         if isinstance(audience, PaymentRiskAudience):
             return await self.resolver.resolve_payment_risk_audience(audience)
         raise TypeError(f"Unhandled audience type: {audience!r}")
+
+
+#: A claim this old belongs to a worker that died mid-send. The retry reuses the
+#: delivery's idempotency scope, so the provider drops a copy that did go out
+#: (Resend keeps keys 24 hours, far longer than this).
+CLAIM_STALE_AFTER = timedelta(minutes=10)
+
+
+@dataclass
+class ProcessCampaignQueue:
+    """Sends background campaigns for the current academy (L11 item 7).
+
+    Resumable and never double-sends to a person: each delivery is claimed
+    atomically before its send, its final state is written right after, and
+    the send runs in the idempotency scope ``campaign:<delivery_id>``. A crash
+    leaves at most one claimed row per worker, retried once the claim is stale
+    under the same provider key. The campaign is marked SENT when no QUEUED row
+    remains.
+    """
+
+    campaigns: CampaignRepository
+    deliveries: DeliveryRepository
+    sender: EmailSendPort
+    unsubscribe_links: UnsubscribeLinkBuilder = field(default_factory=UnsubscribeLinkBuilder)
+    academy_slugs: AcademySlugLookup | None = None
+    brands: AcademyBrandLookup | None = None
+    list_unsubscribe: bool = False
+    now: Callable[[], datetime] = field(default=_utcnow)
+
+    async def execute(self) -> int:
+        """Returns the number of deliveries attempted this tick."""
+        attempted = 0
+        mail = _CampaignMail(self.sender, self.unsubscribe_links, self.list_unsubscribe)
+        for campaign in await self.campaigns.list_background_sending():
+            slug = await _lookup_slug(self.academy_slugs, campaign.academy_id)
+            brand = await _lookup_brand(self.brands, campaign.academy_id)
+            while True:
+                now = self.now()
+                row = await self.deliveries.claim_next_queued(
+                    campaign.campaign_id, now=now, stale_before=now - CLAIM_STALE_AFTER
+                )
+                if row is None:
+                    break
+                attempted += 1
+                with send_idempotency_scope(f"campaign:{row.delivery_id}"):
+                    outcome = await mail.send(
+                        academy_id=campaign.academy_id,
+                        subject=campaign.subject,
+                        body=campaign.body,
+                        recipient=ResolvedRecipient(
+                            user_id=row.recipient_user_id, email=row.recipient_email
+                        ),
+                        academy_slug=slug,
+                        brand=brand,
+                    )
+                done = (
+                    row.mark_sent(
+                        provider_message_id=outcome.provider_message_id, sent_at=self.now()
+                    )
+                    if outcome.ok
+                    else row.mark_failed(reason=outcome.failed_reason or "unknown")
+                )
+                await self.deliveries.save_many([done])
+            rows = await self.deliveries.list_for_campaign(campaign.campaign_id)
+            if not any(r.status == DeliveryStatus.QUEUED for r in rows):
+                await self.campaigns.save(campaign.mark_sent(sent_at=self.now()))
+        return attempted

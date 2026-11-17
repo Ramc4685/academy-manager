@@ -211,6 +211,13 @@ class Settings(BaseSettings):
             "an idempotency key (L11). 0 => one attempt, as before."
         ),
     )
+    campaign_background_send_enabled: bool = Field(
+        default=False,
+        description=(
+            "Campaigns are queued by the request and sent by a once-a-minute resumable "
+            "job (L11). Off => campaigns send inside the HTTP request, as before."
+        ),
+    )
     email_list_unsubscribe_enabled: bool = Field(
         default=False,
         description=(
