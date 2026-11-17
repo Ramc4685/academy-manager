@@ -1,6 +1,6 @@
 # class-credits-visibility
 
-PR: TBD
+PR: #1210
 
 ## What changed
 Owners can now see the credits families get when a class date is called off (#1207). After "Call off dates" on Sessions → Month dates, a "Credits for the dates you called off" card lists each date with how many families were credited and the total. It also says plainly when a family got nothing, for example "the month's free extra class covered it" or "not invoiced yet". The cancel response gained `credit_total_cents` and `credit_skips` for this; no new endpoint.
