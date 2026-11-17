@@ -15884,6 +15884,97 @@
         "title": "CreateTrialRequestRequest",
         "type": "object"
       },
+      "CreditMissedClassRequest": {
+        "description": "Credit a missed class (#1207): record a PAST date as no class.",
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "CreditMissedClassRequest",
+        "type": "object"
+      },
+      "CreditMissedClassResponse": {
+        "properties": {
+          "billing_result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Billing Result"
+          },
+          "credit_skips": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Credit Skips",
+            "type": "object"
+          },
+          "credit_total_cents": {
+            "default": 0,
+            "title": "Credit Total Cents",
+            "type": "integer"
+          },
+          "credits_issued": {
+            "default": 0,
+            "title": "Credits Issued",
+            "type": "integer"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "families": {
+            "items": {
+              "$ref": "#/components/schemas/MissedClassFamilyView"
+            },
+            "title": "Families",
+            "type": "array"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "payroll_flag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payroll Flag"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "start_at",
+          "dry_run"
+        ],
+        "title": "CreditMissedClassResponse",
+        "type": "object"
+      },
       "DMRequest": {
         "properties": {
           "body": {
@@ -22265,6 +22356,51 @@
           "since"
         ],
         "title": "MilestoneView",
+        "type": "object"
+      },
+      "MissedClassFamilyView": {
+        "properties": {
+          "amount_cents": {
+            "default": 0,
+            "title": "Amount Cents",
+            "type": "integer"
+          },
+          "enrollment_id": {
+            "title": "Enrollment Id",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "student_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Id"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "outcome"
+        ],
+        "title": "MissedClassFamilyView",
         "type": "object"
       },
       "ModifyUserRoleRequest": {
@@ -47755,6 +47891,59 @@
           }
         },
         "summary": "Mark coach payroll attendance for a dated occurrence",
+        "tags": [
+          "admin.sessions"
+        ]
+      }
+    },
+    "/api/v2/admin/session-occurrences/{occurrence_id}/credit-missed": {
+      "post": {
+        "description": "Same path and rule as calling the date off before class: ``dry_run``\nprices every family, the confirm cancels the date and credits them. No\nemail goes out; families see the credit on Payments.",
+        "operationId": "credit_missed_class_api_v2_admin_session_occurrences__occurrence_id__credit_missed_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreditMissedClassRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditMissedClassResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Credit a missed class: record a past date as no class (#1207)",
         "tags": [
           "admin.sessions"
         ]

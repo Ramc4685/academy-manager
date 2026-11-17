@@ -38,6 +38,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_occurrence_cancellation im
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     MongoClassFeeResolver,
 )
+from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
+    MongoAttendanceRepository,
+)
 from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
     CancelSessionOccurrence,
 )
@@ -85,6 +88,44 @@ class OccurrenceBillingSyncAdapter:
         reason: str,
         actor_id: str | None,
     ) -> dict[str, Any]:
+        return await self._run(
+            occurrence_id=occurrence_id,
+            session_id=session_id,
+            start_at=start_at,
+            reason=reason,
+            actor_id=actor_id,
+            dry_run=False,
+        )
+
+    async def preview(
+        self,
+        *,
+        occurrence_id: str,
+        session_id: str,
+        start_at: datetime,
+        reason: str,
+        actor_id: str | None,
+    ) -> dict[str, Any]:
+        """The same pricing as ``apply``, writing nothing (#1207)."""
+        return await self._run(
+            occurrence_id=occurrence_id,
+            session_id=session_id,
+            start_at=start_at,
+            reason=reason,
+            actor_id=actor_id,
+            dry_run=True,
+        )
+
+    async def _run(
+        self,
+        *,
+        occurrence_id: str,
+        session_id: str,
+        start_at: datetime,
+        reason: str,
+        actor_id: str | None,
+        dry_run: bool,
+    ) -> dict[str, Any]:
         result = await self._use_case.execute(
             ApplyOccurrenceCancellationCommand(
                 occurrence_id=occurrence_id,
@@ -92,6 +133,7 @@ class OccurrenceBillingSyncAdapter:
                 start_at=start_at,
                 reason=reason[:500],
                 actor_id=actor_id,
+                dry_run=dry_run,
             )
         )
         return {
@@ -102,7 +144,30 @@ class OccurrenceBillingSyncAdapter:
             "credits": result.credits,
             "credited_cents": result.credited_cents,
             "skip_counts": result.skip_counts,
+            "families": [
+                {
+                    "enrollment_id": d.enrollment_id,
+                    "amount_cents": d.amount_cents,
+                    "outcome": d.outcome,
+                }
+                for d in result.decisions
+            ],
         }
+
+
+#: Marks that mean the student was there (``voided`` counts as unmarked, #554).
+_PRESENT_STATUSES = frozenset({"present", "late"})
+
+
+class OccurrenceAttendanceAdapter:
+    """``OccurrenceAttendanceCheck`` over coaching's attendance rows (#1207)."""
+
+    def __init__(self, attendance: MongoAttendanceRepository) -> None:
+        self._attendance = attendance
+
+    async def present_count(self, occurrence_id: str) -> int:
+        rows = await self._attendance.list_for_occurrence(occurrence_id)
+        return sum(1 for row in rows if row.status in _PRESENT_STATUSES)
 
 
 def compose_apply_occurrence_cancellation(db: Any) -> ApplyOccurrenceCancellation:
@@ -139,6 +204,8 @@ def compose_cancel_session_occurrence(
         notifier=notifier,
         # #787: refuse to call off a date whose payout is already frozen.
         payout_lock=compose_payout_input_lock(db),
+        # #1207: a missed class is only credited when nobody was marked present.
+        attendance=OccurrenceAttendanceAdapter(MongoAttendanceRepository(db)),
     )
 
 

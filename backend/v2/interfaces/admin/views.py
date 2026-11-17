@@ -654,6 +654,37 @@ class CancelSessionOccurrenceResponse(BaseModel):
     notified: bool = False
 
 
+class CreditMissedClassRequest(BaseModel):
+    """Credit a missed class (#1207): record a PAST date as no class."""
+
+    reason: str = Field(min_length=1, max_length=500)
+    #: Preview only: price every family, write nothing.
+    dry_run: bool = False
+
+
+class MissedClassFamilyView(BaseModel):
+    enrollment_id: str
+    student_id: str | None = None
+    student_name: str | None = None
+    amount_cents: int = 0
+    #: would_credit | already_credited | skipped:<reason>
+    outcome: str
+
+
+class CreditMissedClassResponse(BaseModel):
+    occurrence_id: str
+    start_at: datetime
+    dry_run: bool
+    #: Per family on a preview; empty once confirmed (the totals below say it).
+    families: list[MissedClassFamilyView] = Field(default_factory=list)
+    credits_issued: int = 0
+    credit_total_cents: int = 0
+    credit_skips: dict[str, int] = Field(default_factory=dict)
+    #: The coach's payout period is frozen: adjust their pay for the date by hand.
+    payroll_flag: str | None = None
+    billing_result: str | None = None
+
+
 class CloseAcademyDatesRequest(BaseModel):
     """Academy-wide closure: every class from ``start_date`` to ``end_date``
     (academy-local, inclusive) is cancelled in one step."""

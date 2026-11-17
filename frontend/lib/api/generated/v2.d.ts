@@ -4071,6 +4071,28 @@ export interface paths {
         patch: operations["update_occurrence_coach_attendance_api_v2_admin_session_occurrences__occurrence_id__coach_attendance_patch"];
         trace?: never;
     };
+    "/api/v2/admin/session-occurrences/{occurrence_id}/credit-missed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Credit a missed class: record a past date as no class (#1207)
+         * @description Same path and rule as calling the date off before class: ``dry_run``
+         *     prices every family, the confirm cancels the date and credits them. No
+         *     email goes out; families see the credit on Payments.
+         */
+        post: operations["credit_missed_class_api_v2_admin_session_occurrences__occurrence_id__credit_missed_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/session-occurrences/{occurrence_id}/replacement": {
         parameters: {
             query?: never;
@@ -13669,6 +13691,51 @@ export interface components {
              */
             student_ref: "prospective" | "existing_student";
         };
+        /**
+         * CreditMissedClassRequest
+         * @description Credit a missed class (#1207): record a PAST date as no class.
+         */
+        CreditMissedClassRequest: {
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /** Reason */
+            reason: string;
+        };
+        /** CreditMissedClassResponse */
+        CreditMissedClassResponse: {
+            /** Billing Result */
+            billing_result?: string | null;
+            /** Credit Skips */
+            credit_skips?: {
+                [key: string]: number;
+            };
+            /**
+             * Credit Total Cents
+             * @default 0
+             */
+            credit_total_cents: number;
+            /**
+             * Credits Issued
+             * @default 0
+             */
+            credits_issued: number;
+            /** Dry Run */
+            dry_run: boolean;
+            /** Families */
+            families?: components["schemas"]["MissedClassFamilyView"][];
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Payroll Flag */
+            payroll_flag?: string | null;
+            /**
+             * Start At
+             * Format: date-time
+             */
+            start_at: string;
+        };
         /** DMRequest */
         DMRequest: {
             /** Body */
@@ -15818,6 +15885,22 @@ export interface components {
              * Format: date-time
              */
             since: string;
+        };
+        /** MissedClassFamilyView */
+        MissedClassFamilyView: {
+            /**
+             * Amount Cents
+             * @default 0
+             */
+            amount_cents: number;
+            /** Enrollment Id */
+            enrollment_id: string;
+            /** Outcome */
+            outcome: string;
+            /** Student Id */
+            student_id?: string | null;
+            /** Student Name */
+            student_name?: string | null;
         };
         /** ModifyUserRoleRequest */
         ModifyUserRoleRequest: {
@@ -28528,6 +28611,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminCoachAttendanceView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    credit_missed_class_api_v2_admin_session_occurrences__occurrence_id__credit_missed_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                occurrence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreditMissedClassRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditMissedClassResponse"];
                 };
             };
             /** @description Validation Error */

@@ -479,6 +479,29 @@ class OccurrenceBillingSync(Protocol):
         actor_id: str | None,
     ) -> dict[str, Any]: ...
 
+    async def preview(
+        self,
+        *,
+        occurrence_id: str,
+        session_id: str,
+        start_at: datetime,
+        reason: str,
+        actor_id: str | None,
+    ) -> dict[str, Any]:
+        """Price every family exactly as ``apply`` would, writing nothing (#1207).
+
+        ``families`` lists ``{enrollment_id, amount_cents, outcome}``."""
+        ...
+
+
+class OccurrenceAttendanceCheck(Protocol):
+    """Students marked present or late on one dated class (#1207).
+
+    Coaching owns attendance; a missed class is only credited when this is 0.
+    """
+
+    async def present_count(self, occurrence_id: str) -> int: ...
+
 
 class OccurrenceCancellationNotifier(Protocol):
     """Tell the affected families and the coach one date is off (issue #671).
