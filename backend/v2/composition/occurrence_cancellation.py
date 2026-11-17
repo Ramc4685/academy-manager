@@ -18,6 +18,7 @@ structural cap, so admin wires this feature in one call.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -144,8 +145,13 @@ class OccurrenceAttendanceAdapter:
         return sum(1 for row in rows if row.status in _PRESENT_STATUSES)
 
 
-def compose_apply_occurrence_cancellation(db: Any) -> ApplyOccurrenceCancellation:
+def compose_apply_occurrence_cancellation(
+    db: Any, *, clock: Callable[[], datetime] | None = None
+) -> ApplyOccurrenceCancellation:
+    """``clock`` pins "now" for tests: whether a month is past decides crediting."""
+    extra = {"clock": clock} if clock is not None else {}
     return ApplyOccurrenceCancellation(
+        **extra,
         reader=MongoOccurrenceCancellationReader(db),
         overrides=MongoOccurrenceOverrideRepository(db),
         invoices=MongoBillingLedgerRepository(db),
