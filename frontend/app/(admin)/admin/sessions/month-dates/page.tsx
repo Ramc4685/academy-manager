@@ -28,6 +28,7 @@ import {
   datesToCancel,
   groupMonthDates,
   isEditable,
+  monthCompleteFrom,
   plainDatesInMonth,
   scheduleAnnouncement,
   type MonthDateClass,
@@ -83,6 +84,9 @@ export default function AdminMonthDatesPage() {
   // Until the academy timezone loads, dates would group by UTC days.
   const loading = tz === null || sessions.isLoading || occurrenceQueries.some((q) => q.isLoading);
   const occurrenceData = occurrenceQueries.map((q) => q.data);
+  // A failed request would show a partial month as if it were whole.
+  const loadFailed = sessions.isError || occurrenceQueries.some((q) => q.isError);
+  const completeFrom = monthCompleteFrom(activeMonth, new Date(), timeZone);
 
   // A dated series answers every sibling's query with the whole series: keep
   // each date once, under the first class that returned it.
@@ -206,6 +210,7 @@ export default function AdminMonthDatesPage() {
       queryClient.setQueryData(PUBLISH_KEY, result);
       let emailed = 0;
       const notEmailed: string[] = [];
+      const partly: string[] = [];
       if (emailFamilies) {
         for (const s of inMonth) {
           const own = dates
@@ -215,27 +220,31 @@ export default function AdminMonthDatesPage() {
           const body = scheduleAnnouncement(s.title, own, monthLabel(activeMonth), timeZone);
           if (!body) continue;
           try {
-            await postSessionAnnouncement("admin", s.session_id, { body, urgent: true });
-            emailed += 1;
+            const res = await postSessionAnnouncement("admin", s.session_id, { body, urgent: true });
+            // A failed send still answers 200: read the delivery result.
+            if (res.email_status === "failed") notEmailed.push(s.title);
+            else if (res.failed_count > 0) partly.push(`${s.title} (${res.failed_count} not reached)`);
+            else if (res.email_status === "sent") emailed += 1;
           } catch {
             notEmailed.push(s.title);
           }
         }
       }
-      return { emailed, notEmailed };
+      return { emailed, notEmailed, partly };
     },
     onMutate: () => {
       setNotice(null);
       setError(null);
     },
-    onSuccess: ({ emailed, notEmailed }) => {
+    onSuccess: ({ emailed, notEmailed, partly }) => {
       setNotice(
         `${monthLabel(activeMonth)} is published.` +
           (emailed ? ` Families in ${emailed} class(es) were emailed the dates.` : ""),
       );
-      if (notEmailed.length) {
-        setError(`These classes were not emailed: ${notEmailed.join(", ")}. Post their dates from the class page.`);
-      }
+      const problems: string[] = [];
+      if (notEmailed.length) problems.push(`These classes were not emailed: ${notEmailed.join(", ")}.`);
+      if (partly.length) problems.push(`Some families were not reached: ${partly.join(", ")}.`);
+      if (problems.length) setError(`${problems.join(" ")} Post their dates from the class page.`);
     },
     onError: () => setError("Could not publish. Nothing was emailed. Try again."),
   });
@@ -302,7 +311,7 @@ export default function AdminMonthDatesPage() {
           <Button
             type="button"
             variant="secondary"
-            disabled={!pasted.trim() || loading || dates.length === 0 || suggest.isPending}
+            disabled={!pasted.trim() || loading || loadFailed || dates.length === 0 || suggest.isPending}
             onClick={() => suggest.mutate()}
             data-testid="month-dates-suggest"
           >
@@ -323,7 +332,21 @@ export default function AdminMonthDatesPage() {
           they end up with fewer classes than they paid for. Called-off dates can&apos;t be
           restored here.
         </p>
-        {loading ? (
+        {loadFailed ? (
+          <div role="alert" className="mt-4 rounded-lg bg-status-red-50 px-3 py-2 text-sm text-status-red-800" data-testid="month-dates-load-error">
+            Some class dates could not be loaded, so this month may be missing dates.{" "}
+            <button
+              type="button"
+              className="font-semibold underline"
+              onClick={() => {
+                void sessions.refetch();
+                occurrenceQueries.forEach((q) => q.isError && void q.refetch());
+              }}
+            >
+              Try again
+            </button>
+          </div>
+        ) : loading ? (
           <p className="mt-4 text-sm text-rally-subtle">Loading dates…</p>
         ) : dates.length === 0 ? (
           <p className="mt-4 text-sm text-rally-subtle">No classes are scheduled in {monthLabel(activeMonth)}.</p>
@@ -411,7 +434,7 @@ export default function AdminMonthDatesPage() {
           type="button"
           variant={published ? "secondary" : "primary"}
           className="mt-3"
-          disabled={publishMonth.isPending || toCancel.length > 0 || loading}
+          disabled={publishMonth.isPending || toCancel.length > 0 || loading || loadFailed || completeFrom !== null}
           onClick={() => publishMonth.mutate()}
           data-testid="month-dates-publish"
         >
@@ -423,6 +446,13 @@ export default function AdminMonthDatesPage() {
         </Button>
         {toCancel.length > 0 && (
           <p className="mt-2 text-xs text-rally-subtle">Save your date changes before publishing.</p>
+        )}
+        {completeFrom && (
+          <p className="mt-2 text-xs text-rally-subtle" data-testid="month-dates-not-complete">
+            Weekly classes are added to the schedule 60 days ahead, so {monthLabel(activeMonth)} isn&apos;t
+            all there yet. You can call off the dates shown now and publish from{" "}
+            {formatAcademyDate(`${completeFrom}T18:00:00Z`, timeZone)}.
+          </p>
         )}
       </Card>
 

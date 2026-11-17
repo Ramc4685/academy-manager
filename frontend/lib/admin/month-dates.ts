@@ -134,3 +134,21 @@ function addDay(day: string): string {
   t.setUTCDate(t.getUTCDate() + 1);
   return t.toISOString().slice(0, 10);
 }
+
+/** composition/admin.py `_series_occurrence_candidates`: recurring dates exist 60 days ahead. */
+export const SCHEDULE_HORIZON_DAYS = 60;
+
+/**
+ * The academy-local day from which every date of `month` exists, or null when
+ * it already does. Before then a recurring class's later dates aren't on the
+ * schedule, so the month can't be reviewed or published as final.
+ */
+export function monthCompleteFrom(month: string, now: Date, timeZone: string): string | null {
+  const [y, m] = month.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  const horizon = sessionDateKey(new Date(now.getTime() + SCHEDULE_HORIZON_DAYS * 86_400_000).toISOString(), timeZone);
+  if (lastDay <= horizon) return null;
+  const from = new Date(`${lastDay}T12:00:00Z`);
+  from.setUTCDate(from.getUTCDate() - SCHEDULE_HORIZON_DAYS);
+  return from.toISOString().slice(0, 10);
+}

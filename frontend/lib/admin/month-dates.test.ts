@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AdminSessionOccurrenceView } from "@/lib/api/admin";
-import { datesToCancel, groupMonthDates, plainDatesInMonth, scheduleAnnouncement } from "./month-dates";
+import { datesToCancel, groupMonthDates, monthCompleteFrom, plainDatesInMonth, scheduleAnnouncement } from "./month-dates";
 
 const TZ = "America/Chicago";
 const NOW = new Date("2026-11-17T12:00:00Z");
@@ -106,5 +106,19 @@ describe("plainDatesInMonth", () => {
 
   it("ignores other months, times and non-dates", () => {
     expect(sorted(plainDatesInMonth("Room 12, 6:30 pm, Jan 5, May 2", "2026-12"))).toEqual([]);
+  });
+});
+
+describe("monthCompleteFrom", () => {
+  const now = new Date("2026-11-20T18:00:00Z"); // Nov 20, noon in Chicago
+
+  it("is null once the whole month is within the 60-day horizon", () => {
+    expect(monthCompleteFrom("2026-12", now, "America/Chicago")).toBeNull();
+    expect(monthCompleteFrom("2026-11", now, "America/Chicago")).toBeNull();
+  });
+
+  it("names the day a later month becomes complete", () => {
+    expect(monthCompleteFrom("2027-01", now, "America/Chicago")).toBe("2026-12-02");
+    expect(monthCompleteFrom("2027-03", now, "America/Chicago")).toBe("2027-01-30");
   });
 });
