@@ -12910,6 +12910,138 @@
         "title": "ClassRiskView",
         "type": "object"
       },
+      "CloseAcademyDatesRequest": {
+        "description": "Academy-wide closure: every class from ``start_date`` to ``end_date``\n(academy-local, inclusive) is cancelled in one step.",
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "end_date": {
+            "format": "date",
+            "title": "End Date",
+            "type": "string"
+          },
+          "notify": {
+            "default": true,
+            "title": "Notify",
+            "type": "boolean"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "start_date": {
+            "format": "date",
+            "title": "Start Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_date",
+          "end_date",
+          "reason"
+        ],
+        "title": "CloseAcademyDatesRequest",
+        "type": "object"
+      },
+      "CloseAcademyDatesResponse": {
+        "properties": {
+          "cancelled": {
+            "default": 0,
+            "title": "Cancelled",
+            "type": "integer"
+          },
+          "credits_issued": {
+            "default": 0,
+            "title": "Credits Issued",
+            "type": "integer"
+          },
+          "dates": {
+            "items": {
+              "$ref": "#/components/schemas/ClosureDateView"
+            },
+            "title": "Dates",
+            "type": "array"
+          },
+          "families_notified": {
+            "default": 0,
+            "title": "Families Notified",
+            "type": "integer"
+          },
+          "skipped": {
+            "default": 0,
+            "title": "Skipped",
+            "type": "integer"
+          }
+        },
+        "title": "CloseAcademyDatesResponse",
+        "type": "object"
+      },
+      "ClosureDateView": {
+        "properties": {
+          "credits_issued": {
+            "default": 0,
+            "title": "Credits Issued",
+            "type": "integer"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "session_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Title"
+          },
+          "skip_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skip Reason"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "cancelled",
+              "would_cancel",
+              "skipped"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "session_id",
+          "start_at",
+          "status"
+        ],
+        "title": "ClosureDateView",
+        "type": "object"
+      },
       "CoachAcademyView": {
         "description": "Row 14: the coach shell's academy mark. Deliberately minimal \u2014 a coach\nnever sees the rest of the academy profile, so this is not\n``ParentAcademyView``/``AdminAcademyView`` with fields dropped, it is its\nown narrow DTO.",
         "properties": {
@@ -19649,6 +19781,17 @@
               }
             ],
             "title": "Student Date Of Birth"
+          },
+          "student_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Id"
           },
           "student_name": {
             "title": "Student Name",
@@ -38904,6 +39047,47 @@
         "summary": "List Class Public Profiles",
         "tags": [
           "admin.public-page"
+        ]
+      }
+    },
+    "/api/v2/admin/closures": {
+      "post": {
+        "operationId": "close_academy_dates_api_v2_admin_closures_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloseAcademyDatesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloseAcademyDatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Close the academy for a date range: cancel every class date in it",
+        "tags": [
+          "admin.sessions"
         ]
       }
     },

@@ -79,7 +79,7 @@ from backend.v2.contexts.communications.domain.models import (
 from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
     MongoAudienceResolver,
 )
-from backend.v2.contexts.enrollment.application.ports import RosterChangeKind
+from backend.v2.contexts.enrollment.application.ports import ClosedClassDate, RosterChangeKind
 from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
     GetSelfServicePolicy,
 )
@@ -239,6 +239,47 @@ def render_occurrence_cancelled_email(
         f"Class cancelled: {session.title} — {when}",
         _branded_shell(academy_name=academy_name, inner_html="".join(parts)),
     )
+
+
+def render_academy_closure_email(
+    *,
+    academy_name: str,
+    lines: Sequence[tuple[str, bool]],
+    reason: str,
+    portal_url: str | None,
+    staff_warnings: Sequence[str] = (),
+) -> tuple[str, str]:
+    """``(subject, html_body)`` for an academy closure: every lost date once.
+
+    ``lines`` are ``(class and date, credited)``; the credit sentence follows
+    the same rule as ``render_occurrence_cancelled_email`` per line, so a
+    family is only told about credits billing actually issued.
+    """
+    items = "".join(
+        f"<li>{html.escape(label)}{' (credited to your account)' if credited else ''}</li>"
+        for label, credited in lines
+    )
+    parts = [
+        f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
+        f"{html.escape(academy_name)} is closed</h2>",
+        _para("These classes will not run:"),
+        f"<ul>{items}</ul>",
+    ]
+    if reason.strip():
+        parts.append(_para(f"Reason: {html.escape(reason.strip())}"))
+    parts.append(
+        _para(
+            "Every other date in the schedule is unchanged. Contact the academy "
+            "if you have a question about these dates."
+        )
+    )
+    for warning in dict.fromkeys(staff_warnings):
+        parts.append(_para(f"<strong>{html.escape(warning)}</strong>"))
+    if portal_url:
+        parts.append(_branded_button(label="Open the parent portal", url=portal_url))
+    count = len(lines)
+    subject = f"Classes cancelled: {count} class date{'s' if count != 1 else ''} — {academy_name}"
+    return subject, _branded_shell(academy_name=academy_name, inner_html="".join(parts))
 
 
 def render_roster_alert(
@@ -776,6 +817,99 @@ class RosterAlertAdapter:
                 category=EmailCategory.NOTIFICATION,
                 context=context,
             )
+
+    async def academy_closed(
+        self, *, dates: Sequence[ClosedClassDate], reason: str, actor_id: str | None
+    ) -> int:
+        """One email per family and per staff member for a whole closure.
+
+        Implements enrollment's ``AcademyClosureNotifier``. Each date's audience
+        is exactly ``occurrence_cancelled``'s (``_occurrence_audience``), summed
+        per parent so a family losing three dates gets one email listing all
+        three. Never raises. Returns how many families were emailed.
+        """
+        academy_id = current_academy_id()
+        academy_doc = await self._academies.find_by_id(academy_id) or {}
+        academy_name = (
+            str(academy_doc.get("display_name") or academy_doc.get("name") or "") or "Your academy"
+        )
+        academy_timezone = str(academy_doc.get("timezone") or "") or None
+        academy_slug = str(academy_doc.get("slug") or "") or None
+        base = academy_frontend_url(
+            frontend_url=self._unsubscribe_links.frontend_url, academy_slug=academy_slug
+        )
+        portal_url = f"{base.rstrip('/')}/parent" if base else None
+
+        family_lines: dict[str, list[tuple[str, bool]]] = {}
+        staff: dict[str, ResolvedRecipient] = {}
+        staff_lines: dict[str, list[tuple[str, bool]]] = {}
+        warnings = [d.billing_warning for d in sorted(dates, key=lambda d: d.start_at)]
+        for item in sorted(dates, key=lambda d: d.start_at):
+            session = await self._sessions.get(item.session_id)
+            if session is None:
+                continue
+            label = f"{session.title} — " + format_occurrence_when(
+                item.start_at, session_timezone=session.timezone, academy_timezone=academy_timezone
+            )
+            for parent_id, credited in await self._occurrence_audience(
+                session_id=item.session_id,
+                extra_student_ids=item.one_time_student_ids,
+                credited_student_ids={s for s in item.credited_student_ids if s},
+            ):
+                family_lines.setdefault(parent_id, []).append((label, credited))
+            for recipient in await self._staff_recipients(
+                session_id=item.session_id, from_session_id=None, actor_id=actor_id
+            ):
+                staff.setdefault(recipient.user_id, recipient)
+                staff_lines.setdefault(recipient.user_id, []).append((label, False))
+
+        context = {"change": "academy_closed"}
+        emailed = 0
+        for parent_id, lines in family_lines.items():
+            subject, body = render_academy_closure_email(
+                academy_name=academy_name, lines=lines, reason=reason, portal_url=portal_url
+            )
+            sent = False
+            for recipient in await self._resolve_users([parent_id]):
+                if not (recipient.email or "").strip():
+                    continue
+                await self._send_one(
+                    recipient=recipient,
+                    subject=subject,
+                    body=body,
+                    category=EmailCategory.TRANSACTIONAL,
+                    context=context,
+                )
+                sent = True
+            emailed += int(sent)
+            await self._push_to(
+                parent_id,
+                title=academy_name,
+                body=f"{len(lines)} class date{'s' if len(lines) != 1 else ''} cancelled.",
+                url="/parent",
+            )
+
+        for user_id, recipient in staff.items():
+            subject, body = render_academy_closure_email(
+                academy_name=academy_name,
+                lines=staff_lines[user_id],
+                reason=reason,
+                portal_url=None,
+                staff_warnings=[w for w in warnings if w],
+            )
+            await self._send_one(
+                recipient=recipient,
+                subject=subject,
+                body=append_unsubscribe_footer(
+                    body,
+                    self._unsubscribe_links.build(
+                        academy_id=academy_id, user_id=user_id, academy_slug=academy_slug
+                    ),
+                ),
+                category=EmailCategory.NOTIFICATION,
+                context=context,
+            )
+        return emailed
 
     async def _occurrence_audience(
         self,

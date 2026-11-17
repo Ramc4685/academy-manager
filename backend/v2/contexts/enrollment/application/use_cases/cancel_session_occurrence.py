@@ -94,6 +94,10 @@ class CancelSessionOccurrenceCommand(BaseModel):
     #: ``False`` records the cancellation without emailing families/coach —
     #: for a date the academy has already announced by other means.
     notify: bool = True
+    #: Academy closures (``CloseAcademyDates``) cancel many dates and send ONE
+    #: summary per family, so they skip this date's family/staff email and
+    #: read the audience off the result instead. Trial guests are still told.
+    defer_family_notice: bool = False
 
 
 class CancelSessionOccurrenceResult(BaseModel):
@@ -107,6 +111,10 @@ class CancelSessionOccurrenceResult(BaseModel):
     credits_issued: int = 0
     billing_result: str | None = None
     notified: bool = False
+    #: The notice inputs a deferred caller needs to tell the families itself.
+    one_time_student_ids: tuple[str, ...] = ()
+    credited_student_ids: tuple[str, ...] = ()
+    billing_warning: str | None = None
 
 
 class CancelSessionOccurrence:
@@ -212,7 +220,7 @@ class CancelSessionOccurrence:
             )
 
         notified = False
-        if cmd.notify:
+        if cmd.notify and not cmd.defer_family_notice:
             notified = await self._notify(
                 cancelled,
                 session_id=session_id,
@@ -242,6 +250,9 @@ class CancelSessionOccurrence:
             credits_issued=sum(1 for value in credits.values() if value),
             billing_result=billing_result,
             notified=notified,
+            one_time_student_ids=tuple(one_time_student_ids),
+            credited_student_ids=tuple(credited_student_ids),
+            billing_warning=_billing_warning(billing_result),
         )
 
     async def _assert_payout_window_open(self, occurrence: SessionOccurrence) -> None:

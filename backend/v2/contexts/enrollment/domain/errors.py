@@ -205,6 +205,13 @@ class OccurrenceNotCancellable(DomainError):
     status_code = 409
 
 
+class ClosureRangeInvalid(DomainError):
+    """An academy closure range that is backwards, in the past or too far out."""
+
+    code = "Enrollment.ClosureRangeInvalid"
+    status_code = 422
+
+
 class WaitlistOfferNotFound(DomainError):
     """No offer with that id belongs to this family (issue #828).
 

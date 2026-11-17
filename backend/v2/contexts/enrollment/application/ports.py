@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Literal, Protocol
 
@@ -505,6 +506,39 @@ class OccurrenceCancellationNotifier(Protocol):
         credited_student_ids: Sequence[str] = (),
         billing_warning: str | None = None,
     ) -> None: ...
+
+
+@dataclass(frozen=True)
+class ClosedClassDate:
+    """One class date an academy closure called off, with its notice inputs."""
+
+    session_id: str
+    start_at: datetime
+    one_time_student_ids: tuple[str, ...] = ()
+    credited_student_ids: tuple[str, ...] = ()
+    billing_warning: str | None = None
+
+
+class AcademyClosureNotifier(Protocol):
+    """One email per family (and per staff member) for a whole closure.
+
+    Same audience and money honesty as ``OccurrenceCancellationNotifier``,
+    summed over every date the closure cancelled. Best-effort: never raises.
+    Answers how many families were emailed.
+    """
+
+    async def academy_closed(
+        self, *, dates: Sequence[ClosedClassDate], reason: str, actor_id: str | None
+    ) -> int: ...
+
+
+class LiveSessionLister(Protocol):
+    async def list_live(self) -> list[Session]: ...
+
+
+#: Re-derives a session's dated rows for the materialisation window, exactly as
+#: create/edit do, so a closure finds dates no admin edit has written yet.
+OccurrenceMaterializer = Callable[[Session], Awaitable[None]]
 
 
 #: What the admin chose for the money side of a withdrawal (issue #670).

@@ -119,6 +119,9 @@ class ImportRowView(BaseModel):
     #: Opens an existing family; None for a new one (it exists after commit).
     family_link: str | None = None
     family_name: str | None = None
+    #: The child this row creates (minted at preview); with ``family_id`` (the
+    #: parent id) it lets staff enroll the child straight after the commit.
+    student_id: str | None = None
     parent_name: str
     parent_email: str | None = None
     parent_phone: str | None = None
@@ -171,6 +174,7 @@ def _row_view(planned: PlannedRow) -> ImportRowView:
             f"/admin/families/{quote(str(planned.family_id), safe='')}" if existing else None
         ),
         family_name=planned.family_name,
+        student_id=planned.student_id if planned.status == "create" else None,
         parent_name=row.parent_name,
         parent_email=row.parent_email,
         parent_phone=row.parent_phone,

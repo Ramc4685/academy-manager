@@ -21,12 +21,15 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+async def academy_zone(use_cases: AdminUseCases, academy_id: str) -> str:
+    """The academy's clock timezone (legacy zone when none is configured)."""
+    reader = getattr(use_cases, "get_academy_timezone", None)
+    if reader is None:
+        return LEGACY_FALLBACK_TIMEZONE
+    return await resolve_academy_clock_timezone(reader, academy_id)
+
+
 async def academy_today(use_cases: AdminUseCases, academy_id: str) -> date:
     """The academy-local calendar date (legacy zone when none is configured)."""
-    reader = getattr(use_cases, "get_academy_timezone", None)
-    zone = (
-        await resolve_academy_clock_timezone(reader, academy_id)
-        if reader is not None
-        else LEGACY_FALLBACK_TIMEZONE
-    )
+    zone = await academy_zone(use_cases, academy_id)
     return _now().astimezone(ZoneInfo(zone)).date()
