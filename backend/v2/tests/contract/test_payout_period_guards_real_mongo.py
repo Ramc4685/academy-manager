@@ -198,17 +198,6 @@ async def test_two_recomputes_from_one_load_conflict_instead_of_both_landing(rea
     assert before["lines"] == [3_000]
 
 
-async def test_a_period_stored_before_versions_existed_reads_as_version_zero(real_db, acad) -> None:
-    repo = MongoPayoutPeriodRepository(real_db)
-    await repo.save(_period())
-    await real_db["payout_periods"].update_one({"period_id": "pp-1"}, {"$unset": {"version": ""}})
-
-    loaded = await repo.find_by_id("pp-1")
-    assert loaded is not None and loaded.version == 0
-    approved = await repo.replace(approve(loaded, at=JUNE_2))
-    assert approved.status == "approved" and approved.version == 1
-
-
 async def test_a_read_between_the_line_and_header_writes_sees_one_consistent_set(
     real_db, acad
 ) -> None:

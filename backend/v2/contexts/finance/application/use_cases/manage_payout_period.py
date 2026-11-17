@@ -36,6 +36,7 @@ from backend.v2.contexts.finance.domain.payout_period import (
     PayoutWarning,
     PersistedPayoutLine,
     reopen,
+    require_version,
 )
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriodConflictError as PayoutPeriodConflictError,  # re-exported for interfaces (ADR-0006)
@@ -57,10 +58,11 @@ class _Audited:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._id = id_factory or (lambda: str(new_ulid()))
 
-    async def _load(self, period_id: str) -> PayoutPeriod:
+    async def _load(self, period_id: str, expected_version: int | None = None) -> PayoutPeriod:
         period = await self._repo.find_by_id(period_id)
         if period is None:
             raise LookupError(f"PayoutPeriod {period_id!r} not found")
+        require_version(period, expected_version)
         return period
 
     async def _record(
@@ -103,8 +105,10 @@ class RecomputePayoutPeriod(_Audited):
         super().__init__(repository=repository, audit=audit, clock=clock, id_factory=id_factory)
         self._calc = calculator
 
-    async def execute(self, *, period_id: str, actor_id: str) -> PayoutPeriod:
-        period = await self._load(period_id)
+    async def execute(
+        self, *, period_id: str, actor_id: str, expected_version: int | None = None
+    ) -> PayoutPeriod:
+        period = await self._load(period_id, expected_version)
         if period.status != "draft":
             raise PayoutPeriodStateError(
                 f"cannot recompute payout period {period_id!r} in status "
@@ -160,7 +164,11 @@ class RecomputePayoutPeriod(_Audited):
             action="recomputed",
             actor_id=actor_id,
             before={"total_minor": period.total_minor, "line_count": len(period.lines)},
-            after={"total_minor": stored.total_minor, "line_count": len(stored.lines)},
+            after={
+                "total_minor": stored.total_minor,
+                "line_count": len(stored.lines),
+                "version": stored.version,
+            },
         )
         return stored
 
@@ -173,10 +181,11 @@ class ReopenPayoutPeriod(_Audited):
         actor_id: str,
         reason: str,
         acknowledge_paid_clawback: bool = False,
+        expected_version: int | None = None,
     ) -> PayoutPeriod:
         if not reason.strip():
             raise ValueError("reason is required to reopen a payout period")
-        period = await self._load(period_id)
+        period = await self._load(period_id, expected_version)
         reopened = reopen(period, acknowledge_paid_clawback=acknowledge_paid_clawback)
         stored = await self._repo.replace(reopened)
         await self._record(
@@ -197,6 +206,7 @@ class ReopenPayoutPeriod(_Audited):
                 "paid_clawback_acknowledged": (
                     acknowledge_paid_clawback if period.status == "paid" else False
                 ),
+                "version": stored.version,
             },
         )
         return stored
@@ -211,13 +221,14 @@ class OverridePayoutLine(_Audited):
         amount_minor: int | None,
         reason: str,
         actor_id: str,
+        expected_version: int | None = None,
     ) -> PayoutPeriod:
         if not reason.strip():
             raise ValueError("reason is required to change a payout line")
         if amount_minor is not None and amount_minor < 0:
             raise ValueError("amount must not be negative")
 
-        period = await self._load(period_id)
+        period = await self._load(period_id, expected_version)
         if period.status != "draft":
             raise PayoutPeriodStateError(
                 f"cannot edit lines of payout period {period_id!r} in status "
@@ -266,7 +277,11 @@ class OverridePayoutLine(_Audited):
             occurrence_id=occurrence_id,
             reason=reason,
             before={"amount_minor": target.amount_minor, "total_minor": period.total_minor},
-            after={"amount_minor": updated_line.amount_minor, "total_minor": stored.total_minor},
+            after={
+                "amount_minor": updated_line.amount_minor,
+                "total_minor": stored.total_minor,
+                "version": stored.version,
+            },
         )
         return stored
 

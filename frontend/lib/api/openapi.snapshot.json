@@ -4928,10 +4928,15 @@
             },
             "title": "Unpaid Occurrences",
             "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
           }
         },
         "required": [
           "period_id",
+          "version",
           "coach_id",
           "period_start",
           "period_end",
@@ -21631,6 +21636,18 @@
             "title": "Amount Cents",
             "type": "integer"
           },
+          "expected_version": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
           "method": {
             "enum": [
               "bank_transfer",
@@ -22619,6 +22636,18 @@
               }
             ],
             "title": "Amount Cents"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
           },
           "reason": {
             "minLength": 1,
@@ -25721,6 +25750,25 @@
           "entries"
         ],
         "title": "PayoutAuditTrailView",
+        "type": "object"
+      },
+      "PayoutPeriodWriteRequest": {
+        "description": "Optional body of approve and recompute.",
+        "properties": {
+          "expected_version": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          }
+        },
+        "title": "PayoutPeriodWriteRequest",
         "type": "object"
       },
       "PayrollSettingsView": {
@@ -29488,6 +29536,18 @@
             "default": false,
             "title": "Acknowledge Paid Clawback",
             "type": "boolean"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
           },
           "reason": {
             "minLength": 1,
@@ -43485,6 +43545,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PayoutPeriodWriteRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -43765,6 +43842,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PayoutPeriodWriteRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {

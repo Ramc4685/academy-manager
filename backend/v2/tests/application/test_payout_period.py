@@ -155,10 +155,12 @@ class FakeRepo:
         coach_id: str,
         period_start: datetime,
         period_end: datetime,
+        exclude_period_id: str | None = None,
     ) -> PayoutPeriod | None:
         for p in self._by_id.values():
             if (
                 p.coach_id == coach_id
+                and p.period_id != exclude_period_id
                 and p.period_start < period_end
                 and p.period_end > period_start
             ):

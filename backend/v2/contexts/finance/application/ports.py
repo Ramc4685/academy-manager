@@ -64,10 +64,12 @@ class PayoutPeriodRepository(Protocol):
         coach_id: str,
         period_start: datetime,
         period_end: datetime,
+        exclude_period_id: str | None = None,
     ) -> PayoutPeriod | None:
         """First period for this coach whose window intersects
-        [period_start, period_end) — including an exact match. Used by
-        generation to reject overlapping windows (#504)."""
+        [period_start, period_end) — including an exact match — other than
+        ``exclude_period_id``. Used by generation to reject overlapping
+        windows (#504) and by approval to refuse approving one."""
         ...
 
     async def find_by_id(self, period_id: str) -> PayoutPeriod | None: ...

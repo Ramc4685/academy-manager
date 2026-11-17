@@ -1616,6 +1616,7 @@ async def test_replacement_endpoint_recomputes_draft_payout_snapshot_in_place() 
             "total_minor": 2500,
             "unpaid_occurrence_ids": [],
             "generated_at": datetime(2026, 6, 6, tzinfo=UTC),
+            "version": 0,  # migration 0239 backfilled every stored period
         }
     )
     await db.payout_period_lines.insert_one(

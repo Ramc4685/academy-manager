@@ -39,6 +39,7 @@ from backend.v2.interfaces.admin.views import (
     OverridePayoutLineRequest,
     PayoutAuditEntryView,
     PayoutAuditTrailView,
+    PayoutPeriodWriteRequest,
     ReopenPayoutPeriodRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
@@ -78,6 +79,8 @@ def _period_write_errors(
         yield
     except PayoutPeriodConflictError as exc:
         raise PayoutPeriodConflict(str(exc)) from exc
+    except OverlappingPayoutPeriodError as exc:  # a ValueError: map it before ``invalid``
+        raise PayoutPeriodOverlap(str(exc)) from exc
     except LookupError as exc:
         raise PayoutPeriodNotFound(not_found or str(exc)) from exc
     except invalid as exc:
@@ -157,6 +160,7 @@ def _period_view(period: Any) -> AdminPayoutPeriodView:
         )
     return AdminPayoutPeriodView(
         period_id=period.period_id,
+        version=period.version,
         coach_id=period.coach_id,
         period_start=period.period_start,
         period_end=period.period_end,
@@ -354,12 +358,15 @@ async def get_payout_period(
 @router.post("/payout-periods/{period_id}/approve", response_model=AdminPayoutPeriodView)
 async def approve_payout_period(
     period_id: str,
+    body: PayoutPeriodWriteRequest | None = None,
     claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
     with _period_write_errors(f"Payout period {period_id!r} not found"):
         period = await _approve_payout_period(use_cases).execute(
-            period_id=period_id, actor_id=claims.user_id
+            period_id=period_id,
+            actor_id=claims.user_id,
+            expected_version=body.expected_version if body else None,
         )
     return await _enriched_period_view(use_cases, period)
 
@@ -381,6 +388,7 @@ async def mark_payout_period_paid(
                 reference=body.reference,
             ),
             actor_id=claims.user_id,
+            expected_version=body.expected_version,
         )
     return await _enriched_period_view(use_cases, period)
 
@@ -388,6 +396,7 @@ async def mark_payout_period_paid(
 @router.post("/payout-periods/{period_id}/recompute", response_model=AdminPayoutPeriodView)
 async def recompute_payout_period(
     period_id: str,
+    body: PayoutPeriodWriteRequest | None = None,
     claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminPayoutPeriodView:
@@ -395,7 +404,9 @@ async def recompute_payout_period(
         f"Payout period {period_id!r} not found", invalid=PayoutPeriodStateError
     ):
         period = await _recompute_payout_period(use_cases).execute(
-            period_id=period_id, actor_id=claims.user_id
+            period_id=period_id,
+            actor_id=claims.user_id,
+            expected_version=body.expected_version if body else None,
         )
     return await _enriched_period_view(use_cases, period)
 
@@ -413,6 +424,7 @@ async def reopen_payout_period(
             actor_id=claims.user_id,
             reason=body.reason,
             acknowledge_paid_clawback=body.acknowledge_paid_clawback,
+            expected_version=body.expected_version,
         )
     return await _enriched_period_view(use_cases, period)
 
@@ -435,6 +447,7 @@ async def override_payout_period_line(
             amount_minor=body.amount_cents,
             reason=body.reason,
             actor_id=claims.user_id,
+            expected_version=body.expected_version,
         )
     return await _enriched_period_view(use_cases, period)
 

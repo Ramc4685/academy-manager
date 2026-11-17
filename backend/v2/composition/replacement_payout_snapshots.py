@@ -23,6 +23,10 @@ from typing import Any
 from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
     RecomputePayoutPeriod,
 )
+from backend.v2.contexts.finance.domain.payout_period import (
+    PayoutPeriodConflictError,
+    PayoutPeriodStateError,
+)
 from backend.v2.contexts.finance.infrastructure.mongo_payout_period_repo import (
     current_lines_filter,
 )
@@ -98,11 +102,30 @@ async def recompute_draft_payout_periods(
     screen while losing the change is not.
     """
     for period_id in period_ids:
-        try:
-            await recompute.execute(period_id=period_id, actor_id=actor_id)
-        except Exception:  # pragma: no cover - best effort, post-commit
-            log.warning(
-                "payout_period_recompute_failed period_id=%s occurrence_change=replacement",
-                period_id,
-                exc_info=True,
-            )
+        for attempt in (1, 2):
+            try:
+                await recompute.execute(period_id=period_id, actor_id=actor_id)
+            except PayoutPeriodConflictError:
+                # Someone wrote the period between our load and write; reload once.
+                if attempt == 1:
+                    continue
+                log.warning(
+                    "payout_period_recompute_conflict period_id=%s occurrence_change=replacement",
+                    period_id,
+                    exc_info=True,
+                )
+            except PayoutPeriodStateError:
+                # Approved or paid since the check: it now pays the old coach.
+                log.error(
+                    "payout_period_left_draft_before_recompute period_id=%s "
+                    "occurrence_change=replacement; reopen and recompute it",
+                    period_id,
+                    exc_info=True,
+                )
+            except Exception:  # pragma: no cover - best effort, post-commit
+                log.warning(
+                    "payout_period_recompute_failed period_id=%s occurrence_change=replacement",
+                    period_id,
+                    exc_info=True,
+                )
+            break
