@@ -689,16 +689,23 @@ class RealStripeGateway(StripeGateway):
         return str(result.id)
 
     async def cancel_subscription(
-        self, stripe_subscription_id: str, *, at_period_end: bool
+        self,
+        stripe_subscription_id: str,
+        *,
+        at_period_end: bool,
+        idempotency_key: str | None = None,
     ) -> None:
+        options = {"idempotency_key": idempotency_key} if idempotency_key else {}
+
         def _cancel() -> None:
             if at_period_end:
                 self._stripe.Subscription.modify(
                     stripe_subscription_id,
                     cancel_at_period_end=True,
+                    **options,
                 )
             else:
-                self._stripe.Subscription.delete(stripe_subscription_id)
+                self._stripe.Subscription.delete(stripe_subscription_id, **options)
 
         await asyncio.to_thread(_cancel)
 

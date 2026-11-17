@@ -29,3 +29,16 @@ class TenantSubscriptionRepository(Protocol):
         ``expected_token``; inserts the row when the academy has none. Returns
         whether this caller won, so two concurrent checkouts open one session."""
         ...
+
+
+class StripeCanceller(Protocol):
+    """Cancels the tenant's platform subscription at Stripe; ``idempotency_key``
+    is forwarded as Stripe's ``Idempotency-Key``."""
+
+    async def cancel_subscription(
+        self,
+        stripe_subscription_id: str,
+        *,
+        at_period_end: bool,
+        idempotency_key: str | None = None,
+    ) -> None: ...

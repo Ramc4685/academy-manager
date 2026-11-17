@@ -701,9 +701,14 @@ class StripeGateway(Protocol):
         """
 
     async def cancel_subscription(
-        self, stripe_subscription_id: str, *, at_period_end: bool
+        self,
+        stripe_subscription_id: str,
+        *,
+        at_period_end: bool,
+        idempotency_key: str | None = None,
     ) -> None:
-        """Cancel a Stripe subscription now or at period end."""
+        """Cancel a Stripe subscription now or at period end. ``idempotency_key``
+        is forwarded as Stripe's ``Idempotency-Key``."""
 
     async def pause_subscription_collection(
         self,

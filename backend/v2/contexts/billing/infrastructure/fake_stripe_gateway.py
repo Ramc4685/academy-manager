@@ -609,12 +609,22 @@ class FakeStripeGateway(StripeGateway):
         return len(self.attached_payment_methods.pop((stripe_account, stripe_customer_id), []))
 
     async def cancel_subscription(
-        self, stripe_subscription_id: str, *, at_period_end: bool
+        self,
+        stripe_subscription_id: str,
+        *,
+        at_period_end: bool,
+        idempotency_key: str | None = None,
     ) -> None:
+        # Stripe replays a repeated Idempotency-Key instead of acting twice.
+        if idempotency_key and any(
+            c.get("idempotency_key") == idempotency_key for c in self.cancelled_subscriptions
+        ):
+            return
         self.cancelled_subscriptions.append(
             {
                 "stripe_subscription_id": stripe_subscription_id,
                 "at_period_end": at_period_end,
+                "idempotency_key": idempotency_key,
             }
         )
 

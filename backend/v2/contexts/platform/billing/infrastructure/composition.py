@@ -25,7 +25,7 @@ from backend.v2.contexts.platform.billing.infrastructure.mongo_repositories impo
 )
 
 
-def build_platform_billing_use_cases(db: Any) -> PlatformBillingUseCases:
+def build_platform_billing_use_cases(db: Any, *, stripe: Any | None = None) -> PlatformBillingUseCases:
     plans = MongoPlatformPlanRepository(db)
     subscriptions = MongoTenantSubscriptionRepository(db)
     platform_audit = PlatformAuditService(
@@ -51,6 +51,7 @@ def build_platform_billing_use_cases(db: Any) -> PlatformBillingUseCases:
         schedule_cancellation=ScheduleTenantCancellation(
             plans=plans,
             subscriptions=subscriptions,
+            stripe=stripe,
             audit_recorder=platform_audit.record_event,
         ),
         check_limits=CheckPlanLimits(plans=plans, subscriptions=subscriptions),

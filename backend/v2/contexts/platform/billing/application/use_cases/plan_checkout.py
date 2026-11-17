@@ -95,7 +95,11 @@ class PlanCheckoutGateway(Protocol):
 
 class PlanSyncGateway(Protocol):
     async def cancel_subscription(
-        self, stripe_subscription_id: str, *, at_period_end: bool
+        self,
+        stripe_subscription_id: str,
+        *,
+        at_period_end: bool,
+        idempotency_key: str | None = None,
     ) -> None: ...
 
 

@@ -895,10 +895,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         invoice_prefix_assigner=compose_invoice_prefix_assigner(db),
         default_application_fee_assigner=compose_default_application_fee_assigner(db),
     )
-    app.state.platform_billing = build_platform_billing_use_cases(db)
-
     # Stripe gateway shared across all BFFs that need it.
     stripe_gw = _build_stripe(settings)
+    app.state.platform_billing = build_platform_billing_use_cases(db, stripe=stripe_gw)
 
     # Coach BFF wiring — exposed as app.state.coach for routes via deps.py.
     app.state.coach = compose_coach(db, outbox, idempotency_store, stripe_gw)
