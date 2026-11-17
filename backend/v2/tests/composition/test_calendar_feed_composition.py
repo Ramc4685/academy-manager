@@ -57,7 +57,10 @@ class _Schedule:
 
     async def __call__(self, *, parent_id, student_id, frm, to, limit, offset):
         self.calls.append((frm, to))
-        rows = [e for e in self.entries if frm <= e.start_at.date() <= to]
+        # Same bounds as GetChildSchedule: whole UTC days, ``to`` inclusive.
+        lo = datetime(frm.year, frm.month, frm.day, tzinfo=UTC)
+        hi = datetime(to.year, to.month, to.day, tzinfo=UTC) + timedelta(days=1)
+        rows = [e for e in self.entries if lo <= e.start_at < hi]
         return rows, len(rows)
 
 
@@ -151,8 +154,28 @@ async def test_feed_stops_at_the_last_published_month(db) -> None:
     with tenant_scope("acad-1"):
         url = await feed.feed_url(parent_id="P1")
         body = await feed.render(_token(url))
-    assert schedule.calls[-1][1] == date(2026, 11, 30)
     assert body is not None and "VEVENT" not in body  # December is not published
+
+
+@pytest.mark.asyncio
+async def test_evening_class_on_the_last_published_day_is_in_the_feed(db) -> None:
+    schedule = _Schedule()
+    # 6:30 pm Nov 30 in Chicago is already Dec 1 in UTC.
+    start = datetime(2026, 12, 1, 0, 30, tzinfo=UTC)
+    evening = _entry("o-eve", date(2026, 11, 30)).model_copy(
+        update={"start_at": start, "end_at": start + timedelta(hours=1)}
+    )
+    schedule.entries = [evening, _entry("o-dec", date(2026, 12, 1))]
+    feed = await _feed(db, schedule)
+    await db["parent_self_service_policies"].insert_one(
+        {"academy_id": "acad-1", "schedule_published_through": "2026-11"}
+    )
+    with tenant_scope("acad-1"):
+        url = await feed.feed_url(parent_id="P1")
+        body = await feed.render(_token(url))
+    assert body is not None
+    assert "DTSTART:20261201T003000Z" in body  # Nov 30 evening class kept
+    assert body.count("BEGIN:VEVENT") == 1  # Dec 1 (local) class left out
 
 
 @pytest.mark.asyncio

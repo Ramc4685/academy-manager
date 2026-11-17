@@ -43,9 +43,11 @@ interface Props {
    */
   timeZone: string;
   onEventClick?: (event: CalendarViewEvent) => void;
+  /** Open on the month even on a phone (the parent page has its own list). */
+  monthFirst?: boolean;
 }
 
-export default function PersonaCalendarView({ events, timeZone, onEventClick }: Props) {
+export default function PersonaCalendarView({ events, timeZone, onEventClick, monthFirst }: Props) {
   const byId = new Map(events.map((e) => [e.id, e]));
   /**
    * #896: a month grid on a 400px phone is 7 columns of ~50px — the coach
@@ -84,7 +86,7 @@ export default function PersonaCalendarView({ events, timeZone, onEventClick }: 
         // Day placement, event times and the Today button all follow this
         // zone (DST included), not the viewer's browser clock.
         timeZone={timeZone}
-        initialView={phone ? "dayGridDay" : "dayGridMonth"}
+        initialView={phone && !monthFirst ? "dayGridDay" : "dayGridMonth"}
         events={events}
         headerToolbar={{
           left: "prev,next today",

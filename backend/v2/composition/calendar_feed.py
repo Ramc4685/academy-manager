@@ -55,6 +55,12 @@ def feed_window(*, today: date, published_through: str | None) -> tuple[date, da
     return (start, end) if end >= start else None
 
 
+def _local_date(value: datetime, zone: ZoneInfo) -> date:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)  # stored datetimes are naive UTC
+    return value.astimezone(zone).date()
+
+
 def _no_class_reason(reason: str | None) -> str:
     # A whole-session cancel stamps a machine code, not a sentence.
     if not reason or reason == "session_cancelled":
@@ -141,15 +147,20 @@ def compose_calendar_feed(
         if window is not None:
             for child in await list_children_for_parent(parent_id):
                 first_name = (str(child.get("full_name") or "").split() or ["Class"])[0]
+                # The schedule reads ``to`` as a UTC day; ask for one more day
+                # and cut on the academy-local date, or a 6:30 pm class on the
+                # last day of the month (already the next day in UTC) is lost.
                 entries, _total = await get_child_schedule(
                     parent_id=parent_id,
                     student_id=str(child["student_id"]),
                     frm=window[0],
-                    to=window[1],
+                    to=window[1] + timedelta(days=1),
                     limit=_SCHEDULE_LIMIT,
                     offset=0,
                 )
                 for entry in entries:
+                    if _local_date(entry.start_at, zone) > window[1]:
+                        continue
                     cancelled = entry.status == "cancelled"
                     label = f"{first_name} — {entry.session_title}"
                     events.append(

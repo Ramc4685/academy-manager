@@ -30,26 +30,16 @@ import {
   scheduleAnnouncement,
   type MonthDateClass,
 } from "@/lib/admin/month-dates";
-import { academyMonthKey, formatAcademyDate, formatAcademyTimeRange } from "@/lib/format/academy-time";
+import {
+  academyMonthKey,
+  formatAcademyDate,
+  formatAcademyTimeRange,
+  monthLabel,
+} from "@/lib/format/academy-time";
 import { isMonthPublished } from "@/lib/parent/schedule-events";
 import { queryKeys } from "@/lib/query/keys";
 
 const PUBLISH_KEY = ["admin", "schedule", "publish"] as const;
-
-function monthLabel(month: string): string {
-  const [y, m] = month.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString(undefined, {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-}
-
-function monthBounds(month: string): [number, number] {
-  const [y, m] = month.split("-").map(Number);
-  // A day of slack each side covers any academy timezone.
-  return [Date.UTC(y, m - 1, 1) - 86_400_000, Date.UTC(y, m, 1) + 86_400_000];
-}
 
 export default function AdminMonthDatesPage() {
   const queryClient = useQueryClient();
@@ -70,12 +60,10 @@ export default function AdminMonthDatesPage() {
   });
   const publish = useQuery({ queryKey: PUBLISH_KEY, queryFn: getSchedulePublish });
 
-  const [from, to] = monthBounds(activeMonth);
+  // window=all lists a recurring class by its first date, not its term, so
+  // filter on phase only; groupMonthDates drops dates outside the month.
   const inMonth = (sessions.data?.sessions ?? []).filter(
-    (s) =>
-      s.status !== "cancelled" &&
-      new Date(s.start_at).getTime() < to &&
-      new Date(s.end_at).getTime() > from,
+    (s) => s.status !== "cancelled" && s.phase !== "ended",
   );
   // shortcut: one occurrences request per class in the month; fine for a
   // single academy's dozen classes, add a month-wide endpoint if that grows.
@@ -88,9 +76,19 @@ export default function AdminMonthDatesPage() {
   const loading = sessions.isLoading || occurrenceQueries.some((q) => q.isLoading);
   const occurrenceData = occurrenceQueries.map((q) => q.data);
 
-  const classes: MonthDateClass[] = inMonth.flatMap((s, i) =>
-    (occurrenceData[i]?.occurrences ?? []).map((occurrence) => ({ occurrence, sessionTitle: s.title })),
-  );
+  // A dated series answers every sibling's query with the whole series: keep
+  // each date once, under the first class that returned it.
+  const seen = new Set<string>();
+  const classes: MonthDateClass[] = [];
+  const ownerOf = new Map<string, number>();
+  inMonth.forEach((s, i) => {
+    for (const occurrence of occurrenceData[i]?.occurrences ?? []) {
+      if (seen.has(occurrence.occurrence_id)) continue;
+      seen.add(occurrence.occurrence_id);
+      ownerOf.set(occurrence.occurrence_id, i);
+      classes.push({ occurrence, sessionTitle: s.title });
+    }
+  });
   const dates = groupMonthDates(classes, activeMonth, timeZone);
 
   const now = new Date();
@@ -120,6 +118,8 @@ export default function AdminMonthDatesPage() {
       return failed;
     },
     onSettled: async (failed) => {
+      setNotice(null);
+      setError(null);
       await Promise.all(
         inMonth.map((s) =>
           queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionOccurrences(s.session_id) }),
@@ -129,41 +129,59 @@ export default function AdminMonthDatesPage() {
       setNoClass(new Set());
       setReason("");
       if (failed && failed.length) {
-        setError(`${failed.length} date(s) could not be called off. They may have started already.`);
+        setError(
+          `${toCancel.length - failed.length} date(s) saved; ${failed.length} could not be called off. They may have started already.`,
+        );
       } else {
         setNotice(`Saved. ${toCancel.length} date(s) are now marked "No class".`);
       }
     },
   });
 
+  const publishThrough = (() => {
+    const current = publish.data?.published_through ?? null;
+    return current && current > activeMonth ? current : activeMonth;
+  })();
+
   const publishMonth = useMutation({
     mutationFn: async () => {
-      const current = publish.data?.published_through ?? null;
-      const through = current && current > activeMonth ? current : activeMonth;
-      const result = await setSchedulePublish(through);
+      const result = await setSchedulePublish(publishThrough);
+      // The month is published from here on, whatever the emails do.
+      queryClient.setQueryData(PUBLISH_KEY, result);
       let emailed = 0;
+      const notEmailed: string[] = [];
       if (emailFamilies) {
         for (const [i, s] of inMonth.entries()) {
-          const own = (occurrenceData[i]?.occurrences ?? []).filter((o) =>
-            dates.some((d) => d.classes.some((c) => c.occurrence.occurrence_id === o.occurrence_id)),
-          );
+          const own = dates
+            .flatMap((d) => d.classes)
+            .filter((c) => ownerOf.get(c.occurrence.occurrence_id) === i)
+            .map((c) => c.occurrence);
           const body = scheduleAnnouncement(s.title, own, monthLabel(activeMonth), timeZone);
           if (!body) continue;
-          await postSessionAnnouncement("admin", s.session_id, { body, urgent: true });
-          emailed += 1;
+          try {
+            await postSessionAnnouncement("admin", s.session_id, { body, urgent: true });
+            emailed += 1;
+          } catch {
+            notEmailed.push(s.title);
+          }
         }
       }
-      return { result, emailed };
+      return { emailed, notEmailed };
     },
-    onSuccess: ({ result, emailed }) => {
-      queryClient.setQueryData(PUBLISH_KEY, result);
+    onMutate: () => {
+      setNotice(null);
       setError(null);
+    },
+    onSuccess: ({ emailed, notEmailed }) => {
       setNotice(
         `${monthLabel(activeMonth)} is published.` +
           (emailed ? ` Families in ${emailed} class(es) were emailed the dates.` : ""),
       );
+      if (notEmailed.length) {
+        setError(`These classes were not emailed: ${notEmailed.join(", ")}. Post their dates from the class page.`);
+      }
     },
-    onError: () => setError("Could not publish. Try again."),
+    onError: () => setError("Could not publish. Nothing was emailed. Try again."),
   });
 
   const published = publish.data
@@ -285,8 +303,9 @@ export default function AdminMonthDatesPage() {
       <Card p={16}>
         <h2 className="text-base font-semibold text-rally-ink">Publish {monthLabel(activeMonth)}</h2>
         <p className="mt-1 text-sm text-rally-muted">
-          Publishing marks this month as final in the parent portal and adds it to parents&apos; phone
-          calendars. Change a date later and their calendars update by themselves.
+          Publishing marks this month, and any earlier unpublished month, as final in the parent
+          portal and adds it to parents&apos; phone calendars. Change a date later and their
+          calendars update by themselves.
         </p>
         <label className="mt-3 flex items-center gap-2 text-sm text-rally-ink">
           <input type="checkbox" checked={emailFamilies} onChange={(e) => setEmailFamilies(e.target.checked)} />
@@ -300,7 +319,11 @@ export default function AdminMonthDatesPage() {
           onClick={() => publishMonth.mutate()}
           data-testid="month-dates-publish"
         >
-          {published ? `Publish again${emailFamilies ? " and email" : ""}` : `Publish ${monthLabel(activeMonth)}`}
+          {published
+            ? `Publish again${emailFamilies ? " and email" : ""}`
+            : publishThrough === activeMonth
+              ? `Publish ${monthLabel(activeMonth)}`
+              : `Publish through ${monthLabel(publishThrough)}`}
         </Button>
         {toCancel.length > 0 && (
           <p className="mt-2 text-xs text-rally-subtle">Save your date changes before publishing.</p>

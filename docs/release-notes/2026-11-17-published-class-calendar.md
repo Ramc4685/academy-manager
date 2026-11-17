@@ -10,8 +10,8 @@ On the parent calendar, phones now open on a list grouped by month. Each date sa
 ## Deploy notes
 - Migration `0242_calendar_feed_links_index` creates a unique index on the new, empty `calendar_feed_links` collection. It is safe to apply at any time.
 - The calendar link is signed with `UNSUBSCRIBE_TOKEN_SECRET`, using its own domain prefix. If that secret is unset, there is no link and no feed, and the "Add to my calendar" button stays hidden.
-- Publishing is opt-in. Until an academy publishes a month, parents see every date as before, with an "aren't confirmed yet" note. The feed shows about six months ahead.
-- New public route `GET /api/v2/calendar-feed/{token}.ics`, rate-limited to 60 requests a minute per client. The academy comes from the request host, never from the token.
+- Publishing is opt-in. An academy that never publishes looks as it did before: every date shows with no "not confirmed" note, and the feed shows about six months ahead. Once it publishes, later months show that note and stay out of the feed. Publishing a month also publishes any earlier unpublished month.
+- New public route `GET /api/v2/calendar-feed/{token}.ics`, rate-limited to 600 requests a minute per client IP (Google and Outlook fetch from shared IPs). The academy comes from the request host, never from the token.
 
 ## Risk / rollback
 - Risk: the feed carries children's first names and class times to the parent's calendar provider. The link is private and can be reset, and it stops working once the parent's membership loses the parent role.

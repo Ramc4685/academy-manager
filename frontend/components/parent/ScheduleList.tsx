@@ -2,7 +2,7 @@
 
 import { Card } from "@/components/ds/card";
 import type { ParentScheduleEntry } from "@/lib/api/parent";
-import { formatAcademyTimeRange } from "@/lib/format/academy-time";
+import { formatAcademyTimeRange, monthLabel } from "@/lib/format/academy-time";
 import { isMonthPublished, noClassReason } from "@/lib/parent/schedule-events";
 import { sessionDateKey } from "@/lib/time/session-time";
 
@@ -16,15 +16,6 @@ interface Props {
   timeZone: string;
   publishedThrough: string | null | undefined;
   now?: Date;
-}
-
-function monthTitle(month: string): string {
-  const [year, m] = month.split("-").map(Number);
-  return new Date(Date.UTC(year, m - 1, 1)).toLocaleDateString(undefined, {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
 }
 
 /**
@@ -59,7 +50,7 @@ export function ScheduleList({ rows, timeZone, publishedThrough, now = new Date(
         return (
           <Card key={month} p={16}>
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-base font-semibold text-rally-ink">{monthTitle(month)}</h2>
+              <h2 className="text-base font-semibold text-rally-ink">{monthLabel(month)}</h2>
               {publishedThrough && published && (
                 <span className="rounded px-2 py-0.5 text-xs font-semibold bg-status-green-50 text-status-green-800">
                   Confirmed

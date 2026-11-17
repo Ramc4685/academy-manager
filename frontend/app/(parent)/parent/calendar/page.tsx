@@ -22,8 +22,10 @@ import { academyMonthKey } from "@/lib/format/academy-time";
 function scheduleRange(timeZone: string | null | undefined) {
   const last = academyMonthKey(timeZone, 2);
   const [year, month] = last.split("-").map(Number);
-  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return { from: `${academyMonthKey(timeZone, 0)}-01`, to: `${last}-${lastDay}` };
+  // `to` is read as a UTC day: run one day past the month so an evening class
+  // on its last day (already the next day in UTC) is still fetched.
+  const dayAfter = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+  return { from: `${academyMonthKey(timeZone, 0)}-01`, to: dayAfter };
 }
 
 type View = "list" | "month";
@@ -193,7 +195,7 @@ export default function ParentCalendarPage() {
           publishedThrough={academyQuery.data?.schedule_published_through}
         />
       ) : calendarZone.status === "ready" ? (
-        <PersonaCalendarView events={events} timeZone={calendarZone.timeZone} />
+        <PersonaCalendarView events={events} timeZone={calendarZone.timeZone} monthFirst />
       ) : academyQuery.isError ? null : (
         <CalendarTimeZoneUnavailable listHref="/parent/children" listLabel="My children" />
       )}
