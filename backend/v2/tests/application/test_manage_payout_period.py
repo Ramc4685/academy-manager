@@ -95,6 +95,9 @@ class FakeRepo:
         return stored
 
     async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
+        if period.status != "draft":
+            # Same refusal as the Mongo repo: lines change on drafts only.
+            raise PayoutPeriodStateError(period.period_id)
         current = self._by_id.get(period.period_id)
         if current is None:
             raise LookupError(period.period_id)

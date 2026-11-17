@@ -98,6 +98,8 @@ class GeneratePayoutPeriod:
             period_end=period_end,
         )
         if overlapping is not None:
+            if (overlapping.period_start, overlapping.period_end) == (period_start, period_end):
+                return overlapping  # a concurrent generate stored this exact window
             raise OverlappingPayoutPeriodError(overlapping)
 
         calc = await self._calc.calculate(
@@ -131,6 +133,8 @@ class GeneratePayoutPeriod:
             paid_at=None,
         )
         stored = await self._repo.save(period)
+        if stored.period_id != period.period_id:
+            return stored  # a concurrent generate stored this window first and audited it
         # #787: creating the snapshot is itself a money-moving step — it is
         # what a later approval and payment are measured against — so the
         # trail starts here, not at the first correction.

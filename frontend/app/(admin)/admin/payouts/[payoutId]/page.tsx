@@ -37,6 +37,8 @@ import {
   getPayoutPeriod,
   markPayoutPeriodPaid,
   overridePayoutLine,
+  PAYOUT_CONFLICT_MESSAGE,
+  payoutErrorMessage,
   recomputePayoutPeriod,
   reopenPayoutPeriod,
   type AdminPayoutPeriodLineView,
@@ -425,37 +427,38 @@ function Actions({
   const [showPaid, setShowPaid] = useState(false);
 
   const recompute = useMutation({
-    mutationFn: () => recomputePayoutPeriod(period.period_id),
+    mutationFn: () => recomputePayoutPeriod(period.period_id, period.version),
     onSuccess: (updated) => {
       setError(null);
       onChanged(updated);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(payoutErrorMessage(err)),
   });
   const approve = useMutation({
-    mutationFn: () => approvePayoutPeriod(period.period_id),
+    mutationFn: () => approvePayoutPeriod(period.period_id, period.version),
     onSuccess: (updated) => {
       setError(null);
       onChanged(updated);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(payoutErrorMessage(err)),
   });
   const reopen = useMutation({
-    mutationFn: (reason: string) => reopenPayoutPeriod(period.period_id, reason),
+    mutationFn: (reason: string) => reopenPayoutPeriod(period.period_id, reason, period.version),
     onSuccess: (updated) => {
       setError(null);
       onChanged(updated);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(payoutErrorMessage(err)),
   });
   const markPaid = useMutation({
-    mutationFn: (input: MarkPayoutPaidInput) => markPayoutPeriodPaid(period.period_id, input),
+    mutationFn: (input: Omit<MarkPayoutPaidInput, "expected_version">) =>
+      markPayoutPeriodPaid(period.period_id, { ...input, expected_version: period.version }),
     onSuccess: (updated) => {
       setError(null);
       setShowPaid(false);
       onChanged(updated);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(payoutErrorMessage(err)),
   });
 
   const onReopen = () => {
@@ -556,6 +559,7 @@ function Actions({
       {error && (
         <p role="alert" className="text-sm text-red-700">
           {error}
+          {error === PAYOUT_CONFLICT_MESSAGE && <ReloadButton />}
         </p>
       )}
       {unresolvedMessage && (
@@ -604,6 +608,18 @@ function ActionButton({
     >
       {icon}
       {label}
+    </button>
+  );
+}
+
+function ReloadButton() {
+  return (
+    <button
+      type="button"
+      onClick={() => window.location.reload()}
+      className="ml-2 font-medium underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+    >
+      Reload
     </button>
   );
 }
@@ -764,12 +780,15 @@ function PaidRow({
   const [error, setError] = useState<string | null>(null);
   const override = useMutation({
     mutationFn: (input: { amount_cents: number | null; reason: string }) =>
-      overridePayoutLine(period.period_id, line.occurrence_id, input),
+      overridePayoutLine(period.period_id, line.occurrence_id, {
+        ...input,
+        expected_version: period.version,
+      }),
     onSuccess: (updated) => {
       setError(null);
       onChanged(updated);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(payoutErrorMessage(err)),
   });
 
   const editable = period.status === "draft";
@@ -850,6 +869,7 @@ function PaidRow({
         {error && (
           <div role="alert" className="text-[11px] text-red-700">
             {error}
+            {error === PAYOUT_CONFLICT_MESSAGE && <ReloadButton />}
           </div>
         )}
       </td>
@@ -959,7 +979,7 @@ function MarkPaidDialog({
   defaultAmountCents: number;
   pending: boolean;
   onCancel: () => void;
-  onSubmit: (input: MarkPayoutPaidInput) => void;
+  onSubmit: (input: Omit<MarkPayoutPaidInput, "expected_version">) => void;
 }) {
   const timezone = useAcademyTimezone();
   const today = academyDateISO(timezone);

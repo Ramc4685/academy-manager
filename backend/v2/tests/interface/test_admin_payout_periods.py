@@ -82,9 +82,13 @@ class _ApprovePayoutPeriod:
     def __init__(self, period: PayoutPeriod) -> None:
         self.period = period
         self.calls: list[str] = []
+        self.expected_versions: list[int | None] = []
 
-    async def execute(self, *, period_id: str, actor_id: str = "system") -> PayoutPeriod:
+    async def execute(
+        self, *, period_id: str, actor_id: str = "system", expected_version: int | None = None
+    ) -> PayoutPeriod:
         self.calls.append(period_id)
+        self.expected_versions.append(expected_version)
         if self.period.unpaid_occurrence_ids:
             raise PayoutPeriodStateError("unresolved unpaid occurrences remain")
         self.period = self.period.model_copy(
@@ -94,7 +98,7 @@ class _ApprovePayoutPeriod:
 
 
 class _ApprovePayoutPeriodRaises:
-    async def execute(self, *, period_id: str, actor_id: str = "system") -> PayoutPeriod:
+    async def execute(self, *, period_id: str, actor_id: str = "system", **_) -> PayoutPeriod:
         raise PayoutPeriodStateError("cannot approve payout period with unresolved payout warnings")
 
 
@@ -102,9 +106,13 @@ class _MarkPayoutPaid:
     def __init__(self, period: PayoutPeriod) -> None:
         self.period = period
         self.calls: list[object] = []
+        self.expected_versions: list[int | None] = []
 
-    async def execute(self, command, *, actor_id: str = "system") -> PayoutPeriod:
+    async def execute(
+        self, command, *, actor_id: str = "system", expected_version: int | None = None
+    ) -> PayoutPeriod:
         self.calls.append(command)
+        self.expected_versions.append(expected_version)
         if self.period.status == "paid":
             return self.period
         self.period = self.period.model_copy(
@@ -390,7 +398,7 @@ def test_payout_period_routes_wrong_persona_404(coach_on_admin_client):
 
 
 class _MarkPaidLosesRace:
-    async def execute(self, command, *, actor_id: str = "system") -> PayoutPeriod:
+    async def execute(self, command, *, actor_id: str = "system", **_) -> PayoutPeriod:
         raise PayoutPeriodConflictError("payout period 'pp-1' changed since it was loaded")
 
 
@@ -434,3 +442,28 @@ def test_period_export_labels_the_basis_column_per_period(admin_client):
 
     assert "Tuition basis" in header(_period(revenue_basis="invoiced"))
     assert "Expected revenue (legacy)" in header(_period(revenue_basis="expected"))
+
+
+def test_the_view_carries_the_version_and_writes_forward_the_one_the_screen_saw(admin_client):
+    _wire(admin_client, _period(version=3))
+
+    assert admin_client.get("/api/v2/admin/payout-periods/pp-1").json()["version"] == 3
+    approved = admin_client.post(
+        "/api/v2/admin/payout-periods/pp-1/approve", json={"expected_version": 3}
+    )
+    assert approved.status_code == 200, approved.text
+    paid = admin_client.post(
+        "/api/v2/admin/payout-periods/pp-1/mark-paid",
+        json={
+            "method": "check",
+            "paid_at": "2026-06-03T10:00:00Z",
+            "amount_cents": 7500,
+            "expected_version": 4,
+        },
+    )
+    assert paid.status_code == 200, paid.text
+    # No body (an older client): the write is still guarded load-to-write.
+    assert admin_client.post("/api/v2/admin/payout-periods/pp-1/approve").status_code == 200
+
+    assert admin_client.use_cases.approve_payout_period.expected_versions == [3, None]
+    assert admin_client.use_cases.mark_payout_paid.expected_versions == [4]

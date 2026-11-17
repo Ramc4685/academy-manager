@@ -9551,6 +9551,8 @@ export interface components {
             unpaid_occurrence_ids: string[];
             /** Unpaid Occurrences */
             unpaid_occurrences?: components["schemas"]["AdminUnpaidOccurrenceView"][];
+            /** Version */
+            version: number;
         };
         /** AdminPayoutWarningView */
         AdminPayoutWarningView: {
@@ -15415,6 +15417,8 @@ export interface components {
         MarkPayoutPeriodPaidRequest: {
             /** Amount Cents */
             amount_cents: number;
+            /** Expected Version */
+            expected_version?: number | null;
             /**
              * Method
              * @enum {string}
@@ -15793,6 +15797,8 @@ export interface components {
         OverridePayoutLineRequest: {
             /** Amount Cents */
             amount_cents?: number | null;
+            /** Expected Version */
+            expected_version?: number | null;
             /** Reason */
             reason: string;
         };
@@ -16958,6 +16964,14 @@ export interface components {
         PayoutAuditTrailView: {
             /** Entries */
             entries: components["schemas"]["PayoutAuditEntryView"][];
+        };
+        /**
+         * PayoutPeriodWriteRequest
+         * @description Optional body of approve and recompute.
+         */
+        PayoutPeriodWriteRequest: {
+            /** Expected Version */
+            expected_version?: number | null;
         };
         /**
          * PayrollSettingsView
@@ -18312,6 +18326,8 @@ export interface components {
              * @default false
              */
             acknowledge_paid_clawback: boolean;
+            /** Expected Version */
+            expected_version?: number | null;
             /** Reason */
             reason: string;
         };
@@ -25538,7 +25554,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["PayoutPeriodWriteRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -25733,7 +25753,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["PayoutPeriodWriteRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

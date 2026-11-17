@@ -10,7 +10,10 @@ Two collections:
 
 Storing the lines separately (rather than embedded) makes the repo more
 useful for analytics/reporting later — but the period and its lines are
-always read+written together to preserve aggregate boundaries.
+always read+written together to preserve aggregate boundaries. Each write
+inserts a new line set under a fresh ``lines_version`` stamp, then one
+version-guarded header write points at it, so the header and its lines
+change together without a multi-document transaction.
 
 The repo extends ``TenantScopedRepository``, so every read/write is
 pre-filtered by the current ``academy_id`` from the request scope.
@@ -29,6 +32,7 @@ from backend.v2.contexts.finance.domain.payout_period import (
     PAYOUT_TRANSITION_FIELDS,
     PayoutPeriod,
     PayoutPeriodConflictError,
+    PayoutPeriodStateError,
     PayoutWarning,
     PersistedPayoutLine,
     PersistedUnpaidOccurrence,
@@ -243,8 +247,7 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
     async def save(self, period: PayoutPeriod) -> PayoutPeriod:
         # Idempotent on natural key — if a period for this window already
         # exists, return it without overwriting. Callers wanting to
-        # re-generate after rate edits go through an explicit "regenerate
-        # draft" flow which is out of scope here.
+        # re-generate after rate edits go through RecomputePayoutPeriod.
         existing = await self.find_by_window(
             coach_id=period.coach_id,
             period_start=period.period_start,
@@ -253,10 +256,30 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
         if existing is not None:
             return existing
 
+        # Lines first under a fresh stamp, then the header that points at
+        # them: until the header lands they are invisible, so a reader (or a
+        # crash between the writes) never sees a total with no lines.
+        token = str(new_ulid())
+        academy_id = current_academy_id()
+        lines = self._db[self.LINES_COLLECTION]
+        if period.lines:
+            await lines.insert_many(
+                [
+                    {
+                        **_line_to_doc(line, period_id=period.period_id),
+                        "academy_id": academy_id,
+                        "lines_version": token,
+                    }
+                    for line in period.lines
+                ]
+            )
         try:
-            await self._insert_one(_period_to_doc(period))
+            await self._insert_one({**_period_to_doc(period), "lines_version": token})
         except DuplicateKeyError:
-            # Concurrent caller won the race; return what they wrote.
+            # Concurrent caller won the race; drop our lines, return what they wrote.
+            await lines.delete_many(
+                {"academy_id": academy_id, "period_id": period.period_id, "lines_version": token}
+            )
             again = await self.find_by_window(
                 coach_id=period.coach_id,
                 period_start=period.period_start,
@@ -265,15 +288,6 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
             if again is None:  # pragma: no cover - defensive
                 raise
             return again
-
-        academy_id = current_academy_id()
-        if period.lines:
-            await self._db[self.LINES_COLLECTION].insert_many(
-                [
-                    {**_line_to_doc(line, period_id=period.period_id), "academy_id": academy_id}
-                    for line in period.lines
-                ]
-            )
 
         stored = await self.find_by_id(period.period_id)
         if stored is None:  # pragma: no cover - defensive
@@ -286,11 +300,8 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
         # reopen and re-approve, two recomputes) only the first lands.
         loaded = period.version
         previous = await self._find_one_and_update(
-            {
-                "period_id": period.period_id,
-                # A document written before versions existed reads as 0.
-                "version": loaded if loaded else {"$in": [0, None]},
-            },
+            # Migration 0239 backfilled ``version`` on every stored period.
+            {"period_id": period.period_id, "version": loaded},
             {"$set": fields, "$inc": {"version": 1}},
             return_document_after=False,
         )
@@ -330,8 +341,14 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
 
         Used by recompute and line-override flows, which legitimately
         change lines (unlike ``replace``, which only moves the state
-        machine). Drafts only — callers enforce that rule.
+        machine). Drafts only: the version compare-and-set below proves the
+        stored status is still the loaded one.
         """
+        if period.status != "draft":
+            raise PayoutPeriodStateError(
+                f"payout period {period.period_id!r} is {period.status!r}; reopen it "
+                "before changing its lines"
+            )
         header = _period_to_doc(period)
         header.pop("version")
         # The new line set goes in first under a fresh stamp, then the header's

@@ -32,6 +32,7 @@ from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     approve,
     mark_paid,
+    require_version,
 )
 
 
@@ -56,16 +57,19 @@ class _BaseTransition:
         self._clock = clock
         self._audit = PayoutAuditRecorder(audit=audit, clock=clock, id_factory=id_factory)
 
-    async def _load(self, period_id: str) -> PayoutPeriod:
+    async def _load(self, period_id: str, expected_version: int | None = None) -> PayoutPeriod:
         period = await self._repo.find_by_id(period_id)
         if period is None:
             raise LookupError(f"PayoutPeriod {period_id!r} not found")
+        require_version(period, expected_version)
         return period
 
 
 class ApprovePayoutPeriod(_BaseTransition):
-    async def execute(self, *, period_id: str, actor_id: str = "system") -> PayoutPeriod:
-        period = await self._load(period_id)
+    async def execute(
+        self, *, period_id: str, actor_id: str = "system", expected_version: int | None = None
+    ) -> PayoutPeriod:
+        period = await self._load(period_id, expected_version)
         approved = approve(period, at=self._clock())
         if approved is period:
             return period
@@ -87,11 +91,12 @@ class MarkPayoutPaid(_BaseTransition):
         *,
         period_id: str | None = None,
         actor_id: str = "system",
+        expected_version: int | None = None,
     ) -> PayoutPeriod:
         if command is None:
             if period_id is None:
                 raise TypeError("MarkPayoutPaid.execute requires command or period_id")
-            period = await self._load(period_id)
+            period = await self._load(period_id, expected_version)
             command = MarkPayoutPaidCommand(
                 period_id=period_id,
                 method="unspecified",
@@ -100,7 +105,7 @@ class MarkPayoutPaid(_BaseTransition):
                 reference=None,
             )
         else:
-            period = await self._load(command.period_id)
+            period = await self._load(command.period_id, expected_version)
 
         paid = mark_paid(
             period,
