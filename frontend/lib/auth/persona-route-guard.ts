@@ -203,3 +203,13 @@ export function sanitizeReturnPath(raw: string | null | undefined): string | nul
 
   return raw;
 }
+
+/**
+ * Where to send a visitor once they are signed in: `/post-login`, carrying a
+ * safe `returnTo` along so a deep link (a dunning email's
+ * `/parent/payments?pay=...`) survives typing a password or Google/Apple.
+ */
+export function postLoginHandOff(returnTo: string | null | undefined): string {
+  const safe = sanitizeReturnPath(returnTo);
+  return safe ? `/post-login?returnTo=${encodeURIComponent(safe)}` : "/post-login";
+}

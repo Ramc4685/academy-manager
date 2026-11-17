@@ -1,7 +1,7 @@
 """Provider idempotency keys for outbound email (L11 item 6).
 
-A unit of work that may be retried — one outbox handler run, one campaign
-delivery — opens a scope named after its own durable id. Every email sent
+A unit of work that may be retried (one outbox handler run, one campaign
+delivery) opens a scope named after its own durable id. Every email sent
 inside the scope gets the key ``<scope>:<recipient hash>:<n>``, where ``n``
 counts the sends to that recipient within the scope, and the Resend adapter
 puts it in its ``Idempotency-Key`` header. A retry of the same unit mints the
@@ -47,11 +47,6 @@ def send_idempotency_scope(name: str) -> Iterator[None]:
         yield
     finally:
         _SCOPE.reset(token)
-
-
-def current_send_idempotency_scope() -> str | None:
-    scope = _SCOPE.get()
-    return scope.name if scope else None
 
 
 def next_send_idempotency_key(recipient_email: str) -> str | None:

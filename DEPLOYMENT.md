@@ -310,8 +310,8 @@ deploy performs lives in `scripts/ops/`:
 | Fly secret | `OPS_ALERT_EMAIL` | Recipient of the 07:00 daily ops digest. Set in prod. |
 | Fly secret | `RESEND_WEBHOOK_SECRET` | Verifies Resend bounce/complaint webhooks at `/api/v2/webhooks/resend`. Set in prod. |
 | Fly secret | `UNSUBSCRIBE_TOKEN_SECRET` | Signs unsubscribe links. Without it, or without `RESEND_WEBHOOK_SECRET`, prod warns at boot and on `/api/v2/healthz`. |
-| Fly env | `V2_EMAIL_SEND_MAX_RETRIES` | Optional, default 0. Retries after a Resend 429 or a keyed 5xx. |
-| Fly env | `V2_MARKETING_SENDER_EMAIL` | Optional. From address for campaigns (verified domain). |
+| Fly env | `V2_EMAIL_SEND_MAX_RETRIES` | Optional, default 0. Retries after a Resend rate-limit 429 (not a quota 429) or a keyed 5xx. |
+| Fly env | `V2_MARKETING_SENDER_EMAIL` | Optional. From address for campaigns (verified domain). An invalid value is ignored with an error log. |
 | Fly env | `V2_EMAIL_LIST_UNSUBSCRIBE_ENABLED` | Optional, default false. One-click `List-Unsubscribe` and postal address on campaigns. |
 | Fly env | `V2_PUSH_EXTRA_EVENTS` | Optional, default empty. Comma list of opt-in push events: `direct_message`, `academy_broadcast`, `class_announcement`. |
 | Fly env | `V2_CAMPAIGN_BACKGROUND_SEND_ENABLED` | Optional, default false. Campaigns queue and send from a resumable 1-minute background job. Set `V2_EMAIL_SEND_MAX_RETRIES>=2` before enabling. Not a kill switch: already-queued campaigns always drain. |

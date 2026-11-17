@@ -87,12 +87,13 @@ REQUEST_TIMEOUT_SECONDS = 30.0
 # never sets it. It carries no credential — the key is always the port's own.
 default_transport: httpx.AsyncBaseTransport | None = None
 
-# Resend's 409 answers when an Idempotency-Key is reused (L11 item 6). The first
-# means a message with this key already went out — exactly what a replayed
-# outbox event should learn — so it is reported as sent. The second means the
-# first request is still in flight and is worth one more try.
-_KEY_ALREADY_USED = "invalid_idempotent_request"
+# Resend's 409 while the first request with this Idempotency-Key is still in
+# flight (L11 item 6): worth one more try. Any other 409 (a reused key with a
+# different payload) is a real failure and goes to the retry ladder / dead
+# letter like every other one; a true replay of a sent message answers 200.
 _KEY_IN_FLIGHT = "concurrent_idempotent_requests"
+# The only 429 that clears by itself; a daily or monthly quota does not.
+_RATE_LIMITED = "rate_limit_exceeded"
 
 
 def _status_code(exc: ResendError) -> int:
@@ -321,9 +322,6 @@ class ResendEmailSendPort(EmailSendPort):
             msg_id = response.get("id") if isinstance(response, dict) else str(response)
             return SendOutcome(ok=True, provider_message_id=msg_id, failed_reason=None)
         except ResendError as exc:
-            if idempotency_key and getattr(exc, "error_type", None) == _KEY_ALREADY_USED:
-                log.info("resend_send_already_sent: key=%s", idempotency_key)
-                return SendOutcome(ok=True, provider_message_id=None, failed_reason=None)
             if isinstance(exc, (MissingApiKeyError, InvalidApiKeyError)):
                 # A credential failure is an outage, not one bad recipient:
                 # without its own log line it reads as a rejected address.
@@ -347,13 +345,14 @@ class ResendEmailSendPort(EmailSendPort):
 
 
 def _retryable(exc: ResendError, *, keyed: bool) -> bool:
-    """429 is never processed, so it is always safe to repeat. A 5xx or a
+    """A rate-limited 429 is never processed, so it is always safe to repeat;
+    a quota 429 will not clear within the backoff, so it is not. A 5xx or a
     transport failure (``HttpClientError`` is code 500) may already have sent
     the mail, so it is repeated only under an idempotency key, which makes the
     provider drop the duplicate."""
     code = _status_code(exc)
     if code == 429:
-        return True
+        return getattr(exc, "error_type", None) == _RATE_LIMITED
     if not keyed:
         return False
     return code >= 500 or getattr(exc, "error_type", None) == _KEY_IN_FLIGHT

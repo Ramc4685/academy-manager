@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from backend.v2.composition.digests import _build_email_sender
 from backend.v2.contexts.communications.infrastructure.resend_send_port import (
     ResendEmailSendPort,
@@ -37,10 +39,10 @@ def test_defaults_keep_todays_sender() -> None:
 
 def test_marketing_sender_and_retries_reach_the_adapter() -> None:
     port = _build_email_sender(
-        _settings(marketing_sender_email="news@mail.example.test", email_send_max_retries=3)
+        _settings(marketing_sender_email="news@mail.example.com", email_send_max_retries=3)
     )
     assert isinstance(port, ResendEmailSendPort)
-    assert port._marketing_from_address == "news@mail.example.test"
+    assert port._marketing_from_address == "news@mail.example.com"
     assert port._max_retries == 3
 
 
@@ -66,9 +68,9 @@ def _construct(**values: object) -> Settings:
 
 def test_production_email_without_bounce_or_unsubscribe_secrets_warns() -> None:
     warnings = _construct().email_config_warnings()
-    assert len(warnings) == 2
-    assert any("RESEND_WEBHOOK_SECRET" in w for w in warnings)
-    assert any("UNSUBSCRIBE_TOKEN_SECRET" in w for w in warnings)
+    assert list(warnings) == ["email_bounce_ingestion_off", "email_unsubscribe_links_off"]
+    assert "RESEND_WEBHOOK_SECRET" in warnings["email_bounce_ingestion_off"]
+    assert "UNSUBSCRIBE_TOKEN_SECRET" in warnings["email_unsubscribe_links_off"]
 
 
 def test_no_warning_when_configured_or_not_sending() -> None:
@@ -76,16 +78,39 @@ def test_no_warning_when_configured_or_not_sending() -> None:
         _construct(
             resend_webhook_secret="whsec_x", unsubscribe_token_secret="s"
         ).email_config_warnings()
-        == []
+        == {}
     )
-    assert _construct(email_delivery_enabled=False).email_config_warnings() == []
-    assert _construct(env="dev").email_config_warnings() == []
+    assert _construct(email_delivery_enabled=False).email_config_warnings() == {}
+    assert _construct(env="dev").email_config_warnings() == {}
 
 
 async def test_healthz_reports_config_warnings_without_failing() -> None:
-    report, healthy = await build_health_report(config_warnings=["bounce ingestion is off"])
+    codes = list(_construct().email_config_warnings())
+    report, healthy = await build_health_report(config_warnings=codes)
     assert healthy is True
-    assert report["warnings"] == ["bounce ingestion is off"]
+    # /healthz is public: opaque codes only, never the secret names.
+    assert report["warnings"] == ["email_bounce_ingestion_off", "email_unsubscribe_links_off"]
+    assert "SECRET" not in str(report)
 
     report, _ = await build_health_report()
     assert "warnings" not in report
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, None),
+        ("   ", None),
+        ("news@academy.example.com", "news@academy.example.com"),
+        ("not-an-address", None),
+        ("news@academy.example.com\r\nBcc: x@example.com", None),
+    ],
+)
+def test_marketing_sender_is_validated_and_falls_back(
+    raw: str | None, expected: str | None
+) -> None:
+    from types import SimpleNamespace
+
+    from backend.v2.composition.digests import marketing_from_address
+
+    assert marketing_from_address(SimpleNamespace(marketing_sender_email=raw)) == expected

@@ -19,7 +19,7 @@ from backend.v2.contexts.communications.infrastructure.resend_send_port import (
     ResendEmailSendPort,
 )
 from backend.v2.shared.comms.send_idempotency import (
-    current_send_idempotency_scope,
+    next_send_idempotency_key,
     send_idempotency_scope,
 )
 
@@ -120,21 +120,24 @@ async def test_a_replayed_scope_mints_the_same_keys() -> None:
 
 
 def test_scopes_nest_and_restore() -> None:
-    assert current_send_idempotency_scope() is None
+    assert next_send_idempotency_key("a@example.com") is None
     with send_idempotency_scope("outer"):
         with send_idempotency_scope("inner"):
-            assert current_send_idempotency_scope() == "inner"
-        assert current_send_idempotency_scope() == "outer"
-    assert current_send_idempotency_scope() is None
+            assert (next_send_idempotency_key("a@example.com") or "").startswith("inner:")
+        assert (next_send_idempotency_key("a@example.com") or "").startswith("outer:")
+    assert next_send_idempotency_key("a@example.com") is None
 
 
-async def test_conflict_on_a_reused_key_counts_as_already_sent() -> None:
-    script = _Script(_status(409, "invalid_idempotent_request"))
-    port = _port(script)
+async def test_a_keyed_conflict_is_a_failure_and_is_not_retried() -> None:
+    """Resend's invalid_idempotent_request means the key was reused with a
+    different payload, not that this mail went out: report it failed so the
+    outbox ladder and dead letter see it."""
+    script = _Script(_status(409, "invalid_idempotent_request"), _ok)
+    port = _port(script, max_retries=2, sleep=_Sleeps())
     with send_idempotency_scope("outbox:evt-2:h"):
         outcome = await port.send(recipient=_recipient(), subject="a", body="<p>a</p>")
-    assert outcome.ok is True
-    assert outcome.provider_message_id is None
+    assert outcome.ok is False
+    assert len(script.requests) == 1
 
 
 async def test_conflict_without_a_key_is_still_a_failure() -> None:
@@ -166,6 +169,17 @@ async def test_rate_limit_is_retried_with_backoff() -> None:
     assert outcome.ok is True
     assert len(script.requests) == 3
     assert sleeps.calls == [0.5, 1.0]
+
+
+@pytest.mark.parametrize("name", ["daily_quota_exceeded", "monthly_quota_exceeded"])
+async def test_a_quota_429_is_not_retried(name: str) -> None:
+    script = _Script(_status(429, name), _ok)
+    sleeps = _Sleeps()
+    port = _port(script, max_retries=2, sleep=sleeps)
+    outcome = await port.send(recipient=_recipient(), subject="a", body="<p>a</p>")
+    assert outcome.ok is False
+    assert len(script.requests) == 1
+    assert sleeps.calls == []
 
 
 async def test_retries_are_bounded() -> None:
@@ -269,7 +283,8 @@ async def test_dispatcher_runs_each_handler_inside_an_event_scope(
     seen: list[str | None] = []
 
     async def handler_fn(event: DomainEvent) -> None:
-        seen.append(current_send_idempotency_scope())
+        key = next_send_idempotency_key("a@example.com")
+        seen.append(key.rsplit(":", 2)[0] if key else None)
 
     monkeypatch.setattr(module, "_reconstruct_event", lambda doc, cls: object())
     disp = module.EventDispatcher(AsyncMongoMockClient()["l11"])
@@ -277,4 +292,4 @@ async def test_dispatcher_runs_each_handler_inside_an_event_scope(
     ok = await disp._run_handler_with_retries(doc, "notify_parent", handler_fn, DomainEvent)
     assert ok is True
     assert seen == ["outbox:evt-42:notify_parent"]
-    assert current_send_idempotency_scope() is None
+    assert next_send_idempotency_key("a@example.com") is None
