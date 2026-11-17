@@ -518,6 +518,7 @@ class InvoiceEmailAdapter:
         )
         brand = await _academy_brand(self._academies, academy_name)
         body = _branded_shell(academy_name=academy_name, inner_html=inner, brand=brand)
+        identity = await _identity(self._academies)
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
                 user_id=parent_id,
@@ -526,7 +527,7 @@ class InvoiceEmailAdapter:
             ),
             subject=subject,
             body=body,
-            **await _identity(self._academies),
+            **identity,
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "invoice email delivery failed")
@@ -557,6 +558,7 @@ class InvoiceEmailAdapter:
                 invoice_id=invoice_id,
                 subject=subject,
                 body=_branded_shell(academy_name=academy_name, inner_html=copy_inner, brand=brand),
+                **identity,
             )
         return outcome.provider_message_id
 

@@ -426,20 +426,22 @@ class Settings(BaseSettings):
         """
         return resolve_sender_address(self.sender_email, self.frontend_url)
 
-    def email_config_warnings(self) -> list[str]:
+    def email_config_warnings(self) -> dict[str, str]:
         """Production email that runs without bounce ingestion or one-click
-        unsubscribe (L11 item 9). Warned at boot and on /healthz, never fatal:
-        mail still goes out, it just cannot learn from bounces or honour links."""
+        unsubscribe (L11 item 9), as ``{opaque code: detail}``. Never fatal:
+        mail still goes out, it just cannot learn from bounces or honour links.
+        The public /healthz shows only the codes; the detail, which names the
+        secret, goes to the boot log and Sentry."""
         if self.env != "prod" or not (self.email_delivery_enabled and self.resend_api_key):
-            return []
-        warnings: list[str] = []
+            return {}
+        warnings: dict[str, str] = {}
         if not self.resend_webhook_secret:
-            warnings.append(
+            warnings["email_bounce_ingestion_off"] = (
                 "RESEND_WEBHOOK_SECRET is unset: bounces and complaints are not ingested, "
                 "so dead addresses keep being mailed"
             )
         if not self.unsubscribe_token_secret:
-            warnings.append(
+            warnings["email_unsubscribe_links_off"] = (
                 "UNSUBSCRIBE_TOKEN_SECRET is unset: digests and campaigns carry no unsubscribe link"
             )
         return warnings

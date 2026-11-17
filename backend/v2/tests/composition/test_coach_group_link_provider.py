@@ -66,6 +66,7 @@ async def test_brand_lookup_maps_academy_doc() -> None:
                 "brand_color": "#112233",
                 "logo_url": "",
                 "contact_email": "hi@blno.test",
+                "address": "1 Court Lane, Springfield",
             }
         )
     )
@@ -75,5 +76,7 @@ async def test_brand_lookup_maps_academy_doc() -> None:
     assert brand.accent() == "#112233"
     assert brand.logo_url is None
     assert brand.contact_email == "hi@blno.test"
+    # The campaign footer's CAN-SPAM address comes from this lookup.
+    assert brand.postal_address == "1 Court Lane, Springfield"
     academies.find_by_id = AsyncMock(return_value=None)
     assert await _AcademyBrandLookup(academies).brand_for("acad") is None

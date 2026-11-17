@@ -155,6 +155,7 @@ class FakeSender:
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
         sender_name: str | None = None,
+        unsubscribe_url: str | None = None,
     ) -> SendOutcome:
         if recipient.user_id in self.raise_for:
             raise RuntimeError("resend rejected the message")

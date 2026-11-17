@@ -711,6 +711,7 @@ class CrashingSendPort(EmailSendPort):
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
         sender_name: str | None = None,
+        unsubscribe_url: str | None = None,
     ) -> SendOutcome:
         if recipient.email == self.crash_on_email:
             raise RuntimeError("process died mid-loop")

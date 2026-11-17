@@ -155,8 +155,13 @@ from backend.v2.contexts.student_progress.application.use_cases.get_pathway_plac
 from backend.v2.contexts.student_progress.application.use_cases.get_teaching_focus import (
     GetTeachingFocus,
 )
+from backend.v2.shared.comms.email_brand import lookup_academy_brand
 from backend.v2.shared.comms.email_theme import EmailBrand, format_money
-from backend.v2.shared.comms.sender_identity import resolve_sender
+from backend.v2.shared.comms.sender_identity import (
+    InvalidSenderValue,
+    resolve_sender,
+    validate_reply_to,
+)
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.config.settings import resolve_sender_address
 from backend.v2.shared.tenancy import current_academy_id
@@ -332,27 +337,15 @@ class _CoachDigestPlanProvider:
 
 
 class _AcademyBrandLookup:
-    """``AcademyBrandLookup`` over the academy document (fields set on the
-    admin Settings → Academy page). Validation of ``brand_color`` happens in
-    ``EmailBrand.accent`` so junk never reaches a style attribute."""
+    """``AcademyBrandLookup`` (``brand_for``) over the shared academy-document
+    mapping, so digests and campaigns carry the same brand, sender identity
+    and postal address as every other send path."""
 
     def __init__(self, academies: Any) -> None:
         self._academies = academies
 
     async def brand_for(self, academy_id: str) -> EmailBrand | None:
-        doc = await self._academies.find_by_id(academy_id)
-        if not doc:
-            return None
-        identity = resolve_sender(doc)
-        return EmailBrand(
-            academy_name=str(doc.get("display_name") or academy_id),
-            brand_color=doc.get("brand_color") or None,
-            logo_url=doc.get("logo_url") or None,
-            contact_email=doc.get("contact_email") or None,
-            contact_phone=doc.get("contact_phone") or None,
-            sender_name=identity.sender_name,
-            reply_to=identity.reply_to,
-        )
+        return await lookup_academy_brand(self._academies, academy_id)
 
 
 def _session_group_label(session: Any) -> str:
@@ -1049,6 +1042,19 @@ class _ParentDigestProvider:
 _REAL_EMAIL_ENVS = frozenset({"staging", "prod"})
 
 
+def marketing_from_address(settings: Any) -> str | None:
+    """``V2_MARKETING_SENDER_EMAIL`` as a From address, or ``None`` (campaigns
+    then leave from the transactional sender). A value that is not one clean
+    email address (blank, a typo, a header-breaking newline) is refused with
+    an error log instead of failing every campaign at the provider."""
+    raw = resolve_sender_address(getattr(settings, "marketing_sender_email", None), None)
+    try:
+        return validate_reply_to(raw)
+    except InvalidSenderValue:
+        log.error("marketing_sender_email_invalid: campaigns use the transactional sender")
+        return None
+
+
 def _build_email_sender(settings: Any, db: AsyncIOMotorDatabase[Any] | None = None) -> Any:
     """Resend/Stub gating — and send-time recipient gates — for every send path.
 
@@ -1088,7 +1094,7 @@ def _build_email_sender(settings: Any, db: AsyncIOMotorDatabase[Any] | None = No
         inner = ResendEmailSendPort(
             api_key=settings.resend_api_key,
             from_address=from_address,
-            marketing_from_address=getattr(settings, "marketing_sender_email", None),
+            marketing_from_address=marketing_from_address(settings),
             max_retries=int(getattr(settings, "email_send_max_retries", 0) or 0),
         )
     else:

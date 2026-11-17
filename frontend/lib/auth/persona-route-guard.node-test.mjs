@@ -7,6 +7,7 @@ import {
   matchesPersonaPath,
   personaForPath,
   personaHintForRoles,
+  postLoginHandOff,
   sanitizeReturnPath,
 } from "./persona-route-guard.ts";
 
@@ -168,4 +169,13 @@ test("rejects the auth routes so the hand-off cannot loop", () => {
   assert.equal(sanitizeReturnPath("/login"), null);
   assert.equal(sanitizeReturnPath("/login?returnTo=%2Fadmin"), null);
   assert.equal(sanitizeReturnPath("/post-login"), null);
+});
+
+test("postLoginHandOff keeps a safe deep link and drops an unsafe one", () => {
+  assert.equal(
+    postLoginHandOff("/parent/payments?pay=inv_1"),
+    "/post-login?returnTo=%2Fparent%2Fpayments%3Fpay%3Dinv_1",
+  );
+  assert.equal(postLoginHandOff("https://evil.example/x"), "/post-login");
+  assert.equal(postLoginHandOff(null), "/post-login");
 });

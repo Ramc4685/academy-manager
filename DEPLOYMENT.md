@@ -310,8 +310,8 @@ deploy performs lives in `scripts/ops/`:
 | Fly secret | `OPS_ALERT_EMAIL` | Recipient of the 07:00 daily ops digest. Set in prod. |
 | Fly secret | `RESEND_WEBHOOK_SECRET` | Verifies Resend bounce/complaint webhooks at `/api/v2/webhooks/resend`. Set in prod. |
 | Fly secret | `UNSUBSCRIBE_TOKEN_SECRET` | Signs unsubscribe links. Without it, or without `RESEND_WEBHOOK_SECRET`, prod warns at boot and on `/api/v2/healthz`. |
-| Fly env | `V2_EMAIL_SEND_MAX_RETRIES` | Optional, default 0. Retries after a Resend 429 or a keyed 5xx. |
-| Fly env | `V2_MARKETING_SENDER_EMAIL` | Optional. From address for campaigns (verified domain). |
+| Fly env | `V2_EMAIL_SEND_MAX_RETRIES` | Optional, default 0. Retries after a Resend rate-limit 429 (not a quota 429) or a keyed 5xx. |
+| Fly env | `V2_MARKETING_SENDER_EMAIL` | Optional. From address for campaigns (verified domain). An invalid value is ignored with an error log. |
 | Fly env | `V2_EMAIL_LIST_UNSUBSCRIBE_ENABLED` | Optional, default false. One-click `List-Unsubscribe` and postal address on campaigns. |
 | Fly env (optional) | `V2_SENTRY_CRON_JOBS` | Comma-separated scheduler job ids that send Sentry Crons check-ins. Default `generate_monthly_invoices`. |
 | GitHub repo secret | `SENTRY_AUTH_TOKEN` | Lets the deploy workflow create the Sentry release `courtmastr-fastapi@<sha>` (org `blno-badmintion`). Token scopes: `project:releases`, `org:read`. Missing token skips the step; events then fall back to `FLY_IMAGE_REF` as the release. |
