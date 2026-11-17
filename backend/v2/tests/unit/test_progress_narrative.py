@@ -216,6 +216,10 @@ async def test_a_malformed_answer_is_still_recorded_then_502():
         json.dumps({"text": "word " * 71, "skills_mentioned": []}),
         # extra key
         '{"text": "Great day.", "skills_mentioned": [], "mood": "x"}',
+        # link-like tokens (coach review can be off, so nothing may auto-link)
+        '{"text": "Great day, see www.drills.example for more.", "skills_mentioned": []}',
+        '{"text": "Great day, ask coach@academy.example.", "skills_mentioned": []}',
+        '{"text": "Great day, practice at drills.example tonight.", "skills_mentioned": []}',
         "",
     ],
 )

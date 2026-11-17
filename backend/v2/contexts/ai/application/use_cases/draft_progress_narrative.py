@@ -14,6 +14,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from backend.v2.contexts.ai.application.json_answer import LINK_LIKE
 from backend.v2.contexts.ai.application.ports import AiEntitlement, LlmPort
 from backend.v2.contexts.ai.application.use_cases.record_ai_call import RecordAiCall
 from backend.v2.contexts.ai.domain.errors import AiNotEntitled, AiProviderError
@@ -73,6 +74,8 @@ def parse_narrative(raw: str, data: ProgressNarrativeInput) -> NarrativeDraft:
     )
     if (
         len(text.split()) > MAX_WORDS
+        # With coach review off the narrative reaches parents unread.
+        or LINK_LIKE.search(text)
         or any(n not in allowed_numbers for n in re.findall(r"\d+", text))
         or any(
             name not in skill_names or name.lower() not in text.lower()

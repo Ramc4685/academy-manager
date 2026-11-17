@@ -12,6 +12,9 @@ from backend.v2.contexts.ai.domain.errors import AiProviderError
 
 _FENCE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL)
 UNREADABLE = "the model's answer could not be read"
+#: A link-looking token. Mail clients auto-link these even after html.escape,
+#: so parent-facing text that can skip review must not contain one.
+LINK_LIKE = re.compile(r"://|www\.|@|\.[a-z]{2,}", re.IGNORECASE)
 
 
 def parse_json_answer[T: BaseModel](text: str, model: type[T]) -> T:
