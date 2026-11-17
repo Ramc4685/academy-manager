@@ -4,16 +4,20 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  getAdminAiControls,
   getAdminAiWinBackPersonalised,
   getAdminNotifications,
   getCoachDigestLog,
   listAdminUsers,
   sendCoachDigestTest,
+  updateAdminAiControls,
   updateAdminAiWinBackPersonalised,
   updateAdminNotifications,
+  type AdminAiControlsView,
   type AdminNotificationsView,
   type CoachDigestLogEntryView,
   type CoachDigestTestSendResponse,
+  type UpdateAdminAiControlsRequest,
   type UpdateAdminNotificationsRequest,
 } from "@/lib/api/admin";
 import { getImportSharing, setImportSharing } from "@/lib/api/admin-ai-import";
@@ -202,6 +206,7 @@ export function NotifyPanel() {
         </div>
 
         <AiImportSharingToggle />
+        <AiLimitsControls />
         <CoachDigestTools />
       </Card>
     </section>
@@ -263,6 +268,164 @@ function AiImportSharingToggle() {
         />
         {mutation.isError && (
           <p className="mt-2 text-sm font-medium text-red-700">{mutation.error.message}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const AI_FEATURE_LABELS: Record<string, string> = {
+  win_back_note: "Win-back email paragraph",
+  technique_observation: "Coach technique notes",
+  progress_narrative: "Progress notes for parents",
+  month_close_narrator: "Month-close summary",
+  pipeline_reply: "Inquiry reply drafts",
+  roster_import_map: "Roster import helper",
+  skill_ladder: "Skill ladder drafts",
+};
+
+export interface AiLimitsForm {
+  monthly: string;
+  /** feature -> text in the box; blank means no daily limit. */
+  daily: Record<string, string>;
+  coachReview: boolean;
+}
+
+export function aiLimitsForm(view: AdminAiControlsView): AiLimitsForm {
+  return {
+    monthly: String(view.monthly_call_cap),
+    daily: Object.fromEntries(
+      view.features.map((f) => [f, f in view.daily_call_caps ? String(view.daily_call_caps[f]) : ""])
+    ),
+    coachReview: view.coach_review_narratives,
+  };
+}
+
+/** The request body, or an error message when a box does not hold a whole number in range. */
+export function aiLimitsPayload(
+  form: AiLimitsForm
+): UpdateAdminAiControlsRequest | { error: string } {
+  const whole = (text: string, max: number) =>
+    /^\d+$/.test(text.trim()) && Number(text) <= max ? Number(text) : null;
+  const monthly = whole(form.monthly, 5000);
+  if (monthly === null) return { error: "Monthly limit must be a whole number from 0 to 5000." };
+  const daily: Record<string, number> = {};
+  for (const [feature, text] of Object.entries(form.daily)) {
+    if (text.trim() === "") continue;
+    const value = whole(text, 1000);
+    if (value === null) return { error: "Daily limits must be blank or a whole number from 0 to 1000." };
+    daily[feature] = value;
+  }
+  return {
+    monthly_call_cap: monthly,
+    daily_call_caps: daily,
+    coach_review_narratives: form.coachReview,
+  };
+}
+
+/**
+ * L13, owner-only (`/admin/ai/controls`): the academy's AI call limits and
+ * whether coaches review AI progress notes. The GET 404s for a plain admin,
+ * so this renders for owners only. Every save is in the audit log.
+ */
+function AiLimitsControls() {
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey: queryKeys.admin.aiControls(),
+    queryFn: getAdminAiControls,
+    retry: false,
+  });
+  const [form, setForm] = useState<AiLimitsForm | null>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  useEffect(() => {
+    if (query.data) setForm(aiLimitsForm(query.data));
+  }, [query.data]);
+  const payload = form ? aiLimitsPayload(form) : null;
+  const mutation = useMutation({
+    mutationFn: (body: UpdateAdminAiControlsRequest) => updateAdminAiControls(body),
+    onSuccess: (view) => {
+      queryClient.setQueryData(queryKeys.admin.aiControls(), view);
+      setSavedAt(savedAtNow());
+    },
+  });
+  if (!query.data || !form) return null;
+  const dirty = JSON.stringify(form) !== JSON.stringify(aiLimitsForm(query.data));
+  const invalid = payload && "error" in payload ? payload.error : null;
+  return (
+    <div className="mt-8 border-t border-rally-line pt-6" data-testid="admin-settings-ai-limits">
+      <Overline>AI limits</Overline>
+      <p className="mt-2 text-sm leading-6 text-rally-muted">
+        A ceiling on AI drafts per month for the whole academy, and optional daily limits per
+        feature so one busy feature cannot use up the month. Months and days reset in UTC.
+      </p>
+      <label className="mt-4 grid max-w-xs gap-1.5 text-sm font-medium text-rally-ink">
+        AI drafts per month
+        <input
+          type="number"
+          inputMode="numeric"
+          min={0}
+          max={5000}
+          value={form.monthly}
+          data-testid="ai-limits-monthly"
+          onChange={(event) => setForm({ ...form, monthly: event.target.value })}
+          className="h-10 rounded-md border border-rally-line bg-white px-3 text-sm font-normal outline-none focus:border-blue-500"
+        />
+      </label>
+      <fieldset className="mt-5">
+        <legend className="text-sm font-medium text-rally-ink">
+          Daily limit per feature (blank means no daily limit)
+        </legend>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {query.data.features.map((feature) => (
+            <label
+              key={feature}
+              className="flex items-center justify-between gap-3 text-sm text-rally-ink"
+            >
+              <span>{AI_FEATURE_LABELS[feature] ?? feature}</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={1000}
+                value={form.daily[feature] ?? ""}
+                aria-label={`Daily limit: ${AI_FEATURE_LABELS[feature] ?? feature}`}
+                data-testid={`ai-limits-daily-${feature}`}
+                onChange={(event) =>
+                  setForm({ ...form, daily: { ...form.daily, [feature]: event.target.value } })
+                }
+                className="h-10 w-24 rounded-md border border-rally-line bg-white px-3 text-sm outline-none focus:border-blue-500"
+              />
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <div className="mt-5">
+        <Toggle
+          label="Coaches review AI progress notes before parents see them"
+          helper={
+            form.coachReview
+              ? undefined
+              : "Off: AI-written notes go to parents with no one reading them first."
+          }
+          testId="ai-limits-coach-review"
+          checked={form.coachReview}
+          onChange={(checked) => setForm({ ...form, coachReview: checked })}
+        />
+      </div>
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        <Button
+          variant={dirty ? "volt" : "secondary"}
+          size="sm"
+          disabled={!dirty || !!invalid || mutation.isPending}
+          onClick={() => payload && !("error" in payload) && mutation.mutate(payload)}
+        >
+          {mutation.isPending ? "Saving..." : "Save AI limits"}
+        </Button>
+        <SavedNote at={savedAt} />
+        {(invalid || mutation.isError) && (
+          <p role="alert" className="text-sm font-medium text-red-700">
+            {invalid ?? mutation.error?.message}
+          </p>
         )}
       </div>
     </div>

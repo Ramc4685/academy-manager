@@ -4,13 +4,15 @@ The one construction site for ``AnthropicLlmPort`` (structural test
 ``test_email_sender_construction``): the real adapter is wired only when
 ``V2_AI_ENABLED`` and ``V2_ANTHROPIC_API_KEY`` are both set, otherwise the
 ``DisabledLlmPort`` answers every call with ``AiDisabled``. Attached at
-``app.state.ai``; no feature reads it yet.
+``app.state.ai``. ``AcademyAiControls`` is the owner's write path for the caps
+and the coach-review switch (``interfaces/admin/ai_controls_routes.py``).
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.v2.contexts.ai.application.ports import AiEntitlement, LlmPort
@@ -18,12 +20,15 @@ from backend.v2.contexts.ai.application.use_cases.record_ai_call import (
     DEFAULT_MONTHLY_CALL_CAP,
     RecordAiCall,
 )
+from backend.v2.contexts.ai.domain.prompts import PROMPTS
 from backend.v2.contexts.ai.infrastructure.anthropic_llm_port import AnthropicLlmPort
 from backend.v2.contexts.ai.infrastructure.disabled_llm_port import DisabledLlmPort
 from backend.v2.contexts.ai.infrastructure.mongo_ai_call_counter_repo import (
     MongoAiCallCounterRepository,
 )
 from backend.v2.contexts.ai.infrastructure.mongo_ai_call_repo import MongoAiCallRepository
+from backend.v2.contexts.ai.infrastructure.mongo_ai_controls_audit import MongoAiControlsAudit
+from backend.v2.contexts.identity.domain.errors import AcademyNotFound
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
@@ -62,6 +67,80 @@ class AcademyAiCapLookup:
         return _cap_value(daily.get(feature)) if isinstance(daily, dict) else None
 
 
+#: Features a daily ceiling can be set for: every prompt but the unused placeholder.
+CAPPABLE_FEATURES: tuple[str, ...] = tuple(f for f in PROMPTS if f != "placeholder")
+
+
+@dataclass(frozen=True)
+class AiControls:
+    monthly_call_cap: int
+    #: feature -> calls per day; a feature that is absent has no daily ceiling.
+    daily_call_caps: dict[str, int]
+    coach_review_narratives: bool
+
+
+class AcademyAiControls:
+    """Read and write ``ai.monthly_call_cap``, ``ai.daily_call_cap`` and
+    ``ai.coach_review_narratives`` for the academy in scope, with the same
+    defaults the readers apply (``AcademyAiCapLookup``,
+    ``AcademyCoachReviewSwitch``). Every change is one ``ai_controls.changed``
+    row in ``audit_logs`` naming the owner."""
+
+    def __init__(self, academies: Any, audit: MongoAiControlsAudit) -> None:
+        self._academies = academies
+        self._audit = audit
+
+    async def get(self) -> AiControls:
+        doc = await self._academies.find_by_id(current_academy_id())
+        ai = (doc or {}).get("ai") if isinstance(doc, dict) else None
+        ai = ai if isinstance(ai, dict) else {}
+        cap = _cap_value(ai.get("monthly_call_cap"))
+        daily = ai.get("daily_call_cap")
+        daily = daily if isinstance(daily, dict) else {}
+        review = ai.get("coach_review_narratives")
+        return AiControls(
+            monthly_call_cap=DEFAULT_MONTHLY_CALL_CAP if cap is None else cap,
+            daily_call_caps={
+                f: v for f in CAPPABLE_FEATURES if (v := _cap_value(daily.get(f))) is not None
+            },
+            coach_review_narratives=review if isinstance(review, bool) else True,
+        )
+
+    async def set(self, controls: AiControls, *, user_id: str) -> AiControls:
+        unknown = set(controls.daily_call_caps) - set(CAPPABLE_FEATURES)
+        if unknown:
+            raise ValueError(f"unknown AI features: {sorted(unknown)}")
+        before = await self.get()
+        academy_id = current_academy_id()
+        updated = await self._academies.update_by_id(
+            academy_id,
+            {
+                "ai.monthly_call_cap": controls.monthly_call_cap,
+                "ai.daily_call_cap": dict(controls.daily_call_caps),
+                "ai.coach_review_narratives": controls.coach_review_narratives,
+            },
+        )
+        if updated is None:
+            raise AcademyNotFound(f"no academy document for {academy_id}")
+        after = await self.get()
+        if after != before:
+            await self._audit.record_changed(
+                actor_id=user_id,
+                before=_controls_dict(before),
+                after=_controls_dict(after),
+                at=datetime.now(UTC),
+            )
+        return after
+
+
+def _controls_dict(controls: AiControls) -> dict[str, object]:
+    return {
+        "monthly_call_cap": controls.monthly_call_cap,
+        "daily_call_caps": dict(controls.daily_call_caps),
+        "coach_review_narratives": controls.coach_review_narratives,
+    }
+
+
 class PlatformAiEntitlement:
     """``AiEntitlement`` over ``has_feature(academy, "ai")`` for the academy in scope.
     No HasFeature wired (tests) means no entitlement."""
@@ -80,6 +159,7 @@ class AiComposition:
     llm: LlmPort
     record_ai_call: RecordAiCall
     entitlement: AiEntitlement
+    controls: AcademyAiControls | None = None
 
 
 def compose_ai(db: Any, settings: Any, *, has_feature: Any | None = None) -> AiComposition:
@@ -88,7 +168,8 @@ def compose_ai(db: Any, settings: Any, *, has_feature: Any | None = None) -> AiC
         llm = AnthropicLlmPort(api_key=settings.anthropic_api_key.get_secret_value())
     else:
         llm = DisabledLlmPort()
-    caps = AcademyAiCapLookup(MongoAcademyRepository(db))
+    academies = MongoAcademyRepository(db)
+    caps = AcademyAiCapLookup(academies)
     return AiComposition(
         llm=llm,
         record_ai_call=RecordAiCall(
@@ -98,4 +179,5 @@ def compose_ai(db: Any, settings: Any, *, has_feature: Any | None = None) -> AiC
             daily_caps=caps,
         ),
         entitlement=PlatformAiEntitlement(has_feature),
+        controls=AcademyAiControls(academies, MongoAiControlsAudit(db)),
     )

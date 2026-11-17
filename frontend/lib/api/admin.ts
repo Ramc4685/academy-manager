@@ -4538,6 +4538,30 @@ export function updateAdminAiWinBackPersonalised(enabled: boolean): Promise<{ en
   });
 }
 
+/** L13: the owner's AI limits (owner-only, 404 otherwise). */
+export interface AdminAiControlsView {
+  monthly_call_cap: number;
+  /** feature -> calls per day; an absent feature has no daily limit. */
+  daily_call_caps: Record<string, number>;
+  coach_review_narratives: boolean;
+  features: string[];
+}
+
+export type UpdateAdminAiControlsRequest = Omit<AdminAiControlsView, "features">;
+
+export function getAdminAiControls(): Promise<AdminAiControlsView> {
+  return apiFetch<AdminAiControlsView>("/admin/ai/controls", { method: "GET" });
+}
+
+export function updateAdminAiControls(
+  payload: UpdateAdminAiControlsRequest
+): Promise<AdminAiControlsView> {
+  return apiFetch<AdminAiControlsView>("/admin/ai/controls", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 /** B1: whether AI drafting is on for this academy (V2_AI_ENABLED + key). */
 export function fetchAdminAiStatus(): Promise<{ enabled: boolean }> {
   return apiFetch<{ enabled: boolean }>("/admin/ai/status", { method: "GET" });
