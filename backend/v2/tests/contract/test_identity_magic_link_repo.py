@@ -1,7 +1,8 @@
 """Contract tests for MongoMagicLinkRepository.
 
 Verifies:
-- Round-trip insert / get_by_hash.
+- Round-trip of a stored link through get_by_hash (links are seeded straight
+  into the collection: nothing mints them any more).
 - ``get_by_hash`` is NOT academy-scoped — it resolves by hash alone and returns
   the stored ``academy_id`` so the use case can enforce tenant binding itself.
 - Two tokens for different tenants coexist and stay distinct.
@@ -17,13 +18,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from backend.v2.contexts.identity.domain.models import MagicLinkRecord
 from backend.v2.contexts.identity.infrastructure.mongo_magic_link_repo import (
     MongoMagicLinkRepository,
 )
 
 
-def _record(**overrides: object) -> MagicLinkRecord:
+async def _seed(db, **overrides: object) -> None:
+    """Insert a link document directly, the shape the retired issue path wrote."""
     now = datetime.now(UTC)
     defaults: dict[str, object] = {
         "magic_link_id": "ml-1",
@@ -37,13 +38,13 @@ def _record(**overrides: object) -> MagicLinkRecord:
         "used_at": None,
     }
     defaults.update(overrides)
-    return MagicLinkRecord(**defaults)  # type: ignore[arg-type]
+    await db[MongoMagicLinkRepository.collection_name].insert_one(defaults)
 
 
 @pytest.mark.asyncio
-async def test_insert_and_get_by_hash_round_trip(db) -> None:
+async def test_stored_link_round_trips_through_get_by_hash(db) -> None:
     repo = MongoMagicLinkRepository(db)
-    await repo.insert(_record(token_hash="h-abc", academy_id="acad-a"))
+    await _seed(db, token_hash="h-abc", academy_id="acad-a")
 
     got = await repo.get_by_hash("h-abc")
 
@@ -70,8 +71,8 @@ async def test_get_by_hash_is_not_academy_scoped(db) -> None:
     pins that the academy is faithfully returned for both.
     """
     repo = MongoMagicLinkRepository(db)
-    await repo.insert(_record(token_hash="h-a", academy_id="acad-a", user_id="p-a"))
-    await repo.insert(_record(token_hash="h-b", academy_id="acad-b", user_id="p-b"))
+    await _seed(db, token_hash="h-a", academy_id="acad-a", user_id="p-a")
+    await _seed(db, token_hash="h-b", academy_id="acad-b", user_id="p-b")
 
     got_a = await repo.get_by_hash("h-a")
     got_b = await repo.get_by_hash("h-b")
@@ -83,7 +84,7 @@ async def test_get_by_hash_is_not_academy_scoped(db) -> None:
 @pytest.mark.asyncio
 async def test_mark_used_is_atomic_and_single_use(db) -> None:
     repo = MongoMagicLinkRepository(db)
-    await repo.insert(_record(token_hash="h-once"))
+    await _seed(db, token_hash="h-once")
     now = datetime.now(UTC)
 
     first = await repo.mark_used("h-once", used_at=now)

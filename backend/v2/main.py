@@ -796,6 +796,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         links=MongoMagicLinkRepository(db),
         tokens=get_firebase_admin_adapter(),
         users=users_repo,
+        memberships=membership_repo,
     )
 
     # Recipient email preferences (#555). Both the public token-authenticated

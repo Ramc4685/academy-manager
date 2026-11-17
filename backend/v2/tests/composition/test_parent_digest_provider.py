@@ -48,7 +48,6 @@ def _build_provider(
     consents: list,
     user_doc: dict | None,
     academy_doc: dict | None,
-    issue_magic_link: object | None = None,
 ) -> _ParentDigestProvider:
     students = SimpleNamespace(
         list_for_parent=AsyncMock(return_value=children),
@@ -96,7 +95,6 @@ def _build_provider(
         ledger=ledger,
         autopay_consents=autopay,
         academies=academies,
-        issue_magic_link=issue_magic_link,
     )
 
 
@@ -208,10 +206,9 @@ async def test_build_view_variant_b_when_never_signed_in() -> None:
     assert view is not None
     assert view.on_portal is False
     assert view.children[0].cant_make_it_url is None  # no portal to deep-link into
-    # No magic-link issuer wired on this provider, so activate_url falls back to
-    # the sign-in page. Must be a real frontend route: /parent/login 404s; these
-    # parents already have an account, so they go to /login.
-    assert view.activate_url == "https://app.test/login"
+    # Must be a real frontend route: /parent/login 404s; these parents already
+    # have an account, so they go to /login. Dues are owed in this fixture.
+    assert view.activate_url == "https://app.test/login?returnTo=%2Fparent%2Fpayments"
 
 
 @pytest.mark.asyncio
@@ -228,61 +225,12 @@ async def test_build_view_variant_b_prefills_login_email() -> None:
     assert view.on_portal is False
     assert view.activate_url == (
         "https://app.test/login?email=parent.one%2Ba%40example.test&activate=1"
+        "&returnTo=%2Fparent%2Fpayments"
     )
 
 
 @pytest.mark.asyncio
-async def test_variant_b_activate_url_is_a_magic_link() -> None:
-    """With an issuer wired, Variant B mints a one-time magic link.
-
-    Dues are owed in the full-family fixture, so the token's next_path routes to
-    the payments page; the CTA URL is /auth/magic?t=<token>.
-    """
-    issuer = SimpleNamespace(execute=AsyncMock(return_value="tok-xyz"))
-    provider = _full_family_provider(
-        # Variant B (never activated), but provisioned with a Firebase login.
-        user_doc={"display_name": "Parent One", "firebase_uid": "fb-p1"},
-        consents=[SimpleNamespace(consent_id="c1")],
-        issue_magic_link=issuer,
-    )
-
-    with tenant_scope(ACADEMY_ID):
-        view = await provider.build_view("p1", ON_DATE)
-
-    assert view is not None
-    assert view.on_portal is False
-    assert view.activate_url == "https://app.test/auth/magic?t=tok-xyz"
-    # The token was minted for this parent, bound to the resolved tenant, and
-    # routed to payments because a balance is owed.
-    issuer.execute.assert_awaited_once_with(
-        user_id="p1", academy_id=ACADEMY_ID, next_path="/parent/payments"
-    )
-
-
-@pytest.mark.asyncio
-async def test_variant_b_next_path_is_dashboard_when_no_dues() -> None:
-    issuer = SimpleNamespace(execute=AsyncMock(return_value="tok-abc"))
-    provider = _full_family_provider(
-        user_doc={"display_name": "Parent One", "firebase_uid": "fb-p1"},
-        consents=[SimpleNamespace(consent_id="c1")],
-        invoices=[],  # nothing owed
-        issue_magic_link=issuer,
-    )
-
-    with tenant_scope(ACADEMY_ID):
-        view = await provider.build_view("p1", ON_DATE)
-
-    assert view is not None
-    assert view.activate_url == "https://app.test/auth/magic?t=tok-abc"
-    issuer.execute.assert_awaited_once_with(
-        user_id="p1", academy_id=ACADEMY_ID, next_path="/parent/dashboard"
-    )
-
-
-@pytest.mark.asyncio
-async def test_variant_b_falls_back_to_login_when_minting_fails() -> None:
-    """A digest must never crash on link minting — fall back to the sign-in URL."""
-    issuer = SimpleNamespace(execute=AsyncMock(side_effect=RuntimeError("boom")))
+async def test_variant_b_returns_to_dashboard_when_no_dues() -> None:
     provider = _full_family_provider(
         user_doc={
             "display_name": "Parent One",
@@ -290,29 +238,46 @@ async def test_variant_b_falls_back_to_login_when_minting_fails() -> None:
             "firebase_uid": "fb-p1",
         },
         consents=[SimpleNamespace(consent_id="c1")],
-        issue_magic_link=issuer,
+        invoices=[],  # nothing owed
     )
 
     with tenant_scope(ACADEMY_ID):
         view = await provider.build_view("p1", ON_DATE)
 
     assert view is not None
-    assert view.activate_url == "https://app.test/login?email=parent.one%40example.test&activate=1"
-    issuer.execute.assert_awaited_once()
+    assert view.activate_url == (
+        "https://app.test/login?email=parent.one%40example.test&activate=1"
+        "&returnTo=%2Fparent%2Fdashboard"
+    )
 
 
 @pytest.mark.asyncio
-async def test_variant_a_does_not_mint_a_magic_link() -> None:
-    """On-portal families never get the activation CTA, so no token is minted."""
-    issuer = SimpleNamespace(execute=AsyncMock(return_value="tok-unused"))
-    provider = _full_family_provider(issue_magic_link=issuer)  # email_verified -> Variant A
+@pytest.mark.parametrize(
+    "user_doc",
+    [
+        {"display_name": "P", "email": "p@example.test", "firebase_uid": "fb-p1"},
+        {"display_name": "P", "email": "p@example.test"},
+        {"display_name": "P", "firebase_uid": "fb-p1"},
+        {"display_name": "P", "email_verified": True, "firebase_uid": "fb-p1"},
+        {"display_name": "P", "last_login_at": "2026-11-01T12:00:00Z"},
+    ],
+)
+@pytest.mark.parametrize("invoices", [None, []])
+async def test_no_digest_ever_carries_a_session_link(user_doc: dict, invoices: list | None) -> None:
+    """An emailed session link is a forwardable bearer credential: whatever the
+    parent's state, the digest's CTA is the sign-in page, never /auth/magic."""
+    overrides: dict = {"user_doc": user_doc, "consents": [SimpleNamespace(consent_id="c1")]}
+    if invoices is not None:
+        overrides["invoices"] = invoices
+    provider = _full_family_provider(**overrides)
 
     with tenant_scope(ACADEMY_ID):
         view = await provider.build_view("p1", ON_DATE)
 
     assert view is not None
-    assert view.on_portal is True
-    issuer.execute.assert_not_awaited()
+    rendered = repr(view)
+    assert "/auth/magic" not in rendered
+    assert view.activate_url.startswith("https://app.test/login?")
 
 
 @pytest.mark.asyncio
@@ -564,14 +529,12 @@ async def test_composed_provider_is_not_reused_across_calls() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_parent_who_has_signed_in_gets_no_magic_link() -> None:
+async def test_a_parent_who_has_signed_in_is_variant_a() -> None:
     """last_login_at (stamped by the login recorder) means the parent is on the
-    portal: Variant A, the absence deep link, and no auto-login token."""
-    issuer = SimpleNamespace(execute=AsyncMock(return_value="tok-unused"))
+    portal: Variant A and the absence deep link."""
     provider = _full_family_provider(
         user_doc={"display_name": "Parent One", "last_login_at": "2026-11-01T12:00:00Z"},
         consents=[SimpleNamespace(consent_id="c1")],
-        issue_magic_link=issuer,
     )
 
     with tenant_scope(ACADEMY_ID):
@@ -580,23 +543,3 @@ async def test_a_parent_who_has_signed_in_gets_no_magic_link() -> None:
     assert view is not None
     assert view.on_portal is True
     assert view.children[0].cant_make_it_url == "https://app.test/parent/requests"
-    issuer.execute.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_parent_without_a_firebase_login_gets_the_set_password_link() -> None:
-    """A custom token for a parent with no Firebase account would sign in to an
-    empty account and burn the link (identity_auth:3); send /login instead."""
-    issuer = SimpleNamespace(execute=AsyncMock(return_value="tok-unused"))
-    provider = _full_family_provider(
-        user_doc={"display_name": "Parent One", "email": "parent.one@example.test"},
-        consents=[SimpleNamespace(consent_id="c1")],
-        issue_magic_link=issuer,
-    )
-
-    with tenant_scope(ACADEMY_ID):
-        view = await provider.build_view("p1", ON_DATE)
-
-    assert view is not None
-    assert view.activate_url == "https://app.test/login?email=parent.one%40example.test&activate=1"
-    issuer.execute.assert_not_awaited()
