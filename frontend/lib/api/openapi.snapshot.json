@@ -12967,22 +12967,50 @@
             "title": "Dates",
             "type": "array"
           },
+          "families_affected": {
+            "default": 0,
+            "title": "Families Affected",
+            "type": "integer"
+          },
           "families_notified": {
             "default": 0,
             "title": "Families Notified",
             "type": "integer"
           },
+          "notice_failed": {
+            "default": false,
+            "title": "Notice Failed",
+            "type": "boolean"
+          },
           "skipped": {
             "default": 0,
             "title": "Skipped",
             "type": "integer"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
           }
         },
+        "required": [
+          "timezone"
+        ],
         "title": "CloseAcademyDatesResponse",
         "type": "object"
       },
       "ClosureDateView": {
         "properties": {
+          "billing_warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Billing Warning"
+          },
           "credits_issued": {
             "default": 0,
             "title": "Credits Issued",

@@ -58,7 +58,11 @@ from backend.v2.contexts.enrollment.domain.errors import (
     PayoutPeriodFrozen,
 )
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
-from backend.v2.contexts.enrollment.domain.models import ACTIVE_OR_PAUSED, SessionOccurrence
+from backend.v2.contexts.enrollment.domain.models import (
+    ACTIVE_OR_PAUSED,
+    Session,
+    SessionOccurrence,
+)
 from backend.v2.contexts.enrollment.domain.occurrence_cancellation import (
     assert_occurrence_cancellable,
 )
@@ -149,11 +153,17 @@ class CancelSessionOccurrence:
         self._payout_lock = payout_lock
         self._now = clock
 
-    async def execute(self, cmd: CancelSessionOccurrenceCommand) -> CancelSessionOccurrenceResult:
-        now = self._now()
-        occurrence = await self._occurrences.get(cmd.occurrence_id)
+    async def check_cancellable(self, occurrence_id: str) -> None:
+        """Every refusal ``execute`` makes before its commit point, writing
+        nothing: an academy closure's preview uses it."""
+        await self._precheck(occurrence_id, self._now())
+
+    async def _precheck(
+        self, occurrence_id: str, now: datetime
+    ) -> tuple[SessionOccurrence, Session | None, str]:
+        occurrence = await self._occurrences.get(occurrence_id)
         if occurrence is None:
-            raise OccurrenceNotFound("no such class date", occurrence_id=cmd.occurrence_id)
+            raise OccurrenceNotFound("no such class date", occurrence_id=occurrence_id)
         session_id = occurrence.template_session_id or occurrence.session_id
         session = await self._sessions.get(session_id)
         assert_occurrence_cancellable(occurrence, session=session, now=now)
@@ -162,6 +172,11 @@ class CancelSessionOccurrence:
         # point rather than leave payroll silently disagreeing with the
         # schedule.
         await self._assert_payout_window_open(occurrence)
+        return occurrence, session, session_id
+
+    async def execute(self, cmd: CancelSessionOccurrenceCommand) -> CancelSessionOccurrenceResult:
+        now = self._now()
+        occurrence, session, session_id = await self._precheck(cmd.occurrence_id, now)
 
         cancelled = await self._occurrences.cancel_scheduled(
             occurrence_id=cmd.occurrence_id,

@@ -28,11 +28,14 @@ class _RecordingClose:
                     start_at=datetime(2026, 11, 26, 23, tzinfo=UTC),
                     status="cancelled",
                     credits_issued=2,
+                    billing_warning="Billing did not run.",
                 ),
             ),
             cancelled=1,
             credits_issued=2,
+            families_affected=3,
             families_notified=2,
+            notice_failed=True,
         )
 
 
@@ -45,6 +48,9 @@ def test_closure_converts_local_dates_to_the_academy_day_bounds(admin_client):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["cancelled"] == 1 and body["families_notified"] == 2
+    assert body["families_affected"] == 3 and body["notice_failed"] is True
+    assert body["dates"][0]["billing_warning"] == "Billing did not run."
+    assert body["timezone"] == "America/Chicago"
     assert "session_title" in body["dates"][0]
     cmd = close.commands[0]
     # Chicago midnight on the first day, through midnight after the last day.

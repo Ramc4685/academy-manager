@@ -14,7 +14,9 @@ from typing import Any
 
 import pytest
 
+import backend.v2.composition.admin as admin_composition
 from backend.v2.composition.occurrence_cancellation import compose_occurrence_cancellations
+from backend.v2.contexts.enrollment.application.ports import ClosureNotice
 from backend.v2.contexts.enrollment.application.use_cases.close_academy_dates import (
     CloseAcademyDatesCommand,
 )
@@ -36,9 +38,13 @@ class RecordingClosureNotifier:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
-    async def academy_closed(self, *, dates, reason, actor_id) -> int:
+    async def academy_closed(self, *, dates, reason, actor_id) -> ClosureNotice:
         self.calls.append({"dates": list(dates), "reason": reason, "actor_id": actor_id})
-        return 1
+        return ClosureNotice(families_affected=1, families_emailed=1)
+
+
+async def _no_materialize(session: Any) -> None:
+    return None
 
 
 async def _seed(db: Any) -> None:
@@ -116,7 +122,9 @@ async def test_closure_cancels_only_the_range_and_notifies_once(real_db: Any) ->
     await _seed(real_db)
     notifier = RecordingClosureNotifier()
     with tenant_scope(ACADEMY):
-        close = compose_occurrence_cancellations(real_db, notifier, None)["close_academy_dates"]
+        close = compose_occurrence_cancellations(real_db, notifier, _no_materialize)[
+            "close_academy_dates"
+        ]
         close._notifier = notifier
 
         preview = await close.execute(_command(dry_run=True))
@@ -155,7 +163,9 @@ async def test_rerunning_a_closure_cancels_nothing_and_emails_nobody(real_db: An
     await _seed(real_db)
     notifier = RecordingClosureNotifier()
     with tenant_scope(ACADEMY):
-        close = compose_occurrence_cancellations(real_db, notifier, None)["close_academy_dates"]
+        close = compose_occurrence_cancellations(real_db, notifier, _no_materialize)[
+            "close_academy_dates"
+        ]
         close._notifier = notifier
         await close.execute(_command())
         again = await close.execute(_command())
@@ -165,7 +175,9 @@ async def test_rerunning_a_closure_cancels_nothing_and_emails_nobody(real_db: An
 
 async def test_closure_refuses_a_range_past_the_materialisation_window(real_db: Any) -> None:
     with tenant_scope(ACADEMY):
-        close = compose_occurrence_cancellations(real_db, None, None)["close_academy_dates"]
+        close = compose_occurrence_cancellations(real_db, None, _no_materialize)[
+            "close_academy_dates"
+        ]
         with pytest.raises(ClosureRangeInvalid):
             await close.execute(_command(end_at=NOW + timedelta(days=61)))
         with pytest.raises(ClosureRangeInvalid):
@@ -202,3 +214,199 @@ async def test_closure_materialises_live_recurring_sessions_first(real_db: Any) 
         close = compose_occurrence_cancellations(real_db, None, materialize)["close_academy_dates"]
         await close.execute(_command(dry_run=True))
     assert seen == ["sess-1"]
+
+
+# --- Risk-review regressions (L12 fix round) ---------------------------------
+
+# Monday 2026-01-05 21:00 UTC = 15:00 America/Chicago: AFTER the 09:00 class.
+AFTERNOON = datetime(2026, 1, 5, 21, 0, tzinfo=UTC)
+TEST_ACADEMY = "test-academy"
+
+
+def _freeze_admin_clock(monkeypatch: Any, instant: datetime) -> None:
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return instant.replace(tzinfo=None) if tz is None else instant.astimezone(tz)
+
+    monkeypatch.setattr(admin_composition, "datetime", _Frozen)
+
+
+def _real_maintain(database: Any) -> Any:
+    from backend.v2.composition.admin import compose_admin
+    from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
+    from backend.v2.shared.events import MongoOutbox
+    from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
+
+    admin = compose_admin(
+        database, MongoOutbox(database), MongoIdempotencyStore(database), FakeStripeGateway()
+    )
+    return admin.maintain_session_occurrences
+
+
+async def _seed_weekly(database: Any, session_id: str, **extra: Any) -> None:
+    await database["sessions"].insert_one(
+        {
+            "session_id": session_id,
+            "academy_id": TEST_ACADEMY,
+            "coach_id": "coach-1",
+            "title": "Juniors",
+            "location": "Court 1",
+            "start_at": AFTERNOON - timedelta(days=60),
+            "end_at": AFTERNOON - timedelta(days=60) + timedelta(hours=1),
+            "capacity": 10,
+            "status": "scheduled",
+            "days_of_week": ["Mon"],
+            "start_time": "09:00",
+            "end_time": "10:00",
+            "timezone": "America/Chicago",
+            **extra,
+        }
+    )
+
+
+def _frozen_closure(database: Any, notifier: Any, materialize: Any) -> Any:
+    close = compose_occurrence_cancellations(database, notifier, materialize)["close_academy_dates"]
+    close._now = lambda: AFTERNOON
+    close._cancel._now = lambda: AFTERNOON
+    return close
+
+
+async def test_preview_never_rewrites_a_class_that_ran_this_morning(
+    real_db: Any, acad: str, monkeypatch: Any
+) -> None:
+    """B1: materialising (any preview or closure) once skipped rows that had
+    started today, so a class cancelled this morning came back as scheduled
+    and a substitute this morning was wiped."""
+    _freeze_admin_clock(monkeypatch, AFTERNOON)
+    await _seed_weekly(real_db, "sess-1")
+    await _seed_weekly(real_db, "sess-2")
+    start = datetime(2026, 1, 5, 15, 0, tzinfo=UTC)  # 09:00 Chicago today
+    base = {
+        "academy_id": TEST_ACADEMY,
+        "start_at": start,
+        "end_at": start + timedelta(hours=1),
+        "scheduled_coach_id": "coach-1",
+    }
+    await real_db["session_occurrences"].insert_many(
+        [
+            {
+                **base,
+                "occurrence_id": "sess-1:2026-01-05:09:00",
+                "session_id": "sess-1",
+                "template_session_id": "sess-1",
+                "status": "cancelled",
+                "cancellation_reason": "Coach sick",
+                "is_billable": False,
+                "is_payable": False,
+            },
+            {
+                **base,
+                "occurrence_id": "sess-2:2026-01-05:09:00",
+                "session_id": "sess-2",
+                "template_session_id": "sess-2",
+                "status": "scheduled",
+                "actual_coach_id": "sub-coach",
+                "substitute_coach_id": "sub-coach",
+                "is_billable": True,
+                "is_payable": True,
+            },
+        ]
+    )
+    close = _frozen_closure(real_db, RecordingClosureNotifier(), _real_maintain(real_db))
+    await close.execute(
+        CloseAcademyDatesCommand(
+            start_at=AFTERNOON + timedelta(days=20),
+            end_at=AFTERNOON + timedelta(days=22),
+            reason="Thanksgiving",
+            dry_run=True,
+        )
+    )
+    cancelled = await real_db["session_occurrences"].find_one(
+        {"occurrence_id": "sess-1:2026-01-05:09:00"}
+    )
+    covered = await real_db["session_occurrences"].find_one(
+        {"occurrence_id": "sess-2:2026-01-05:09:00"}
+    )
+    assert cancelled["status"] == "cancelled" and cancelled["is_billable"] is False
+    assert covered["actual_coach_id"] == "sub-coach"
+    assert covered["substitute_coach_id"] == "sub-coach"
+
+
+async def test_closure_skips_classes_outside_their_own_dates(
+    real_db: Any, acad: str, monkeypatch: Any
+) -> None:
+    """F2: a weekly class that ended (or has not started) is not materialised,
+    so the closure cancels nothing for it."""
+    _freeze_admin_clock(monkeypatch, AFTERNOON)
+    await _seed_weekly(real_db, "sess-ended", start_date="2025-09-01", end_date="2025-12-15")
+    await _seed_weekly(real_db, "sess-future", start_date="2026-03-02", end_date="2026-05-25")
+    notifier = RecordingClosureNotifier()
+    close = _frozen_closure(real_db, notifier, _real_maintain(real_db))
+    result = await close.execute(
+        CloseAcademyDatesCommand(
+            start_at=datetime(2026, 1, 19, 6, tzinfo=UTC),
+            end_at=datetime(2026, 1, 20, 6, tzinfo=UTC),
+            reason="MLK day",
+        )
+    )
+    assert result.cancelled == 0
+    assert await real_db["session_occurrences"].count_documents({}) == 0
+    assert notifier.calls == []
+
+
+async def test_an_unexpected_error_on_one_date_still_notifies_the_cancelled_ones(
+    real_db: Any, acad: str, monkeypatch: Any
+) -> None:
+    """B2: a non-domain error on date 2 of 3 used to escape the loop and drop
+    the deferred notice for date 1, which no rerun ever resends."""
+    _freeze_admin_clock(monkeypatch, AFTERNOON)
+    await _seed_weekly(real_db, "sess-1")
+    notifier = RecordingClosureNotifier()
+    close = _frozen_closure(real_db, notifier, _real_maintain(real_db))
+    real_execute = close._cancel.execute
+    seen: list[str] = []
+
+    async def flaky(cmd: Any) -> Any:
+        seen.append(cmd.occurrence_id)
+        if len(seen) == 2:
+            raise RuntimeError("AutoReconnect: connection reset")
+        return await real_execute(cmd)
+
+    close._cancel.execute = flaky
+    result = await close.execute(
+        CloseAcademyDatesCommand(
+            start_at=datetime(2026, 1, 12, 6, tzinfo=UTC),
+            end_at=datetime(2026, 2, 1, 6, tzinfo=UTC),
+            reason="Facility closed",
+        )
+    )
+    assert len(seen) == 3
+    assert [d.status for d in result.dates] == ["cancelled", "skipped", "cancelled"]
+    assert result.dates[1].skip_reason == "failed, retry"
+    told = {n.start_at for call in notifier.calls for n in call["dates"]}
+    assert result.dates[0].start_at in told and result.dates[2].start_at in told
+    assert len(notifier.calls) == 1
+
+
+async def test_preview_shows_dates_the_cancel_rules_would_refuse(real_db: Any) -> None:
+    """F5: the dry run runs the cancel's own pre-commit checks, so a date in a
+    frozen payout period shows as skipped in the preview, not would_cancel."""
+    await _seed(real_db)
+
+    class FrozenFirstDate:
+        async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None:
+            return "approved" if at < CLOSE_START + timedelta(days=1) else None
+
+    with tenant_scope(ACADEMY):
+        close = compose_occurrence_cancellations(real_db, None, _no_materialize)[
+            "close_academy_dates"
+        ]
+        close._cancel._payout_lock = FrozenFirstDate()
+        preview = await close.execute(_command(dry_run=True))
+    assert [(d.occurrence_id, d.status) for d in preview.dates] == [
+        ("occ-in-1", "skipped"),
+        ("occ-in-2", "would_cancel"),
+    ]
+    assert "payout period" in (preview.dates[0].skip_reason or "")
+    assert (await _statuses(real_db))["occ-in-1"] == "scheduled"

@@ -12491,18 +12491,32 @@ export interface components {
             /** Dates */
             dates?: components["schemas"]["ClosureDateView"][];
             /**
+             * Families Affected
+             * @default 0
+             */
+            families_affected: number;
+            /**
              * Families Notified
              * @default 0
              */
             families_notified: number;
             /**
+             * Notice Failed
+             * @default false
+             */
+            notice_failed: boolean;
+            /**
              * Skipped
              * @default 0
              */
             skipped: number;
+            /** Timezone */
+            timezone: string;
         };
         /** ClosureDateView */
         ClosureDateView: {
+            /** Billing Warning */
+            billing_warning?: string | null;
             /**
              * Credits Issued
              * @default 0

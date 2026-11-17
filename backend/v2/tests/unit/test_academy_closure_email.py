@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from backend.v2.contexts.communications.application.ports import ResolvedRecipient
-from backend.v2.contexts.enrollment.application.ports import ClosedClassDate
+from backend.v2.contexts.enrollment.application.ports import ClosedClassDate, ClosureNotice
 from backend.v2.shared.tenancy import tenant_scope
 from backend.v2.tests.unit.test_parent_push_hookups import RecordingPush
 from backend.v2.tests.unit.test_roster_alert_adapter import (
@@ -62,9 +62,9 @@ async def test_one_email_per_family_lists_every_closed_date() -> None:
         ),
     ]
     with tenant_scope(ACADEMY):
-        families = await adapter.academy_closed(dates=dates, reason="Thanksgiving", actor_id="a-1")
+        notice = await adapter.academy_closed(dates=dates, reason="Thanksgiving", actor_id="a-1")
 
-    assert families == 1
+    assert notice == ClosureNotice(families_affected=1, families_emailed=1, failed=False)
     parent_mail = [row for row in sender.sent if row["user_id"] == "par-1"]
     assert len(parent_mail) == 1
     body = parent_mail[0]["body"]
@@ -78,3 +78,48 @@ async def test_one_email_per_family_lists_every_closed_date() -> None:
     coach_mail = [row for row in sender.sent if row["user_id"] == "coach-1"]
     assert len(coach_mail) == 1
     assert "Billing did not run" in coach_mail[0]["body"]
+
+
+def _closure_adapter(sender: Any, *, parent_email: str | None) -> Any:
+    adapter = _adapter(
+        sessions=FakeSessions(rows={"sess-1": _session()}),
+        audiences=FakeAudiences(
+            coaches={},
+            users={"par-1": ResolvedRecipient(user_id="par-1", email=parent_email)},
+        ),
+        sender=sender,
+        roster=FakeRoster(),
+        students=ParentStudents(),  # type: ignore[arg-type]
+    )
+    adapter._push = RecordingPush()  # type: ignore[assignment]
+    return adapter
+
+
+_ONE_DATE = [
+    ClosedClassDate(
+        session_id="sess-1",
+        start_at=datetime(2026, 11, 26, 23, 0, tzinfo=UTC),
+        one_time_student_ids=("st-1",),
+    )
+]
+
+
+@pytest.mark.asyncio
+async def test_a_roster_only_parent_with_no_email_counts_as_affected_not_emailed() -> None:
+    adapter = _closure_adapter(FakeSender(), parent_email=None)
+    with tenant_scope(ACADEMY):
+        notice = await adapter.academy_closed(dates=_ONE_DATE, reason="Snow", actor_id="a-1")
+    assert notice == ClosureNotice(families_affected=1, families_emailed=0, failed=False)
+
+
+@pytest.mark.asyncio
+async def test_a_failing_send_never_raises_and_reports_the_notice_failed() -> None:
+    adapter = _closure_adapter(FakeSender(), parent_email="parent@x.com")
+
+    async def boom(**kwargs: Any) -> None:
+        raise RuntimeError("smtp down")
+
+    adapter._send_one = boom  # type: ignore[method-assign]
+    with tenant_scope(ACADEMY):
+        notice = await adapter.academy_closed(dates=_ONE_DATE, reason="Snow", actor_id="a-1")
+    assert notice.failed is True and notice.families_emailed == 0

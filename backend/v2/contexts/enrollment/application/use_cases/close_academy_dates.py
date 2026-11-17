@@ -17,8 +17,11 @@ create/edit writes, so the closure first re-runs that maintenance for every
 live recurring class (idempotent) and refuses a range that ends past the
 window: a date with no row would silently stay on the schedule.
 
-Re-running the same closure is safe: already-cancelled dates are skipped by
-the cancel CAS, and a family with no newly cancelled date gets no email.
+Re-running the same closure cancels nothing twice: already-cancelled dates
+are skipped by the cancel CAS. A date that fails for an unexpected reason is
+reported as "failed, retry" and the rest go ahead; the summary for every date
+that WAS cancelled is still sent. Known gap: if the process dies mid-run, the
+dates cancelled before the crash are never in a summary (a rerun skips them).
 """
 
 from __future__ import annotations
@@ -26,13 +29,15 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Literal, Protocol
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from backend.v2.contexts.enrollment.application.ports import (
+    OCCURRENCE_WINDOW,
     AcademyClosureNotifier,
     ClosedClassDate,
+    ClosureNotice,
     LiveSessionLister,
     OccurrenceMaterializer,
 )
@@ -40,21 +45,16 @@ from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurre
     CancelSessionOccurrence,
     CancelSessionOccurrenceCommand,
 )
+from backend.v2.contexts.enrollment.application.use_cases.trial_guest_booking import (
+    BookableOccurrenceQuery,
+)
 from backend.v2.contexts.enrollment.domain.errors import ClosureRangeInvalid
 from backend.v2.contexts.enrollment.domain.models import SessionOccurrence
 from backend.v2.shared.http.errors import DomainError
 
 log = logging.getLogger(__name__)
 
-
-class ScheduledOccurrenceRange(Protocol):
-    async def list_upcoming_scheduled_between(
-        self, *, start_at: datetime, end_at: datetime
-    ) -> list[SessionOccurrence]: ...
-
-
-#: Mirrors the materialisation window in ``maintain_session_occurrences``.
-CLOSURE_HORIZON = timedelta(days=60)
+FAILED_RETRY = "failed, retry"
 
 
 class CloseAcademyDatesCommand(BaseModel):
@@ -66,8 +66,9 @@ class CloseAcademyDatesCommand(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
     actor_id: str | None = None
     notify: bool = True
-    #: Preview: list the dates that would be cancelled, write nothing but the
-    #: idempotent materialisation.
+    #: Preview: list the dates that would be cancelled (and the ones the
+    #: cancel rules would refuse), write nothing but the idempotent
+    #: materialisation.
     dry_run: bool = False
 
 
@@ -80,6 +81,9 @@ class ClosureDate(BaseModel):
     status: Literal["cancelled", "would_cancel", "skipped"]
     skip_reason: str | None = None
     credits_issued: int = 0
+    #: The cancel's money warning (credits not applied): the admin running the
+    #: closure is not on the staff summary email, so it is shown here.
+    billing_warning: str | None = None
 
 
 class CloseAcademyDatesResult(BaseModel):
@@ -89,7 +93,9 @@ class CloseAcademyDatesResult(BaseModel):
     cancelled: int = 0
     skipped: int = 0
     credits_issued: int = 0
+    families_affected: int = 0
     families_notified: int = 0
+    notice_failed: bool = False
 
 
 class CloseAcademyDates:
@@ -97,9 +103,9 @@ class CloseAcademyDates:
         self,
         *,
         cancel: CancelSessionOccurrence,
-        occurrences: ScheduledOccurrenceRange,
-        sessions: LiveSessionLister | None = None,
-        materialize: OccurrenceMaterializer | None = None,
+        occurrences: BookableOccurrenceQuery,
+        sessions: LiveSessionLister,
+        materialize: OccurrenceMaterializer,
         notifier: AcademyClosureNotifier | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -116,96 +122,109 @@ class CloseAcademyDates:
             raise ClosureRangeInvalid("the closure must end on or after the day it starts")
         if cmd.end_at <= now:
             raise ClosureRangeInvalid("the closure is already over")
-        if cmd.end_at > now + CLOSURE_HORIZON:
+        if cmd.end_at > now + OCCURRENCE_WINDOW:
             raise ClosureRangeInvalid("a closure can be set at most 60 days ahead")
 
-        await self._materialize_live_sessions()
+        # A materialisation failure stops the run before anything is cancelled:
+        # a date with no row would silently stay on the schedule.
+        for session in await self._sessions.list_live():
+            await self._materialize(session)
         rows = await self._occurrences.list_upcoming_scheduled_between(
             start_at=max(cmd.start_at, now), end_at=cmd.end_at - timedelta(microseconds=1)
         )
-        if cmd.dry_run:
-            dates = tuple(
-                ClosureDate(
-                    occurrence_id=row.occurrence_id,
-                    session_id=row.template_session_id or row.session_id,
-                    start_at=row.start_at,
-                    status="would_cancel",
-                )
-                for row in rows
-            )
-            return CloseAcademyDatesResult(dates=dates)
 
         dates_out: list[ClosureDate] = []
         notices: list[ClosedClassDate] = []
-        for row in rows:
-            session_id = row.template_session_id or row.session_id
-            try:
-                result = await self._cancel.execute(
-                    CancelSessionOccurrenceCommand(
-                        occurrence_id=row.occurrence_id,
-                        reason=cmd.reason,
-                        actor_id=cmd.actor_id,
-                        notify=cmd.notify,
-                        defer_family_notice=True,
+        try:
+            for row in rows:
+                session_id = row.template_session_id or row.session_id
+
+                try:
+                    if cmd.dry_run:
+                        await self._cancel.check_cancellable(row.occurrence_id)
+                        dates_out.append(
+                            ClosureDate(
+                                occurrence_id=row.occurrence_id,
+                                session_id=session_id,
+                                start_at=row.start_at,
+                                status="would_cancel",
+                            )
+                        )
+                        continue
+                    result = await self._cancel.execute(
+                        CancelSessionOccurrenceCommand(
+                            occurrence_id=row.occurrence_id,
+                            reason=cmd.reason,
+                            actor_id=cmd.actor_id,
+                            notify=cmd.notify,
+                            defer_family_notice=True,
+                        )
                     )
-                )
-            except DomainError as exc:
-                # Already cancelled, started, or inside a frozen payout period:
-                # the rest of the closure still goes ahead.
+                except DomainError as exc:
+                    # Already cancelled, started, or inside a frozen payout
+                    # period: the rest of the closure still goes ahead.
+                    dates_out.append(_skipped(row, session_id, exc.message))
+                    continue
+                except Exception:
+                    log.exception(
+                        "enrollment.closure_date_failed",
+                        extra={"occurrence_id": row.occurrence_id},
+                    )
+                    dates_out.append(_skipped(row, session_id, FAILED_RETRY))
+                    continue
                 dates_out.append(
                     ClosureDate(
                         occurrence_id=row.occurrence_id,
                         session_id=session_id,
                         start_at=row.start_at,
-                        status="skipped",
-                        skip_reason=exc.message,
+                        status="cancelled",
+                        credits_issued=result.credits_issued,
+                        billing_warning=result.billing_warning,
                     )
                 )
-                continue
-            dates_out.append(
-                ClosureDate(
-                    occurrence_id=row.occurrence_id,
-                    session_id=session_id,
-                    start_at=row.start_at,
-                    status="cancelled",
-                    credits_issued=result.credits_issued,
+                notices.append(
+                    ClosedClassDate(
+                        session_id=session_id,
+                        start_at=row.start_at,
+                        one_time_student_ids=result.one_time_student_ids,
+                        credited_student_ids=result.credited_student_ids,
+                        billing_warning=result.billing_warning,
+                    )
                 )
-            )
-            notices.append(
-                ClosedClassDate(
-                    session_id=session_id,
-                    start_at=row.start_at,
-                    one_time_student_ids=result.one_time_student_ids,
-                    credited_student_ids=result.credited_student_ids,
-                    billing_warning=result.billing_warning,
-                )
-            )
-
-        families = 0
-        if cmd.notify and notices and self._notifier is not None:
-            try:
-                families = await self._notifier.academy_closed(
-                    dates=notices, reason=cmd.reason, actor_id=cmd.actor_id
-                )
-            except Exception:
-                log.exception("enrollment.academy_closure_notify_failed")
+        finally:
+            # Even if something above escapes, every date already cancelled
+            # gets its family summary.
+            notice = await self._notify(cmd, notices)
 
         return CloseAcademyDatesResult(
             dates=tuple(dates_out),
             cancelled=sum(1 for d in dates_out if d.status == "cancelled"),
             skipped=sum(1 for d in dates_out if d.status == "skipped"),
             credits_issued=sum(d.credits_issued for d in dates_out),
-            families_notified=families,
+            families_affected=notice.families_affected,
+            families_notified=notice.families_emailed,
+            notice_failed=notice.failed,
         )
 
-    async def _materialize_live_sessions(self) -> None:
-        if self._sessions is None or self._materialize is None:
-            return
-        for session in await self._sessions.list_live():
-            try:
-                await self._materialize(session)
-            except Exception:
-                log.exception(
-                    "enrollment.closure_materialize_failed",
-                    extra={"session_id": session.session_id},
-                )
+    async def _notify(
+        self, cmd: CloseAcademyDatesCommand, notices: list[ClosedClassDate]
+    ) -> ClosureNotice:
+        if not (cmd.notify and notices and self._notifier is not None):
+            return ClosureNotice()
+        try:
+            return await self._notifier.academy_closed(
+                dates=notices, reason=cmd.reason, actor_id=cmd.actor_id
+            )
+        except Exception:
+            log.exception("enrollment.academy_closure_notify_failed")
+            return ClosureNotice(failed=True)
+
+
+def _skipped(row: SessionOccurrence, session_id: str, reason: str) -> ClosureDate:
+    return ClosureDate(
+        occurrence_id=row.occurrence_id,
+        session_id=session_id,
+        start_at=row.start_at,
+        status="skipped",
+        skip_reason=reason,
+    )

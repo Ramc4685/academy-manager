@@ -670,6 +670,7 @@ class ClosureDateView(BaseModel):
     status: Literal["cancelled", "would_cancel", "skipped"]
     skip_reason: str | None = None
     credits_issued: int = 0
+    billing_warning: str | None = None
 
 
 class CloseAcademyDatesResponse(BaseModel):
@@ -677,7 +678,11 @@ class CloseAcademyDatesResponse(BaseModel):
     cancelled: int = 0
     skipped: int = 0
     credits_issued: int = 0
+    families_affected: int = 0
     families_notified: int = 0
+    notice_failed: bool = False
+    #: Academy timezone, so the page shows class times as the academy reads them.
+    timezone: str
 
 
 class UpdateOccurrenceReplacementRequest(BaseModel):

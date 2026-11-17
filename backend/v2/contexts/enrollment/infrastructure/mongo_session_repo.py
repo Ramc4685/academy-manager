@@ -373,12 +373,20 @@ class MongoSessionRepository(TenantScopedRepository):
         return await sessions_to_domain(self._db, [doc async for doc in cursor])
 
     async def list_live(self) -> list[Session]:
-        """Recurring classes still running: the ones whose dated rows an
-        academy closure may need materialised first."""
+        """Recurring classes running today (inside their own ``start_date`` /
+        ``end_date``): the ones whose dated rows an academy closure may need
+        materialised first."""
         cursor = self._find_many(
             {"status": {"$nin": ["cancelled", "completed"]}, "days_of_week.0": {"$exists": True}}
         )
-        return await sessions_to_domain(self._db, [doc async for doc in cursor])
+        academy_timezone = await academy_timezone_lookup(self._db)(current_academy_id())
+        now = datetime.now(UTC)
+        live = []
+        async for doc in cursor:
+            zone = _zone(str(doc.get("timezone") or "").strip() or academy_timezone or None)
+            if session_phase(doc, now.astimezone(zone).date(), zone) == "active":
+                live.append(doc)
+        return await sessions_to_domain(self._db, live)
 
     async def available_for_parent_catalog(self) -> list[ParentAvailableSession]:
         now = datetime.now(UTC)

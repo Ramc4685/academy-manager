@@ -140,30 +140,20 @@ def compose_cancel_session_occurrence(
     )
 
 
-def compose_close_academy_dates(
-    db: Any, *, cancel: CancelSessionOccurrence, notifier: Any | None, materialize: Any | None
-) -> CloseAcademyDates:
-    """Academy closures: a loop over the SAME wired ``cancel`` use case (so the
-    billing sync, payout lock and guest notifier are shared), one summary email
-    per family through ``notifier.academy_closed``."""
-    return CloseAcademyDates(
-        cancel=cancel,
-        occurrences=MongoSessionOccurrenceRepository(db),
-        sessions=MongoSessionRepository(db),
-        materialize=materialize,
-        notifier=notifier,
-    )
-
-
 def compose_occurrence_cancellations(
-    db: Any, notifier: Any | None, materialize: Any | None
+    db: Any, notifier: Any | None, materialize: Any
 ) -> dict[str, Any]:
-    """Both admin cancel use cases, sharing ONE cancel instance (admin.py has
-    no line budget left for two calls)."""
+    """Both admin cancel use cases. Academy closures loop over the SAME wired
+    cancel instance (billing sync, payout lock, guest notifier shared) and send
+    one summary per family through ``notifier.academy_closed``."""
     cancel = compose_cancel_session_occurrence(db, notifier=notifier)
     return {
         "cancel_session_occurrence": cancel,
-        "close_academy_dates": compose_close_academy_dates(
-            db, cancel=cancel, notifier=notifier, materialize=materialize
+        "close_academy_dates": CloseAcademyDates(
+            cancel=cancel,
+            occurrences=MongoSessionOccurrenceRepository(db),
+            sessions=MongoSessionRepository(db),
+            materialize=materialize,
+            notifier=notifier,
         ),
     }

@@ -307,6 +307,7 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_lesson_card_repo import
 from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
     MongoCurriculumVideoRefRepository,
 )
+from backend.v2.contexts.enrollment.application.ports import OCCURRENCE_WINDOW
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
     RecordAbsenceNoticeForStudent,
 )
@@ -2318,7 +2319,7 @@ def compose_admin(
         if not target_days:
             return []
         local_start = datetime.now(UTC).astimezone(tz).date()
-        local_end = (datetime.now(UTC) + timedelta(days=60)).astimezone(tz).date()
+        local_end = (datetime.now(UTC) + OCCURRENCE_WINDOW).astimezone(tz).date()
         start_time = time.fromisoformat(session.start_time)
         end_time = time.fromisoformat(session.end_time)
         rows: list[dict[str, Any]] = []
@@ -2617,7 +2618,7 @@ def compose_admin(
             return
         academy_id = current_academy_id()
         now = datetime.now(UTC)
-        window_end = now + timedelta(days=60, hours=23, minutes=59, seconds=59)
+        window_end = now + OCCURRENCE_WINDOW + timedelta(hours=23, minutes=59, seconds=59)
         # Normal maintenance only reconciles the 60-day materialisation window.
         # A cancel has to reach EVERY future occurrence, including any dated row
         # materialised beyond that window, so drop the upper bound (#467).
@@ -2685,6 +2686,8 @@ def compose_admin(
             # whose occurrence is cancelled, so nothing renders unmarkable.
 
         for row in candidates:
+            if row["start_at"] < now:  # earlier today: history, never re-scheduled
+                continue
             existing_doc = existing.get(str(row["occurrence_id"]))
             if existing_doc is not None and not await _is_clean_future_occurrence(
                 existing_doc, now=now

@@ -483,7 +483,8 @@ async def close_academy_dates(
 ) -> CloseAcademyDatesResponse:
     if use_cases.close_academy_dates is None:
         raise HTTPException(status_code=503, detail="Academy closures are not configured")
-    zone = ZoneInfo(await academy_zone(use_cases, claims.academy_id))
+    zone_name = await academy_zone(use_cases, claims.academy_id)
+    zone = ZoneInfo(zone_name)
     result = await use_cases.close_academy_dates.execute(  # type: ignore[attr-defined]
         CloseAcademyDatesCommand(
             start_at=datetime.combine(body.start_date, time.min, tzinfo=zone),
@@ -507,7 +508,10 @@ async def close_academy_dates(
         cancelled=result.cancelled,
         skipped=result.skipped,
         credits_issued=result.credits_issued,
+        families_affected=result.families_affected,
         families_notified=result.families_notified,
+        notice_failed=result.notice_failed,
+        timezone=zone_name,
     )
 
 
