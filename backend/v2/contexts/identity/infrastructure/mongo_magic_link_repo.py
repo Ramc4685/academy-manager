@@ -28,7 +28,7 @@ def _as_utc(value: Any) -> datetime | None:
 
 
 class MongoMagicLinkRepository:
-    """Read/write access to single-use parent auto-login tokens."""
+    """Lookup and single-use claim of parent auto-login tokens already sent."""
 
     collection_name = "parent_magic_links"
 
@@ -36,29 +36,9 @@ class MongoMagicLinkRepository:
         self._db = db
         self._links = db[self.collection_name]
 
-    async def insert(self, record: MagicLinkRecord) -> None:
-        await self._links.insert_one(
-            {
-                "magic_link_id": record.magic_link_id,
-                "token_hash": record.token_hash,
-                "user_id": record.user_id,
-                "academy_id": record.academy_id,
-                "next_path": record.next_path,
-                "created_at": record.created_at,
-                "expires_at": record.expires_at,
-                "purge_at": record.purge_at,
-                "used_at": record.used_at,
-            }
-        )
-
     async def get_by_hash(self, token_hash: str) -> MagicLinkRecord | None:
         doc = await self._links.find_one({"token_hash": token_hash})
         return self._to_record(doc) if doc else None
-
-    async def revoke_unused_for_user(self, *, user_id: str, academy_id: str) -> None:
-        await self._links.delete_many(
-            {"user_id": user_id, "academy_id": academy_id, "used_at": None}
-        )
 
     async def mark_used(self, token_hash: str, *, used_at: datetime) -> bool:
         """Atomically stamp ``used_at`` iff the token is still unused.

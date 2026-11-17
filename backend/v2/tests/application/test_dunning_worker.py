@@ -540,7 +540,11 @@ def test_every_park_reason_is_re_claimable_by_the_repository() -> None:
         MongoDunningStateRepository,
     )
 
-    stranded = _PARK_REASONS - MongoDunningStateRepository.retryable_parked_reasons
+    reclaimed = (
+        MongoDunningStateRepository.retryable_parked_reasons
+        | MongoDunningStateRepository.daily_recheck_parked_reasons
+    )
+    stranded = _PARK_REASONS - reclaimed
     assert not stranded, f"park reasons never re-claimed: {sorted(stranded)}"
 
 

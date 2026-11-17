@@ -139,7 +139,7 @@ class PlatformRoleRepository(Protocol):
 
 
 class MagicLinkRepository(Protocol):
-    """Read/write port for single-use parent auto-login tokens.
+    """Read/claim port for single-use parent auto-login tokens already sent.
 
     The Mongo implementation lives in
     ``infrastructure/mongo_magic_link_repo.py`` on the ``parent_magic_links``
@@ -149,13 +149,7 @@ class MagicLinkRepository(Protocol):
     tenant could not distinguish "wrong tenant" (attack) from "no such token".
     """
 
-    async def insert(self, record: MagicLinkRecord) -> None: ...
-
     async def get_by_hash(self, token_hash: str) -> MagicLinkRecord | None: ...
-
-    async def revoke_unused_for_user(self, *, user_id: str, academy_id: str) -> None:
-        """Delete this user's still-unused links in ``academy_id``."""
-        ...
 
     async def mark_used(self, token_hash: str, *, used_at: datetime) -> bool:
         """Atomically stamp ``used_at`` iff still unused.

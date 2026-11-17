@@ -38,6 +38,13 @@ TECHNICAL_PARK_REASONS = frozenset(
 TECHNICAL_PARK_CAP = timedelta(hours=24)
 TECHNICAL_FAILURE_CAPPED = "technical_failure_capped"
 
+#: A capped recheck found a PaymentIntent on the invoice that is not cleanly this
+#: charge (refunded, disputed, another amount or source), or a found charge that
+#: left a balance. Parked for a person to decide and never charged again: charging
+#: on top of it could take money a person already refunded. It is rechecked once a
+#: day without calling Stripe, so a paid or voided invoice stands the ladder down.
+EXISTING_CHARGE_NEEDS_REVIEW = "existing_charge_needs_review"
+
 #: Park reasons that mean "we could not ask the bank" because of something on our
 #: side. A ladder parked for one of these is listed for the admin and counted by
 #: the ops digest; settling ACH debits, open checkouts and paused enrollments are
@@ -50,6 +57,7 @@ PARK_REASONS_NEEDING_ATTENTION = frozenset(
         "stripe_not_configured",
         STRIPE_UNAVAILABLE,
         TECHNICAL_FAILURE_CAPPED,
+        EXISTING_CHARGE_NEEDS_REVIEW,
     }
 )
 

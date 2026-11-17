@@ -14,6 +14,7 @@ from backend.v2.contexts.billing.application.autopay_eligibility import invoice_
 from backend.v2.contexts.billing.application.ports import FamilyAutopayPauser
 from backend.v2.contexts.billing.domain.checkout_hold import CHECKOUT_HOLD_DECLINE_CODE
 from backend.v2.contexts.billing.domain.dunning import (
+    EXISTING_CHARGE_NEEDS_REVIEW,
     NO_SAVED_PAYMENT_METHOD,
     PARK_REASONS_NEEDING_ATTENTION,
     STRIPE_UNAVAILABLE,
@@ -53,6 +54,8 @@ _PARK_REASONS = frozenset(
         # No saved card or bank: the parent has to act. Parked so it is charged as
         # soon as a method appears, with one "add a payment method" notice (A4-1).
         NO_SAVED_PAYMENT_METHOD,
+        # A found charge a person must review: parked once, never retried.
+        EXISTING_CHARGE_NEEDS_REVIEW,
     }
 )
 

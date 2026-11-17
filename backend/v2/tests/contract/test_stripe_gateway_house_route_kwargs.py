@@ -17,6 +17,9 @@ from typing import Any
 
 import pytest
 
+from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
+    autopay_idempotency_key,
+)
 from backend.v2.contexts.billing.infrastructure.stripe_gateway import RealStripeGateway
 
 ACCT = "acct_tenant_1"
@@ -606,7 +609,7 @@ async def test_house_autopay_use_case_sends_the_historical_calls(calls: _Calls) 
         "payment_method": "pm_1",
         "off_session": True,
         "confirm": True,
-        "idempotency_key": "autopay:inv-1:2026-06:10000",
+        "idempotency_key": autopay_idempotency_key("inv-1", None),
         "metadata": {
             "invoice_id": "inv-1",
             "academy_id": "acad-1",
@@ -628,7 +631,7 @@ async def test_direct_autopay_charges_the_stored_card_on_the_academy_account(
     assert direct["stripe_account"] == ACCT
     assert (direct["customer"], direct["payment_method"]) == ("cus_on_acct", "pm_on_acct")
     assert direct["application_fee_amount"] == 250  # 2.5% of $100.00
-    assert direct["idempotency_key"] == f"autopay:inv-1:2026-06:10000:fee250:acct:{ACCT}"
+    assert direct["idempotency_key"] == autopay_idempotency_key("inv-1", None) + f":acct:{ACCT}"
     assert "on_behalf_of" not in direct and "transfer_data" not in direct
 
 

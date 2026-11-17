@@ -1,9 +1,10 @@
-"""Issue and consume single-use parent auto-login magic links (Option C).
+"""Consume single-use parent auto-login magic links already sent (Option C).
 
-The parent daily digest links provisioned-but-never-activated parents straight
-into the portal. Rather than emailing a bearer that stays valid forever, we mint
-a one-time token here: only its SHA-256 hash is stored, it expires in 72h, it is
-bound to the issuing academy, and redemption is atomic + single-use.
+The issue path is deleted: an emailed link that grants a session is a
+forwardable bearer credential (OWASP, NIST 800-63B), so nothing mints these any
+more and the digest links to the sign-in page instead. Consume, its route and
+the /auth/magic page remain only for links already in inboxes (72h TTL) and are
+deleted in a cleanup once the last one has expired.
 
 Security posture (do not weaken — see the feature's SECURITY callouts):
 
@@ -12,6 +13,10 @@ Security posture (do not weaken — see the feature's SECURITY callouts):
   one wins, the other gets ``MagicLinkInvalid``.
 * **Short-lived** — 72h TTL, after which consume returns ``MagicLinkExpired``.
 * **Tenant-bound** — a token issued for one academy is rejected against another.
+* **Parent-only, least privilege** — consume succeeds only for a user whose
+  membership in the token's academy is active and whose roles are exactly
+  ``{"parent"}``. Anyone holding a staff role (or removed, or cross-tenant) gets
+  the same opaque ``MagicLinkInvalid`` as an unknown token and signs in normally.
 * **Open-redirect-safe** — ``_safe_next`` only permits a same-site absolute
   path; ``//host`` and absolute URLs collapse to the dashboard.
 """
@@ -19,27 +24,20 @@ Security posture (do not weaken — see the feature's SECURITY callouts):
 from __future__ import annotations
 
 import hashlib
-import secrets
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from backend.v2.contexts.identity.application.ports import (
     CustomTokenPort,
     MagicLinkRepository,
+    MembershipLookup,
     UserRepository,
 )
 from backend.v2.contexts.identity.domain.errors import (
     MagicLinkExpired,
     MagicLinkInvalid,
 )
-from backend.v2.contexts.identity.domain.models import MagicLinkRecord
-from backend.v2.shared.ids import new_ulid
-
-# 72h active window. A consumed/expired row is retained ``_PURGE_GRACE`` longer
-# before the collection's TTL index deletes it — a short debug window without
-# unbounded growth.
-_TTL = timedelta(hours=72)
-_PURGE_GRACE = timedelta(days=7)
+from backend.v2.contexts.identity.domain.identity_aliases import identity_aliases
 
 # Where a token with no (or an unsafe) ``next_path`` lands.
 _DEFAULT_NEXT = "/parent/dashboard"
@@ -72,37 +70,6 @@ class ConsumedMagicLink:
     next_path: str
 
 
-class IssueMagicLink:
-    """Mint a fresh single-use token and persist only its hash.
-
-    Returns the RAW token — the sole time it exists outside the recipient's
-    inbox. The caller (the digest composition root) embeds it in the email link
-    and never stores it.
-    """
-
-    def __init__(self, links: MagicLinkRepository) -> None:
-        self._links = links
-
-    async def execute(self, *, user_id: str, academy_id: str, next_path: str) -> str:
-        now = datetime.now(UTC)
-        token = secrets.token_urlsafe(32)
-        record = MagicLinkRecord(
-            magic_link_id=new_ulid(),
-            token_hash=_hash_token(token),
-            user_id=user_id,
-            academy_id=academy_id,
-            next_path=_safe_next(next_path),
-            created_at=now,
-            expires_at=now + _TTL,
-            purge_at=now + _TTL + _PURGE_GRACE,
-            used_at=None,
-        )
-        # One live link per parent: a new digest supersedes yesterday's.
-        await self._links.revoke_unused_for_user(user_id=user_id, academy_id=academy_id)
-        await self._links.insert(record)
-        return token
-
-
 class ConsumeMagicLink:
     """Redeem a token: verify → claim atomically → mint a Firebase custom token.
 
@@ -114,11 +81,17 @@ class ConsumeMagicLink:
     """
 
     def __init__(
-        self, *, links: MagicLinkRepository, tokens: CustomTokenPort, users: UserRepository
+        self,
+        *,
+        links: MagicLinkRepository,
+        tokens: CustomTokenPort,
+        users: UserRepository,
+        memberships: MembershipLookup,
     ) -> None:
         self._links = links
         self._tokens = tokens
         self._users = users
+        self._memberships = memberships
 
     async def execute(self, token: str, *, academy_id: str) -> ConsumedMagicLink:
         token_hash = _hash_token(token)
@@ -142,6 +115,16 @@ class ConsumeMagicLink:
         # The repo already folds a legacy auth_uid into firebase_uid.
         uid = user.firebase_uid if user is not None else None
         if user is None or not uid or user.global_status != "active":
+            raise MagicLinkInvalid()
+        # Least privilege: an inbox link may only ever become a parent-only
+        # session. A user who also holds a staff role (or was removed) must sign
+        # in normally, so a forwarded link can never open a staff session.
+        membership = await self._memberships.get_for_user_in_academy(
+            user_id=user.user_id,
+            academy_id=record.academy_id,
+            aliases=identity_aliases(user.user_id, user.firebase_uid, user.auth_uid),
+        )
+        if membership is None or not membership.is_active() or set(membership.roles) != {"parent"}:
             raise MagicLinkInvalid()
         # Mint before claiming: minting has no side effects, so a Firebase
         # failure here leaves the link redeemable on retry.
