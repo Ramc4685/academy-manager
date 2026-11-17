@@ -54,12 +54,26 @@ def compose_message_push(db: Any, settings: Any) -> NotifyMessageByPush:
     from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
         MongoMembershipRepository,
     )
+    from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 
-    memberships = MongoMembershipRepository(db)
+    # Same role source as authentication: academy_memberships in SaaS mode, the
+    # users record in single-academy mode (main.py's legacy membership adapter).
+    if getattr(settings, "saas_mode", False):
+        memberships = MongoMembershipRepository(db)
+
+        async def roles_of(academy_id: str, user_id: str) -> Sequence[str]:
+            membership = await memberships.get_membership(academy_id, user_id)
+            return membership.roles if membership else ()
+
+    else:
+        users = MongoUserRepository(db)
+
+        async def roles_of(academy_id: str, user_id: str) -> Sequence[str]:
+            user = await users.get_by_id(user_id)
+            return user.roles if user is not None and user.is_active else ()
 
     async def inbox_path(academy_id: str, user_id: str) -> str:
-        membership = await memberships.get_membership(academy_id, user_id)
-        return message_inbox_path(membership.roles if membership else ())
+        return message_inbox_path(await roles_of(academy_id, user_id))
 
     return NotifyMessageByPush(
         push=compose_send_push_to_user(db, settings),
