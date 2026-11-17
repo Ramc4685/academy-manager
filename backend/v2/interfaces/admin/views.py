@@ -680,8 +680,10 @@ class CreditMissedClassResponse(BaseModel):
     credits_issued: int = 0
     credit_total_cents: int = 0
     credit_skips: dict[str, int] = Field(default_factory=dict)
-    #: The coach's payout period is frozen: adjust their pay for the date by hand.
+    #: The coach's payout covering the date needs a hand fix or a recompute.
     payroll_flag: str | None = None
+    #: Preview only: billing never laid out this date; confirming is refused.
+    schedule_changed: bool = False
     billing_result: str | None = None
 
 

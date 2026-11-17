@@ -282,6 +282,13 @@ class OccurrenceNotPast(DomainError):
     status_code = 409
 
 
+class MissedClassScheduleChanged(DomainError):
+    """Billing never laid out this date, so it cannot price the credits (#1207)."""
+
+    code = "Enrollment.MissedClassScheduleChanged"
+    status_code = 409
+
+
 class MissedClassHadAttendance(DomainError):
     """Students were marked present, so the class ran and cannot be credited (#1207)."""
 

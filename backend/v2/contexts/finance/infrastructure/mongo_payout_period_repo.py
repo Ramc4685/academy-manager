@@ -233,13 +233,14 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
         *,
         coach_id: str,
         at: datetime,
+        include_draft: bool = False,
     ) -> str | None:
         # Status only — the caller is gating a write, not rendering a
         # period, so the lines lookup in ``_hydrate`` would be wasted I/O.
         doc = await self._find_one(
             {
                 "coach_id": coach_id,
-                "status": {"$in": ["approved", "paid"]},
+                "status": {"$in": ["approved", "paid", *(["draft"] if include_draft else [])]},
                 "period_start": {"$lte": at},
                 "period_end": {"$gt": at},
             }

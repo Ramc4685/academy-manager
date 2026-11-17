@@ -20,6 +20,7 @@ from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurre
 )
 from backend.v2.contexts.enrollment.domain.errors import (
     MissedClassHadAttendance,
+    MissedClassScheduleChanged,
     OccurrenceAlreadyCancelled,
     OccurrenceNotPast,
 )
@@ -49,25 +50,29 @@ class FakeAttendance:
 
 @dataclass
 class FakeBillingWithPreview:
-    """Mirrors the adapter: ``preview`` prices, ``apply`` writes."""
+    """Mirrors the adapter: ``apply(dry_run=True)`` prices, ``apply`` writes."""
 
     applied: list[dict[str, Any]] = field(default_factory=list)
     previewed: list[dict[str, Any]] = field(default_factory=list)
+    #: False: billing never laid out the date (schedule edited after it).
+    matched: bool = True
 
     _families: tuple[dict[str, Any], ...] = (
         {"enrollment_id": "enr-1", "amount_cents": 3000, "outcome": "would_credit"},
         {"enrollment_id": "enr-2", "amount_cents": 0, "outcome": "skipped:covered_by_free_classes"},
     )
 
-    async def preview(self, **kwargs: Any) -> dict[str, Any]:
-        self.previewed.append(kwargs)
-        return {
-            "families": list(self._families),
-            "credited_cents": 3000,
-            "skip_counts": {"covered_by_free_classes": 1},
-        }
-
-    async def apply(self, **kwargs: Any) -> dict[str, Any]:
+    async def apply(self, *, dry_run: bool = False, **kwargs: Any) -> dict[str, Any]:
+        if dry_run:
+            self.previewed.append(kwargs)
+            if not self.matched:
+                return {"families": [], "credited_cents": 0, "schedule_matched": False}
+            return {
+                "families": list(self._families),
+                "credited_cents": 3000,
+                "skip_counts": {"covered_by_free_classes": 1},
+                "schedule_matched": True,
+            }
         self.applied.append(kwargs)
         return {
             "billing_result": "credited=1,skipped=1,override=written",
@@ -226,3 +231,41 @@ async def test_crediting_the_same_missed_date_twice_is_refused() -> None:
     with pytest.raises(OccurrenceAlreadyCancelled):
         await use_case.execute(_missed())
     assert len(billing.applied) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_date_billing_never_laid_out_is_flagged_and_refused() -> None:
+    """Schedule edited after the date: no silent "no credits" cancel."""
+    occurrences, billing = _past(), FakeBillingWithPreview(matched=False)
+    use_case = _build(occurrences, attendance=FakeAttendance(), billing=billing)
+
+    assert (await use_case.preview_missed("occ-1")).schedule_changed is True
+    with pytest.raises(MissedClassScheduleChanged):
+        await use_case.execute(_missed())
+    assert occurrences.rows["occ-1"].status == "scheduled"
+    assert billing.applied == []
+
+
+@pytest.mark.asyncio
+async def test_a_draft_payout_is_flagged_for_a_recompute() -> None:
+    use_case = _build(
+        _past(),
+        attendance=FakeAttendance(),
+        billing=FakeBillingWithPreview(),
+        payout_lock=FakePayoutLock("draft"),
+    )
+    flag = (await use_case.preview_missed("occ-1")).payroll_flag
+    assert flag and "Recompute" in flag
+
+
+@pytest.mark.asyncio
+async def test_a_class_still_in_progress_is_not_missed_yet() -> None:
+    started = NOW - timedelta(minutes=10)
+    use_case = _build(
+        FakeOccurrences(
+            {"occ-1": _occurrence(start_at=started, end_at=started + timedelta(hours=1))}
+        ),
+        attendance=FakeAttendance(),
+    )
+    with pytest.raises(OccurrenceNotPast):
+        await use_case.preview_missed("occ-1")

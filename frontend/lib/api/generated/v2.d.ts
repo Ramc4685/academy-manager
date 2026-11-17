@@ -13731,6 +13731,11 @@ export interface components {
             /** Payroll Flag */
             payroll_flag?: string | null;
             /**
+             * Schedule Changed
+             * @default false
+             */
+            schedule_changed: boolean;
+            /**
              * Start At
              * Format: date-time
              */

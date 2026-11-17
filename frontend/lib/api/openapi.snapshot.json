@@ -15961,6 +15961,11 @@
             ],
             "title": "Payroll Flag"
           },
+          "schedule_changed": {
+            "default": false,
+            "title": "Schedule Changed",
+            "type": "boolean"
+          },
           "start_at": {
             "format": "date-time",
             "title": "Start At",

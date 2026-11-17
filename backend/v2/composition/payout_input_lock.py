@@ -28,8 +28,12 @@ class PayoutInputLock:
     def __init__(self, periods: PayoutPeriodRepository) -> None:
         self._periods = periods
 
-    async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None:
-        return await self._periods.find_locked_status_for_coach(coach_id=coach_id, at=at)
+    async def locked_status_for(
+        self, *, coach_id: str, at: datetime, include_draft: bool = False
+    ) -> str | None:
+        return await self._periods.find_locked_status_for_coach(
+            coach_id=coach_id, at=at, include_draft=include_draft
+        )
 
 
 def compose_payout_input_lock(

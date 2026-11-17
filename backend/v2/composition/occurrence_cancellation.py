@@ -17,6 +17,7 @@ structural cap, so admin wires this feature in one call.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -72,6 +73,8 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo impo
     MongoTrialRequestRepository,
 )
 
+log = logging.getLogger(__name__)
+
 
 class OccurrenceBillingSyncAdapter:
     """``OccurrenceBillingSync`` implementation backed by the billing use case."""
@@ -87,44 +90,7 @@ class OccurrenceBillingSyncAdapter:
         start_at: datetime,
         reason: str,
         actor_id: str | None,
-    ) -> dict[str, Any]:
-        return await self._run(
-            occurrence_id=occurrence_id,
-            session_id=session_id,
-            start_at=start_at,
-            reason=reason,
-            actor_id=actor_id,
-            dry_run=False,
-        )
-
-    async def preview(
-        self,
-        *,
-        occurrence_id: str,
-        session_id: str,
-        start_at: datetime,
-        reason: str,
-        actor_id: str | None,
-    ) -> dict[str, Any]:
-        """The same pricing as ``apply``, writing nothing (#1207)."""
-        return await self._run(
-            occurrence_id=occurrence_id,
-            session_id=session_id,
-            start_at=start_at,
-            reason=reason,
-            actor_id=actor_id,
-            dry_run=True,
-        )
-
-    async def _run(
-        self,
-        *,
-        occurrence_id: str,
-        session_id: str,
-        start_at: datetime,
-        reason: str,
-        actor_id: str | None,
-        dry_run: bool,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         result = await self._use_case.execute(
             ApplyOccurrenceCancellationCommand(
@@ -141,6 +107,7 @@ class OccurrenceBillingSyncAdapter:
             "billing_result": result.billing_result,
             "period": result.period,
             "override_written": result.override_written,
+            "schedule_matched": result.schedule_matched,
             "credits": result.credits,
             "credited_cents": result.credited_cents,
             "skip_counts": result.skip_counts,
@@ -165,8 +132,15 @@ class OccurrenceAttendanceAdapter:
     def __init__(self, attendance: MongoAttendanceRepository) -> None:
         self._attendance = attendance
 
-    async def present_count(self, occurrence_id: str) -> int:
-        rows = await self._attendance.list_for_occurrence(occurrence_id)
+    async def present_count(self, occurrence_id: str) -> int | None:
+        """``None`` when attendance can't be read: the caller refuses then."""
+        try:
+            rows = await self._attendance.list_for_occurrence(occurrence_id)
+        except Exception:
+            log.warning(
+                "missed_class_attendance_unreadable", extra={"occurrence_id": occurrence_id}
+            )
+            return None
         return sum(1 for row in rows if row.status in _PRESENT_STATUSES)
 
 

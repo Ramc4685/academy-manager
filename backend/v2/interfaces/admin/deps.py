@@ -88,6 +88,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     TransferEnrollment,
     WithdrawEnrollment,
 )
+from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
+    CancelSessionOccurrence,
+)
 from backend.v2.contexts.enrollment.application.use_cases.departure_policies import (
     GetEnrollmentDeparturePolicy,
     UpdateEnrollmentDeparturePolicy,
@@ -397,7 +400,7 @@ class AdminUseCases:
     # Issue #671: CancelSessionOccurrence — "cancel this date". Optional so
     # older admin fixtures still construct AdminUseCases; the route 503s
     # rather than 500s when a composition root forgets to wire it.
-    cancel_session_occurrence: object | None = None
+    cancel_session_occurrence: CancelSessionOccurrence | None = None
     close_academy_dates: object | None = None  # CloseAcademyDates
     get_coach_engagement_stats: GetCoachEngagementStats | None = None
     send_campaign: SendCampaign | None = None

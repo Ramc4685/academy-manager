@@ -69,9 +69,10 @@ def assert_missed_class_creditable(
         )
     if session is not None and session.status == "cancelled":
         raise SessionCancelled("the whole session is cancelled", session_id=session.session_id)
-    if occurrence.start_at > now:
+    if occurrence.end_at > now:
+        # A class still in progress has not been missed yet (#1207 review).
         raise OccurrenceNotPast(
-            "this class has not happened yet; call the date off instead",
+            "this class has not finished yet; call a future date off instead",
             occurrence_id=occurrence.occurrence_id,
         )
     if occurrence.status == "completed":

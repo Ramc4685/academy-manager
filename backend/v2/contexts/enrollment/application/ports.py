@@ -452,10 +452,13 @@ class PayoutPeriodLock(Protocol):
     Finance owns ``PayoutPeriod``; Enrollment must not import it, so the
     composition layer reshapes it into this one question. Returns the
     blocking period's status (``"approved"`` / ``"paid"``), or ``None``
-    when the window is still editable.
+    when the window is still editable. ``include_draft`` also reports a
+    ``"draft"`` period (#1207: it must be recomputed before approval).
     """
 
-    async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None: ...
+    async def locked_status_for(
+        self, *, coach_id: str, at: datetime, include_draft: bool = False
+    ) -> str | None: ...
 
 
 class OccurrenceBillingSync(Protocol):
@@ -477,20 +480,10 @@ class OccurrenceBillingSync(Protocol):
         start_at: datetime,
         reason: str,
         actor_id: str | None,
-    ) -> dict[str, Any]: ...
-
-    async def preview(
-        self,
-        *,
-        occurrence_id: str,
-        session_id: str,
-        start_at: datetime,
-        reason: str,
-        actor_id: str | None,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
-        """Price every family exactly as ``apply`` would, writing nothing (#1207).
-
-        ``families`` lists ``{enrollment_id, amount_cents, outcome}``."""
+        """``dry_run`` prices every family as a real run would, writing nothing
+        (#1207); ``families`` lists ``{enrollment_id, amount_cents, outcome}``."""
         ...
 
 
@@ -500,7 +493,7 @@ class OccurrenceAttendanceCheck(Protocol):
     Coaching owns attendance; a missed class is only credited when this is 0.
     """
 
-    async def present_count(self, occurrence_id: str) -> int: ...
+    async def present_count(self, occurrence_id: str) -> int | None: ...
 
 
 class OccurrenceCancellationNotifier(Protocol):

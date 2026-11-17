@@ -63,6 +63,7 @@ from backend.v2.contexts.enrollment.application.ports import (
     TrialReopener,
 )
 from backend.v2.contexts.enrollment.domain.errors import (
+    MissedClassScheduleChanged,
     OccurrenceAlreadyCancelled,
     OccurrenceNotFound,
     PayoutPeriodFrozen,
@@ -158,6 +159,9 @@ class MissedClassPreview(BaseModel):
     credit_total_cents: int = 0
     credit_skips: dict[str, int] = Field(default_factory=dict)
     payroll_flag: str | None = None
+    #: Billing never laid out this date (the schedule was edited after it):
+    #: confirming is refused, so the families are credited by hand.
+    schedule_changed: bool = False
 
 
 class CancelSessionOccurrence:
@@ -237,22 +241,29 @@ class CancelSessionOccurrence:
         coach_id = occurrence.actual_coach_id or occurrence.scheduled_coach_id
         if not coach_id:
             return None
-        return await self._payout_lock.locked_status_for(coach_id=coach_id, at=occurrence.start_at)
+        # A draft counts too: it was computed while the date was still payable.
+        return await self._payout_lock.locked_status_for(
+            coach_id=coach_id, at=occurrence.start_at, include_draft=True
+        )
+
+    async def _quote(self, occurrence: SessionOccurrence, session_id: str) -> dict[str, Any]:
+        if self._billing is None:
+            raise RuntimeError("occurrence billing sync is not wired")
+        return await self._billing.apply(
+            occurrence_id=occurrence.occurrence_id,
+            session_id=session_id,
+            start_at=occurrence.start_at,
+            reason="",
+            actor_id=None,
+            dry_run=True,
+        )
 
     async def preview_missed(self, occurrence_id: str) -> MissedClassPreview:
         """Price crediting a missed date for every family, writing nothing (#1207)."""
         occurrence, _, session_id, payroll_flag = await self._precheck(
             occurrence_id, self._now(), missed=True
         )
-        if self._billing is None:
-            raise RuntimeError("occurrence billing sync is not wired")
-        quote = await self._billing.preview(
-            occurrence_id=occurrence.occurrence_id,
-            session_id=session_id,
-            start_at=occurrence.start_at,
-            reason="",
-            actor_id=None,
-        )
+        quote = await self._quote(occurrence, session_id)
         students = {
             row.enrollment_id: row.student_id
             for row in await self._enrollments.for_session_in_statuses(
@@ -273,6 +284,7 @@ class CancelSessionOccurrence:
             credit_total_cents=int(quote.get("credited_cents") or 0),
             credit_skips=dict(quote.get("skip_counts") or {}),
             payroll_flag=_payroll_flag_text(payroll_flag),
+            schedule_changed=quote.get("schedule_matched") is False,
         )
 
     async def execute(self, cmd: CancelSessionOccurrenceCommand) -> CancelSessionOccurrenceResult:
@@ -280,6 +292,14 @@ class CancelSessionOccurrence:
         occurrence, session, session_id, payroll_flag = await self._precheck(
             cmd.occurrence_id, now, missed=cmd.missed
         )
+        if cmd.missed and self._billing is not None:
+            # Refuse before the commit point: cancelling a date billing cannot
+            # price would mark it No class and credit nobody (#1207 review).
+            if (await self._quote(occurrence, session_id)).get("schedule_matched") is False:
+                raise MissedClassScheduleChanged(
+                    "the class schedule changed since this date; credit families by hand",
+                    occurrence_id=cmd.occurrence_id,
+                )
         if payroll_flag:
             log.warning(
                 "enrollment.missed_class_payroll_frozen",
@@ -603,6 +623,11 @@ def _billing_warning(billing_result: str | None) -> str | None:
 def _payroll_flag_text(status: str | None) -> str | None:
     if not status:
         return None
+    if status == "draft":
+        return (
+            "The coach's payout for this period is a draft that still counts this date. "
+            "Recompute that coach's draft payout before approving it."
+        )
     return (
         f"The coach's payout period for this date is already {status}, so payroll will not "
         "pick this change up. Adjust the coach's pay for this date by hand."

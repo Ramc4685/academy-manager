@@ -251,3 +251,38 @@ async def test_a_frozen_payout_still_credits_and_flags_payroll(real_db: Any) -> 
         result = await _cancel(real_db).execute(_missed())
     assert result.payroll_flag and "paid" in result.payroll_flag
     assert len(await _credits(real_db)) == 1
+
+
+async def test_free_tuition_and_never_invoiced_families_get_nothing(real_db: Any) -> None:
+    """Risk review #1207: only money actually collected is credited back."""
+    await _seed(real_db)
+    for n, extra in ((2, {"billing_type": "NoCharge"}), (3, {})):
+        await real_db["students"].insert_one(
+            {"academy_id": ACADEMY, "student_id": f"st-{n}", "parent_id": f"par-{n}"}
+        )
+        await real_db["enrollments"].insert_one(
+            {
+                "academy_id": ACADEMY,
+                "enrollment_id": f"enr-{n}",
+                "session_id": "sess-1",
+                "student_id": f"st-{n}",
+                "parent_id": f"par-{n}",
+                "status": "active",
+                "enrolled_at": datetime(2026, 6, 1, tzinfo=UTC),
+                **extra,
+            }
+        )
+    with tenant_scope(ACADEMY):
+        cancel = _cancel(real_db)
+        preview = await cancel.preview_missed("occ-missed")
+        result = await cancel.execute(_missed())
+
+    assert {f.enrollment_id: f.outcome for f in preview.families} == {
+        "enr-1": "would_credit",
+        "enr-2": "skipped:free_tuition",
+        "enr-3": "skipped:not_invoiced",
+    }
+    assert result.credit_skips == {"free_tuition": 1, "not_invoiced": 1}
+    assert [c["source_id"] for c in await _credits(real_db)] == [
+        class_cancellation_source_id(occurrence_id="occ-missed", enrollment_id="enr-1")
+    ]

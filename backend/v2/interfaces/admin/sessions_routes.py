@@ -442,7 +442,7 @@ async def cancel_session_occurrence(
 ) -> CancelSessionOccurrenceResponse:
     if use_cases.cancel_session_occurrence is None:
         raise HTTPException(status_code=503, detail="Class-date cancellation is not configured")
-    result = await use_cases.cancel_session_occurrence.execute(  # type: ignore[attr-defined]
+    result = await use_cases.cancel_session_occurrence.execute(
         CancelSessionOccurrenceCommand(
             occurrence_id=occurrence_id,
             reason=body.reason,
@@ -494,7 +494,7 @@ async def credit_missed_class(
     if cancel is None:
         raise HTTPException(status_code=503, detail="Class-date cancellation is not configured")
     if body.dry_run:
-        preview = await cancel.preview_missed(occurrence_id)  # type: ignore[attr-defined]
+        preview = await cancel.preview_missed(occurrence_id)
         names = await _student_names(use_cases, [f.student_id for f in preview.families])
         return CreditMissedClassResponse(
             occurrence_id=preview.occurrence.occurrence_id,
@@ -508,8 +508,9 @@ async def credit_missed_class(
             credit_total_cents=preview.credit_total_cents,
             credit_skips=dict(preview.credit_skips),
             payroll_flag=preview.payroll_flag,
+            schedule_changed=preview.schedule_changed,
         )
-    result = await cancel.execute(  # type: ignore[attr-defined]
+    result = await cancel.execute(
         CancelSessionOccurrenceCommand(
             occurrence_id=occurrence_id,
             reason=body.reason,

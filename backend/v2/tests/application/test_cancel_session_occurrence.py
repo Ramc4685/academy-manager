@@ -485,8 +485,12 @@ class FakePayoutLock:
         self._status = status
         self.calls: list[tuple[str, datetime]] = []
 
-    async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None:
+    async def locked_status_for(
+        self, *, coach_id: str, at: datetime, include_draft: bool = False
+    ) -> str | None:
         self.calls.append((coach_id, at))
+        if self._status == "draft" and not include_draft:
+            return None
         return self._status
 
 

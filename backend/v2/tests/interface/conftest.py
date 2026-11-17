@@ -1588,16 +1588,15 @@ class FakeOccurrenceBilling:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def preview(self, *, occurrence_id, session_id, start_at, reason, actor_id):
-        return {
-            "families": [
-                {"enrollment_id": "enr-1", "amount_cents": 3000, "outcome": "would_credit"}
-            ],
-            "credited_cents": 3000,
-            "skip_counts": {},
-        }
-
-    async def apply(self, *, occurrence_id, session_id, start_at, reason, actor_id):
+    async def apply(self, *, occurrence_id, session_id, start_at, reason, actor_id, dry_run=False):
+        if dry_run:
+            return {
+                "families": [
+                    {"enrollment_id": "enr-1", "amount_cents": 3000, "outcome": "would_credit"}
+                ],
+                "credited_cents": 3000,
+                "skip_counts": {},
+            }
         self.calls.append(
             {
                 "occurrence_id": occurrence_id,
@@ -2375,7 +2374,9 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         approved payout period so the owner-override path (#821) is reachable
         from the route tests; every other coach's window is open."""
 
-        async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None:
+        async def locked_status_for(
+            self, *, coach_id: str, at: datetime, include_draft: bool = False
+        ) -> str | None:
             return "approved" if coach_id == "coach-frozen" else None
 
     _coach_attendance_audit = seed["coach_attendance_audit"]
