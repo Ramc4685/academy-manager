@@ -142,6 +142,10 @@ class GeneratePayoutPeriod:
             stored,
             action="generated",
             actor_id=actor_id,
-            after={"total_minor": stored.total_minor, "line_count": len(stored.lines)},
+            after={
+                "total_minor": stored.total_minor,
+                "line_count": len(stored.lines),
+                "version": stored.version,
+            },
         )
         return stored

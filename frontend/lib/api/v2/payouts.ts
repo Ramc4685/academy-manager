@@ -151,14 +151,14 @@ export function payoutErrorMessage(err: Error): string {
     : err.message;
 }
 
-/** `expectedVersion` is the version on screen; omit it only for system follow-ups. */
+/** `expectedVersion` is the version on screen; a stale one is a 409. */
 export async function recomputePayoutPeriod(
   periodId: string,
-  expectedVersion?: number,
+  expectedVersion: number,
 ): Promise<AdminPayoutPeriodView> {
   return apiFetch<AdminPayoutPeriodView>(
     `/admin/payout-periods/${encodeURIComponent(periodId)}/recompute`,
-    { method: "POST", body: JSON.stringify({ expected_version: expectedVersion ?? null }) },
+    { method: "POST", body: JSON.stringify({ expected_version: expectedVersion }) },
   );
 }
 
@@ -225,4 +225,21 @@ export async function markPayoutPeriodPaid(
     `/admin/payout-periods/${encodeURIComponent(periodId)}/mark-paid`,
     { method: "POST", body: JSON.stringify(input) },
   );
+}
+
+/** The mark-paid body from the dialog's fields and the version it opened on. */
+export function markPaidInput(fields: {
+  method: MarkPayoutPaidInput["method"];
+  paidAt: string;
+  amount: string;
+  reference: string;
+  versionAtOpen: number;
+}): MarkPayoutPaidInput {
+  return {
+    method: fields.method,
+    paid_at: new Date(fields.paidAt).toISOString(),
+    amount_cents: Math.round(parseFloat(fields.amount) * 100),
+    reference: fields.reference || null,
+    expected_version: fields.versionAtOpen,
+  };
 }

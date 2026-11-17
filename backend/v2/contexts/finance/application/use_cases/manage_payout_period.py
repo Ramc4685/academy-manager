@@ -164,7 +164,11 @@ class RecomputePayoutPeriod(_Audited):
             action="recomputed",
             actor_id=actor_id,
             before={"total_minor": period.total_minor, "line_count": len(period.lines)},
-            after={"total_minor": stored.total_minor, "line_count": len(stored.lines)},
+            after={
+                "total_minor": stored.total_minor,
+                "line_count": len(stored.lines),
+                "version": stored.version,
+            },
         )
         return stored
 
@@ -202,6 +206,7 @@ class ReopenPayoutPeriod(_Audited):
                 "paid_clawback_acknowledged": (
                     acknowledge_paid_clawback if period.status == "paid" else False
                 ),
+                "version": stored.version,
             },
         )
         return stored
@@ -272,7 +277,11 @@ class OverridePayoutLine(_Audited):
             occurrence_id=occurrence_id,
             reason=reason,
             before={"amount_minor": target.amount_minor, "total_minor": period.total_minor},
-            after={"amount_minor": updated_line.amount_minor, "total_minor": stored.total_minor},
+            after={
+                "amount_minor": updated_line.amount_minor,
+                "total_minor": stored.total_minor,
+                "version": stored.version,
+            },
         )
         return stored
 

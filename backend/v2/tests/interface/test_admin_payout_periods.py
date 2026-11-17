@@ -8,6 +8,9 @@ from io import BytesIO
 
 from openpyxl import load_workbook
 
+from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
+    OverlappingPayoutPeriodError,
+)
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     PayoutPeriodConflictError,
@@ -467,3 +470,58 @@ def test_the_view_carries_the_version_and_writes_forward_the_one_the_screen_saw(
 
     assert admin_client.use_cases.approve_payout_period.expected_versions == [3, None]
     assert admin_client.use_cases.mark_payout_paid.expected_versions == [4]
+
+
+class _RecordsVersion:
+    """Fake reopen/recompute/override: records the expected_version it was given."""
+
+    def __init__(self, period: PayoutPeriod) -> None:
+        self.period = period
+        self.expected_versions: list[int | None] = []
+
+    async def execute(self, *, expected_version: int | None = None, **_) -> PayoutPeriod:
+        self.expected_versions.append(expected_version)
+        return self.period
+
+
+def test_reopen_recompute_and_line_override_forward_the_version_the_screen_saw(admin_client):
+    period = _period(version=7)
+    _wire(admin_client, period)
+    uc = admin_client.use_cases
+    uc.reopen_payout_period = _RecordsVersion(period)
+    uc.recompute_payout_period = _RecordsVersion(period)
+    uc.override_payout_line = _RecordsVersion(period)
+    base = "/api/v2/admin/payout-periods/pp-1"
+
+    assert (
+        admin_client.post(
+            f"{base}/reopen", json={"reason": "fix", "expected_version": 7}
+        ).status_code
+        == 200
+    )
+    assert admin_client.post(f"{base}/recompute", json={"expected_version": 8}).status_code == 200
+    assert admin_client.post(f"{base}/recompute").status_code == 200
+    override = admin_client.patch(
+        f"{base}/lines/occ-pay-1",
+        json={"amount_cents": 100, "reason": "typo", "expected_version": 9},
+    )
+    assert override.status_code == 200, override.text
+
+    assert uc.reopen_payout_period.expected_versions == [7]
+    assert uc.recompute_payout_period.expected_versions == [8, None]
+    assert uc.override_payout_line.expected_versions == [9]
+
+
+class _ApproveOverlaps:
+    async def execute(self, **_) -> PayoutPeriod:
+        raise OverlappingPayoutPeriodError(_period(period_id="pp-2"))
+
+
+def test_approving_a_period_that_overlaps_another_is_a_409(admin_client):
+    _wire(admin_client, _period())
+    admin_client.use_cases.approve_payout_period = _ApproveOverlaps()
+
+    response = admin_client.post("/api/v2/admin/payout-periods/pp-1/approve")
+
+    assert response.status_code == 409, response.text
+    assert "Finance.PayoutPeriodOverlap" in response.text and "pp-2" in response.text

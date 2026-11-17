@@ -10,8 +10,9 @@ lines with no guard, so two racing recomputes could leave an occurrence twice
 in one set (paid twice). The unique index makes that a database rule. The
 migration checks first and, on duplicates, raises naming them instead of
 failing on an opaque DuplicateKeyError or silently picking a survivor: which
-copy is right is a payroll decision. Missing ``lines_version`` (lines written by
-``save`` and legacy lines) indexes as null, the same set the readers match.
+copy is right is a payroll decision. Missing ``lines_version`` (legacy lines
+only; every write now stamps its set) indexes as null, the same set the
+readers match.
 
 Idempotent: the backfill only touches documents without a version and the
 index spec is unchanged on a re-run.

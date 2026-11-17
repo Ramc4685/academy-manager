@@ -265,7 +265,7 @@ async def test_recompute_rewrites_lines_and_audits() -> None:
     assert entry.action == "recomputed"
     assert entry.actor_id == "admin-1"
     assert entry.before == {"total_minor": 5000, "line_count": 1}
-    assert entry.after == {"total_minor": 10000, "line_count": 2}
+    assert entry.after == {"total_minor": 10000, "line_count": 2, "version": 1}
 
 
 @pytest.mark.asyncio
@@ -371,7 +371,7 @@ async def test_reopen_paid_period_clears_payment_and_audits_before_snapshot() ->
     assert entry.before is not None
     assert entry.before["status"] == "paid"
     assert entry.before["paid_method"] == "cash"
-    assert entry.after == {"status": "draft", "paid_clawback_acknowledged": True}
+    assert entry.after == {"status": "draft", "paid_clawback_acknowledged": True, "version": 1}
 
 
 @pytest.mark.asyncio
@@ -421,7 +421,7 @@ async def test_override_sets_amount_and_rebuilds_total() -> None:
     assert entry.action == "line_overridden"
     assert entry.occurrence_id == "occ-1"
     assert entry.before == {"amount_minor": 5000, "total_minor": 8000}
-    assert entry.after == {"amount_minor": 6500, "total_minor": 9500}
+    assert entry.after == {"amount_minor": 6500, "total_minor": 9500, "version": 1}
 
 
 @pytest.mark.asyncio

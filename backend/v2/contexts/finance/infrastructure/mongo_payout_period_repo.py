@@ -48,7 +48,7 @@ def _utc_or_none(value: datetime | None) -> datetime | None:
 
 def current_lines_filter(period_docs: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     """Match only each period's current line set: lines whose ``lines_version``
-    equals the header's (None matches lines from ``save`` and legacy lines).
+    equals the header's (None matches legacy lines only: every write now stamps its set).
 
     A recompute that dies between its header write and its cleanup leaves the
     old set behind; every raw reader of ``payout_period_lines`` must use this.
@@ -212,14 +212,16 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
         coach_id: str,
         period_start: datetime,
         period_end: datetime,
+        exclude_period_id: str | None = None,
     ) -> PayoutPeriod | None:
-        doc = await self._find_one(
-            {
-                "coach_id": coach_id,
-                "period_start": {"$lt": period_end},
-                "period_end": {"$gt": period_start},
-            }
-        )
+        query: dict[str, Any] = {
+            "coach_id": coach_id,
+            "period_start": {"$lt": period_end},
+            "period_end": {"$gt": period_start},
+        }
+        if exclude_period_id is not None:
+            query["period_id"] = {"$ne": exclude_period_id}
+        doc = await self._find_one(query)
         return await self._hydrate(doc) if doc else None
 
     async def find_by_id(self, period_id: str) -> PayoutPeriod | None:
@@ -375,7 +377,7 @@ class MongoPayoutPeriodRepository(TenantScopedRepository):
                 {"academy_id": academy_id, "period_id": period.period_id, "lines_version": token}
             )
             raise
-        # Delete only the set this write replaced (None: lines from ``save``).
+        # Delete only the set this write replaced (None: legacy lines only).
         # Never "everything but mine": a late cleanup would wipe a newer
         # writer's current lines.
         await lines.delete_many(

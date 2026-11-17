@@ -79,6 +79,8 @@ def _period_write_errors(
         yield
     except PayoutPeriodConflictError as exc:
         raise PayoutPeriodConflict(str(exc)) from exc
+    except OverlappingPayoutPeriodError as exc:  # a ValueError: map it before ``invalid``
+        raise PayoutPeriodOverlap(str(exc)) from exc
     except LookupError as exc:
         raise PayoutPeriodNotFound(not_found or str(exc)) from exc
     except invalid as exc:

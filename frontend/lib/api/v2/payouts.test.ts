@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   approvePayoutPeriod,
+  markPaidInput,
   markPayoutPeriodPaid,
   PAYOUT_CONFLICT_MESSAGE,
   payoutErrorMessage,
@@ -46,5 +47,25 @@ describe("payoutErrorMessage", () => {
     expect(payoutErrorMessage(conflict)).toBe(PAYOUT_CONFLICT_MESSAGE);
     expect(PAYOUT_CONFLICT_MESSAGE).toMatch(/Someone else changed this payout/);
     expect(payoutErrorMessage(new Error("reason is required"))).toBe("reason is required");
+  });
+});
+
+describe("markPaidInput", () => {
+  it("submits the version the dialog opened on with the amount it showed", () => {
+    expect(
+      markPaidInput({
+        method: "check",
+        paidAt: "2026-07-01T00:00:00Z",
+        amount: "450.10",
+        reference: "",
+        versionAtOpen: 3,
+      }),
+    ).toEqual({
+      method: "check",
+      paid_at: "2026-07-01T00:00:00.000Z",
+      amount_cents: 45010,
+      reference: null,
+      expected_version: 3,
+    });
   });
 });

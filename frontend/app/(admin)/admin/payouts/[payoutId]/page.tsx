@@ -37,6 +37,7 @@ import {
   getPayoutPeriod,
   markPayoutPeriodPaid,
   overridePayoutLine,
+  markPaidInput,
   PAYOUT_CONFLICT_MESSAGE,
   payoutErrorMessage,
   recomputePayoutPeriod,
@@ -451,8 +452,7 @@ function Actions({
     onError: (err: Error) => setError(payoutErrorMessage(err)),
   });
   const markPaid = useMutation({
-    mutationFn: (input: Omit<MarkPayoutPaidInput, "expected_version">) =>
-      markPayoutPeriodPaid(period.period_id, { ...input, expected_version: period.version }),
+    mutationFn: (input: MarkPayoutPaidInput) => markPayoutPeriodPaid(period.period_id, input),
     onSuccess: (updated) => {
       setError(null);
       setShowPaid(false);
@@ -570,6 +570,7 @@ function Actions({
       {showPaid && (
         <MarkPaidDialog
           defaultAmountCents={period.total_amount_cents}
+          version={period.version}
           pending={markPaid.isPending}
           onCancel={() => setShowPaid(false)}
           onSubmit={(input) => markPaid.mutate(input)}
@@ -638,7 +639,7 @@ function PayLog({
   const [correctingOccurrenceId, setCorrectingOccurrenceId] = useState<string | null>(null);
 
   const handleCorrectionApplied = async () => {
-    const updated = await recomputePayoutPeriod(period.period_id);
+    const updated = await recomputePayoutPeriod(period.period_id, period.version);
     setCorrectingOccurrenceId(null);
     onChanged(updated);
   };
@@ -972,15 +973,20 @@ function AuditTrail({
 
 function MarkPaidDialog({
   defaultAmountCents,
+  version,
   pending,
   onCancel,
   onSubmit,
 }: {
   defaultAmountCents: number;
+  version: number;
   pending: boolean;
   onCancel: () => void;
-  onSubmit: (input: Omit<MarkPayoutPaidInput, "expected_version">) => void;
+  onSubmit: (input: MarkPayoutPaidInput) => void;
 }) {
+  // Snapshot at open, like the amount: a refetch while the dialog is open must
+  // not pair the amount the owner saw with a newer version.
+  const [versionAtOpen] = useState(version);
   const timezone = useAcademyTimezone();
   const today = academyDateISO(timezone);
   const [method, setMethod] = useState<MarkPayoutPaidInput["method"]>("bank_transfer");
@@ -991,12 +997,7 @@ function MarkPaidDialog({
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    onSubmit({
-      method,
-      paid_at: new Date(paidAt).toISOString(),
-      amount_cents: Math.round(parseFloat(amount) * 100),
-      reference: reference || null,
-    });
+    onSubmit(markPaidInput({ method, paidAt, amount, reference, versionAtOpen }));
   };
 
   return (

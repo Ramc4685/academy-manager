@@ -27,6 +27,7 @@ from backend.v2.contexts.finance.application.use_cases.approve_payout_period imp
 )
 from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
     GeneratePayoutPeriod,
+    OverlappingPayoutPeriodError,
 )
 from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
     OverridePayoutLine,
@@ -412,3 +413,70 @@ async def test_0239_backfills_versions_and_refuses_duplicate_lines_by_name(real_
     # The same occurrence in another line set (or another academy) is allowed.
     await lines.insert_one({**line, "lines_version": "t3"})
     await lines.insert_one({**line, "academy_id": "a2"})
+
+
+async def test_approve_refuses_a_period_overlapping_another_for_the_coach(real_db, acad) -> None:
+    """Risk-review repro: a legacy May 1-Jun 1 and May 15-Jun 15 would pay May 15-31 twice."""
+    repo = MongoPayoutPeriodRepository(real_db)
+    await repo.save(_period())
+    await repo.save(
+        _period(
+            period_id="pp-2",
+            period_start=datetime(2026, 5, 15, tzinfo=UTC),
+            period_end=datetime(2026, 6, 15, tzinfo=UTC),
+        )
+    )
+    approver = ApprovePayoutPeriod(
+        repository=repo,
+        audit=MongoPayoutAuditLogRepository(real_db),
+        clock=lambda: datetime(2026, 6, 16, tzinfo=UTC),
+    )
+
+    for period_id in ("pp-1", "pp-2"):
+        with pytest.raises(OverlappingPayoutPeriodError, match="overlaps"):
+            await approver.execute(period_id=period_id, expected_version=0)
+
+    statuses = {d["period_id"]: d["status"] async for d in real_db["payout_periods"].find({})}
+    assert statuses == {"pp-1": "draft", "pp-2": "draft"}
+    assert await real_db["payout_audit_log"].count_documents({}) == 0
+    # Adjacent windows (Jun 1-Jul 1 starts where May ends) do not overlap.
+    await real_db["payout_periods"].delete_one({"period_id": "pp-2"})
+    await repo.save(
+        _period(
+            period_id="pp-3",
+            period_start=JUNE_1,
+            period_end=datetime(2026, 7, 1, tzinfo=UTC),
+        )
+    )
+    assert (await approver.execute(period_id="pp-1", expected_version=0)).status == "approved"
+
+
+async def test_a_lost_response_retry_gets_the_same_outcome_not_a_409(real_db, acad) -> None:
+    repo = MongoPayoutPeriodRepository(real_db)
+    audit = MongoPayoutAuditLogRepository(real_db)
+    await repo.save(_period())
+    approver = ApprovePayoutPeriod(repository=repo, audit=audit, clock=lambda: JUNE_2)
+
+    first = await approver.execute(period_id="pp-1", expected_version=0)
+    retry = await approver.execute(period_id="pp-1", expected_version=0)  # version is now 1
+    assert retry.status == "approved" and retry.version == first.version == 1
+
+    command = MarkPayoutPaidCommand(
+        period_id="pp-1",
+        method="check",
+        paid_at=datetime(2026, 6, 3, 10, 0, 0, 123456, tzinfo=UTC),
+        amount_minor=2_500,
+        reference="chk-9",
+    )
+    paid = await MarkPayoutPaid(repository=repo, audit=audit).execute(command, expected_version=1)
+    again = await MarkPayoutPaid(repository=repo, audit=audit).execute(command, expected_version=1)
+    assert again.status == "paid" and again.version == paid.version == 2
+
+    # A different payment on the stale version is a new decision: refused.
+    different = command.model_copy(update={"amount_minor": 9_999})
+    with pytest.raises(PayoutPeriodConflictError):
+        await MarkPayoutPaid(repository=repo, audit=audit).execute(different, expected_version=1)
+
+    entries = await audit.list_for_period("pp-1")
+    assert sorted(e.action for e in entries) == ["approved", "marked_paid"]
+    assert {e.action: e.after["version"] for e in entries} == {"approved": 1, "marked_paid": 2}
