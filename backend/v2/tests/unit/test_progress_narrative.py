@@ -16,6 +16,7 @@ import pytest
 from backend.v2.composition.ai import PlatformAiEntitlement
 from backend.v2.composition.ai_narratives import AcademyCoachReviewSwitch, _StudentNarrativeFacts
 from backend.v2.composition.evening_wins import _ParentWinsProvider
+from backend.v2.contexts.ai.application.json_answer import LINK_LIKE
 from backend.v2.contexts.ai.application.use_cases.draft_progress_narrative import (
     DraftProgressNarrative,
     ProgressNarrativeInput,
@@ -226,6 +227,18 @@ async def test_a_malformed_answer_is_still_recorded_then_502():
 def test_parse_refuses_invented_numbers_skills_length_and_shape(raw: str):
     with pytest.raises(AiProviderError):
         parse_narrative(raw, INPUT)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Great day...and more drills next week.", "Strong footwork.Next we work on serves."],
+)
+def test_an_ellipsis_or_a_missed_space_is_not_a_link(text: str):
+    assert not LINK_LIKE.search(text)
+
+
+def test_a_real_domain_is_still_a_link():
+    assert LINK_LIKE.search("Practice videos at blno.com this week.")
 
 
 def test_parse_strips_a_json_fence_and_collapses_whitespace():
