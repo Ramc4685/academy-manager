@@ -208,7 +208,7 @@ async def test_build_view_variant_b_when_never_signed_in() -> None:
     assert view.children[0].cant_make_it_url is None  # no portal to deep-link into
     # Must be a real frontend route: /parent/login 404s; these parents already
     # have an account, so they go to /login. Dues are owed in this fixture.
-    assert view.activate_url == "https://app.test/login?returnTo=/parent/payments"
+    assert view.activate_url == "https://app.test/login?returnTo=%2Fparent%2Fpayments"
 
 
 @pytest.mark.asyncio
@@ -225,7 +225,7 @@ async def test_build_view_variant_b_prefills_login_email() -> None:
     assert view.on_portal is False
     assert view.activate_url == (
         "https://app.test/login?email=parent.one%2Ba%40example.test&activate=1"
-        "&returnTo=/parent/payments"
+        "&returnTo=%2Fparent%2Fpayments"
     )
 
 
@@ -247,7 +247,7 @@ async def test_variant_b_returns_to_dashboard_when_no_dues() -> None:
     assert view is not None
     assert view.activate_url == (
         "https://app.test/login?email=parent.one%40example.test&activate=1"
-        "&returnTo=/parent/dashboard"
+        "&returnTo=%2Fparent%2Fdashboard"
     )
 
 

@@ -13,7 +13,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from backend.v2.contexts.identity.application.use_cases.magic_link import (
     ConsumeMagicLink,
-    IssueMagicLink,
     _hash_token,
     _safe_next,
 )
@@ -34,18 +33,8 @@ class _FakeRepo:
     def __init__(self) -> None:
         self.by_hash: dict[str, MagicLinkRecord] = {}
 
-    async def insert(self, record: MagicLinkRecord) -> None:
-        self.by_hash[record.token_hash] = record
-
     async def get_by_hash(self, token_hash: str) -> MagicLinkRecord | None:
         return self.by_hash.get(token_hash)
-
-    async def revoke_unused_for_user(self, *, user_id: str, academy_id: str) -> None:
-        self.by_hash = {
-            h: r
-            for h, r in self.by_hash.items()
-            if not (r.user_id == user_id and r.academy_id == academy_id and r.used_at is None)
-        }
 
     async def mark_used(self, token_hash: str, *, used_at: datetime) -> bool:
         record = self.by_hash.get(token_hash)
@@ -172,45 +161,6 @@ def test_safe_next_only_allows_same_site_paths(value: str | None, expected: str)
 
 
 # ---------------------------------------------------------------------------
-# IssueMagicLink
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_issue_stores_only_the_hash_and_returns_raw_token() -> None:
-    repo = _FakeRepo()
-    issue = IssueMagicLink(repo)
-
-    token = await issue.execute(
-        user_id="parent-1", academy_id=ACADEMY, next_path="/parent/payments"
-    )
-
-    assert token  # a non-empty raw token is returned to the caller
-    assert token not in repo.by_hash  # the raw token itself is never stored
-    stored = repo.by_hash[_hash_token(token)]
-    assert stored.token_hash == _hash_token(token)
-    assert stored.user_id == "parent-1"
-    assert stored.academy_id == ACADEMY
-    assert stored.next_path == "/parent/payments"
-    assert stored.used_at is None
-    # TTL + purge grace: expires ~72h out, purge ~7d after that.
-    assert timedelta(hours=71) < (stored.expires_at - stored.created_at) < timedelta(hours=73)
-    assert timedelta(days=6) < (stored.purge_at - stored.expires_at) < timedelta(days=8)
-
-
-@pytest.mark.asyncio
-async def test_issue_sanitizes_unsafe_next_path() -> None:
-    repo = _FakeRepo()
-    issue = IssueMagicLink(repo)
-
-    token = await issue.execute(
-        user_id="parent-1", academy_id=ACADEMY, next_path="https://evil.example.com"
-    )
-
-    assert repo.by_hash[_hash_token(token)].next_path == "/parent/dashboard"
-
-
-# ---------------------------------------------------------------------------
 # ConsumeMagicLink — happy path
 # ---------------------------------------------------------------------------
 
@@ -296,7 +246,7 @@ async def test_consume_rejects_unknown_token() -> None:
 
 
 # ---------------------------------------------------------------------------
-# L4 regressions: real Firebase uid, retryable on Firebase failure, one live link
+# L4 regressions: real Firebase uid, retryable on Firebase failure
 # ---------------------------------------------------------------------------
 
 
@@ -368,23 +318,8 @@ async def test_a_firebase_failure_does_not_burn_the_link() -> None:
     assert result.custom_token == "custom-fb-parent-1"
 
 
-@pytest.mark.asyncio
-async def test_issuing_a_new_link_revokes_the_parents_older_unused_links() -> None:
-    repo = _FakeRepo()
-    old = _seed(repo, token="old-token")
-    other_parent = _seed(repo, token="other", user_id="parent-2", magic_link_id="ml-2")
-
-    new = await IssueMagicLink(repo).execute(
-        user_id="parent-1", academy_id=ACADEMY, next_path="/parent/dashboard"
-    )
-
-    assert _hash_token(old) not in repo.by_hash
-    assert _hash_token(other_parent) in repo.by_hash
-    assert _hash_token(new) in repo.by_hash
-
-
 # ---------------------------------------------------------------------------
-# Parent-membership gate: only an active parent of the token's academy redeems
+# Least privilege: only an active, parent-ONLY member of the token's academy redeems
 # ---------------------------------------------------------------------------
 
 
@@ -423,15 +358,18 @@ async def test_consume_rejects_a_user_without_an_active_parent_membership(
 
 
 @pytest.mark.asyncio
-async def test_consume_accepts_an_active_parent_who_is_also_staff() -> None:
+@pytest.mark.parametrize("staff_role", ["coach", "admin", "owner"])
+async def test_consume_rejects_a_parent_who_also_holds_a_staff_role(staff_role: str) -> None:
+    """An inbox link may only ever become a parent-only session; a parent who is
+    also staff must sign in normally, so a forwarded link opens no staff session."""
     repo = _FakeRepo()
     tokens = _FakeTokens()
     raw = _seed(repo)
-    rows = {(ACADEMY, "parent-1"): _membership(ACADEMY, "parent-1", ("coach", "parent"))}
+    rows = {(ACADEMY, "parent-1"): _membership(ACADEMY, "parent-1", ("parent", staff_role))}
 
-    result = await _consume(repo, tokens, memberships=_FakeMemberships(rows)).execute(
-        raw, academy_id=ACADEMY
-    )
-
-    assert result.custom_token == "custom-fb-parent-1"
-    assert repo.by_hash[_hash_token(raw)].used_at is not None
+    with pytest.raises(MagicLinkInvalid):
+        await _consume(repo, tokens, memberships=_FakeMemberships(rows)).execute(
+            raw, academy_id=ACADEMY
+        )
+    assert tokens.calls == []
+    assert repo.by_hash[_hash_token(raw)].used_at is None

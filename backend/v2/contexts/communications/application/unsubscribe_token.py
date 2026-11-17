@@ -3,9 +3,9 @@
 Requirements this scheme has to meet, and why the obvious alternative fails:
 
 * **Re-derivable.** The same link must appear in tomorrow's digest and the one
-  after. ``IssueMagicLink`` stores only a SHA-256 of a one-time token and hands
-  back the raw value once — it cannot regenerate a link for the next send, so
-  a magic-link-style stored token is the wrong tool here.
+  after. A stored one-time token (the retired parent magic link kept only a
+  SHA-256 and handed back the raw value once) cannot regenerate a link for the
+  next send, so that style of token is the wrong tool here.
 * **Long-lived.** A six-month-old email must still unsubscribe. There is
   therefore no expiry in the payload; the token is revoked by rotating the
   secret.

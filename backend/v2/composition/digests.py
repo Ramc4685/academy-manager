@@ -17,7 +17,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -961,7 +961,7 @@ class _ParentDigestProvider:
             # Email prefilled so the parent can go straight to "Forgot password";
             # activate=1 tells the login page this parent has no password yet.
             params = {"email": email, "activate": "1", **params}
-        return f"{frontend}/login?{urlencode(params, quote_via=quote, safe='/')}"
+        return f"{frontend}/login?{urlencode(params)}"
 
     @staticmethod
     def _is_on_portal(user_doc: dict[str, Any] | None) -> bool:
