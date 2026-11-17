@@ -4591,3 +4591,19 @@ export function previewAdminNurtureStep(step: NurtureStepInput): Promise<Nurture
     body: JSON.stringify(step),
   });
 }
+
+/** The last month the academy calls final ("YYYY-MM"), or null (never published). */
+export interface SchedulePublishView {
+  published_through: string | null;
+}
+
+export function getSchedulePublish(): Promise<SchedulePublishView> {
+  return apiFetch<SchedulePublishView>("/admin/schedule/publish", { method: "GET" });
+}
+
+export function setSchedulePublish(publishedThrough: string | null): Promise<SchedulePublishView> {
+  return apiFetch<SchedulePublishView>("/admin/schedule/publish", {
+    method: "PUT",
+    body: JSON.stringify({ published_through: publishedThrough }),
+  });
+}

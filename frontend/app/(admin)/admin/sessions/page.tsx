@@ -205,6 +205,13 @@ export default function AdminSessionsPage() {
           {/* The waitlist is a queue on the Inbox, not its own page; the old
               sidebar entry pointed at /admin/waitlist, which does not exist. */}
           <Link
+            href={"/admin/sessions/month-dates" as Route}
+            className="inline-flex min-h-touch items-center text-sm font-medium text-rally-cobalt-700 hover:underline"
+            data-testid="admin-sessions-month-dates-link"
+          >
+            Month dates
+          </Link>
+          <Link
             href={"/admin/inbox?tab=waitlist" as Route}
             className="inline-flex min-h-touch items-center text-sm font-medium text-rally-cobalt-700 hover:underline"
             data-testid="admin-sessions-waitlist-link"

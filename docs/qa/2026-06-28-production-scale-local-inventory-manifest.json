@@ -1677,6 +1677,54 @@
       ]
     },
     {
+      "route": "/admin/sessions/month-dates",
+      "role": "admin",
+      "source": "frontend/app/(admin)/admin/sessions/month-dates/page.tsx",
+      "workflows": [
+        "Pick class and no-class dates for a month",
+        "Publish a month to parents",
+        "Email each class its month schedule"
+      ],
+      "controls": {
+        "buttons": [
+          "Call off dates",
+          "Publish month",
+          "Publish again"
+        ],
+        "inputs": [
+          "Month",
+          "Class has class",
+          "No class this day",
+          "Reason families see",
+          "Email families"
+        ],
+        "modals": [
+          "Call off dates"
+        ]
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error",
+        "validation",
+        "unsaved no-class dates",
+        "published",
+        "not published"
+      ],
+      "risk_edges": [
+        "Date already started or cancelled (409)",
+        "Partial failure while calling off several dates",
+        "Publishing with unsaved date changes",
+        "Announcement email failure"
+      ],
+      "acceptance": [
+        "Calling off a date reuses the single-date cancel path, so credits follow the paid-class rule",
+        "Workflow evidence: \"Pick class and no-class dates for a month\" completes for the admin route /admin/sessions/month-dates with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Publish a month to parents\" completes for the admin route /admin/sessions/month-dates with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Email each class its month schedule\" completes for the admin route /admin/sessions/month-dates with real-user evidence and no framework or runtime errors."
+      ]
+    },
+    {
       "route": "/admin/sessions/[id]/skill-board",
       "role": "admin",
       "source": "frontend/app/(admin)/admin/sessions/[id]/skill-board/page.tsx",

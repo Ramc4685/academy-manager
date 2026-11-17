@@ -200,6 +200,7 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin": { title: "Dashboard", subtitle: "Daily overview", breadcrumbs: ["Admin", "Dashboard"] },
   "/admin/dashboard": { title: "Dashboard", subtitle: "Daily overview", breadcrumbs: ["Admin", "Dashboard"] },
   "/admin/sessions": { title: "Sessions", subtitle: "Schedule and rosters", breadcrumbs: ["Admin", "Sessions"] },
+  "/admin/sessions/month-dates": { title: "Month dates", subtitle: "Class and no-class days, published to parents", breadcrumbs: ["Admin", "Sessions", "Month dates"] },
   "/admin/students": { title: "Students", subtitle: "Every child: classes, attendance, status", breadcrumbs: ["Admin", "People", "Students"] },
   "/admin/pathway": { title: "Progress", subtitle: "Where each student is on the skill pathway", breadcrumbs: ["Admin", "Progress"] },
   "/admin/pathway/dashboard": { title: "Progress", subtitle: "Who is moving, who is stuck", breadcrumbs: ["Admin", "Progress"] },
