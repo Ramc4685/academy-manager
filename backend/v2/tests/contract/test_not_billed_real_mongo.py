@@ -357,7 +357,10 @@ async def test_projected_income_leaves_out_not_billed_enrollments(real_db, acad)
     assert report["not_billed_enrollment_count"] == 1
 
 
-async def test_marking_today_never_hides_an_older_months_missing_invoice(real_db, acad) -> None:
+@pytest.mark.parametrize("then_start_billing", [False, True])
+async def test_marking_today_never_hides_an_older_months_missing_invoice(
+    real_db, acad, then_start_billing: bool
+) -> None:
     await _two_november_classes(real_db)
     await real_db["session_occurrences"].update_many(
         {},
@@ -378,6 +381,14 @@ async def test_marking_today_never_hides_an_older_months_missing_invoice(real_db
             enrollment_id="enr-b", not_billed=True, reason="owner_child", actor_id="owner-1"
         ),
     )
+    if then_start_billing:
+        # Billing started after the mark: October, before both, was still billed.
+        await _setter(real_db, []).execute(
+            ACAD,
+            SetEnrollmentBillingCommand(
+                enrollment_id="enr-b", not_billed=False, actor_id="owner-1"
+            ),
+        )
 
     october = await ComputeCoachPayout(
         occurrences=MongoPayableOccurrenceQuery(
@@ -402,6 +413,17 @@ async def test_a_billed_child_who_left_mid_month_keeps_the_warning(real_db, acad
     )
 
     assert len(_missing_invoice_warnings(await _payroll(real_db))) == 2
+
+
+async def test_a_billed_child_who_joined_after_the_month_does_not_warn(real_db, acad) -> None:
+    await _two_november_classes(real_db)
+    await _enroll(real_db, "enr-a", student_id="kid-a", billing_type="NoCharge")
+    await _enroll(real_db, "enr-c", student_id="kid-c")
+    await real_db["enrollments"].update_one(
+        {"enrollment_id": "enr-c"}, {"$set": {"created_at": datetime(2026, 12, 3, tzinfo=UTC)}}
+    )
+
+    assert _missing_invoice_warnings(await _payroll(real_db)) == []
 
 
 async def test_start_billing_does_not_turn_skipped_months_into_warnings(real_db, acad) -> None:

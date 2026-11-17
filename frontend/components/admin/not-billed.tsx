@@ -76,6 +76,13 @@ export function NotBilledDialog({
   const [voidOpen, setVoidOpen] = useState(false);
   // Saved, but some open invoices were not voided: say so before closing.
   const [keptResult, setKeptResult] = useState<EnrollmentBillingView | null>(null);
+  // The dialog stays mounted between rows: never carry a choice (above all
+  // the void box) over to the next enrollment.
+  const resetFields = () => {
+    setReason("");
+    setNote("");
+    setVoidOpen(false);
+  };
   const mutation = useMutation({
     mutationFn: () =>
       setEnrollmentBilling(
@@ -90,15 +97,14 @@ export function NotBilledDialog({
             },
       ),
     onSuccess: (result) => {
-      setReason("");
-      setNote("");
-      setVoidOpen(false);
+      resetFields();
       if (result.kept_invoice_ids.length > 0) setKeptResult(result);
       else onSaved(result);
     },
   });
   const close = () => {
     mutation.reset();
+    resetFields();
     if (keptResult) {
       const result = keptResult;
       setKeptResult(null);

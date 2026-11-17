@@ -262,8 +262,10 @@ class MongoPayableOccurrenceQuery:
         child marked not billed after the month ended was billed that month,
         so marking today never hides an older month's missing invoice; one
         whose billing started after the month began was not billed that month.
-        A child who left during the month still counts. Imported ``NoCharge``
-        rows carry no mark time and count every month.
+        A child who left during the month still counts; one who joined after
+        it ended does not. Imported ``NoCharge`` rows carry no mark time and
+        count every month. "Start billing" keeps ``not_billed_at``, so months
+        before the mark stay billed.
         """
         rows = [
             row
@@ -276,6 +278,7 @@ class MongoPayableOccurrenceQuery:
                         {"status": {"$in": list(_PAYROLL_ROSTER_STATUSES)}},
                         {"updated_at": {"$gte": month_start}},
                     ],
+                    "created_at": {"$not": {"$gte": month_end}},
                 },
                 {"billing_type": 1, "not_billed_at": 1, "billing_started_at": 1},
             )
@@ -286,7 +289,10 @@ class MongoPayableOccurrenceQuery:
                 marked = row.get("not_billed_at")
                 return marked is None or _as_utc(marked) < month_end
             started = row.get("billing_started_at")
-            return started is not None and _as_utc(started) >= month_start
+            if started is None or _as_utc(started) < month_start:
+                return False
+            marked = row.get("not_billed_at")
+            return marked is None or _as_utc(marked) < month_end
 
         return bool(rows) and all(not_billed_that_month(row) for row in rows)
 

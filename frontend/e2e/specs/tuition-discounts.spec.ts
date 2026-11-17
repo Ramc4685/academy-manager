@@ -585,15 +585,23 @@ test.describe("tuition discounts", () => {
     await page.goto("/admin/students/student-discounts");
     await page.getByRole("tab", { name: "Sessions" }).click();
     await expect(page.getByTestId("admin-student-enrolled-sessions")).toBeVisible();
-    await (
-      await rowActionControl(page, {
-        rowTestId: "admin-student-enrollment-enr-scholarship",
-        actionsTestId: "admin-student-enrollment-actions-enr-scholarship",
-        label: "Not billed",
-      })
-    ).click();
+    const openNotBilled = async () =>
+      (
+        await rowActionControl(page, {
+          rowTestId: "admin-student-enrollment-enr-scholarship",
+          actionsTestId: "admin-student-enrollment-actions-enr-scholarship",
+          label: "Not billed",
+        })
+      ).click();
     const dialog = page.getByRole("dialog", { name: "Not billed" });
+    // A cancelled choice (above all the void box) never carries into the next open.
+    await openNotBilled();
+    await dialog.getByRole("checkbox").check();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toHaveCount(0);
+    await openNotBilled();
     await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("checkbox")).not.toBeChecked();
     await dialog.locator("select").selectOption("owner_child");
     await dialog.getByRole("button", { name: "Mark not billed" }).click();
     await expect(dialog).toHaveCount(0);

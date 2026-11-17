@@ -67,10 +67,11 @@ class MongoEnrollmentNotBilledStore(TenantScopedRepository):
                     "not_billed_reason": "",
                     "not_billed_note": "",
                     "not_billed_by": "",
-                    "not_billed_at": "",
                     "billing_type_before_not_billed": "",
                 },
-                # The month it starts in stays unbilled; the next run invoices.
+                # ``not_billed_at`` stays: payroll reads it to tell which past
+                # months were not billed. The month it starts in stays
+                # unbilled; the next run invoices.
                 "$addToSet": {"skip_periods": skip_period},
             },
         )
