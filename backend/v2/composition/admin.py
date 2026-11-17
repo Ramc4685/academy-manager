@@ -2609,6 +2609,23 @@ def compose_admin(
             },
         )
 
+    def _occurrence_insert_doc(academy_id: str, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "academy_id": academy_id,
+            "occurrence_id": row["occurrence_id"],
+            "session_id": row["session_id"],
+            "template_session_id": row["template_session_id"],
+            "start_at": row["start_at"],
+            "end_at": row["end_at"],
+            "status": row["status"],
+            "scheduled_coach_id": row["scheduled_coach_id"],
+            "actual_coach_id": None,
+            "substitute_coach_id": None,
+            "assistant_coach_ids": row["assistant_coach_ids"],
+            "is_billable": True,
+            "is_payable": True,
+        }
+
     async def maintain_session_occurrences(session) -> None:
         from backend.v2.shared.tenancy import current_academy_id
 
@@ -2686,7 +2703,15 @@ def compose_admin(
             # whose occurrence is cancelled, so nothing renders unmarkable.
 
         for row in candidates:
-            if row["start_at"] < now:  # earlier today: history, never re-scheduled
+            if row["start_at"] < now:
+                # Started earlier today: create it if missing (a class made after
+                # its start time), but never rewrite an existing row (it may be
+                # cancelled or have a substitute already).
+                await db["session_occurrences"].update_one(
+                    {"academy_id": academy_id, "occurrence_id": row["occurrence_id"]},
+                    {"$setOnInsert": _occurrence_insert_doc(academy_id, row)},
+                    upsert=True,
+                )
                 continue
             existing_doc = existing.get(str(row["occurrence_id"]))
             if existing_doc is not None and not await _is_clean_future_occurrence(

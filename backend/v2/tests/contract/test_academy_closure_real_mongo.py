@@ -333,6 +333,22 @@ async def test_preview_never_rewrites_a_class_that_ran_this_morning(
     assert covered["substitute_coach_id"] == "sub-coach"
 
 
+async def test_materialising_creates_todays_started_class_when_missing(
+    real_db: Any, acad: str, monkeypatch: Any
+) -> None:
+    """A class created after today's start time still gets today's occurrence,
+    so the coach can mark it; only EXISTING started rows are left alone."""
+    _freeze_admin_clock(monkeypatch, AFTERNOON)
+    await _seed_weekly(real_db, "sess-new")
+    with tenant_scope(TEST_ACADEMY):
+        await _real_maintain(real_db)(await MongoSessionRepository(real_db).get("sess-new"))
+    today = await real_db["session_occurrences"].find_one(
+        {"occurrence_id": "sess-new:2026-01-05:09:00"}
+    )
+    assert today is not None and today["status"] == "scheduled"
+    assert today["start_at"].replace(tzinfo=UTC) < AFTERNOON
+
+
 async def test_closure_skips_classes_outside_their_own_dates(
     real_db: Any, acad: str, monkeypatch: Any
 ) -> None:
