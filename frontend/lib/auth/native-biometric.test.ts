@@ -5,6 +5,8 @@ const plugin = {
   verifyIdentity: vi.fn(async () => undefined),
 };
 vi.mock("@capgo/capacitor-native-biometric", () => ({ NativeBiometric: plugin }));
+const privacy = { enable: vi.fn(async () => undefined), disable: vi.fn(async () => undefined) };
+vi.mock("@capacitor-community/privacy-screen", () => ({ PrivacyScreen: privacy }));
 
 async function load() {
   vi.resetModules();
@@ -76,6 +78,23 @@ describe("app lock (Face ID / fingerprint)", () => {
 
     lock.disableBiometricLock();
     expect(lock.isBiometricLockOn()).toBe(false);
+  });
+
+  it("hides the app-switcher snapshot only while the lock is on", async () => {
+    installShell(["NativeBiometric", "PrivacyScreen"]);
+    const lock = await load();
+    plugin.verifyIdentity.mockRejectedValueOnce(new Error("cancelled"));
+    await lock.enableBiometricLock();
+    await vi.dynamicImportSettled();
+    expect(privacy.enable).not.toHaveBeenCalled();
+
+    await lock.enableBiometricLock();
+    await vi.dynamicImportSettled();
+    expect(privacy.enable).toHaveBeenCalledTimes(1);
+
+    lock.disableBiometricLock();
+    await vi.dynamicImportSettled();
+    expect(privacy.disable).toHaveBeenCalledTimes(1);
   });
 
   it("reports a failed unlock instead of throwing", async () => {

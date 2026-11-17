@@ -15,6 +15,9 @@ importers:
 
   .:
     dependencies:
+      '@capacitor-community/privacy-screen':
+        specifier: 8.0.0
+        version: 8.0.0(@capacitor/core@8.5.1)
       '@capacitor-firebase/authentication':
         specifier: 8.5.2
         version: 8.5.2(@capacitor/core@8.5.1)(firebase@12.18.0)
@@ -48,6 +51,11 @@ importers:
         version: 5.9.3
 
 packages:
+
+  '@capacitor-community/privacy-screen@8.0.0':
+    resolution: {integrity: sha512-XcBTgQ13BdH8xB7arJ2io5rP3aEXcndgDVl/GdFRNwc8TatnV+1U6rGROLtepYLA4Rl0GP7k4zAeykcG+a//3w==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
 
   '@capacitor-firebase/authentication@8.5.2':
     resolution: {integrity: sha512-URpL6nxrCS9E/3OfpJDUJx5Kxbhi1KqnzY5bvpt1B3va48o7aaksz7RTggjNGW5J4EsG+Q5U2vSZ/ycJkcODQw==}
@@ -1171,6 +1179,10 @@ packages:
     resolution: {integrity: sha512-p4a9I6X6nu6IhoGmBqAcbJy1mlC4j27vEPZX9F4L4/vZT3Lyq1VkFHw/V/PUcB9Buo+DG3iHkT0x3Qya58zc3g==}
 
 snapshots:
+
+  '@capacitor-community/privacy-screen@8.0.0(@capacitor/core@8.5.1)':
+    dependencies:
+      '@capacitor/core': 8.5.1
 
   '@capacitor-firebase/authentication@8.5.2(@capacitor/core@8.5.1)(firebase@12.18.0)':
     dependencies:

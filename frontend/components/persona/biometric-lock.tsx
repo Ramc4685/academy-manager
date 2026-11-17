@@ -7,6 +7,7 @@ import { brand } from "@/lib/brand";
 import {
   LOCK_AFTER_MS,
   isBiometricLockOn,
+  syncPrivacyScreen,
   verifyWithBiometrics,
 } from "@/lib/auth/native-biometric";
 
@@ -37,6 +38,8 @@ export function BiometricLock() {
   }, []);
 
   useEffect(() => {
+    // The native cover resets on every launch (config enable:false).
+    syncPrivacyScreen(isBiometricLockOn());
     if (isBiometricLockOn()) {
       needsUnlock.current = true;
       setCovered(true);

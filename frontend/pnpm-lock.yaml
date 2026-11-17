@@ -36,6 +36,9 @@ importers:
 
   .:
     dependencies:
+      '@capacitor-community/privacy-screen':
+        specifier: 8.0.0
+        version: 8.0.0(@capacitor/core@8.6.0)
       '@capacitor-firebase/authentication':
         specifier: 8.6.0
         version: 8.6.0(@capacitor/core@8.6.0)(firebase@12.19.0)
@@ -502,6 +505,11 @@ packages:
   '@bcoe/v8-coverage@1.0.2':
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
+
+  '@capacitor-community/privacy-screen@8.0.0':
+    resolution: {integrity: sha512-XcBTgQ13BdH8xB7arJ2io5rP3aEXcndgDVl/GdFRNwc8TatnV+1U6rGROLtepYLA4Rl0GP7k4zAeykcG+a//3w==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
 
   '@capacitor-firebase/authentication@8.6.0':
     resolution: {integrity: sha512-ePL+7lVEt5eSFiTTI2Mi/B53oB00B8Wd7Nc3WroYiLybgnfFs49yvcO90cjImk2keY7sGT7CGgmquLcxVaHzyw==}
@@ -6488,6 +6496,10 @@ snapshots:
       '@babel/helper-validator-identifier': 7.29.7
 
   '@bcoe/v8-coverage@1.0.2': {}
+
+  '@capacitor-community/privacy-screen@8.0.0(@capacitor/core@8.6.0)':
+    dependencies:
+      '@capacitor/core': 8.6.0
 
   '@capacitor-firebase/authentication@8.6.0(@capacitor/core@8.6.0)(firebase@12.19.0)':
     dependencies:

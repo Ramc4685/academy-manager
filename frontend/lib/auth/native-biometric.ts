@@ -87,13 +87,29 @@ export async function verifyWithBiometrics(reason: string): Promise<boolean> {
   }
 }
 
+/**
+ * Hides the app-switcher snapshot while the lock is on. JS visibility events
+ * fire too late for iOS's snapshot, so the native plugin covers the window.
+ * Best effort: a build without the plugin just keeps the in-page cover.
+ */
+export function syncPrivacyScreen(on: boolean): void {
+  if (!hasNativePlugin("PrivacyScreen")) return;
+  void import("@capacitor-community/privacy-screen")
+    .then(({ PrivacyScreen }) => (on ? PrivacyScreen.enable() : PrivacyScreen.disable()))
+    .catch(() => {});
+}
+
 /** Turning it on asks once first, so nobody enables a lock their phone can't pass. */
 export async function enableBiometricLock(): Promise<boolean> {
   const ok = await verifyWithBiometrics("Turn on app lock");
-  if (ok) saveSetting(true);
+  if (ok) {
+    saveSetting(true);
+    syncPrivacyScreen(true);
+  }
   return ok;
 }
 
 export function disableBiometricLock(): void {
   saveSetting(false);
+  syncPrivacyScreen(false);
 }
