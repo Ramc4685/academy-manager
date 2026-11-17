@@ -14,6 +14,22 @@
       },
       "oauth_client": [
         {
+          "client_id": "953230788846-0045psonirrjf3v5i4j1q755qlas1ns5.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.courtmastr.academy",
+            "certificate_hash": "4b31e5d5f037824857bb86ab7bd8ee67a217b30c"
+          }
+        },
+        {
+          "client_id": "953230788846-nq17aoum0ad7m5j3ujnf0mj2g423570l.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.courtmastr.academy",
+            "certificate_hash": "11d4e22ce20beaf8ff84c9e24453c037a89a530f"
+          }
+        },
+        {
           "client_id": "953230788846-gqljom7q2sqhfpmhcjan7c2t3go3pl0h.apps.googleusercontent.com",
           "client_type": 3
         }
