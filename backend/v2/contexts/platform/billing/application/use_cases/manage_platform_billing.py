@@ -321,7 +321,6 @@ class ScheduleTenantCancellation:
             raise TenantSubscriptionNotFound(
                 f"no platform subscription for academy {command.academy_id}"
             )
-        await _require_active_plan(self._plans, existing.plan_id)
         if existing.cancellation_status == "cancelled":
             return existing  # already cancelled here and at Stripe: a repeat is a no-op
         await self._cancel_at_stripe(existing, at_period_end=command.cancel_at_period_end)
@@ -368,26 +367,16 @@ class ScheduleTenantCancellation:
 
     async def _cancel_at_stripe(self, existing: TenantSubscription, *, at_period_end: bool) -> None:
         """Stripe first, so a failure leaves the row (and the academy's plan)
-        exactly as Stripe still bills it.
-
-        The key is subscription + mode + the row's ``updated_at``: a retry after
-        a failure (row untouched) replays Stripe's first answer, while a cancel
-        after a resume (the resume's Stripe sync moved ``updated_at``) gets a
-        fresh key, so Stripe never replays a stale cancel inside its 24h window."""
+        exactly as Stripe still bills it. Both modes are safe to retry: a repeat
+        modify sets the same flag, and a subscription already gone counts as
+        cancelled."""
         sub_id = existing.stripe_subscription_id
         if not sub_id:
             return  # a local trial: nothing is billed at Stripe
         if self._stripe is None:
             raise StripeCancellationFailed("Stripe is not configured; nothing was cancelled")
-        mode = "period_end" if at_period_end else "now"
         try:
-            await self._stripe.cancel_subscription(
-                sub_id,
-                at_period_end=at_period_end,
-                idempotency_key=(
-                    f"platform_cancel:{sub_id}:{mode}:{existing.updated_at.isoformat()}"
-                ),
-            )
+            await self._stripe.cancel_subscription(sub_id, at_period_end=at_period_end)
         except Exception as exc:
             log.warning(
                 "platform_cancel_stripe_failed academy=%s sub=%s: %s",

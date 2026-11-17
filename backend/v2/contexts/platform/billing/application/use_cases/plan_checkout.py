@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from backend.v2.contexts.platform.billing.application.ports import (
     PlatformPlanRepository,
+    StripeCanceller,
     TenantSubscriptionRepository,
 )
 from backend.v2.contexts.platform.billing.application.use_cases.manage_platform_billing import (
@@ -91,16 +92,6 @@ class PlanCheckoutGateway(Protocol):
     async def retrieve_checkout_session(self, checkout_session_id: str) -> dict[str, Any]: ...
 
     async def expire_checkout_session(self, checkout_session_id: str) -> None: ...
-
-
-class PlanSyncGateway(Protocol):
-    async def cancel_subscription(
-        self,
-        stripe_subscription_id: str,
-        *,
-        at_period_end: bool,
-        idempotency_key: str | None = None,
-    ) -> None: ...
 
 
 class GrowthPlanUnavailable(DomainError):
@@ -355,7 +346,7 @@ class SyncTenantSubscriptionFromStripe:
         *,
         plans: PlatformPlanRepository,
         subscriptions: TenantSubscriptionRepository,
-        stripe: PlanSyncGateway | None = None,
+        stripe: StripeCanceller | None = None,
         stripe_volume: StripeVolumeReader | None = None,
         audit_recorder: AuditRecorder | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -450,6 +441,19 @@ class SyncTenantSubscriptionFromStripe:
             status = _STRIPE_STATUS.get(str(obj.get("status") or ""), "incomplete")
             if event_type == "customer.subscription.deleted":
                 status = "cancelled"
+            if (
+                status == "cancelled"
+                and existing is not None
+                and event_sub_id != existing.stripe_subscription_id
+            ):
+                # A late cancel for a subscription no longer on file (a trial
+                # replaced it) must not overwrite the current row.
+                log.warning(
+                    "platform_plan_sync_cancel_for_other_subscription academy=%s sub=%s",
+                    academy_id,
+                    event_sub_id,
+                )
+                return
             if superseded_id and from_pending and status not in ENTITLED_BILLING_STATUSES:
                 # An upgrade that did not go through keeps the live subscription.
                 log.warning(

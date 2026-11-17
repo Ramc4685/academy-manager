@@ -32,13 +32,9 @@ class TenantSubscriptionRepository(Protocol):
 
 
 class StripeCanceller(Protocol):
-    """Cancels the tenant's platform subscription at Stripe; ``idempotency_key``
-    is forwarded as Stripe's ``Idempotency-Key``."""
+    """Cancels a platform subscription at Stripe. A subscription Stripe no
+    longer has counts as cancelled, so a retry is always safe."""
 
     async def cancel_subscription(
-        self,
-        stripe_subscription_id: str,
-        *,
-        at_period_end: bool,
-        idempotency_key: str | None = None,
+        self, stripe_subscription_id: str, *, at_period_end: bool
     ) -> None: ...

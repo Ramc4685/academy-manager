@@ -689,25 +689,23 @@ class RealStripeGateway(StripeGateway):
         return str(result.id)
 
     async def cancel_subscription(
-        self,
-        stripe_subscription_id: str,
-        *,
-        at_period_end: bool,
-        idempotency_key: str | None = None,
+        self, stripe_subscription_id: str, *, at_period_end: bool
     ) -> None:
-        options = {"idempotency_key": idempotency_key} if idempotency_key else {}
-
         def _cancel() -> None:
             if at_period_end:
                 self._stripe.Subscription.modify(
                     stripe_subscription_id,
                     cancel_at_period_end=True,
-                    **options,
                 )
             else:
-                self._stripe.Subscription.delete(stripe_subscription_id, **options)
+                self._stripe.Subscription.delete(stripe_subscription_id)
 
-        await asyncio.to_thread(_cancel)
+        try:
+            await asyncio.to_thread(_cancel)
+        except self._stripe.StripeError as exc:
+            if not _is_resource_missing(self._stripe, exc):
+                raise
+            # Stripe no longer has it: already cancelled, so the caller converges.
 
     async def pause_subscription_collection(
         self,

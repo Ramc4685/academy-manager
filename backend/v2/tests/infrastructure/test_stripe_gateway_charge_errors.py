@@ -92,3 +92,33 @@ async def test_network_and_api_errors_raise_stripe_unavailable(
     gw = _gateway(monkeypatch, _APIConnectionError("connection reset"))
     with pytest.raises(StripeUnavailable):
         await _charge(gw)
+
+
+def _cancel_gateway(monkeypatch: pytest.MonkeyPatch, raises: Exception) -> RealStripeGateway:
+    gw = _gateway(monkeypatch, raises)
+
+    def _raise(*_args: Any, **_kwargs: Any) -> Any:
+        raise raises
+
+    sys.modules["stripe"].Subscription = types.SimpleNamespace(  # type: ignore[attr-defined]
+        modify=_raise, delete=_raise
+    )
+    return gw
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("at_period_end", [True, False])
+async def test_cancel_of_a_subscription_stripe_no_longer_has_succeeds(
+    monkeypatch: pytest.MonkeyPatch, at_period_end: bool
+) -> None:
+    gw = _cancel_gateway(
+        monkeypatch, _InvalidRequestError("No such subscription", code="resource_missing")
+    )
+    await gw.cancel_subscription("sub_gone", at_period_end=at_period_end)
+
+
+@pytest.mark.asyncio
+async def test_cancel_still_raises_other_stripe_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    gw = _cancel_gateway(monkeypatch, _InvalidRequestError("bad", code="parameter_invalid"))
+    with pytest.raises(_InvalidRequestError):
+        await gw.cancel_subscription("sub_1", at_period_end=False)
