@@ -116,8 +116,23 @@ pins stay put.
 - Android 7.0 (API 24) and newer. The WebView updates through the Play Store, and even
   Android 7 gets Chrome 119, above the web app's Chrome 111 floor. A phone whose
   WebView was never updated is the remaining risk.
-- Not yet run on an older simulator or emulator (iOS 16.4, Android 8/11): the dev Mac
-  needs ~15 GB free for those images.
+- Older OS versions are not yet run on a device. Xcode 27 can no longer download iOS
+  16.4-26 simulators, so iOS 16.4-18 needs a real phone or TestFlight. The Android 11
+  emulator needs ~8 GB free on the dev Mac (the Android 8 image failed to download).
+  App lock was checked on the iOS 27.2 simulator on 2026-11-17: enable, cold-launch
+  lock, wrong face, unlock, relock after a minute away, and a covered app-switcher card.
+
+## App lock (Face ID / fingerprint)
+
+`@capgo/capacitor-native-biometric` does the scan; `@capacitor-community/privacy-screen`
+starts off (`enable: false`) and the web app turns it on with the lock, because JS
+visibility events fire after iOS takes its app-switcher snapshot. On Android it sets
+FLAG_SECURE, so screenshots are blocked while the lock is on. Simulator Face ID:
+`xcrun simctl spawn <id> notifyutil -p com.apple.BiometricKit_Sim.pearl.match`
+(`.nomatch` for a wrong face) after enrolling from the Features menu. A dev-shell
+build that once ran a production service worker keeps serving its old chunks; delete
+`Library/WebKit/<bundle>/WebsiteData/**/{CacheStorage,ServiceWorkers}` in the app
+container to see new code.
 
 ## Store builds
 
