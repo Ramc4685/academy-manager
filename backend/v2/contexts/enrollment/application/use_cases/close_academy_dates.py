@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -35,16 +35,22 @@ from backend.v2.contexts.enrollment.application.ports import (
     ClosedClassDate,
     LiveSessionLister,
     OccurrenceMaterializer,
-    SessionOccurrenceRepository,
 )
 from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
     CancelSessionOccurrence,
     CancelSessionOccurrenceCommand,
 )
 from backend.v2.contexts.enrollment.domain.errors import ClosureRangeInvalid
+from backend.v2.contexts.enrollment.domain.models import SessionOccurrence
 from backend.v2.shared.http.errors import DomainError
 
 log = logging.getLogger(__name__)
+
+class ScheduledOccurrenceRange(Protocol):
+    async def list_upcoming_scheduled_between(
+        self, *, start_at: datetime, end_at: datetime
+    ) -> list[SessionOccurrence]: ...
+
 
 #: Mirrors the materialisation window in ``maintain_session_occurrences``.
 CLOSURE_HORIZON = timedelta(days=60)
@@ -90,7 +96,7 @@ class CloseAcademyDates:
         self,
         *,
         cancel: CancelSessionOccurrence,
-        occurrences: SessionOccurrenceRepository,
+        occurrences: ScheduledOccurrenceRange,
         sessions: LiveSessionLister | None = None,
         materialize: OccurrenceMaterializer | None = None,
         notifier: AcademyClosureNotifier | None = None,
