@@ -25,7 +25,8 @@ class SchedulePublishView(BaseModel):
 
 
 class SchedulePublishRequest(BaseModel):
-    published_through: str | None = Field(default=None, pattern=_MONTH)
+    # Required (null withdraws publishing): an empty body must not unpublish.
+    published_through: str | None = Field(..., pattern=_MONTH)
 
 
 @router.get("/schedule/publish", response_model=SchedulePublishView)

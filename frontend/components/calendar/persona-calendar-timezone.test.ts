@@ -254,7 +254,8 @@ describe("PersonaCalendarView wiring (#1043)", () => {
   });
 
   it("keeps the mobile day view, desktop month/week views and the safe-URL guard", () => {
-    expect(view).toContain('initialView={phone ? "dayGridDay" : "dayGridMonth"}');
+    // Phones open on the day view unless the page asks for the month (parent).
+    expect(view).toContain('initialView={phone && !monthFirst ? "dayGridDay" : "dayGridMonth"}');
     expect(view).toContain('"dayGridMonth,dayGridWeek"');
     expect(view).toContain('event.url.startsWith("/") && !event.url.startsWith("//")');
   });

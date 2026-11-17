@@ -12,6 +12,7 @@ academy never publishes), so a phone never shows tentative dates as final.
 from __future__ import annotations
 
 import calendar
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -32,11 +33,11 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_calendar_feed_link_repo
 from backend.v2.contexts.enrollment.infrastructure.mongo_self_service_policy_repo import (
     MongoSelfServicePolicyRepository,
 )
-from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
-    MongoMembershipRepository,
-)
+from backend.v2.contexts.identity.domain.identity_aliases import identity_aliases
 from backend.v2.shared.config.settings import get_settings
 from backend.v2.shared.tenancy import current_academy_id
+
+log = logging.getLogger(__name__)
 
 _LOOKBACK_DAYS = 31
 _UNPUBLISHED_LOOKAHEAD_DAYS = 183
@@ -79,11 +80,14 @@ def compose_calendar_feed(
     *,
     list_children_for_parent: Callable[[str], Awaitable[list[dict[str, Any]]]],
     get_child_schedule: Callable[..., Awaitable[tuple[list[Any], int]]],
+    users: Any,
+    memberships: Any,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> CalendarFeed:
+    """``users`` / ``memberships`` are the repos sign-in uses (LoadAuthClaims),
+    so a link only works for a parent who could still sign in here."""
     links = MongoCalendarFeedLinkRepository(db)
     policies = MongoSelfServicePolicyRepository(db)
-    memberships = MongoMembershipRepository(db)
 
     def _secret() -> str | None:
         return get_settings().unsubscribe_token_secret or None
@@ -101,22 +105,41 @@ def compose_calendar_feed(
         return await base_url(academy_id) + _FEED_PATH.format(token=token)
 
     async def _parent_still_has_access(academy_id: str, parent_id: str) -> bool:
-        membership = await memberships.get_membership(academy_id, parent_id)
-        # Single-academy legacy parents may have no membership row at all; a
-        # row that exists must still be live and still be a parent's.
-        if membership is not None and not membership.has_role("parent"):
+        # Same rules as sign-in: an active user with an active parent
+        # membership here, looked up under every id the account goes by (the
+        # invite path keys the membership by firebase uid, not user_id).
+        user = await users.get_by_id(parent_id)
+        if user is None:
             return False
-        return True
+        status = getattr(user, "global_status", None)
+        if not (status == "active" if status is not None else getattr(user, "is_active", True)):
+            return False
+        membership = await memberships.get_for_user_in_academy(
+            user_id=user.user_id,
+            academy_id=academy_id,
+            aliases=identity_aliases(user.user_id, user.firebase_uid, user.auth_uid),
+        )
+        return membership is not None and membership.is_active() and membership.has_role("parent")
 
     async def render(token: str) -> str | None:
         """The ``.ics`` body, or ``None`` for any link that is not valid here.
 
         Runs inside the tenant the request host resolved to."""
-        secret = _secret()
-        parsed = parse_feed_token(token)
-        if secret is None or parsed is None:
+        try:
+            return await _render(token)
+        except Exception:
+            # Never let a feed request become a 5xx: the crash report would
+            # carry the request URL, which is the parent's private link.
+            log.exception("calendar feed render failed")
             return None
-        parent_id, signature = parsed
+
+    async def _render(token: str) -> str | None:
+        secret = _secret()
+        parts = parse_feed_token(token)
+        if secret is None or parts is None:
+            return None
+        parent_id, signature = parts
+        del parts
         academy_id = current_academy_id()
         version = await links.version_for(parent_id)
         if not feed_signature_matches(

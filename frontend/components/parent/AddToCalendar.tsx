@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ds/button";
 import { getCalendarFeedLink, resetCalendarFeedLink } from "@/lib/api/parent";
+import { nativePlatform } from "@/lib/auth/native-sign-in";
 import { queryKeys } from "@/lib/query/keys";
 
 /** Subscribe URLs for each calendar app, from the parent's https feed link. */
@@ -85,9 +86,12 @@ export function AddToCalendar({ academyName }: { academyName: string }) {
         academy still emails same-day changes.
       </p>
       <div className="mt-3 grid gap-2 sm:grid-cols-3">
-        <a className={linkClass} href={links.apple}>
-          iPhone / Apple Calendar
-        </a>
+        {/* The Android app has nothing that opens webcal: links. */}
+        {nativePlatform() !== "android" && (
+          <a className={linkClass} href={links.apple}>
+            iPhone / Apple Calendar
+          </a>
+        )}
         <a className={linkClass} href={links.google} target="_blank" rel="noopener noreferrer">
           Google Calendar
         </a>

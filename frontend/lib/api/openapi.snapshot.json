@@ -30022,6 +30022,9 @@
             "title": "Published Through"
           }
         },
+        "required": [
+          "published_through"
+        ],
         "title": "SchedulePublishRequest",
         "type": "object"
       },

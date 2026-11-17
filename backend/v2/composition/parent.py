@@ -431,6 +431,9 @@ class ParentComposition:
     resolve_assigned_classes: object = None
     # Per-child AI/video opt-in and revoke (Phase 3 E1).
     ai_video_consent: object = None
+    # Phone-calendar subscription (composition/calendar_feed.py); None when
+    # the sign-in repos were not passed in.
+    calendar_feed: object = None
 
 
 class _MongoTransactionRunner:
@@ -726,6 +729,8 @@ def compose_parent(
     *,
     academy_id: str | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    auth_users: Any | None = None,
+    auth_memberships: Any | None = None,
 ) -> ParentComposition:
     """`clock` is the seam the checkout-start path prices against.
 
@@ -3062,11 +3067,19 @@ def compose_parent(
         get_parent_home=get_parent_home,
         resolve_assigned_classes=resolve_assigned_classes,
         ai_video_consent=compose_parent_ai_video_consent(db),
-        calendar_feed=compose_calendar_feed(
-            db,
-            list_children_for_parent=list_children_for_parent,
-            get_child_schedule=get_child_schedule,
-            clock=clock,
+        # The feed checks access with sign-in's own repos; without them there
+        # is no feed at all (fail closed), not a weaker check.
+        calendar_feed=(
+            compose_calendar_feed(
+                db,
+                list_children_for_parent=list_children_for_parent,
+                get_child_schedule=get_child_schedule,
+                users=auth_users,
+                memberships=auth_memberships,
+                clock=clock,
+            )
+            if auth_users is not None and auth_memberships is not None
+            else None
         ),
         # #828: claiming a held seat inside the three-day window.
         confirm_waitlist_offer=compose_confirm_waitlist_offer(db, settings),

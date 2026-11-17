@@ -10,6 +10,8 @@ from __future__ import annotations
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 
+# Never delete rows here: a missing row reads as version 0, which would
+# bring a parent's original (reset) link back to life.
 class MongoCalendarFeedLinkRepository(TenantScopedRepository):
     collection_name = "calendar_feed_links"
 

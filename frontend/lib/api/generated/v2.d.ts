@@ -18560,7 +18560,7 @@ export interface components {
         /** SchedulePublishRequest */
         SchedulePublishRequest: {
             /** Published Through */
-            published_through?: string | null;
+            published_through: string | null;
         };
         /** SchedulePublishView */
         SchedulePublishView: {

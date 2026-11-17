@@ -32,7 +32,7 @@ async def get_calendar_feed(token: str, request: Request) -> Response:
     academy_id = getattr(request.state, "resolved_academy_id", None)
     parent = getattr(request.app.state, "parent", None)
     feed = getattr(parent, "calendar_feed", None)
-    if not academy_id or feed is None or len(token) > 200:
+    if not academy_id or feed is None:
         return not_found_response()
     with tenant_scope(str(academy_id)):
         body = await feed.render(token)

@@ -11,6 +11,10 @@ from backend.v2.composition import calendar_feed as module
 from backend.v2.contexts.enrollment.application.use_cases.get_child_schedule import (
     ChildScheduleEntry,
 )
+from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
+    MongoMembershipRepository,
+)
+from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.shared.tenancy import tenant_scope
 
 NOW = datetime(2026, 11, 17, 18, 0, tzinfo=UTC)
@@ -68,7 +72,33 @@ async def _children(parent_id: str) -> list[dict[str, Any]]:
     return [{"student_id": "stu-1", "full_name": "Maithri Rao"}]
 
 
-async def _feed(db, schedule=None):
+async def _parent(db, *, status: str = "active", user_status: str = "active") -> None:
+    """A parent provisioned by the invite path: roster ``user_id`` on the users
+    doc, membership row keyed by the Firebase uid (the shape the risk review
+    found the old check missed)."""
+    await db["users"].insert_one(
+        {
+            "user_id": "P1",
+            "firebase_uid": "fb-P1",
+            "email": "p1@example.com",
+            "display_name": "Parent One",
+            "status": user_status,
+        }
+    )
+    await db["academy_memberships"].insert_one(
+        {
+            "academy_id": "acad-1",
+            "user_id": "fb-P1",
+            "roles": ["parent"],
+            "status": status,
+            "membership_id": "m1",
+        }
+    )
+
+
+async def _feed(db, schedule=None, *, parent_status: str | None = "active"):
+    if parent_status is not None:
+        await _parent(db, status=parent_status)
     await db["academies"].insert_one(
         {
             "academy_id": "acad-1",
@@ -81,6 +111,8 @@ async def _feed(db, schedule=None):
         db,
         list_children_for_parent=_children,
         get_child_schedule=schedule or _Schedule(),
+        users=MongoUserRepository(db, default_academy_id="acad-1"),
+        memberships=MongoMembershipRepository(db),
         clock=lambda: NOW,
     )
 
@@ -127,20 +159,51 @@ async def test_link_does_not_work_on_another_academy(db) -> None:
 
 
 @pytest.mark.asyncio
-async def test_removed_parent_loses_the_feed(db) -> None:
+@pytest.mark.parametrize("status", ["suspended", "removed"])
+async def test_disabled_or_removed_parent_loses_the_feed(db, status) -> None:
     feed = await _feed(db)
     with tenant_scope("acad-1"):
         url = await feed.feed_url(parent_id="P1")
-    await db["academy_memberships"].insert_one(
-        {
-            "academy_id": "acad-1",
-            "user_id": "P1",
-            "roles": ["parent"],
-            "status": "removed",
-            "membership_id": "m1",
-        }
-    )
+        assert await feed.render(_token(url)) is not None
+    # Admin disable / account deletion flip the firebase-keyed row.
+    await db["academy_memberships"].update_one({"user_id": "fb-P1"}, {"$set": {"status": status}})
     with tenant_scope("acad-1"):
+        assert await feed.render(_token(url)) is None
+
+
+@pytest.mark.asyncio
+async def test_deactivated_user_loses_the_feed(db) -> None:
+    feed = await _feed(db)
+    with tenant_scope("acad-1"):
+        url = await feed.feed_url(parent_id="P1")
+    await db["users"].update_one({"user_id": "P1"}, {"$set": {"status": "disabled"}})
+    with tenant_scope("acad-1"):
+        assert await feed.render(_token(url)) is None
+
+
+@pytest.mark.asyncio
+async def test_unknown_parent_gets_no_feed(db) -> None:
+    feed = await _feed(db, parent_status=None)
+    with tenant_scope("acad-1"):
+        url = await feed.feed_url(parent_id="P1")
+        assert await feed.render(_token(url)) is None
+
+
+@pytest.mark.asyncio
+async def test_non_ascii_signature_is_a_quiet_404_not_a_crash(db) -> None:
+    feed = await _feed(db)
+    with tenant_scope("acad-1"):
+        assert await feed.render("P1." + "\u00e9" * 32) is None
+
+
+@pytest.mark.asyncio
+async def test_schedule_error_never_escapes_render(db) -> None:
+    async def boom(**_kwargs):
+        raise RuntimeError("legacy student without student_id")
+
+    feed = await _feed(db, boom)
+    with tenant_scope("acad-1"):
+        url = await feed.feed_url(parent_id="P1")
         assert await feed.render(_token(url)) is None
 
 
@@ -191,3 +254,25 @@ async def test_no_secret_means_no_link_and_no_feed(db, monkeypatch) -> None:
     with tenant_scope("acad-1"):
         assert await feed.feed_url(parent_id="P1") is None
         assert await feed.render(_token(url)) is None
+
+
+def test_parent_composition_wires_the_feed_only_with_sign_in_repos(db) -> None:
+    """main.py passes sign-in's repos; without them the feed is off, not weaker."""
+    from backend.v2.composition.parent import compose_parent
+
+    def build(**auth: Any):
+        return compose_parent(
+            db,
+            outbox=object(),  # type: ignore[arg-type]
+            idempotency_store=object(),  # type: ignore[arg-type]
+            stripe=object(),  # type: ignore[arg-type]
+            academy_id="acad-1",
+            **auth,
+        )
+
+    assert build().calendar_feed is None
+    wired = build(
+        auth_users=MongoUserRepository(db, default_academy_id="acad-1"),
+        auth_memberships=MongoMembershipRepository(db),
+    )
+    assert isinstance(wired.calendar_feed, module.CalendarFeed)

@@ -19,9 +19,13 @@ import logging
 import os
 import re
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit, urlunsplit
 
 from backend.v2.shared.config import Settings
-from backend.v2.shared.observability.request_context import current_request_id
+from backend.v2.shared.observability.request_context import (
+    current_request_id,
+    redact_secret_path,
+)
 from backend.v2.shared.tenancy.context import TenantContextUnset, current_academy_id
 
 if TYPE_CHECKING:
@@ -37,6 +41,9 @@ log = logging.getLogger(__name__)
 # structured locals) and inside repr/JSON text (``full_name='Ada'``,
 # ``'phone': '555'``) — on top of the SDK's own secrets denylist.
 PII_DENYLIST: tuple[str, ...] = (
+    # Calendar feed link signatures (frame locals in calendar_feed.py).
+    "signature",
+    "expected_signature",
     "full_name",
     "first_name",
     "last_name",
@@ -219,7 +226,15 @@ def _keep_log(log_entry: Log, hint: Hint) -> Log | None:
 
 
 def _tag_event(event: Event, hint: Hint) -> Event | None:
-    """Event processor: read correlation contextvars at event time."""
+    """Event processor: read correlation contextvars at event time, and strip
+    link credentials out of the request URL."""
+    request = event.get("request")
+    if isinstance(request, dict) and isinstance(request.get("url"), str):
+        parts = urlsplit(request["url"])
+        redacted = redact_secret_path(parts.path)
+        if redacted != parts.path:
+            request["url"] = urlunsplit((parts.scheme, parts.netloc, redacted, "", ""))
+            request.pop("query_string", None)
     tags = event.setdefault("tags", {})
     request_id = current_request_id()
     if request_id is not None:

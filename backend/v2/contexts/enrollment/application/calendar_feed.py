@@ -24,6 +24,9 @@ from datetime import UTC, datetime
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _SIG_LEN = 32
+# ASCII only: hmac.compare_digest raises on non-ASCII str, and a raise here
+# would put the expected signature into a crash report.
+_TOKEN_RE = re.compile(r"^([A-Za-z0-9_-]{1,128})\.([A-Za-z0-9_-]{32})$")
 
 
 def _signature(*, secret: str, academy_id: str, parent_id: str, version: int) -> str:
@@ -41,19 +44,18 @@ def mint_feed_token(*, secret: str, academy_id: str, parent_id: str, version: in
 
 def parse_feed_token(token: str) -> tuple[str, str] | None:
     """``(parent_id, signature)`` for a well-formed token, else ``None``."""
-    parent_id, sep, sig = token.partition(".")
-    if not sep or not _ID_RE.fullmatch(parent_id) or len(sig) != _SIG_LEN:
-        return None
-    return parent_id, sig
+    match = _TOKEN_RE.fullmatch(token)
+    return (match.group(1), match.group(2)) if match else None
 
 
 def feed_signature_matches(
     *, secret: str, academy_id: str, parent_id: str, version: int, signature: str
 ) -> bool:
-    expected = _signature(
+    # Local names are on the crash-report scrubber's denylist.
+    expected_signature = _signature(
         secret=secret, academy_id=academy_id, parent_id=parent_id, version=version
     )
-    return hmac.compare_digest(expected, signature)
+    return hmac.compare_digest(expected_signature.encode(), signature.encode())
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,7 @@ def _escape(text: str) -> str:
         .replace(",", "\\,")
         .replace("\r\n", "\\n")
         .replace("\n", "\\n")
+        .replace("\r", "\\n")
     )
 
 

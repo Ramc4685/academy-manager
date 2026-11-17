@@ -40,6 +40,8 @@ import { isMonthPublished } from "@/lib/parent/schedule-events";
 import { queryKeys } from "@/lib/query/keys";
 
 const PUBLISH_KEY = ["admin", "schedule", "publish"] as const;
+// cancel_session_occurrence.py: the date is off but nobody was credited yet.
+const NOT_CREDITED = new Set(["billing_sync_failed", "billing_sync_unwired"]);
 
 export default function AdminMonthDatesPage() {
   const queryClient = useQueryClient();
@@ -73,19 +75,18 @@ export default function AdminMonthDatesPage() {
       queryFn: () => listSessionOccurrences(s.session_id),
     })),
   });
-  const loading = sessions.isLoading || occurrenceQueries.some((q) => q.isLoading);
+  // Until the academy timezone loads, dates would group by UTC days.
+  const loading = tz === null || sessions.isLoading || occurrenceQueries.some((q) => q.isLoading);
   const occurrenceData = occurrenceQueries.map((q) => q.data);
 
   // A dated series answers every sibling's query with the whole series: keep
   // each date once, under the first class that returned it.
   const seen = new Set<string>();
   const classes: MonthDateClass[] = [];
-  const ownerOf = new Map<string, number>();
   inMonth.forEach((s, i) => {
     for (const occurrence of occurrenceData[i]?.occurrences ?? []) {
       if (seen.has(occurrence.occurrence_id)) continue;
       seen.add(occurrence.occurrence_id);
-      ownerOf.set(occurrence.occurrence_id, i);
       classes.push({ occurrence, sessionTitle: s.title });
     }
   });
@@ -108,16 +109,20 @@ export default function AdminMonthDatesPage() {
   const save = useMutation({
     mutationFn: async () => {
       const failed: string[] = [];
+      let creditNotSynced = 0;
+      let oneTimeSeatsRemoved = 0;
       for (const id of toCancel) {
         try {
-          await cancelSessionOccurrence(id, { reason: reason.trim(), notify: false });
+          const result = await cancelSessionOccurrence(id, { reason: reason.trim(), notify: false });
+          if (result.billing_result && NOT_CREDITED.has(result.billing_result)) creditNotSynced += 1;
+          oneTimeSeatsRemoved += result.roster_entries_removed;
         } catch {
           failed.push(id);
         }
       }
-      return failed;
+      return { failed, creditNotSynced, oneTimeSeatsRemoved };
     },
-    onSettled: async (failed) => {
+    onSettled: async (outcome) => {
       setNotice(null);
       setError(null);
       await Promise.all(
@@ -128,12 +133,25 @@ export default function AdminMonthDatesPage() {
       setConfirmOpen(false);
       setNoClass(new Set());
       setReason("");
-      if (failed && failed.length) {
-        setError(
+      const failed = outcome?.failed ?? [];
+      const problems: string[] = [];
+      if (failed.length) {
+        problems.push(
           `${toCancel.length - failed.length} date(s) saved; ${failed.length} could not be called off. They may have started already.`,
         );
-      } else {
-        setNotice(`Saved. ${toCancel.length} date(s) are now marked "No class".`);
+      }
+      if (outcome?.creditNotSynced) {
+        problems.push(
+          `Billing did not update for ${outcome.creditNotSynced} date(s), so families were not credited yet. Check Billing Health.`,
+        );
+      }
+      if (problems.length) setError(problems.join(" "));
+      else setNotice(`Saved. ${toCancel.length} date(s) are now marked "No class".`);
+      if (outcome?.oneTimeSeatsRemoved) {
+        setNotice(
+          (prev) =>
+            `${prev ?? ""} ${outcome.oneTimeSeatsRemoved} make-up or trial booking(s) on those dates were removed; those families are not in the class email, so contact them directly.`.trim(),
+        );
       }
     },
   });
@@ -151,10 +169,10 @@ export default function AdminMonthDatesPage() {
       let emailed = 0;
       const notEmailed: string[] = [];
       if (emailFamilies) {
-        for (const [i, s] of inMonth.entries()) {
+        for (const s of inMonth) {
           const own = dates
             .flatMap((d) => d.classes)
-            .filter((c) => ownerOf.get(c.occurrence.occurrence_id) === i)
+            .filter((c) => c.occurrence.session_id === s.session_id)
             .map((c) => c.occurrence);
           const body = scheduleAnnouncement(s.title, own, monthLabel(activeMonth), timeZone);
           if (!body) continue;

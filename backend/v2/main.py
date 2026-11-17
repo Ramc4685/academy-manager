@@ -911,6 +911,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         idempotency_store,
         stripe_gw,
         academy_id=runtime_academy_id,
+        auth_users=users_repo,
+        auth_memberships=membership_repo,
     )
     stripe_webhook_processors = {runtime_academy_id: app.state.parent.handle_webhook_event}
 
