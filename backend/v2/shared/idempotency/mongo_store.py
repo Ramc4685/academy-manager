@@ -66,7 +66,8 @@ class MongoIdempotencyStore:
                     "key": key,
                     "$or": [
                         {"claimed_at": {"$lt": now - CLAIM_STALE_AFTER}},
-                        {"claimed_at": {"$exists": False}},
+                        # Legacy claim shape only, never a stored put() result.
+                        {"claimed_at": {"$exists": False}, "value.started_at": {"$exists": True}},
                     ],
                 },
                 {"$set": {"claimed_at": now, "created_at": now}},

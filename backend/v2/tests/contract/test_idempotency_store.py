@@ -178,3 +178,11 @@ async def test_a_claim_written_before_claimed_at_existed_can_be_taken_over(real_
     assert token is not None
     assert await store.claim("legacy:claim") is None  # now held by the taker
     assert await store.claim("legacy:claim", takeover=False) is None
+
+
+@pytest.mark.asyncio
+async def test_a_stored_result_is_never_taken_over_as_a_legacy_claim(real_db) -> None:
+    store = MongoIdempotencyStore(real_db)
+    await store.put("op:abc:claim", {"payment_id": "pay-1"})
+    assert await store.claim("op:abc:claim") is None
+    assert (await store.get("op:abc:claim")) == {"payment_id": "pay-1"}

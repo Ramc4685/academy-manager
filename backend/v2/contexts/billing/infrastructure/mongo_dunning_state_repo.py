@@ -518,7 +518,9 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 "enrollment_id": str(invoice_doc.get("enrollment_id") or ""),
             }
         )
-        if (
+        # A review park may mean we already hold the family's money, so turning
+        # autopay off must not hide it from billing-health; only paid/void clears it.
+        if not review_recheck and (
             enrollment is None
             or enrollment.get("autopay_enrollment_status") != AUTOPAY_ACTIVE_STATUS
         ):

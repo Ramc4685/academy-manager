@@ -393,3 +393,23 @@ async def test_a_review_park_resolves_once_the_invoice_is_paid_by_hand(real_db, 
     with tenant_scope(ACAD):
         assert await repo.list_admin_rows() == []
     assert len(stripe.off_session_payment_intents) == 1
+
+
+async def test_a_review_park_stays_visible_when_autopay_is_turned_off(real_db, acad) -> None:
+    """Turning autopay off must not drop a review park: the money may already be with
+    us, so it stays on billing-health until the invoice is settled or voided."""
+    stripe = _CrashOnceStripe()
+    await _park_for_review(real_db, stripe)
+    await real_db["student_billing_enrollments"].update_many(
+        {"academy_id": ACAD}, {"$set": {"autopay_enrollment_status": "paused"}}
+    )
+
+    await _tick(real_db, stripe, FakeOutbox(), at=LATER + timedelta(days=1, hours=1))
+
+    state = await real_db["dunning_states"].find_one({"invoice_id": "inv-a"})
+    assert state["status"] == "active"
+    assert state["suppression_reason"] == "existing_charge_needs_review"
+    with tenant_scope(ACAD):
+        rows = await MongoDunningStateRepository(real_db).list_admin_rows()
+    assert [r["invoice_id"] for r in rows] == ["inv-a"]
+    assert len(stripe.off_session_payment_intents) == 1
