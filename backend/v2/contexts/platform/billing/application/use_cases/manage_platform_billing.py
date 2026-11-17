@@ -14,6 +14,7 @@ from backend.v2.contexts.platform.audit.application.use_cases import (
 )
 from backend.v2.contexts.platform.billing.application.ports import (
     PlatformPlanRepository,
+    StripeCanceller,
     TenantSubscriptionRepository,
 )
 from backend.v2.contexts.platform.billing.domain.models import (
@@ -43,6 +44,20 @@ class PlatformPlanInactive(DomainError):
 class TenantSubscriptionNotFound(DomainError):
     code = "PlatformBilling.SubscriptionNotFound"
     status_code = 404
+
+
+class LiveStripeSubscription(DomainError):
+    """A trial would overwrite a subscription Stripe is still billing."""
+
+    code = "PlatformBilling.LiveStripeSubscription"
+    status_code = 409
+
+
+class StripeCancellationFailed(DomainError):
+    """Stripe did not confirm the cancellation; the local row is unchanged."""
+
+    code = "PlatformBilling.StripeCancellationFailed"
+    status_code = 502
 
 
 class UpsertPlatformPlanCommand(BaseModel):
@@ -192,6 +207,15 @@ class StartTenantTrial:
             raise ValueError("trial_ends_at must be in the future")
 
         existing = await self._subscriptions.get_for_academy(command.academy_id)
+        if (
+            existing is not None
+            and existing.stripe_subscription_id
+            and existing.billing_status != "cancelled"
+        ):
+            # Rebuilding the row would drop the Stripe ids while Stripe keeps billing.
+            raise LiveStripeSubscription(
+                f"academy {command.academy_id} has a live Stripe subscription; cancel it first"
+            )
         subscription_id = existing.subscription_id if existing else self._id_factory()
         created_at = existing.created_at if existing else now
         subscription = TenantSubscription(
@@ -281,11 +305,13 @@ class ScheduleTenantCancellation:
         *,
         plans: PlatformPlanRepository,
         subscriptions: TenantSubscriptionRepository,
+        stripe: StripeCanceller | None = None,
         clock: Callable[[], datetime] | None = None,
         audit_recorder: AuditRecorder | None = None,
     ) -> None:
         self._plans = plans
         self._subscriptions = subscriptions
+        self._stripe = stripe
         self._clock = clock or (lambda: datetime.now(UTC))
         self._audit_recorder = audit_recorder
 
@@ -295,7 +321,9 @@ class ScheduleTenantCancellation:
             raise TenantSubscriptionNotFound(
                 f"no platform subscription for academy {command.academy_id}"
             )
-        await _require_active_plan(self._plans, existing.plan_id)
+        if existing.cancellation_status == "cancelled":
+            return existing  # already cancelled here and at Stripe: a repeat is a no-op
+        await self._cancel_at_stripe(existing, at_period_end=command.cancel_at_period_end)
 
         now = self._clock()
         if command.cancel_at_period_end:
@@ -336,6 +364,29 @@ class ScheduleTenantCancellation:
             ip_address=command.ip_address,
         )
         return updated
+
+    async def _cancel_at_stripe(self, existing: TenantSubscription, *, at_period_end: bool) -> None:
+        """Stripe first, so a failure leaves the row (and the academy's plan)
+        exactly as Stripe still bills it. Both modes are safe to retry: a repeat
+        modify sets the same flag, and a subscription already gone counts as
+        cancelled."""
+        sub_id = existing.stripe_subscription_id
+        if not sub_id:
+            return  # a local trial: nothing is billed at Stripe
+        if self._stripe is None:
+            raise StripeCancellationFailed("Stripe is not configured; nothing was cancelled")
+        try:
+            await self._stripe.cancel_subscription(sub_id, at_period_end=at_period_end)
+        except Exception as exc:
+            log.warning(
+                "platform_cancel_stripe_failed academy=%s sub=%s: %s",
+                existing.academy_id,
+                sub_id,
+                exc,
+            )
+            raise StripeCancellationFailed(
+                "Stripe did not confirm the cancellation; nothing was changed"
+            ) from exc
 
 
 class CheckPlanLimits:

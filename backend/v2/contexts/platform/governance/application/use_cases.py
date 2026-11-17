@@ -77,6 +77,8 @@ class TenantGovernanceStore(Protocol):
         self, academy_id: str | None = None
     ) -> list[dict[str, Any]]: ...
     async def get_request_status(self, request_id: str) -> dict[str, Any] | None: ...
+    async def academy_exists(self, academy_id: str) -> bool: ...
+    async def student_exists(self, academy_id: str, student_id: str) -> bool: ...
     async def append_audit_log(self, audit: dict[str, Any]) -> dict[str, Any]: ...
 
 
@@ -155,6 +157,9 @@ class RevokeSupportAccessCommand(BaseModel):
 class TenantGovernanceService:
     """Coordinates SaaS governance requests and required audit rows.
 
+    Every request here is record-only: no worker builds governance exports, no
+    sign-in path reads support access grants, and impersonation is not built.
+    The routes say so in each response (``enforced``/``operator_note``).
     Deletion is request-only. Requesting deletion stamps ``deletion_requested``
     on the subject (academy or student) so readers can surface the pending
     request, but nothing is deleted, redacted or cascaded here. The full
@@ -182,6 +187,7 @@ class TenantGovernanceService:
     async def request_tenant_export(
         self, command: RequestTenantExportCommand
     ) -> TenantExportRequest:
+        await self._require_academy(command.academy_id)
         now = self._clock()
         retention = RetentionPolicy().model_dump()
         pii = PIIHandlingPolicy().model_dump()
@@ -220,6 +226,7 @@ class TenantGovernanceService:
     async def request_tenant_deletion(
         self, command: RequestTenantDeletionCommand
     ) -> TenantDeletionRequest:
+        await self._require_academy(command.academy_id)
         now = self._clock()
         soft_delete = SoftDeletePolicy()
         retention = RetentionPolicy()
@@ -263,6 +270,11 @@ class TenantGovernanceService:
     async def request_student_data_deletion(
         self, command: RequestStudentDataDeletionCommand
     ) -> StudentDataDeletionRequest:
+        await self._require_academy(command.academy_id)
+        if not await self._store.student_exists(command.academy_id, command.student_id):
+            raise GovernanceRequestNotFound(
+                f"student {command.student_id} not found in academy {command.academy_id}"
+            )
         now = self._clock()
         soft_delete = SoftDeletePolicy()
         request = StudentDataDeletionRequest(
@@ -306,6 +318,7 @@ class TenantGovernanceService:
 
     async def grant_support_access(self, command: GrantSupportAccessCommand) -> SupportAccessGrant:
         self._require_platform_admin(command.actor)
+        await self._require_academy(command.academy_id)
         now = self._clock()
         grant = SupportAccessGrant(
             support_access_grant_id=self._id_factory("support_access_"),
@@ -373,6 +386,7 @@ class TenantGovernanceService:
         self, command: RequestSupportImpersonationCommand
     ) -> SupportImpersonationRequest:
         self._require_platform_support(command.actor)
+        await self._require_academy(command.academy_id)
         now = self._clock()
         request = SupportImpersonationRequest(
             impersonation_request_id=self._id_factory("support_impersonation_"),
@@ -439,6 +453,11 @@ class TenantGovernanceService:
         )
         await self._store.append_audit_log(audit.model_dump())
         await self._append_platform_audit(audit)
+
+    async def _require_academy(self, academy_id: str) -> None:
+        # A request against a mistyped academy would sit forever looking handled.
+        if not await self._store.academy_exists(academy_id):
+            raise GovernanceRequestNotFound(f"academy not found: {academy_id}")
 
     def _require_platform_support(self, actor: GovernanceActor) -> None:
         if not actor.has_platform_support_access():

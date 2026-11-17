@@ -1,4 +1,9 @@
-"""Platform governance and support access routes."""
+"""Platform governance and support access routes.
+
+Every request here is record-only (see ``TenantGovernanceService``): each
+response carries ``enforced: false`` and an ``operator_note`` saying what a
+human still has to do, so no caller mistakes a recorded request for a done one.
+"""
 
 from __future__ import annotations
 
@@ -73,6 +78,9 @@ class TenantExportResponse(BaseModel):
     completed_at: datetime | None = None
     updated_at: datetime | None = None
     created_at: datetime
+    #: Governance honesty: none of these requests is carried out by the system.
+    enforced: bool = False
+    operator_note: str = "Recorded only: no worker builds governance exports. Download the data from the tenant page export (Data export and purge)."
 
 
 class TenantDeletionResponse(BaseModel):
@@ -86,6 +94,9 @@ class TenantDeletionResponse(BaseModel):
     soft_delete_policy: dict[str, object]
     retention_policy: dict[str, object]
     created_at: datetime
+    #: Governance honesty: none of these requests is carried out by the system.
+    enforced: bool = False
+    operator_note: str = "Recorded only: nothing is deleted. A platform admin must work the checklist in docs/policy/governance-deletion-cascade.md."
 
 
 class StudentDataDeletionResponse(BaseModel):
@@ -102,6 +113,9 @@ class StudentDataDeletionResponse(BaseModel):
     retention_policy: dict[str, object]
     pii_handling_policy: dict[str, object]
     created_at: datetime
+    #: Governance honesty: none of these requests is carried out by the system.
+    enforced: bool = False
+    operator_note: str = "Recorded only: nothing is deleted or redacted. A platform admin must work the checklist in docs/policy/governance-deletion-cascade.md."
 
 
 class SupportAccessGrantResponse(BaseModel):
@@ -117,6 +131,11 @@ class SupportAccessGrantResponse(BaseModel):
     revoked_at: datetime | None = None
     revoked_by_user_id: str | None = None
     revoke_reason: str | None = None
+    #: Governance honesty: none of these requests is carried out by the system.
+    enforced: bool = False
+    operator_note: str = (
+        "Recorded only: no sign-in path reads support access grants, so this grants no access."
+    )
 
 
 class SupportImpersonationResponse(BaseModel):
@@ -131,6 +150,9 @@ class SupportImpersonationResponse(BaseModel):
     approval_required: bool
     session_token: str | None = None
     created_at: datetime
+    #: Governance honesty: none of these requests is carried out by the system.
+    enforced: bool = False
+    operator_note: str = "Recorded only: impersonation is not built; no session can be issued."
 
 
 class RequestStatusResponse(BaseModel):

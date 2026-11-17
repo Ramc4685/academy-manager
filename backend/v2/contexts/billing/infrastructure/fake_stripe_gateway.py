@@ -55,6 +55,7 @@ class FakeStripeGateway(StripeGateway):
         self.refund_requests: list[dict[str, Any]] = []
         self._refunds_by_key: dict[str, dict[str, Any]] = {}
         self.cancelled_subscriptions: list[dict[str, Any]] = []
+        self.missing_subscription_ids: set[str] = set()
         # (stripe_account, customer_id) -> payment method ids still attached.
         self.attached_payment_methods: dict[tuple[str | None, str], list[str]] = {}
         self.paused_subscriptions: list[dict[str, Any]] = []
@@ -611,6 +612,8 @@ class FakeStripeGateway(StripeGateway):
     async def cancel_subscription(
         self, stripe_subscription_id: str, *, at_period_end: bool
     ) -> None:
+        if stripe_subscription_id in self.missing_subscription_ids:
+            return  # mirrors RealStripeGateway: resource_missing counts as cancelled
         self.cancelled_subscriptions.append(
             {
                 "stripe_subscription_id": stripe_subscription_id,

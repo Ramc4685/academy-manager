@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from mongomock_motor import AsyncMongoMockClient
 
+from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
 from backend.v2.contexts.platform.audit.application.use_cases import (
     RecordPlatformAuditEventCommand,
 )
@@ -12,11 +13,13 @@ from backend.v2.contexts.platform.billing.application.use_cases.manage_platform_
     ActivateTenantSubscription,
     ActivateTenantSubscriptionCommand,
     CheckPlanLimits,
+    LiveStripeSubscription,
     PlatformUsage,
     ScheduleTenantCancellation,
     ScheduleTenantCancellationCommand,
     StartTenantTrial,
     StartTenantTrialCommand,
+    StripeCancellationFailed,
     UpsertPlatformPlan,
     UpsertPlatformPlanCommand,
 )
@@ -326,6 +329,7 @@ async def test_schedule_cancellation_keeps_subscription_active_until_period_end(
     result = await ScheduleTenantCancellation(
         plans=plans,
         subscriptions=subscriptions,
+        stripe=FakeStripeGateway(),
         clock=_clock,
     ).execute(
         ScheduleTenantCancellationCommand(
@@ -365,6 +369,7 @@ async def test_schedule_cancellation_emits_one_unified_platform_audit_event_afte
     result = await ScheduleTenantCancellation(
         plans=plans,
         subscriptions=subscriptions,
+        stripe=FakeStripeGateway(),
         clock=_clock,
         audit_recorder=audit.record_event,
     ).execute(
@@ -415,6 +420,7 @@ async def test_cancel_now_emits_one_unified_platform_audit_event_after_save() ->
     result = await ScheduleTenantCancellation(
         plans=plans,
         subscriptions=subscriptions,
+        stripe=FakeStripeGateway(),
         clock=_clock,
         audit_recorder=audit.record_event,
     ).execute(
@@ -597,3 +603,231 @@ async def test_composed_start_trial_writes_platform_audit_events_collection() ->
     assert audit_doc["academy_id"] == "academy-1"
     assert audit_doc["entity_type"] == "tenant_subscription"
     assert audit_doc["after_snapshot"]["billing_status"] == "trialing"
+
+
+def _paid_subscription(**overrides: object) -> TenantSubscription:
+    fields: dict[str, object] = {
+        "subscription_id": "platform-sub-1",
+        "academy_id": "academy-1",
+        "plan_id": "plan-growth",
+        "billing_status": "active",
+        "trial_status": "converted",
+        "cancellation_status": "none",
+        "stripe_customer_id": "cus_platform_123",
+        "stripe_subscription_id": "sub_platform_123",
+        "current_period_start": _clock(),
+        "current_period_end": _clock() + timedelta(days=30),
+        "created_at": _clock(),
+        "updated_at": _clock(),
+    }
+    fields.update(overrides)
+    return TenantSubscription.model_validate(fields)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("at_period_end", [True, False])
+async def test_a_retry_after_a_stripe_failure_cancels(at_period_end: bool) -> None:
+    class FlakyStripe(FakeStripeGateway):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        async def cancel_subscription(self, sub_id: str, *, at_period_end: bool) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("timeout")
+            await super().cancel_subscription(sub_id, at_period_end=at_period_end)
+
+    subscriptions = FakeTenantSubscriptionRepository()
+    await subscriptions.save(_paid_subscription())
+    stripe = FlakyStripe()
+    use_case = ScheduleTenantCancellation(
+        plans=FakePlanRepository([_plan()]),
+        subscriptions=subscriptions,
+        stripe=stripe,
+        clock=_clock,
+    )
+    command = ScheduleTenantCancellationCommand(
+        academy_id="academy-1", cancel_at_period_end=at_period_end
+    )
+
+    with pytest.raises(StripeCancellationFailed):
+        await use_case.execute(command)
+    await use_case.execute(command)
+
+    assert stripe.cancelled_subscriptions == [
+        {"stripe_subscription_id": "sub_platform_123", "at_period_end": at_period_end}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cancel_resume_cancel_calls_stripe_twice() -> None:
+    subscriptions = FakeTenantSubscriptionRepository()
+    await subscriptions.save(_paid_subscription())
+    stripe = FakeStripeGateway()
+    use_case = ScheduleTenantCancellation(
+        plans=FakePlanRepository([_plan()]),
+        subscriptions=subscriptions,
+        stripe=stripe,
+        clock=_clock,
+    )
+    command = ScheduleTenantCancellationCommand(academy_id="academy-1", cancel_at_period_end=True)
+
+    await use_case.execute(command)
+    # The owner resumes in Stripe; the subscription sync writes the row back.
+    resumed = subscriptions.by_academy["academy-1"].model_copy(
+        update={"cancellation_status": "none", "cancel_at_period_end": False}
+    )
+    await subscriptions.save(resumed)
+    await use_case.execute(command)
+
+    assert len(stripe.cancelled_subscriptions) == 2
+    assert subscriptions.by_academy["academy-1"].cancellation_status == "scheduled"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_subscription_stripe_no_longer_has_converges() -> None:
+    subscriptions = FakeTenantSubscriptionRepository()
+    await subscriptions.save(_paid_subscription())
+    stripe = FakeStripeGateway()
+    stripe.missing_subscription_ids.add("sub_platform_123")
+    result = await ScheduleTenantCancellation(
+        plans=FakePlanRepository([_plan()]),
+        subscriptions=subscriptions,
+        stripe=stripe,
+        clock=_clock,
+    ).execute(ScheduleTenantCancellationCommand(academy_id="academy-1", cancel_at_period_end=False))
+    assert result.billing_status == "cancelled"
+    assert stripe.cancelled_subscriptions == []
+
+
+@pytest.mark.asyncio
+async def test_an_archived_plan_can_still_be_cancelled_then_a_trial_starts() -> None:
+    archived = _plan().model_copy(update={"status": "archived"})
+    trial_plan = _plan().model_copy(update={"plan_id": "plan-starter", "code": "starter"})
+    plans = FakePlanRepository([archived, trial_plan])
+    subscriptions = FakeTenantSubscriptionRepository()
+    await subscriptions.save(_paid_subscription())
+    stripe = FakeStripeGateway()
+
+    cancelled = await ScheduleTenantCancellation(
+        plans=plans, subscriptions=subscriptions, stripe=stripe, clock=_clock
+    ).execute(ScheduleTenantCancellationCommand(academy_id="academy-1", cancel_at_period_end=False))
+    assert cancelled.billing_status == "cancelled"
+    assert len(stripe.cancelled_subscriptions) == 1
+
+    trial = await StartTenantTrial(plans=plans, subscriptions=subscriptions, clock=_clock).execute(
+        StartTenantTrialCommand(
+            academy_id="academy-1",
+            plan_id="plan-starter",
+            trial_ends_at=_clock() + timedelta(days=14),
+        )
+    )
+    assert trial.billing_status == "trialing"
+
+
+@pytest.mark.asyncio
+async def test_cancellation_leaves_the_row_alone_when_stripe_fails() -> None:
+    class FailingStripe:
+        async def cancel_subscription(self, *_a: object, **_k: object) -> None:
+            raise RuntimeError("stripe down")
+
+    subscriptions = FakeTenantSubscriptionRepository()
+    await subscriptions.save(_paid_subscription())
+    with pytest.raises(StripeCancellationFailed):
+        await ScheduleTenantCancellation(
+            plans=FakePlanRepository([_plan()]),
+            subscriptions=subscriptions,
+            stripe=FailingStripe(),
+            clock=_clock,
+        ).execute(ScheduleTenantCancellationCommand(academy_id="academy-1"))
+
+    assert len(subscriptions.saved) == 1  # only the seed
+    assert subscriptions.by_academy["academy-1"].cancellation_status == "none"
+
+
+@pytest.mark.asyncio
+async def test_cancellation_of_a_paid_subscription_refuses_without_a_stripe_gateway() -> None:
+    subscriptions = FakeTenantSubscriptionRepository()
+    await subscriptions.save(_paid_subscription())
+    with pytest.raises(StripeCancellationFailed):
+        await ScheduleTenantCancellation(
+            plans=FakePlanRepository([_plan()]), subscriptions=subscriptions, clock=_clock
+        ).execute(ScheduleTenantCancellationCommand(academy_id="academy-1"))
+    assert subscriptions.by_academy["academy-1"].cancellation_status == "none"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_local_trial_needs_no_stripe_call() -> None:
+    subscriptions = FakeTenantSubscriptionRepository()
+    await subscriptions.save(
+        _paid_subscription(
+            billing_status="trialing",
+            trial_status="active",
+            stripe_customer_id=None,
+            stripe_subscription_id=None,
+        )
+    )
+    result = await ScheduleTenantCancellation(
+        plans=FakePlanRepository([_plan()]), subscriptions=subscriptions, clock=_clock
+    ).execute(ScheduleTenantCancellationCommand(academy_id="academy-1", cancel_at_period_end=False))
+    assert result.cancellation_status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_an_already_cancelled_subscription_is_a_no_op() -> None:
+    subscriptions = FakeTenantSubscriptionRepository()
+    cancelled = _paid_subscription(
+        billing_status="cancelled", cancellation_status="cancelled", cancelled_at=_clock()
+    )
+    await subscriptions.save(cancelled)
+    stripe = FakeStripeGateway()
+    audit = FakePlatformAuditRecorder()
+    result = await ScheduleTenantCancellation(
+        plans=FakePlanRepository([_plan()]),
+        subscriptions=subscriptions,
+        stripe=stripe,
+        clock=_clock,
+        audit_recorder=audit.record_event,
+    ).execute(ScheduleTenantCancellationCommand(academy_id="academy-1", cancel_at_period_end=False))
+    assert result == cancelled
+    assert stripe.cancelled_subscriptions == []
+    assert audit.commands == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("billing_status", ["active", "past_due", "trialing"])
+async def test_start_trial_refuses_to_orphan_a_live_stripe_subscription(
+    billing_status: str,
+) -> None:
+    subscriptions = FakeTenantSubscriptionRepository()
+    await subscriptions.save(_paid_subscription(billing_status=billing_status))
+    with pytest.raises(LiveStripeSubscription):
+        await StartTenantTrial(
+            plans=FakePlanRepository([_plan()]), subscriptions=subscriptions, clock=_clock
+        ).execute(
+            StartTenantTrialCommand(
+                academy_id="academy-1",
+                plan_id="plan-growth",
+                trial_ends_at=_clock() + timedelta(days=14),
+            )
+        )
+    assert subscriptions.by_academy["academy-1"].stripe_subscription_id == "sub_platform_123"
+
+
+@pytest.mark.asyncio
+async def test_start_trial_is_allowed_after_the_stripe_subscription_is_cancelled() -> None:
+    subscriptions = FakeTenantSubscriptionRepository()
+    await subscriptions.save(
+        _paid_subscription(billing_status="cancelled", cancellation_status="cancelled")
+    )
+    result = await StartTenantTrial(
+        plans=FakePlanRepository([_plan()]), subscriptions=subscriptions, clock=_clock
+    ).execute(
+        StartTenantTrialCommand(
+            academy_id="academy-1",
+            plan_id="plan-growth",
+            trial_ends_at=_clock() + timedelta(days=14),
+        )
+    )
+    assert result.billing_status == "trialing"

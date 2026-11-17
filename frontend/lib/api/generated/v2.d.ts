@@ -193,6 +193,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/ai/controls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Ai Controls */
+        get: operations["get_ai_controls_api_v2_admin_ai_controls_get"];
+        /** Put Ai Controls */
+        put: operations["put_ai_controls_api_v2_admin_ai_controls_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/ai/import-sharing": {
         parameters: {
             query?: never;
@@ -11495,6 +11513,30 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** AiControlsRequest */
+        AiControlsRequest: {
+            /** Coach Review Narratives */
+            coach_review_narratives: boolean;
+            /** Daily Call Caps */
+            daily_call_caps: {
+                [key: string]: number;
+            };
+            /** Monthly Call Cap */
+            monthly_call_cap: number;
+        };
+        /** AiControlsView */
+        AiControlsView: {
+            /** Coach Review Narratives */
+            coach_review_narratives: boolean;
+            /** Daily Call Caps */
+            daily_call_caps: {
+                [key: string]: number;
+            };
+            /** Features */
+            features: string[];
+            /** Monthly Call Cap */
+            monthly_call_cap: number;
+        };
         /** AiUsageView */
         AiUsageView: {
             /** Cap */
@@ -19372,6 +19414,16 @@ export interface components {
             created_at: string;
             /** Delete Student Profile */
             delete_student_profile: boolean;
+            /**
+             * Enforced
+             * @default false
+             */
+            enforced: boolean;
+            /**
+             * Operator Note
+             * @default Recorded only: nothing is deleted or redacted. A platform admin must work the checklist in docs/policy/governance-deletion-cascade.md.
+             */
+            operator_note: string;
             /** Pii Handling Policy */
             pii_handling_policy: {
                 [key: string]: unknown;
@@ -19531,6 +19583,11 @@ export interface components {
              */
             created_at: string;
             /**
+             * Enforced
+             * @default false
+             */
+            enforced: boolean;
+            /**
              * Expires At
              * Format: date-time
              */
@@ -19539,6 +19596,11 @@ export interface components {
             granted_by_platform_role: string;
             /** Granted By User Id */
             granted_by_user_id: string;
+            /**
+             * Operator Note
+             * @default Recorded only: no sign-in path reads support access grants, so this grants no access.
+             */
+            operator_note: string;
             /** Purpose */
             purpose: string;
             /** Revoke Reason */
@@ -19574,10 +19636,20 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Enforced
+             * @default false
+             */
+            enforced: boolean;
             /** Impersonation Enabled */
             impersonation_enabled: boolean;
             /** Impersonation Request Id */
             impersonation_request_id: string;
+            /**
+             * Operator Note
+             * @default Recorded only: impersonation is not built; no session can be issued.
+             */
+            operator_note: string;
             /** Purpose */
             purpose: string;
             /** Requested By Platform Role */
@@ -19639,8 +19711,18 @@ export interface components {
             created_at: string;
             /** Deletion Request Id */
             deletion_request_id: string;
+            /**
+             * Enforced
+             * @default false
+             */
+            enforced: boolean;
             /** Hard Delete Allowed */
             hard_delete_allowed: boolean;
+            /**
+             * Operator Note
+             * @default Recorded only: nothing is deleted. A platform admin must work the checklist in docs/policy/governance-deletion-cascade.md.
+             */
+            operator_note: string;
             /** Reason */
             reason: string;
             /** Requested By Membership Id */
@@ -19687,10 +19769,20 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Enforced
+             * @default false
+             */
+            enforced: boolean;
             /** Export Request Id */
             export_request_id: string;
             /** Include Pii */
             include_pii: boolean;
+            /**
+             * Operator Note
+             * @default Recorded only: no worker builds governance exports. Download the data from the tenant page export (Data export and purge).
+             */
+            operator_note: string;
             /** Pii Handling Policy */
             pii_handling_policy: {
                 [key: string]: unknown;
@@ -21016,6 +21108,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccountDeletionList"];
+                };
+            };
+        };
+    };
+    get_ai_controls_api_v2_admin_ai_controls_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiControlsView"];
+                };
+            };
+        };
+    };
+    put_ai_controls_api_v2_admin_ai_controls_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiControlsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiControlsView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

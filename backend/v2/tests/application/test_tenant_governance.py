@@ -41,6 +41,15 @@ class FakeGovernanceStore:
         self.audit_logs: list[dict[str, Any]] = []
         self.tenant_deletion_stamps: dict[str, dict[str, Any]] = {}
         self.student_deletion_stamps: dict[tuple[str, str], dict[str, Any]] = {}
+        #: None means every academy / student exists; tests narrow it to check refusals.
+        self.academies: set[str] | None = None
+        self.students: set[tuple[str, str]] | None = None
+
+    async def academy_exists(self, academy_id: str) -> bool:
+        return self.academies is None or academy_id in self.academies
+
+    async def student_exists(self, academy_id: str, student_id: str) -> bool:
+        return self.students is None or (academy_id, student_id) in self.students
 
     async def create_tenant_export_request(self, request: dict[str, Any]) -> dict[str, Any]:
         self.tenant_exports[request["export_request_id"]] = dict(request)
@@ -713,6 +722,7 @@ async def test_mongo_governance_store_persists_requests_and_status() -> None:
     )
 
     client = mongomock_motor.AsyncMongoMockClient()
+    await client["governance_test"].academies.insert_one({"academy_id": "acad_001"})
     store = MongoGovernanceStore(client["governance_test"])
     service = _service(store)
     actor = _academy_actor()
@@ -761,6 +771,7 @@ async def test_export_worker_writes_metadata_only_and_never_marks_deletions_dest
     )
 
     client = mongomock_motor.AsyncMongoMockClient()
+    await client["governance_test"].academies.insert_one({"academy_id": "acad_001"})
     store = MongoGovernanceStore(client["governance_test"])
     service = _service(store)
     actor = _academy_actor()
@@ -829,3 +840,71 @@ async def test_support_access_can_be_revoked_without_session_minting() -> None:
         "support_access.granted",
         "support_access.revoked",
     ]
+
+
+@pytest.mark.asyncio
+async def test_governance_requests_refuse_an_unknown_academy_or_student() -> None:
+    store = FakeGovernanceStore()
+    store.academies = {"acad_001"}
+    store.students = {("acad_001", "student_001")}
+    service = _service(store)
+    actor = _platform_actor()
+
+    with pytest.raises(GovernanceRequestNotFound):
+        await service.request_tenant_export(
+            RequestTenantExportCommand(academy_id="acad_typo", actor=actor, reason="r")
+        )
+    with pytest.raises(GovernanceRequestNotFound):
+        await service.request_tenant_deletion(
+            RequestTenantDeletionCommand(academy_id="acad_typo", actor=actor, reason="r")
+        )
+    with pytest.raises(GovernanceRequestNotFound):
+        await service.request_student_data_deletion(
+            RequestStudentDataDeletionCommand(
+                academy_id="acad_001", student_id="student_typo", actor=actor, reason="r"
+            )
+        )
+    with pytest.raises(GovernanceRequestNotFound):
+        await service.grant_support_access(
+            GrantSupportAccessCommand(
+                academy_id="acad_typo", actor=actor, support_user_id="u", purpose="p"
+            )
+        )
+    with pytest.raises(GovernanceRequestNotFound):
+        await service.request_support_impersonation(
+            RequestSupportImpersonationCommand(
+                academy_id="acad_typo",
+                actor=_platform_support_actor(),
+                target_user_id="u",
+                purpose="p",
+            )
+        )
+    assert not (store.tenant_exports or store.tenant_deletions or store.student_deletions)
+    assert not (store.support_access_grants or store.support_impersonation_requests)
+    assert store.audit_logs == []
+
+    created = await service.request_student_data_deletion(
+        RequestStudentDataDeletionCommand(
+            academy_id="acad_001", student_id="student_001", actor=actor, reason="r"
+        )
+    )
+    assert created.status == "pending_review"
+
+
+@pytest.mark.asyncio
+async def test_mongo_governance_store_checks_subjects_within_the_academy() -> None:
+    from mongomock_motor import AsyncMongoMockClient
+
+    from backend.v2.contexts.platform.governance.infrastructure.mongo_governance_store import (
+        MongoGovernanceStore,
+    )
+
+    db = AsyncMongoMockClient()["governance_subjects"]
+    await db.academies.insert_one({"academy_id": "acad_001"})
+    await db.students.insert_one({"academy_id": "acad_001", "student_id": "student_001"})
+    store = MongoGovernanceStore(db)
+
+    assert await store.academy_exists("acad_001") is True
+    assert await store.academy_exists("acad_002") is False
+    assert await store.student_exists("acad_001", "student_001") is True
+    assert await store.student_exists("acad_002", "student_001") is False

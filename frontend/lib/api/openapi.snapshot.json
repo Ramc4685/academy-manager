@@ -9979,6 +9979,70 @@
         "title": "AgreementAcceptanceRequest",
         "type": "object"
       },
+      "AiControlsRequest": {
+        "properties": {
+          "coach_review_narratives": {
+            "title": "Coach Review Narratives",
+            "type": "boolean"
+          },
+          "daily_call_caps": {
+            "additionalProperties": {
+              "maximum": 1000.0,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "title": "Daily Call Caps",
+            "type": "object"
+          },
+          "monthly_call_cap": {
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Monthly Call Cap",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "monthly_call_cap",
+          "daily_call_caps",
+          "coach_review_narratives"
+        ],
+        "title": "AiControlsRequest",
+        "type": "object"
+      },
+      "AiControlsView": {
+        "properties": {
+          "coach_review_narratives": {
+            "title": "Coach Review Narratives",
+            "type": "boolean"
+          },
+          "daily_call_caps": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Daily Call Caps",
+            "type": "object"
+          },
+          "features": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "monthly_call_cap": {
+            "title": "Monthly Call Cap",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "monthly_call_cap",
+          "daily_call_caps",
+          "coach_review_narratives",
+          "features"
+        ],
+        "title": "AiControlsView",
+        "type": "object"
+      },
       "AiUsageView": {
         "properties": {
           "cap": {
@@ -32177,6 +32241,16 @@
             "title": "Delete Student Profile",
             "type": "boolean"
           },
+          "enforced": {
+            "default": false,
+            "title": "Enforced",
+            "type": "boolean"
+          },
+          "operator_note": {
+            "default": "Recorded only: nothing is deleted or redacted. A platform admin must work the checklist in docs/policy/governance-deletion-cascade.md.",
+            "title": "Operator Note",
+            "type": "string"
+          },
           "pii_handling_policy": {
             "additionalProperties": true,
             "title": "Pii Handling Policy",
@@ -32584,6 +32658,11 @@
             "title": "Created At",
             "type": "string"
           },
+          "enforced": {
+            "default": false,
+            "title": "Enforced",
+            "type": "boolean"
+          },
           "expires_at": {
             "format": "date-time",
             "title": "Expires At",
@@ -32595,6 +32674,11 @@
           },
           "granted_by_user_id": {
             "title": "Granted By User Id",
+            "type": "string"
+          },
+          "operator_note": {
+            "default": "Recorded only: no sign-in path reads support access grants, so this grants no access.",
+            "title": "Operator Note",
             "type": "string"
           },
           "purpose": {
@@ -32703,12 +32787,22 @@
             "title": "Created At",
             "type": "string"
           },
+          "enforced": {
+            "default": false,
+            "title": "Enforced",
+            "type": "boolean"
+          },
           "impersonation_enabled": {
             "title": "Impersonation Enabled",
             "type": "boolean"
           },
           "impersonation_request_id": {
             "title": "Impersonation Request Id",
+            "type": "string"
+          },
+          "operator_note": {
+            "default": "Recorded only: impersonation is not built; no session can be issued.",
+            "title": "Operator Note",
             "type": "string"
           },
           "purpose": {
@@ -32884,9 +32978,19 @@
             "title": "Deletion Request Id",
             "type": "string"
           },
+          "enforced": {
+            "default": false,
+            "title": "Enforced",
+            "type": "boolean"
+          },
           "hard_delete_allowed": {
             "title": "Hard Delete Allowed",
             "type": "boolean"
+          },
+          "operator_note": {
+            "default": "Recorded only: nothing is deleted. A platform admin must work the checklist in docs/policy/governance-deletion-cascade.md.",
+            "title": "Operator Note",
+            "type": "string"
           },
           "reason": {
             "title": "Reason",
@@ -33008,6 +33112,11 @@
             "title": "Created At",
             "type": "string"
           },
+          "enforced": {
+            "default": false,
+            "title": "Enforced",
+            "type": "boolean"
+          },
           "export_request_id": {
             "title": "Export Request Id",
             "type": "string"
@@ -33015,6 +33124,11 @@
           "include_pii": {
             "title": "Include Pii",
             "type": "boolean"
+          },
+          "operator_note": {
+            "default": "Recorded only: no worker builds governance exports. Download the data from the tenant page export (Data export and purge).",
+            "title": "Operator Note",
+            "type": "string"
           },
           "pii_handling_policy": {
             "additionalProperties": true,
@@ -36918,6 +37032,66 @@
         "summary": "List Account Deletions",
         "tags": [
           "admin.account_deletions"
+        ]
+      }
+    },
+    "/api/v2/admin/ai/controls": {
+      "get": {
+        "operationId": "get_ai_controls_api_v2_admin_ai_controls_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiControlsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Ai Controls",
+        "tags": [
+          "admin.ai-controls"
+        ]
+      },
+      "put": {
+        "operationId": "put_ai_controls_api_v2_admin_ai_controls_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiControlsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiControlsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Ai Controls",
+        "tags": [
+          "admin.ai-controls"
         ]
       }
     },
