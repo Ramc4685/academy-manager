@@ -1683,13 +1683,17 @@
       "workflows": [
         "Pick class and no-class dates for a month",
         "Publish a month to parents",
-        "Email each class its month schedule"
+        "Email each class its month schedule",
+        "Credit a missed past class"
       ],
       "controls": {
         "buttons": [
           "Call off dates",
           "Publish month",
-          "Publish again"
+          "Publish again",
+          "Credit as missed",
+          "Preview credits",
+          "Credit and mark No class"
         ],
         "inputs": [
           "Month",
@@ -1699,7 +1703,8 @@
           "Email families"
         ],
         "modals": [
-          "Call off dates"
+          "Call off dates",
+          "Credit a missed class"
         ]
       },
       "states": [
@@ -1709,19 +1714,31 @@
         "validation",
         "unsaved no-class dates",
         "published",
-        "not published"
+        "not published",
+        "credits issued per called-off date",
+        "missed-class preview",
+        "schedule changed since the date",
+        "billing did not update"
       ],
       "risk_edges": [
         "Date already started or cancelled (409)",
         "Partial failure while calling off several dates",
         "Publishing with unsaved date changes",
-        "Announcement email failure"
+        "Announcement email failure",
+        "Missed date with attendance marked, unreadable attendance, not yet ended, or already called off (409)",
+        "Schedule edited after the date: preview says so, confirm refuses without cancelling (409)",
+        "Coach or assistant payout already draft, approved or paid: families still credited, payroll flagged for a hand fix",
+        "Billing sync fails after the cancel: page says families were not credited yet"
       ],
       "acceptance": [
         "Calling off a date reuses the single-date cancel path, so credits follow the paid-class rule",
         "Workflow evidence: \"Pick class and no-class dates for a month\" completes for the admin route /admin/sessions/month-dates with real-user evidence and no framework or runtime errors.",
         "Workflow evidence: \"Publish a month to parents\" completes for the admin route /admin/sessions/month-dates with real-user evidence and no framework or runtime errors.",
-        "Workflow evidence: \"Email each class its month schedule\" completes for the admin route /admin/sessions/month-dates with real-user evidence and no framework or runtime errors."
+        "Workflow evidence: \"Email each class its month schedule\" completes for the admin route /admin/sessions/month-dates with real-user evidence and no framework or runtime errors.",
+        "Crediting a missed date reuses the call-off credit path: preview total equals confirm total, the same per-date credit key prevents a second credit, and uncollected months or free-tuition children are never credited",
+        "Workflow evidence: \"Credit a missed past class\" completes for the admin route /admin/sessions/month-dates with real-user evidence and no framework or runtime errors.",
+        "A missed date that had attendance, a schedule change, or an unfinished class is refused with nothing cancelled or credited",
+        "A frozen or draft coach or assistant payout is flagged for a hand fix, and a failed billing sync is shown as not credited yet"
       ]
     },
     {

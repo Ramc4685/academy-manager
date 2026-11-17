@@ -238,13 +238,19 @@ class CancelSessionOccurrence:
         will simply stop paying it on its next run."""
         if self._payout_lock is None:
             return None
-        coach_id = occurrence.actual_coach_id or occurrence.scheduled_coach_id
-        if not coach_id:
-            return None
-        # A draft counts too: it was computed while the date was still payable.
-        return await self._payout_lock.locked_status_for(
-            coach_id=coach_id, at=occurrence.start_at, include_draft=True
-        )
+        lead = occurrence.actual_coach_id or occurrence.scheduled_coach_id
+        # Assistants are paid their own lines for the date, so their periods count too.
+        coaches = _distinct([c for c in (lead, *occurrence.assistant_coach_ids) if c])
+        statuses = [
+            # A draft counts too: it was computed while the date was still payable.
+            await self._payout_lock.locked_status_for(
+                coach_id=coach_id, at=occurrence.start_at, include_draft=True
+            )
+            for coach_id in coaches
+        ]
+        # A frozen (approved/paid) period needs a hand fix; prefer it over a draft.
+        frozen = [s for s in statuses if s and s != "draft"]
+        return frozen[0] if frozen else ("draft" if "draft" in statuses else None)
 
     async def _quote(self, occurrence: SessionOccurrence, session_id: str) -> dict[str, Any]:
         if self._billing is None:
@@ -625,11 +631,11 @@ def _payroll_flag_text(status: str | None) -> str | None:
         return None
     if status == "draft":
         return (
-            "The coach's payout for this period is a draft that still counts this date. "
+            "A coach's payout for this period is a draft that still counts this date. "
             "Recompute that coach's draft payout before approving it."
         )
     return (
-        f"The coach's payout period for this date is already {status}, so payroll will not "
+        f"A coach's payout period for this date is already {status}, so payroll will not "
         "pick this change up. Adjust the coach's pay for this date by hand."
     )
 

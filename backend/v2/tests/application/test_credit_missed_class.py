@@ -9,7 +9,7 @@ occurrence CAS refuses anything but a ``scheduled`` row, as Mongo does.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
@@ -269,3 +269,34 @@ async def test_a_class_still_in_progress_is_not_missed_yet() -> None:
     )
     with pytest.raises(OccurrenceNotPast):
         await use_case.preview_missed("occ-1")
+
+
+class _PerCoachPayoutLock:
+    def __init__(self, statuses: dict[str, str]) -> None:
+        self._statuses = statuses
+
+    async def locked_status_for(
+        self, *, coach_id: str, at: datetime, include_draft: bool = False
+    ) -> str | None:
+        status = self._statuses.get(coach_id)
+        return None if status == "draft" and not include_draft else status
+
+
+@pytest.mark.asyncio
+async def test_an_assistants_frozen_payout_is_flagged_too() -> None:
+    """Assistants are paid their own lines for the date (#1210 review)."""
+    occurrences = FakeOccurrences(
+        {
+            "occ-1": _occurrence(
+                start_at=PAST, end_at=PAST + timedelta(hours=1), assistant_coach_ids=("asst-1",)
+            )
+        }
+    )
+    use_case = _build(
+        occurrences,
+        attendance=FakeAttendance(),
+        billing=FakeBillingWithPreview(),
+        payout_lock=_PerCoachPayoutLock({"asst-1": "approved"}),
+    )
+    preview = await use_case.preview_missed("occ-1")
+    assert preview.payroll_flag and "approved" in preview.payroll_flag
