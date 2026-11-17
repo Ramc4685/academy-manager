@@ -1,6 +1,6 @@
 # platform-and-ai-hardening
 
-PR: TBD
+PR: #1205
 
 ## What changed
 Cancelling a tenant's platform plan (schedule cancellation or cancel now) now cancels the subscription at Stripe first. A subscription Stripe no longer has counts as cancelled, so a retry always converges. If Stripe fails, the row stays as it was and the route answers 502. A repeat cancel of a cancelled row does nothing, and cancelling no longer needs the plan to be active. A late `customer.subscription.deleted` for a subscription no longer on file (a trial replaced it) is ignored instead of wiping the trial. Starting a trial is refused (409) while a live Stripe subscription is on file, so the trial cannot orphan it. Governance requests (exports, deletions, support access grants, impersonation) now carry `enforced: false` and a note naming the manual step, because nothing acts on them yet. They are also refused (404) when the academy or student does not exist.
