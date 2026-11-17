@@ -255,3 +255,26 @@ async def test_a_dues_reminder_pushes_only_parents_whose_email_went_out() -> Non
             "data": {"url": "/parent/payments"},
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_routine_announcement_hands_off_to_the_opt_in_message_push() -> None:
+    """L11 item 4: routine posts send no email; the message notifier decides
+    (by the push catalogue and preferences) whether the class gets a nudge."""
+
+    @dataclass
+    class _MessagePush:
+        calls: list[tuple[str, str]] = field(default_factory=list)
+
+        async def class_announcement(self, message: Any, *, session_id: str, session_title: str):
+            self.calls.append((session_id, session_title))
+
+    push, message_push = RecordingPush(), _MessagePush()
+    service = _announcements(push)
+    service._message_push = message_push  # type: ignore[assignment]
+    with tenant_scope("acad"):
+        await service.post(
+            session_id="sess-1", author_id="adm-1", author_persona="admin", body="Routine note."
+        )
+    assert message_push.calls == [("sess-1", "Junior A")]
+    assert push.sent == []

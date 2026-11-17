@@ -234,6 +234,14 @@ class Settings(BaseSettings):
     )
     anthropic_api_key: SecretStr | None = Field(default=None)
 
+    push_extra_events: str = Field(
+        default="",
+        description=(
+            "Comma-separated opt-in push events (L11): direct_message, academy_broadcast, "
+            "class_announcement. Empty => only the four original events push. "
+            "PUSH_DELIVERY_ENABLED stays the global switch."
+        ),
+    )
     push_delivery_enabled: bool = Field(
         default=False,
         description=(

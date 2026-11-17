@@ -9,9 +9,13 @@ from __future__ import annotations
 from typing import Any
 
 from backend.v2.contexts.communications.application.ports import PushSendPort
+from backend.v2.contexts.communications.application.use_cases.notify_message_by_push import (
+    NotifyMessageByPush,
+)
 from backend.v2.contexts.communications.application.use_cases.send_push_to_user import (
     SendPushToUser,
 )
+from backend.v2.contexts.communications.domain.push_events import enabled_push_events
 from backend.v2.contexts.communications.infrastructure.fcm_push_send_port import FcmPushSendPort
 from backend.v2.contexts.communications.infrastructure.mongo_push_device_repo import (
     MongoPushDeviceRepository,
@@ -32,5 +36,23 @@ def compose_send_push_to_user(db: Any, settings: Any) -> SendPushToUser:
     """The push the parent notifiers send after their email (class cancelled,
     waitlist offer, urgent announcement, dues reminders)."""
     return SendPushToUser(
-        devices=MongoPushDeviceRepository(db), sender=_build_push_sender(settings)
+        devices=MongoPushDeviceRepository(db),
+        sender=_build_push_sender(settings),
+        enabled_events=enabled_push_events(getattr(settings, "push_extra_events", "")),
+    )
+
+
+def compose_message_push(db: Any, settings: Any) -> NotifyMessageByPush:
+    """Push for DMs, academy broadcasts and routine class announcements (L11)."""
+    from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
+        MongoAudienceResolver,
+    )
+    from backend.v2.contexts.communications.infrastructure.mongo_email_preference_repo import (
+        MongoEmailPreferenceRepository,
+    )
+
+    return NotifyMessageByPush(
+        push=compose_send_push_to_user(db, settings),
+        audiences=MongoAudienceResolver(db=db),
+        preferences=MongoEmailPreferenceRepository(db),
     )

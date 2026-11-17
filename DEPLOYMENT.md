@@ -313,6 +313,7 @@ deploy performs lives in `scripts/ops/`:
 | Fly env | `V2_EMAIL_SEND_MAX_RETRIES` | Optional, default 0. Retries after a Resend 429 or a keyed 5xx. |
 | Fly env | `V2_MARKETING_SENDER_EMAIL` | Optional. From address for campaigns (verified domain). |
 | Fly env | `V2_EMAIL_LIST_UNSUBSCRIBE_ENABLED` | Optional, default false. One-click `List-Unsubscribe` and postal address on campaigns. |
+| Fly env | `V2_PUSH_EXTRA_EVENTS` | Optional, default empty. Comma list of opt-in push events: `direct_message`, `academy_broadcast`, `class_announcement`. |
 | Fly env | `V2_CAMPAIGN_BACKGROUND_SEND_ENABLED` | Optional, default false. Campaigns queue and send from a resumable 1-minute background job. |
 | Fly env (optional) | `V2_SENTRY_CRON_JOBS` | Comma-separated scheduler job ids that send Sentry Crons check-ins. Default `generate_monthly_invoices`. |
 | GitHub repo secret | `SENTRY_AUTH_TOKEN` | Lets the deploy workflow create the Sentry release `courtmastr-fastapi@<sha>` (org `blno-badmintion`). Token scopes: `project:releases`, `org:read`. Missing token skips the step; events then fall back to `FLY_IMAGE_REF` as the release. |

@@ -74,7 +74,7 @@ from backend.v2.composition.prospect_email import compose_unsubscribe_prospect
 from backend.v2.composition.public_page_admin import compose_admin_public_page
 from backend.v2.composition.public_page_read import compose_public_page_read
 from backend.v2.composition.public_trial_requests import compose_public_trial_requests
-from backend.v2.composition.push import _build_push_sender
+from backend.v2.composition.push import _build_push_sender, compose_message_push
 from backend.v2.composition.referrals import compose_referrals
 from backend.v2.composition.student import compose_student
 from backend.v2.composition.waitlist_offers import (
@@ -837,6 +837,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.list_email_suppressions = compose_list_email_suppressions(db)
     app.state.release_email_suppression = compose_release_email_suppression(db)
     app.state.delivery_problems = compose_delivery_problems(db)
+    app.state.message_push = compose_message_push(db, settings)
 
     # Tenant resolver — wired only in SaaS mode. In non-SaaS mode the
     # middleware falls back to ``settings.default_academy_id`` so existing

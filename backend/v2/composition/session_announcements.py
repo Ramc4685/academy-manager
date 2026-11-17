@@ -38,16 +38,20 @@ from typing import Any, Literal, Protocol
 
 from backend.v2.composition.digests import _build_email_sender
 from backend.v2.composition.email_adapters import _BRAND_HEADING, _branded_shell
-from backend.v2.composition.push import compose_send_push_to_user
+from backend.v2.composition.push import compose_message_push, compose_send_push_to_user
 from backend.v2.contexts.communications.application.ports import (
     AudienceResolver,
     EmailSendPort,
+)
+from backend.v2.contexts.communications.application.use_cases.notify_message_by_push import (
+    NotifyMessageByPush,
 )
 from backend.v2.contexts.communications.application.use_cases.send_push_to_user import (
     SendPushToUser,
 )
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.contexts.communications.domain.models import SessionAudience
+from backend.v2.contexts.communications.domain.push_events import PushEvent
 from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
     MongoAudienceResolver,
 )
@@ -159,6 +163,7 @@ class SessionAnnouncementService:
         audiences: AudienceResolver,
         sender: EmailSendPort,
         push: SendPushToUser | None = None,
+        message_push: NotifyMessageByPush | None = None,
     ) -> None:
         self._comms = comms
         self._sessions = sessions
@@ -167,6 +172,7 @@ class SessionAnnouncementService:
         self._audiences = audiences
         self._sender = sender
         self._push = push
+        self._message_push = message_push
 
     async def list_for_session(self, session_id: str) -> list[Message]:
         session = await self._sessions.get(session_id)
@@ -205,6 +211,11 @@ class SessionAnnouncementService:
             urgency="urgent" if urgent else "routine",
         )
         if not urgent:
+            if self._message_push is not None:
+                # L11: routine posts send no email; an opt-in push nudges the class.
+                await self._message_push.class_announcement(
+                    message, session_id=session_id, session_title=session.title
+                )
             return AnnouncementPostResult(message=message, email_status="skipped")
 
         try:
@@ -291,6 +302,7 @@ class SessionAnnouncementService:
                     title=session.title or academy_name,
                     body=_push_preview(message.body),
                     data={"url": "/parent/messages"},
+                    event=PushEvent.URGENT_ANNOUNCEMENT,
                 )
         return AnnouncementPostResult(
             message=message,
@@ -328,4 +340,5 @@ def compose_announcements(
         audiences=MongoAudienceResolver(db=db),
         sender=_build_email_sender(settings, db),
         push=compose_send_push_to_user(db, settings),
+        message_push=compose_message_push(db, settings),
     )

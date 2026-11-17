@@ -72,6 +72,7 @@ async def mark_message_read(
 @router.post("/messages/broadcast", response_model=AdminMessageView)
 async def broadcast(
     body: BroadcastRequest,
+    request: Request,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminMessageView:
@@ -81,12 +82,15 @@ async def broadcast(
         scope_type=body.scope_type,
         scope_label=body.scope_label,
     )
+    if (push := getattr(request.app.state, "message_push", None)) is not None:
+        await push.academy_broadcast(m)
     return _message_view(m, claims.user_id)
 
 
 @router.post("/messages/dm", response_model=AdminMessageView)
 async def dm(
     body: DMRequest,
+    request: Request,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminMessageView:
@@ -96,6 +100,8 @@ async def dm(
         recipient_id=body.recipient_id,
         body=body.body,
     )
+    if (push := getattr(request.app.state, "message_push", None)) is not None:
+        await push.direct_message(m)
     return _message_view(m, claims.user_id)
 
 
