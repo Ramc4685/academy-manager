@@ -183,19 +183,20 @@ def query_family_index(
 def summarize_family_index(index: FamilyIndex) -> FamilyIndexSummary:
     counts: dict[str, int] = {stage: 0 for stage in FAMILY_STAGE_PRECEDENCE}
     tile_counts: dict[str, int] = {stage: 0 for stage in FAMILY_STAGE_PRECEDENCE}
-    tiled = {stage for stages in SCOPE_STAGES.values() for stage in stages}
+    scope_of = {stage: scope for scope, stages in SCOPE_STAGES.items() for stage in stages}
     not_billed_families = 0
     for record in index.families:
         counts[record.stage] = counts.get(record.stage, 0) + 1
-        # Tiles are headcounts: a not-billed child does not put its family on one.
-        tile_stage = (
+        # Tiles are headcounts: a not-billed child does not put its family on
+        # one. A family the billed children alone would put on another tile (or
+        # none) is "+N not billed", never moved: its tile's filter uses its stage.
+        if any(c.not_billed for c in record.children) and scope_of.get(
             roll_up_family_stage(c.lifecycle for c in record.children if not c.not_billed)
-            if any(c.not_billed for c in record.children)
-            else record.stage
-        )
-        tile_counts[tile_stage] = tile_counts.get(tile_stage, 0) + 1
-        if record.stage in tiled and tile_stage not in tiled:
-            not_billed_families += 1
+        ) != scope_of.get(record.stage):
+            if record.stage in scope_of:
+                not_billed_families += 1
+            continue
+        tile_counts[record.stage] = tile_counts.get(record.stage, 0) + 1
     tiles = {
         scope: sum(tile_counts.get(stage, 0) for stage in stages)
         for scope, stages in SCOPE_STAGES.items()

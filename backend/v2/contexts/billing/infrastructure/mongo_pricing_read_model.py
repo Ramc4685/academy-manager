@@ -23,7 +23,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
     MONTHLY_INVOICED_ENROLLMENT_STATUS,
     session_amount_cents,
 )
-from backend.v2.shared.billing_type import MONTHLY_INVOICED_BILLING_TYPES
+from backend.v2.shared.billing_type import is_not_billed
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 #: Enough for any academy's class list and override review; the page is not
@@ -135,8 +135,7 @@ class MongoPricingReadModel(TenantScopedRepository):
         )
         students: dict[str, set[str]] = {}
         async for doc in cursor:
-            billing_type = str(doc.get("billing_type") or "standard").lower()
-            if billing_type not in MONTHLY_INVOICED_BILLING_TYPES or not doc.get("student_id"):
+            if is_not_billed(doc) or not doc.get("student_id"):
                 continue
             students.setdefault(str(doc["session_id"]), set()).add(str(doc["student_id"]))
         return {session_id: len(ids) for session_id, ids in students.items()}

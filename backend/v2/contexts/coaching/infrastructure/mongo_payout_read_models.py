@@ -216,15 +216,17 @@ class MongoPayableOccurrenceQuery:
         share_of: dict[str, int] = {}
         for session_id, month in sorted(set(month_of.values())):
             tuition = basis.amounts.get((session_id, month))
+            month_start, month_end = _local_month_bounds(month, tz)
             if tuition is None:
                 # A class whose only children are not billed has nothing to
                 # invoice: its base is $0, not a missing invoice.
                 if basis.missing_invoices != "pay_zero" and not (
-                    await self._only_not_billed_children(academy_id, session_id)
+                    await self._only_not_billed_children(
+                        academy_id, session_id, month_start, month_end
+                    )
                 ):
                     continue
                 tuition = 0
-            month_start, month_end = _local_month_bounds(month, tz)
             query: dict[str, Any] = {
                 "academy_id": academy_id,
                 "session_id": session_id,
@@ -250,11 +252,18 @@ class MongoPayableOccurrenceQuery:
             if occurrence_id in share_of
         }, assistants_paid
 
-    async def _only_not_billed_children(self, academy_id: str, session_id: str) -> bool:
-        """True when the class has enrolled children and none of them is billed.
+    async def _only_not_billed_children(
+        self, academy_id: str, session_id: str, month_start: datetime, month_end: datetime
+    ) -> bool:
+        """True when the class has enrolled children and none was billed that month.
 
         Active, paused and held rows count; one billed child among them keeps
-        the missing-invoice warning (the class should have been invoiced).
+        the missing-invoice warning (the class should have been invoiced). A
+        child marked not billed after the month ended was billed that month,
+        so marking today never hides an older month's missing invoice; one
+        whose billing started after the month began was not billed that month.
+        A child who left during the month still counts. Imported ``NoCharge``
+        rows carry no mark time and count every month.
         """
         rows = [
             row
@@ -262,13 +271,24 @@ class MongoPayableOccurrenceQuery:
                 {
                     "academy_id": academy_id,
                     "session_id": session_id,
-                    "status": {"$in": list(_PAYROLL_ROSTER_STATUSES)},
                     "is_deleted": {"$ne": True},
+                    "$or": [
+                        {"status": {"$in": list(_PAYROLL_ROSTER_STATUSES)}},
+                        {"updated_at": {"$gte": month_start}},
+                    ],
                 },
-                {"billing_type": 1},
+                {"billing_type": 1, "not_billed_at": 1, "billing_started_at": 1},
             )
         ]
-        return bool(rows) and all(is_not_billed(row) for row in rows)
+
+        def not_billed_that_month(row: dict[str, Any]) -> bool:
+            if is_not_billed(row):
+                marked = row.get("not_billed_at")
+                return marked is None or _as_utc(marked) < month_end
+            started = row.get("billing_started_at")
+            return started is not None and _as_utc(started) >= month_start
+
+        return bool(rows) and all(not_billed_that_month(row) for row in rows)
 
 
 #: Enrollment statuses that put a child in a class for payroll's not-billed check.

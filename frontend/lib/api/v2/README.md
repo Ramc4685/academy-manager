@@ -23,6 +23,7 @@ multi-academy switching it is the simplest path.
 - `payouts.ts` calls admin payout-period endpoints under `/admin/payout-periods/*`.
 - `sessions.ts` calls admin session and occurrence endpoints.
 - `students.ts` calls admin student progress and placement endpoints.
+  `setEnrollmentBilling` is the owner-only "Not billed" / "Start billing" write (`PUT /admin/enrollments/{id}/billing`).
 - `session-types.ts` calls the admin session-type billing catalog endpoints
   under `/admin/session-types/*`. Note `GET` returns active types only, so
   archiving (`DELETE`, a soft delete) is not reversible through this client.

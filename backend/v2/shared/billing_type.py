@@ -14,7 +14,7 @@ read it and contexts may not import one another.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Final, Literal
+from typing import Any, Final
 
 #: ``billing_type`` values the monthly run invoices (lower-cased; missing is "").
 MONTHLY_INVOICED_BILLING_TYPES: Final[frozenset[str]] = frozenset(
@@ -25,8 +25,7 @@ MONTHLY_INVOICED_BILLING_TYPES: Final[frozenset[str]] = frozenset(
 #: rows and new rows share one stored value.
 NOT_BILLED_BILLING_TYPE: Final = "NoCharge"
 
-#: Why a child is not billed. Labels live in the UI.
-NotBilledReason = Literal["owner_child", "coach_child", "scholarship", "other"]
+#: Why a child is not billed. Labels live in the UI; the route's Literal mirrors it.
 NOT_BILLED_REASONS: Final[tuple[str, ...]] = (
     "owner_child",
     "coach_child",

@@ -123,6 +123,20 @@ export function StudentsPanel({
     );
   }
 
+  const notBilledDialog = (
+    <NotBilledDialog
+      enrollmentId={billingChange?.enrollment_id ?? null}
+      className={billingChange?.session_title}
+      notBilled={Boolean(billingChange?.not_billed)}
+      onClose={() => setBillingChange(null)}
+      onSaved={() => {
+        setBillingChange(null);
+        // Billing, the sibling preview and the Families tiles all sit under families().
+        void queryClient.invalidateQueries({ queryKey: queryKeys.admin.families() });
+      }}
+    />
+  );
+
   if (isPhone) {
     return (
       <Card p={20} data-testid="family-students">
@@ -193,17 +207,7 @@ export function StudentsPanel({
             )}
           </PhoneList>
         )}
-        <NotBilledDialog
-        enrollmentId={billingChange?.enrollment_id ?? null}
-        className={billingChange?.session_title}
-        notBilled={Boolean(billingChange?.not_billed)}
-        onClose={() => setBillingChange(null)}
-        onSaved={() => {
-          setBillingChange(null);
-          // Billing, the sibling preview and the Families tiles all sit under families().
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.families() });
-        }}
-      />
+        {notBilledDialog}
       {stopAllClassesFor && (
           <StopAllClassesDialog
             studentId={stopAllClassesFor.studentId}
@@ -291,17 +295,7 @@ export function StudentsPanel({
           )}
         </ul>
       )}
-      <NotBilledDialog
-        enrollmentId={billingChange?.enrollment_id ?? null}
-        className={billingChange?.session_title}
-        notBilled={Boolean(billingChange?.not_billed)}
-        onClose={() => setBillingChange(null)}
-        onSaved={() => {
-          setBillingChange(null);
-          // Billing, the sibling preview and the Families tiles all sit under families().
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.families() });
-        }}
-      />
+      {notBilledDialog}
       {stopAllClassesFor && (
         <StopAllClassesDialog
           studentId={stopAllClassesFor.studentId}

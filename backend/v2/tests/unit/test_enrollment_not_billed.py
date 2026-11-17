@@ -165,3 +165,22 @@ async def test_void_takes_unpaid_draft_and_open_only() -> None:
     assert voided == ["d", "o"]
     assert result.voided_invoice_ids == ["d", "o"]
     assert result.kept_invoice_ids == ["p"]
+
+
+async def test_a_failed_void_is_kept_and_the_change_still_audited() -> None:
+    async def boom(*, invoice_id: str, reason: str, actor_id: str | None = None) -> None:
+        raise ValueError("money landed")
+
+    audit = _Audit()
+    use_case = _use_case(_Store({"enrollment_id": "enr-1"}), audit)
+    use_case._void = boom  # type: ignore[method-assign]
+    invoice = SimpleNamespace(invoice_id="o", status="open", total_cents=100, balance_due_cents=100)
+    use_case._invoices = _Invoices([invoice])  # type: ignore[assignment]
+
+    result = await use_case.execute(
+        "acad", _cmd(not_billed=True, reason="coach_child", void_open_invoices=True)
+    )
+
+    assert result.kept_invoice_ids == ["o"]
+    assert result.voided_invoice_ids == []
+    assert len(audit.entries) == 1

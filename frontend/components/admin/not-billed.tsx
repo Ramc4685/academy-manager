@@ -74,6 +74,8 @@ export function NotBilledDialog({
   const [reason, setReason] = useState<NotBilledReason | "">("");
   const [note, setNote] = useState("");
   const [voidOpen, setVoidOpen] = useState(false);
+  // Saved, but some open invoices were not voided: say so before closing.
+  const [keptResult, setKeptResult] = useState<EnrollmentBillingView | null>(null);
   const mutation = useMutation({
     mutationFn: () =>
       setEnrollmentBilling(
@@ -91,11 +93,18 @@ export function NotBilledDialog({
       setReason("");
       setNote("");
       setVoidOpen(false);
-      onSaved(result);
+      if (result.kept_invoice_ids.length > 0) setKeptResult(result);
+      else onSaved(result);
     },
   });
   const close = () => {
     mutation.reset();
+    if (keptResult) {
+      const result = keptResult;
+      setKeptResult(null);
+      onSaved(result);
+      return;
+    }
     onClose();
   };
   const invalid = !notBilled && (!reason || (reason === "other" && !note.trim()));
@@ -107,6 +116,13 @@ export function NotBilledDialog({
       title={notBilled ? "Start billing" : "Not billed"}
       dismissable={!mutation.isPending}
       footer={
+        keptResult ? (
+          <div className="flex justify-end">
+            <Button size="sm" onClick={close}>
+              Done
+            </Button>
+          </div>
+        ) : (
         <div className="flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={close} disabled={mutation.isPending}>
             Cancel
@@ -120,9 +136,17 @@ export function NotBilledDialog({
             {mutation.isPending ? "Saving…" : notBilled ? "Start billing" : "Mark not billed"}
           </Button>
         </div>
+        )
       }
     >
-      {notBilled ? (
+      {keptResult ? (
+        <p role="status" data-testid="not-billed-kept" className="text-sm text-rally-ink">
+          Marked not billed. {keptResult.kept_invoice_ids.length}{" "}
+          {keptResult.kept_invoice_ids.length === 1 ? "open invoice was" : "open invoices were"} not
+          voided because money is recorded on them or the void failed. Review them on the family
+          Billing tab.
+        </p>
+      ) : notBilled ? (
         <p className="text-sm text-rally-subtle">
           {className ?? "This class"} is invoiced again from next month. This month stays
           unbilled.

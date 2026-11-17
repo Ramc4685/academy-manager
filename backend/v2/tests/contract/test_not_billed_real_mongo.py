@@ -355,3 +355,63 @@ async def test_projected_income_leaves_out_not_billed_enrollments(real_db, acad)
     assert report["enrollment_count"] == 1
     assert report["total_cents"] == 10_000
     assert report["not_billed_enrollment_count"] == 1
+
+
+async def test_marking_today_never_hides_an_older_months_missing_invoice(real_db, acad) -> None:
+    await _two_november_classes(real_db)
+    await real_db["session_occurrences"].update_many(
+        {},
+        [
+            {
+                "$set": {
+                    "start_at": {
+                        "$dateSubtract": {"startDate": "$start_at", "unit": "day", "amount": 28}
+                    }
+                }
+            }
+        ],
+    )
+    await _enroll(real_db, "enr-b", student_id="kid-b", billing_type="Manual")
+    await _setter(real_db, []).execute(
+        ACAD,
+        SetEnrollmentBillingCommand(
+            enrollment_id="enr-b", not_billed=True, reason="owner_child", actor_id="owner-1"
+        ),
+    )
+
+    october = await ComputeCoachPayout(
+        occurrences=MongoPayableOccurrenceQuery(
+            real_db, tuition=MongoInvoicedTuitionReadModel(real_db), academy_timezone=_central
+        ),
+        rates=MongoCoachRateLookup(real_db),
+    ).execute(
+        coach_id="coach-1",
+        academy_id=ACAD,
+        period_start=datetime(2026, 10, 1, 5, tzinfo=UTC),
+        period_end=NOV_START,
+    )
+    assert len(_missing_invoice_warnings(october)) == 2
+
+
+async def test_a_billed_child_who_left_mid_month_keeps_the_warning(real_db, acad) -> None:
+    await _two_november_classes(real_db)
+    await _enroll(real_db, "enr-a", student_id="kid-a", billing_type="NoCharge")
+    await _enroll(real_db, "enr-b", student_id="kid-b", status="dropped")
+    await real_db["enrollments"].update_one(
+        {"enrollment_id": "enr-b"}, {"$set": {"updated_at": datetime(2026, 11, 28, tzinfo=UTC)}}
+    )
+
+    assert len(_missing_invoice_warnings(await _payroll(real_db))) == 2
+
+
+async def test_start_billing_does_not_turn_skipped_months_into_warnings(real_db, acad) -> None:
+    await _two_november_classes(real_db)
+    await _enroll(real_db, "enr-a", student_id="kid-a", billing_type="NoCharge")
+    await _setter(real_db, []).execute(
+        ACAD,
+        SetEnrollmentBillingCommand(enrollment_id="enr-a", not_billed=False, actor_id="owner-1"),
+    )
+
+    statement = await _payroll(real_db)
+    assert _missing_invoice_warnings(statement) == []
+    assert statement.total_minor == 0

@@ -16,6 +16,7 @@ the next monthly run that invoices it is next month's.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -30,6 +31,8 @@ from backend.v2.shared.billing_type import (
     NOT_BILLED_REASONS,
     is_not_billed,
 )
+
+logger = logging.getLogger(__name__)
 
 #: The fields a not-billed change moves; also what the audit row records.
 _AUDITED_FIELDS = ("billing_type", "not_billed_reason", "not_billed_note")
@@ -103,7 +106,7 @@ class EnrollmentBillingResult(BaseModel):
     not_billed_reason: str | None = None
     not_billed_note: str | None = None
     voided_invoice_ids: list[str] = []
-    #: Open invoices left alone because money is already recorded on them.
+    #: Open invoices left alone: money is recorded on them, or the void failed.
     kept_invoice_ids: list[str] = []
     #: "Start billing": the month the run skips (the next one invoices).
     skipped_period: str | None = None
@@ -217,7 +220,16 @@ class SetEnrollmentBilling:
             if invoice.balance_due_cents != invoice.total_cents:
                 kept.append(invoice.invoice_id)
                 continue
-            await self._void(invoice_id=invoice.invoice_id, reason=reason, actor_id=cmd.actor_id)
+            try:
+                await self._void(
+                    invoice_id=invoice.invoice_id, reason=reason, actor_id=cmd.actor_id
+                )
+            except Exception:
+                # The mark is already written; one failed void (money landed
+                # since the list, a Stripe error) must not lose the audit row.
+                logger.warning("not billed: void of %s failed", invoice.invoice_id, exc_info=True)
+                kept.append(invoice.invoice_id)
+                continue
             voided.append(invoice.invoice_id)
         return voided, kept
 
