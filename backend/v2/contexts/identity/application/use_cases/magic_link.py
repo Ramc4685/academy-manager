@@ -12,6 +12,9 @@ Security posture (do not weaken — see the feature's SECURITY callouts):
   one wins, the other gets ``MagicLinkInvalid``.
 * **Short-lived** — 72h TTL, after which consume returns ``MagicLinkExpired``.
 * **Tenant-bound** — a token issued for one academy is rejected against another.
+* **Parent-only** — consume succeeds only for a user holding an ACTIVE parent
+  membership in the token's academy; staff-only, removed or cross-tenant users
+  get the same opaque ``MagicLinkInvalid`` as an unknown token.
 * **Open-redirect-safe** — ``_safe_next`` only permits a same-site absolute
   path; ``//host`` and absolute URLs collapse to the dashboard.
 """
@@ -26,12 +29,14 @@ from datetime import UTC, datetime, timedelta
 from backend.v2.contexts.identity.application.ports import (
     CustomTokenPort,
     MagicLinkRepository,
+    MembershipLookup,
     UserRepository,
 )
 from backend.v2.contexts.identity.domain.errors import (
     MagicLinkExpired,
     MagicLinkInvalid,
 )
+from backend.v2.contexts.identity.domain.identity_aliases import identity_aliases
 from backend.v2.contexts.identity.domain.models import MagicLinkRecord
 from backend.v2.shared.ids import new_ulid
 
@@ -114,11 +119,17 @@ class ConsumeMagicLink:
     """
 
     def __init__(
-        self, *, links: MagicLinkRepository, tokens: CustomTokenPort, users: UserRepository
+        self,
+        *,
+        links: MagicLinkRepository,
+        tokens: CustomTokenPort,
+        users: UserRepository,
+        memberships: MembershipLookup,
     ) -> None:
         self._links = links
         self._tokens = tokens
         self._users = users
+        self._memberships = memberships
 
     async def execute(self, token: str, *, academy_id: str) -> ConsumedMagicLink:
         token_hash = _hash_token(token)
@@ -142,6 +153,16 @@ class ConsumeMagicLink:
         # The repo already folds a legacy auth_uid into firebase_uid.
         uid = user.firebase_uid if user is not None else None
         if user is None or not uid or user.global_status != "active":
+            raise MagicLinkInvalid()
+        # Role + tenant binding: only an active parent of the issuing academy may
+        # redeem. Without this, a link minted for a roster id that is (or became)
+        # staff, or was removed, would mint a session with no role check.
+        membership = await self._memberships.get_for_user_in_academy(
+            user_id=user.user_id,
+            academy_id=record.academy_id,
+            aliases=identity_aliases(user.user_id, user.firebase_uid, user.auth_uid),
+        )
+        if membership is None or membership.status != "active" or "parent" not in membership.roles:
             raise MagicLinkInvalid()
         # Mint before claiming: minting has no side effects, so a Firebase
         # failure here leaves the link redeemable on retry.

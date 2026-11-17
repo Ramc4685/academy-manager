@@ -21,7 +21,11 @@ from backend.v2.contexts.identity.domain.errors import (
     MagicLinkExpired,
     MagicLinkInvalid,
 )
-from backend.v2.contexts.identity.domain.models import MagicLinkRecord, User
+from backend.v2.contexts.identity.domain.models import (
+    AcademyMembership,
+    MagicLinkRecord,
+    User,
+)
 
 ACADEMY = "acad-1"
 
@@ -84,8 +88,46 @@ class _FakeUsers:
         return self.users.get(user_id)
 
 
-def _consume(repo: _FakeRepo, tokens: _FakeTokens, users: _FakeUsers | None = None):
-    return ConsumeMagicLink(links=repo, tokens=tokens, users=users or _FakeUsers())
+class _FakeMemberships:
+    """Keyed by (academy_id, user_id); defaults to parent-1 as an active parent."""
+
+    def __init__(self, rows: dict[tuple[str, str], AcademyMembership] | None = None) -> None:
+        self.rows = (
+            rows
+            if rows is not None
+            else {(ACADEMY, "parent-1"): _membership(ACADEMY, "parent-1", ("parent",))}
+        )
+
+    async def get_for_user_in_academy(
+        self, *, user_id: str, academy_id: str, aliases: object = None
+    ) -> AcademyMembership | None:
+        return self.rows.get((academy_id, user_id))
+
+
+def _membership(
+    academy_id: str, user_id: str, roles: tuple[str, ...], status: str = "active"
+) -> AcademyMembership:
+    return AcademyMembership(
+        membership_id=f"m-{academy_id}-{user_id}",
+        academy_id=academy_id,
+        user_id=user_id,
+        roles=roles,  # type: ignore[arg-type]
+        status=status,  # type: ignore[arg-type]
+    )
+
+
+def _consume(
+    repo: _FakeRepo,
+    tokens: _FakeTokens,
+    users: _FakeUsers | None = None,
+    memberships: _FakeMemberships | None = None,
+):
+    return ConsumeMagicLink(
+        links=repo,
+        tokens=tokens,
+        users=users or _FakeUsers(),
+        memberships=memberships or _FakeMemberships(),
+    )
 
 
 def _seed(repo: _FakeRepo, **overrides: object) -> str:
@@ -274,7 +316,11 @@ async def test_consume_mints_for_the_users_firebase_uid_not_the_roster_id() -> N
         }
     )
 
-    result = await _consume(repo, tokens, users).execute(raw, academy_id=ACADEMY)
+    memberships = _FakeMemberships(
+        {(ACADEMY, "roster-7"): _membership(ACADEMY, "roster-7", ("parent",))}
+    )
+
+    result = await _consume(repo, tokens, users, memberships).execute(raw, academy_id=ACADEMY)
 
     assert tokens.calls == ["fb-real"]
     assert result.custom_token == "custom-fb-real"
@@ -335,3 +381,57 @@ async def test_issuing_a_new_link_revokes_the_parents_older_unused_links() -> No
     assert _hash_token(old) not in repo.by_hash
     assert _hash_token(other_parent) in repo.by_hash
     assert _hash_token(new) in repo.by_hash
+
+
+# ---------------------------------------------------------------------------
+# Parent-membership gate: only an active parent of the token's academy redeems
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rows",
+    [
+        pytest.param(
+            {(ACADEMY, "parent-1"): _membership(ACADEMY, "parent-1", ("coach", "admin"))},
+            id="staff-only",
+        ),
+        pytest.param(
+            {("acad-other", "parent-1"): _membership("acad-other", "parent-1", ("parent",))},
+            id="parent-in-wrong-academy",
+        ),
+        pytest.param(
+            {(ACADEMY, "parent-1"): _membership(ACADEMY, "parent-1", ("parent",), "removed")},
+            id="inactive-membership",
+        ),
+        pytest.param({}, id="no-membership"),
+    ],
+)
+async def test_consume_rejects_a_user_without_an_active_parent_membership(
+    rows: dict[tuple[str, str], AcademyMembership],
+) -> None:
+    repo = _FakeRepo()
+    tokens = _FakeTokens()
+    raw = _seed(repo)
+
+    with pytest.raises(MagicLinkInvalid):
+        await _consume(repo, tokens, memberships=_FakeMemberships(rows)).execute(
+            raw, academy_id=ACADEMY
+        )
+    assert tokens.calls == []
+    assert repo.by_hash[_hash_token(raw)].used_at is None
+
+
+@pytest.mark.asyncio
+async def test_consume_accepts_an_active_parent_who_is_also_staff() -> None:
+    repo = _FakeRepo()
+    tokens = _FakeTokens()
+    raw = _seed(repo)
+    rows = {(ACADEMY, "parent-1"): _membership(ACADEMY, "parent-1", ("coach", "parent"))}
+
+    result = await _consume(repo, tokens, memberships=_FakeMemberships(rows)).execute(
+        raw, academy_id=ACADEMY
+    )
+
+    assert result.custom_token == "custom-fb-parent-1"
+    assert repo.by_hash[_hash_token(raw)].used_at is not None
