@@ -116,6 +116,18 @@ async def test_a_stale_claim_from_a_dead_request_is_taken_over(real_db) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_claim_without_takeover_stays_held_when_stale(real_db) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    store = MongoIdempotencyStore(real_db)
+    assert await store.claim("nt:claim", takeover=False)
+    await real_db["idempotency_keys"].update_one(
+        {"key": "nt:claim"}, {"$set": {"claimed_at": datetime.now(UTC) - timedelta(days=1)}}
+    )
+    assert await store.claim("nt:claim", takeover=False) is None
+
+
+@pytest.mark.asyncio
 async def test_a_taken_over_request_cannot_release_the_new_holders_claim(real_db) -> None:
     from datetime import UTC, datetime, timedelta
 

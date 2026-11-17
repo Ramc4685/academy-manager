@@ -8,7 +8,7 @@ from __future__ import annotations
 
 
 class ClaimableStore:
-    async def claim(self, key: str) -> object | None:
+    async def claim(self, key: str, *, takeover: bool = True) -> object | None:
         claimed: dict[str, object] = self.__dict__.setdefault("_claimed", {})
         if key in claimed:
             return None

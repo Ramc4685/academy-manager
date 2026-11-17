@@ -266,17 +266,14 @@ class _LosesTheFirstResultWrite(MongoIdempotencyStore):
 
 
 async def test_keyed_retry_after_a_crash_does_not_record_a_second_payment(
-    real_db, boot_academy, monkeypatch: pytest.MonkeyPatch
+    real_db, boot_academy
 ) -> None:
-    from backend.v2.contexts.billing.application import manual_payment_idempotency
-
     await _seed_invoice(real_db)
     admin = _admin(real_db, store=_LosesTheFirstResultWrite(real_db))
     with tenant_scope(ACAD):
         with pytest.raises(RuntimeError):
             await _pay(admin, key="k-crash")
-        # The admin retries once the in-flight window has passed.
-        monkeypatch.setattr(manual_payment_idempotency, "IN_FLIGHT_WINDOW", timedelta(0))
+        # The failed run released its claim, so the retry runs straight away.
         retried = await _pay(admin, key="k-crash")
         payments, allocations, invoice = await _ledger_state(real_db)
 
@@ -284,6 +281,61 @@ async def test_keyed_retry_after_a_crash_does_not_record_a_second_payment(
     assert len(allocations) == 1
     assert invoice["balance_due_cents"] == TOTAL - 3_000
     assert retried["balance_due_cents"] == TOTAL - 3_000
+
+
+async def test_keyed_retry_after_a_failed_recording_runs_at_once(
+    real_db, boot_academy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A recording that raised gives its claim back: the admin's retry with the same
+    key records the payment instead of a 409 "in progress" for the next minute."""
+    from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
+        MongoBillingLedgerRepository,
+    )
+
+    await _seed_invoice(real_db)
+    admin = _admin(real_db)
+    real_record = MongoBillingLedgerRepository.record_payment
+    calls = 0
+
+    async def _down_once(self: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("primary stepped down")
+        return await real_record(self, *args, **kwargs)
+
+    monkeypatch.setattr(MongoBillingLedgerRepository, "record_payment", _down_once)
+    with tenant_scope(ACAD):
+        with pytest.raises(RuntimeError):
+            await _pay(admin, key="k-down")
+        retried = await _pay(admin, key="k-down")
+        payments, allocations, invoice = await _ledger_state(real_db)
+
+    assert len(payments) == 1 and payments[0]["payment_id"] == retried["payment_id"]
+    assert len(allocations) == 1
+    assert invoice["balance_due_cents"] == TOTAL - 3_000
+
+
+async def test_keyless_retry_after_a_crash_never_records_twice_even_when_stale(
+    real_db, boot_academy
+) -> None:
+    """A keyless recording has no key-derived payment id, so its claim is never taken
+    over: an identical retry long after a crash is a 409, not a second payment."""
+    await _seed_invoice(real_db)
+    admin = _admin(real_db, store=_LosesTheFirstResultWrite(real_db))
+    with tenant_scope(ACAD):
+        with pytest.raises(RuntimeError):
+            await _pay(admin, key=None)
+        await real_db["idempotency_keys"].update_many(
+            {"claimed_at": {"$exists": True}},
+            {"$set": {"claimed_at": NOW - timedelta(days=1)}},
+        )
+        with pytest.raises(ValueError, match="possible duplicate"):
+            await _pay(admin, key=None)
+        payments, _, invoice = await _ledger_state(real_db)
+
+    assert len(payments) == 1
+    assert invoice["balance_due_cents"] == TOTAL - 3_000
 
 
 # ------------------------------------------------------------------ tenancy
@@ -429,18 +481,17 @@ async def test_overflow_retry_with_the_same_key_moves_no_more_money(real_db, boo
 
 
 async def test_overflow_crash_retry_counts_invoices_it_already_settled(
-    real_db, boot_academy, monkeypatch: pytest.MonkeyPatch
+    real_db, boot_academy
 ) -> None:
     # PR #1093 review: on resume the sibling this payment already paid reads as
     # "paid"; skipping it left $60 to spread and the overflow step then raised.
-    from backend.v2.contexts.billing.application import manual_payment_idempotency
 
     await _seed_family_months(real_db)
     admin = _admin(real_db, store=_LosesTheFirstResultWrite(real_db))
     with tenant_scope(ACAD):
         with pytest.raises(RuntimeError):
             await _pay(admin, key="k-crash-spread", amount=12_000, invoice_id="inv-2026-10")
-        monkeypatch.setattr(manual_payment_idempotency, "IN_FLIGHT_WINDOW", timedelta(0))
+        # The failed run released its claim, so the retry runs straight away.
         retried = await _pay(admin, key="k-crash-spread", amount=12_000, invoice_id="inv-2026-10")
 
     assert retried["previous_balance_applied_cents"] == 6_000
