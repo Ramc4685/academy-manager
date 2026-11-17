@@ -6,6 +6,7 @@ import type { UrlObject } from "url";
 
 import { AcademyPanel } from "@/components/admin/settings/academy-panel";
 import { AiUsageCard } from "@/components/admin/settings/ai-usage-card";
+import { ClosureDatesCard } from "@/components/admin/settings/closure-dates-card";
 import { BillingRulesPanel } from "@/components/admin/settings/billing-rules-panel";
 import { GatewayPanel } from "@/components/admin/settings/gateway-panel";
 import { NotifyPanel } from "@/components/admin/settings/notify-panel";
@@ -96,6 +97,7 @@ export default function AdminSettingsPage() {
         {active === "academy" && (
           <div className="space-y-6">
             <AcademyPanel />
+            <ClosureDatesCard />
             <AiUsageCard />
           </div>
         )}

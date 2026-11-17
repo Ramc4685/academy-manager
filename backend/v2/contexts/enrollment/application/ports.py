@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import date, datetime
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from typing import Any, Literal, Protocol
 
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
@@ -505,6 +506,53 @@ class OccurrenceCancellationNotifier(Protocol):
         credited_student_ids: Sequence[str] = (),
         billing_warning: str | None = None,
     ) -> None: ...
+
+
+@dataclass(frozen=True)
+class ClosedClassDate:
+    """One class date an academy closure called off, with its notice inputs."""
+
+    session_id: str
+    start_at: datetime
+    one_time_student_ids: tuple[str, ...] = ()
+    credited_student_ids: tuple[str, ...] = ()
+    billing_warning: str | None = None
+
+
+@dataclass(frozen=True)
+class ClosureNotice:
+    """What the closure summary reached: families on the cancelled rosters,
+    the ones actually emailed (a roster-only parent with no email is not), and
+    whether any send failed."""
+
+    families_affected: int = 0
+    families_emailed: int = 0
+    failed: bool = False
+
+
+class AcademyClosureNotifier(Protocol):
+    """One email per family (and per staff member) for a whole closure.
+
+    Same audience and money honesty as ``OccurrenceCancellationNotifier``,
+    summed over every date the closure cancelled. Best-effort: never raises;
+    a failed send is reported in ``ClosureNotice.failed``.
+    """
+
+    async def academy_closed(
+        self, *, dates: Sequence[ClosedClassDate], reason: str, actor_id: str | None
+    ) -> ClosureNotice: ...
+
+
+class LiveSessionLister(Protocol):
+    async def list_live(self) -> list[Session]: ...
+
+
+#: Re-derives a session's dated rows for the materialisation window, exactly as
+#: create/edit do, so a closure finds dates no admin edit has written yet.
+OccurrenceMaterializer = Callable[[Session], Awaitable[None]]
+
+#: How far ahead a weekly class's dated rows are materialised.
+OCCURRENCE_WINDOW = timedelta(days=60)
 
 
 #: What the admin chose for the money side of a withdrawal (issue #670).

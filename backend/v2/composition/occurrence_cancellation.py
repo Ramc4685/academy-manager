@@ -41,6 +41,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import 
 from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
     CancelSessionOccurrence,
 )
+from backend.v2.contexts.enrollment.application.use_cases.close_academy_dates import (
+    CloseAcademyDates,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_event_repo import (
     MongoEnrollmentEventRepository,
 )
@@ -135,3 +138,22 @@ def compose_cancel_session_occurrence(
         # #787: refuse to call off a date whose payout is already frozen.
         payout_lock=compose_payout_input_lock(db),
     )
+
+
+def compose_occurrence_cancellations(
+    db: Any, notifier: Any | None, materialize: Any
+) -> dict[str, Any]:
+    """Both admin cancel use cases. Academy closures loop over the SAME wired
+    cancel instance (billing sync, payout lock, guest notifier shared) and send
+    one summary per family through ``notifier.academy_closed``."""
+    cancel = compose_cancel_session_occurrence(db, notifier=notifier)
+    return {
+        "cancel_session_occurrence": cancel,
+        "close_academy_dates": CloseAcademyDates(
+            cancel=cancel,
+            occurrences=MongoSessionOccurrenceRepository(db),
+            sessions=MongoSessionRepository(db),
+            materialize=materialize,
+            notifier=notifier,
+        ),
+    }

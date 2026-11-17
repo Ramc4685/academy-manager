@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -40,6 +41,10 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
 from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
     CancelSessionOccurrenceCommand,
 )
+from backend.v2.contexts.enrollment.application.use_cases.close_academy_dates import (
+    CloseAcademyDatesCommand,
+)
+from backend.v2.interfaces.admin.academy_clock import academy_zone
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.owner_gate import (
     ensure_owner_for_enrollment_delete,
@@ -59,6 +64,9 @@ from backend.v2.interfaces.admin.views import (
     AdminStudentAttendanceView,
     CancelSessionOccurrenceRequest,
     CancelSessionOccurrenceResponse,
+    CloseAcademyDatesRequest,
+    CloseAcademyDatesResponse,
+    ClosureDateView,
     CorrectStudentAttendanceRequest,
     CreateSessionRequest,
     EditRosterAddRequest,
@@ -460,6 +468,50 @@ async def cancel_session_occurrence(
         credits_issued=result.credits_issued,
         billing_result=result.billing_result,
         notified=result.notified,
+    )
+
+
+@router.post(
+    "/closures",
+    response_model=CloseAcademyDatesResponse,
+    summary="Close the academy for a date range: cancel every class date in it",
+)
+async def close_academy_dates(
+    body: CloseAcademyDatesRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> CloseAcademyDatesResponse:
+    if use_cases.close_academy_dates is None:
+        raise HTTPException(status_code=503, detail="Academy closures are not configured")
+    zone_name = await academy_zone(use_cases, claims.academy_id)
+    zone = ZoneInfo(zone_name)
+    result = await use_cases.close_academy_dates.execute(  # type: ignore[attr-defined]
+        CloseAcademyDatesCommand(
+            start_at=datetime.combine(body.start_date, time.min, tzinfo=zone),
+            end_at=datetime.combine(body.end_date + timedelta(days=1), time.min, tzinfo=zone),
+            reason=body.reason,
+            actor_id=claims.user_id,
+            notify=body.notify,
+            dry_run=body.dry_run,
+        )
+    )
+    titles: dict[str, str | None] = {}
+    if use_cases.get_admin_session is not None:
+        for session_id in {d.session_id for d in result.dates}:
+            row = await use_cases.get_admin_session(session_id)  # type: ignore[operator]
+            titles[session_id] = str(_row_field(row, "title") or "") or None if row else None
+    return CloseAcademyDatesResponse(
+        dates=[
+            ClosureDateView(**d.model_dump(), session_title=titles.get(d.session_id))
+            for d in result.dates
+        ],
+        cancelled=result.cancelled,
+        skipped=result.skipped,
+        credits_issued=result.credits_issued,
+        families_affected=result.families_affected,
+        families_notified=result.families_notified,
+        notice_failed=result.notice_failed,
+        timezone=zone_name,
     )
 
 

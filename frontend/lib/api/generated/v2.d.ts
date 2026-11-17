@@ -1136,6 +1136,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/closures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Close the academy for a date range: cancel every class date in it */
+        post: operations["close_academy_dates_api_v2_admin_closures_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/coaches/{coach_id}/pay-rates": {
         parameters: {
             query?: never;
@@ -12585,6 +12602,100 @@ export interface components {
             title: string;
         };
         /**
+         * CloseAcademyDatesRequest
+         * @description Academy-wide closure: every class from ``start_date`` to ``end_date``
+         *     (academy-local, inclusive) is cancelled in one step.
+         */
+        CloseAcademyDatesRequest: {
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /**
+             * End Date
+             * Format: date
+             */
+            end_date: string;
+            /**
+             * Notify
+             * @default true
+             */
+            notify: boolean;
+            /** Reason */
+            reason: string;
+            /**
+             * Start Date
+             * Format: date
+             */
+            start_date: string;
+        };
+        /** CloseAcademyDatesResponse */
+        CloseAcademyDatesResponse: {
+            /**
+             * Cancelled
+             * @default 0
+             */
+            cancelled: number;
+            /**
+             * Credits Issued
+             * @default 0
+             */
+            credits_issued: number;
+            /** Dates */
+            dates?: components["schemas"]["ClosureDateView"][];
+            /**
+             * Families Affected
+             * @default 0
+             */
+            families_affected: number;
+            /**
+             * Families Notified
+             * @default 0
+             */
+            families_notified: number;
+            /**
+             * Notice Failed
+             * @default false
+             */
+            notice_failed: boolean;
+            /**
+             * Skipped
+             * @default 0
+             */
+            skipped: number;
+            /** Timezone */
+            timezone: string;
+        };
+        /** ClosureDateView */
+        ClosureDateView: {
+            /** Billing Warning */
+            billing_warning?: string | null;
+            /**
+             * Credits Issued
+             * @default 0
+             */
+            credits_issued: number;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Session Id */
+            session_id: string;
+            /** Session Title */
+            session_title?: string | null;
+            /** Skip Reason */
+            skip_reason?: string | null;
+            /**
+             * Start At
+             * Format: date-time
+             */
+            start_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "cancelled" | "would_cancel" | "skipped";
+        };
+        /**
          * CoachAcademyView
          * @description Row 14: the coach shell's academy mark. Deliberately minimal — a coach
          *     never sees the rest of the academy profile, so this is not
@@ -14880,6 +14991,8 @@ export interface components {
             status: "create" | "skip" | "error";
             /** Student Date Of Birth */
             student_date_of_birth?: string | null;
+            /** Student Id */
+            student_id?: string | null;
             /** Student Name */
             student_name: string;
             /** Warnings */
@@ -22742,6 +22855,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClassPublicProfileList"];
+                };
+            };
+        };
+    };
+    close_academy_dates_api_v2_admin_closures_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseAcademyDatesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloseAcademyDatesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

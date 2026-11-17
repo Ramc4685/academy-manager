@@ -58,7 +58,11 @@ from backend.v2.contexts.enrollment.domain.errors import (
     PayoutPeriodFrozen,
 )
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
-from backend.v2.contexts.enrollment.domain.models import ACTIVE_OR_PAUSED, SessionOccurrence
+from backend.v2.contexts.enrollment.domain.models import (
+    ACTIVE_OR_PAUSED,
+    Session,
+    SessionOccurrence,
+)
 from backend.v2.contexts.enrollment.domain.occurrence_cancellation import (
     assert_occurrence_cancellable,
 )
@@ -94,6 +98,10 @@ class CancelSessionOccurrenceCommand(BaseModel):
     #: ``False`` records the cancellation without emailing families/coach —
     #: for a date the academy has already announced by other means.
     notify: bool = True
+    #: Academy closures (``CloseAcademyDates``) cancel many dates and send ONE
+    #: summary per family, so they skip this date's family/staff email and
+    #: read the audience off the result instead. Trial guests are still told.
+    defer_family_notice: bool = False
 
 
 class CancelSessionOccurrenceResult(BaseModel):
@@ -107,6 +115,10 @@ class CancelSessionOccurrenceResult(BaseModel):
     credits_issued: int = 0
     billing_result: str | None = None
     notified: bool = False
+    #: The notice inputs a deferred caller needs to tell the families itself.
+    one_time_student_ids: tuple[str, ...] = ()
+    credited_student_ids: tuple[str, ...] = ()
+    billing_warning: str | None = None
 
 
 class CancelSessionOccurrence:
@@ -141,11 +153,17 @@ class CancelSessionOccurrence:
         self._payout_lock = payout_lock
         self._now = clock
 
-    async def execute(self, cmd: CancelSessionOccurrenceCommand) -> CancelSessionOccurrenceResult:
-        now = self._now()
-        occurrence = await self._occurrences.get(cmd.occurrence_id)
+    async def check_cancellable(self, occurrence_id: str) -> None:
+        """Every refusal ``execute`` makes before its commit point, writing
+        nothing: an academy closure's preview uses it."""
+        await self._precheck(occurrence_id, self._now())
+
+    async def _precheck(
+        self, occurrence_id: str, now: datetime
+    ) -> tuple[SessionOccurrence, Session | None, str]:
+        occurrence = await self._occurrences.get(occurrence_id)
         if occurrence is None:
-            raise OccurrenceNotFound("no such class date", occurrence_id=cmd.occurrence_id)
+            raise OccurrenceNotFound("no such class date", occurrence_id=occurrence_id)
         session_id = occurrence.template_session_id or occurrence.session_id
         session = await self._sessions.get(session_id)
         assert_occurrence_cancellable(occurrence, session=session, now=now)
@@ -154,6 +172,11 @@ class CancelSessionOccurrence:
         # point rather than leave payroll silently disagreeing with the
         # schedule.
         await self._assert_payout_window_open(occurrence)
+        return occurrence, session, session_id
+
+    async def execute(self, cmd: CancelSessionOccurrenceCommand) -> CancelSessionOccurrenceResult:
+        now = self._now()
+        occurrence, session, session_id = await self._precheck(cmd.occurrence_id, now)
 
         cancelled = await self._occurrences.cancel_scheduled(
             occurrence_id=cmd.occurrence_id,
@@ -212,7 +235,7 @@ class CancelSessionOccurrence:
             )
 
         notified = False
-        if cmd.notify:
+        if cmd.notify and not cmd.defer_family_notice:
             notified = await self._notify(
                 cancelled,
                 session_id=session_id,
@@ -242,6 +265,9 @@ class CancelSessionOccurrence:
             credits_issued=sum(1 for value in credits.values() if value),
             billing_result=billing_result,
             notified=notified,
+            one_time_student_ids=tuple(one_time_student_ids),
+            credited_student_ids=tuple(credited_student_ids),
+            billing_warning=_billing_warning(billing_result),
         )
 
     async def _assert_payout_window_open(self, occurrence: SessionOccurrence) -> None:

@@ -181,6 +181,7 @@ def test_preview_answers_the_batch_for_the_tenant(client: TestClient, services: 
     assert first["status"] == "create"
     assert first["family_link"] == "/admin/families/fam%2F1"
     assert first["warnings"] == ["Matches the inquiry from Pat."]
+    assert second["student_id"] is None
     assert second["errors"] == [
         {"field": "parent_email", "message": "Give the parent's email or phone."}
     ]
@@ -199,6 +200,10 @@ def test_commit_answers_the_committed_batch(client: TestClient, services: Any) -
     assert body["already_committed"] is False
     assert body["students_inserted"] == 1
     assert body["can_commit"] is False
+    # Quick add (L12) enrolls the child straight after: a create row names the
+    # student and parent (family) ids; an error row names no student.
+    first = body["rows"][0]
+    assert (first["student_id"], first["family_id"]) == ("stu-1", "fam/1")
     assert services.commit.calls == [(A, {"import_batch_id": "batch-1", "actor_id": "u-admin"})]
 
 

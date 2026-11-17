@@ -650,6 +650,41 @@ class CancelSessionOccurrenceResponse(BaseModel):
     notified: bool = False
 
 
+class CloseAcademyDatesRequest(BaseModel):
+    """Academy-wide closure: every class from ``start_date`` to ``end_date``
+    (academy-local, inclusive) is cancelled in one step."""
+
+    start_date: date
+    end_date: date
+    reason: str = Field(min_length=1, max_length=500)
+    notify: bool = True
+    #: Preview only: list the class dates, cancel nothing.
+    dry_run: bool = False
+
+
+class ClosureDateView(BaseModel):
+    occurrence_id: str
+    session_id: str
+    session_title: str | None = None
+    start_at: datetime
+    status: Literal["cancelled", "would_cancel", "skipped"]
+    skip_reason: str | None = None
+    credits_issued: int = 0
+    billing_warning: str | None = None
+
+
+class CloseAcademyDatesResponse(BaseModel):
+    dates: list[ClosureDateView] = Field(default_factory=list)
+    cancelled: int = 0
+    skipped: int = 0
+    credits_issued: int = 0
+    families_affected: int = 0
+    families_notified: int = 0
+    notice_failed: bool = False
+    #: Academy timezone, so the page shows class times as the academy reads them.
+    timezone: str
+
+
 class UpdateOccurrenceReplacementRequest(BaseModel):
     replacement_coach_id: str | None = None
     reason: str | None = None

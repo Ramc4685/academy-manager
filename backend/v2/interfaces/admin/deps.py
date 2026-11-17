@@ -398,6 +398,7 @@ class AdminUseCases:
     # older admin fixtures still construct AdminUseCases; the route 503s
     # rather than 500s when a composition root forgets to wire it.
     cancel_session_occurrence: object | None = None
+    close_academy_dates: object | None = None  # CloseAcademyDates
     get_coach_engagement_stats: GetCoachEngagementStats | None = None
     send_campaign: SendCampaign | None = None
     start_stripe_connect_use_case: StartStripeConnectUseCase | None = None

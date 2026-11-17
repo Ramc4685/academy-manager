@@ -41,6 +41,8 @@ export interface ImportRow {
   /** Opens an existing family; null for a new one. */
   family_link: string | null;
   family_name: string | null;
+  /** The child a `create` row makes; with `family_id` (the parent id) it can be enrolled. */
+  student_id?: string | null;
   parent_name: string;
   parent_email: string | null;
   parent_phone: string | null;
