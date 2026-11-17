@@ -119,6 +119,7 @@ class StubEmailSendPort(EmailSendPort):
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
         sender_name: str | None = None,
+        unsubscribe_url: str | None = None,
     ) -> SendOutcome:
         record = {
             "user_id": recipient.user_id,
@@ -128,6 +129,7 @@ class StubEmailSendPort(EmailSendPort):
             "category": category,
             "reply_to": reply_to,
             "sender_name": sender_name,
+            "unsubscribe_url": unsubscribe_url,
         }
         self.sent.append(record)
         if recipient.email in self.fail_for_emails:
@@ -709,6 +711,7 @@ class CrashingSendPort(EmailSendPort):
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
         sender_name: str | None = None,
+        unsubscribe_url: str | None = None,
     ) -> SendOutcome:
         if recipient.email == self.crash_on_email:
             raise RuntimeError("process died mid-loop")
@@ -851,3 +854,55 @@ async def test_campaign_without_brand_lookup_keeps_the_platform_sender() -> None
     use_case, _, sender, _, _ = _build_use_case(resolver=resolver)
     await use_case.execute(_parent_command())
     assert (sender.sent[0]["sender_name"], sender.sent[0]["reply_to"]) == (None, None)
+
+
+# -- L11 item 8: RFC 8058 one-click unsubscribe + postal address ---------------
+
+
+def _compliance_use_case(*, list_unsubscribe: bool, address: str | None = "1 Court St, Normal IL"):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from backend.v2.contexts.communications.application.unsubscribe_token import (
+        UnsubscribeLinkBuilder,
+    )
+    from backend.v2.shared.comms.email_theme import EmailBrand
+
+    resolver = FakeAudienceResolver(by_academy=[_recipient("p1")])
+    use_case, _, sender, _, _ = _build_use_case(resolver=resolver)
+    use_case.unsubscribe_links = UnsubscribeLinkBuilder(
+        frontend_url="https://app.example.test", secret="s3cret"
+    )
+    use_case.brands = SimpleNamespace(
+        brand_for=AsyncMock(
+            return_value=EmailBrand(academy_name="Synthetic Academy", postal_address=address)
+        )
+    )
+    use_case.list_unsubscribe = list_unsubscribe
+    return use_case, sender
+
+
+@pytest.mark.asyncio
+async def test_campaign_carries_one_click_unsubscribe_and_postal_address_when_enabled() -> None:
+    use_case, sender = _compliance_use_case(list_unsubscribe=True)
+    await use_case.execute(_parent_command())
+    sent = sender.sent[0]
+    assert sent["unsubscribe_url"].startswith(
+        "https://app.example.test/api/v2/unsubscribe/one-click?t="
+    )
+    assert "1 Court St, Normal IL" in sent["body"]
+
+
+@pytest.mark.asyncio
+async def test_campaign_compliance_extras_are_off_by_default() -> None:
+    use_case, sender = _compliance_use_case(list_unsubscribe=False)
+    await use_case.execute(_parent_command())
+    assert sender.sent[0].get("unsubscribe_url") is None
+    assert "1 Court St" not in sender.sent[0]["body"]
+
+
+@pytest.mark.asyncio
+async def test_postal_address_is_escaped_in_the_footer() -> None:
+    use_case, sender = _compliance_use_case(list_unsubscribe=True, address="<b>1 Court</b>")
+    await use_case.execute(_parent_command())
+    assert "&lt;b&gt;1 Court&lt;/b&gt;" in sender.sent[0]["body"]

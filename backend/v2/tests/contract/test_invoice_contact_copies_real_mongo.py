@@ -103,6 +103,13 @@ class _Academies:
     async def get_academy_name(self, academy_id: str) -> str | None:
         return "Test Academy"
 
+    async def find_by_id(self, academy_id: str) -> dict[str, Any] | None:
+        return {
+            "academy_id": academy_id,
+            "display_name": "Test Academy",
+            "email_reply_to": "desk@academy.example.com",
+        }
+
 
 def _contact(
     contact_id: str,
@@ -185,6 +192,15 @@ async def test_only_opted_in_contacts_get_a_copy_without_the_pay_link(real_db: A
     assert "payment link was sent to the family's primary email" in copy_call["body"]
     assert copy_call["subject"] == parent_call["subject"]
     assert copy_call["recipient"].user_id == "family_contact:c-in"
+    # The copy comes from the academy, like the parent's: same From name and Reply-To.
+    assert (copy_call["sender_name"], copy_call["reply_to"]) == (
+        "Test Academy",
+        "desk@academy.example.com",
+    )
+    assert (parent_call["sender_name"], parent_call["reply_to"]) == (
+        copy_call["sender_name"],
+        copy_call["reply_to"],
+    )
 
     row = await real_db["invoice_contact_email_sends"].find_one({"contact_id": "c-in"})
     assert row["academy_id"] == A

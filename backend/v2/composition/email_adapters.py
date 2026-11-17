@@ -19,7 +19,7 @@ import html
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import date, datetime
-from typing import Any
+from typing import Any, TypedDict
 from urllib.parse import quote
 
 from pydantic import BaseModel
@@ -99,6 +99,18 @@ async def _academy_brand(academies: Any, academy_name: str) -> EmailBrand:
     """The request academy's full email brand, named ``academy_name`` so the
     shell matches the subject line. Never raises (row 6)."""
     return branded_as(await lookup_academy_brand(academies, current_academy_id()), academy_name)
+
+
+class _SenderIdentityKwargs(TypedDict):
+    sender_name: str | None
+    reply_to: str | None
+
+
+async def _identity(academies: Any) -> _SenderIdentityKwargs:
+    """The academy's From display name and Reply-To as send kwargs (L9a; billing
+    mail joined in L11). Never raises: a failed lookup sends with neither."""
+    identity = await sender_identity_for_current_academy(academies)
+    return {"sender_name": identity.sender_name, "reply_to": identity.reply_to}
 
 
 def due_phrase(days_past_due: int) -> str:
@@ -506,6 +518,7 @@ class InvoiceEmailAdapter:
         )
         brand = await _academy_brand(self._academies, academy_name)
         body = _branded_shell(academy_name=academy_name, inner_html=inner, brand=brand)
+        identity = await _identity(self._academies)
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
                 user_id=parent_id,
@@ -514,6 +527,7 @@ class InvoiceEmailAdapter:
             ),
             subject=subject,
             body=body,
+            **identity,
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "invoice email delivery failed")
@@ -544,6 +558,7 @@ class InvoiceEmailAdapter:
                 invoice_id=invoice_id,
                 subject=subject,
                 body=_branded_shell(academy_name=academy_name, inner_html=copy_inner, brand=brand),
+                **identity,
             )
         return outcome.provider_message_id
 
@@ -639,6 +654,9 @@ class InvoiceEmailAdapter:
             )
             button_label = "Pay now or update your card"
         pay_url, _ = await self._pay_link(academy_id) if self._pay_link else (None, "")
+        # A plain pay-page link, never a sign-in token: a forwarded or leaked
+        # billing email must not hand out a session (L11 security review). A
+        # signed-out parent is sent through /login?returnTo= and lands back here.
         pay_button = (
             _branded_button(label=button_label, url=f"{pay_url}?pay={quote(invoice_id, safe='')}")
             if pay_url
@@ -658,6 +676,7 @@ class InvoiceEmailAdapter:
             ),
             subject=subject,
             body=body,
+            **await _identity(self._academies),
         )
         if outcome.suppressed:
             raise UndeliverableNotice(outcome.failed_reason or "dunning email suppressed")
@@ -737,6 +756,7 @@ class InvoiceEmailAdapter:
                 inner_html=inner,
                 brand=await _academy_brand(self._academies, academy_name),
             ),
+            **await _identity(self._academies),
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "autopay notice delivery failed")
@@ -788,6 +808,7 @@ class InvoiceEmailAdapter:
                 inner_html=inner,
                 brand=await _academy_brand(self._academies, academy_name),
             ),
+            **await _identity(self._academies),
         )
         if outcome.suppressed:
             raise UndeliverableNotice(outcome.failed_reason or "payment receipt suppressed")
@@ -882,6 +903,7 @@ class DuesReminderEmailAdapter:
             ),
             subject=f"Payment reminder: {tuition}",
             body=body,
+            **await _identity(self._academies),
         )
         return outcome.ok
 
@@ -929,6 +951,7 @@ class DuesReminderEmailAdapter:
             ),
             subject="Payment reminder: outstanding balance",
             body=body,
+            **await _identity(self._academies),
         )
         return outcome.ok
 
@@ -938,8 +961,9 @@ class AddCardReminderEmailAdapter:
     ``EmailSendPort`` — mirrors ``LoginInviteEmailAdapter``; billing must not
     import communications directly."""
 
-    def __init__(self, *, sender: EmailSendPort) -> None:
+    def __init__(self, *, sender: EmailSendPort, academies: Any | None = None) -> None:
         self._sender = sender
+        self._academies = academies
 
     async def send_invite_email(
         self, *, user_id: str, email: str, display_name: str, subject: str, body: str
@@ -948,5 +972,6 @@ class AddCardReminderEmailAdapter:
             recipient=ResolvedRecipient(user_id=user_id, email=email, display_name=display_name),
             subject=subject,
             body=body,
+            **await _identity(self._academies),
         )
         return AddCardReminderEmailOutcome(ok=outcome.ok, failed_reason=outcome.failed_reason)

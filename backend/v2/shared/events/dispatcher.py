@@ -12,6 +12,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
+from backend.v2.shared.comms.send_idempotency import send_idempotency_scope
 from backend.v2.shared.observability.ops_alerts import (
     capture_exception,
     should_report_failure,
@@ -263,7 +264,11 @@ class EventDispatcher:
 
         started_at = datetime.now(UTC)
         try:
-            await fn(event)
+            # L11 item 6: a retried run re-sends with the same provider
+            # idempotency keys, so mail that went out on the failed run is
+            # dropped by the provider instead of reaching the family twice.
+            with send_idempotency_scope(f"outbox:{doc['event_id']}:{handler_name}"):
+                await fn(event)
         except Exception as exc:
             await self._schedule_retry_or_dead_letter(doc, handler_name, exc, started_at)
             return False

@@ -39,6 +39,7 @@ from backend.v2.contexts.communications.application.unsubscribe_footer import (
     append_unsubscribe_footer,
 )
 from backend.v2.contexts.communications.application.unsubscribe_token import (
+    ONE_CLICK_UNSUBSCRIBE_PATH,
     UnsubscribeLinkBuilder,
 )
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
@@ -150,6 +151,10 @@ class SendCampaign:
     # Sender display name / reply-to (L9a). Optional: without it the From
     # header stays the platform address and there is no reply-to.
     brands: AcademyBrandLookup | None = None
+    # L11 item 8 (EMAIL_LIST_UNSUBSCRIBE_ENABLED): RFC 8058 one-click
+    # List-Unsubscribe headers and the academy's postal address in the footer.
+    # Off keeps every campaign byte-for-byte as before.
+    list_unsubscribe: bool = False
     now: Callable[[], datetime] = field(default=_utcnow)
     new_id: Callable[[], str] = field(default=new_ulid)
 
@@ -230,6 +235,7 @@ class SendCampaign:
         deliveries: list[Delivery] = []
         sent_count = 0
         failed_count = 0
+        postal_address = brand.postal_address if brand and self.list_unsubscribe else None
         for base, recipient in zip(queued, recipients, strict=True):
             body = append_unsubscribe_footer(
                 command.body,
@@ -238,6 +244,17 @@ class SendCampaign:
                     user_id=recipient.user_id,
                     academy_slug=academy_slug,
                 ),
+                postal_address,
+            )
+            one_click = (
+                self.unsubscribe_links.build(
+                    academy_id=command.academy_id,
+                    user_id=recipient.user_id,
+                    academy_slug=academy_slug,
+                    path=ONE_CLICK_UNSUBSCRIBE_PATH,
+                )
+                if self.list_unsubscribe
+                else None
             )
             outcome = await self.sender.send(
                 recipient=recipient,
@@ -246,6 +263,7 @@ class SendCampaign:
                 category=EmailCategory.CAMPAIGN,
                 reply_to=brand.reply_to if brand else None,
                 sender_name=brand.sender_name if brand else None,
+                unsubscribe_url=one_click,
             )
             if outcome.ok:
                 deliveries.append(

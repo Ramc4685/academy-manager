@@ -179,8 +179,11 @@ class InvoiceContactCopies:
         invoice_id: str,
         subject: str,
         body: str,
+        sender_name: str | None = None,
+        reply_to: str | None = None,
     ) -> int:
-        """Send ``body`` to each opted-in contact not yet sent this invoice.
+        """Send ``body`` to each opted-in contact not yet sent this invoice,
+        from the same academy identity (From name, Reply-To) as the parent's copy.
 
         Returns how many copies were delivered on this call.
         """
@@ -192,7 +195,14 @@ class InvoiceContactCopies:
         sent = 0
         for contact in contacts:
             try:
-                if await self._send_one(contact, invoice_id=invoice_id, subject=subject, body=body):
+                if await self._send_one(
+                    contact,
+                    invoice_id=invoice_id,
+                    subject=subject,
+                    body=body,
+                    sender_name=sender_name,
+                    reply_to=reply_to,
+                ):
                     sent += 1
             except Exception:
                 log.exception(
@@ -202,7 +212,14 @@ class InvoiceContactCopies:
         return sent
 
     async def _send_one(
-        self, contact: FamilyContact, *, invoice_id: str, subject: str, body: str
+        self,
+        contact: FamilyContact,
+        *,
+        invoice_id: str,
+        subject: str,
+        body: str,
+        sender_name: str | None,
+        reply_to: str | None,
     ) -> bool:
         academy_id = current_academy_id()
         email = _normalize_email(contact.email)
@@ -227,6 +244,8 @@ class InvoiceContactCopies:
                 subject=subject,
                 body=body,
                 category=EmailCategory.TRANSACTIONAL,
+                sender_name=sender_name,
+                reply_to=reply_to,
             )
         except Exception:
             await self._sends.mark_failed(academy_id, send_id, "send_exception")

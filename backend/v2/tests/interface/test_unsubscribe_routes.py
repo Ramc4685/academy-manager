@@ -249,3 +249,40 @@ def test_transactional_is_still_rejected_outright(client: Any) -> None:
         },
     )
     assert response.status_code == 422
+
+
+# -- L11 item 8: RFC 8058 one-click endpoint -----------------------------------
+
+
+def _one_click(client: Any, token: str) -> Any:
+    return client.post(
+        f"/api/v2/unsubscribe/one-click?t={token}",
+        content="List-Unsubscribe=One-Click",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+
+def test_one_click_opts_out_of_campaigns_only(client: Any) -> None:
+    token = _token()
+    client.post(
+        "/api/v2/unsubscribe/confirm",
+        json={"token": token, "campaigns": False, "digests": True},
+    )
+    response = _one_click(client, token)
+    assert response.status_code == 200
+    state = client.post("/api/v2/unsubscribe/preview", json={"token": token}).json()
+    assert state == {
+        "campaigns_opted_out": True,
+        "digests_opted_out": True,
+        "notifications_opted_out": False,
+    }
+
+
+def test_one_click_rejects_a_forged_token_and_get(client: Any) -> None:
+    assert _one_click(client, "u1.forged.mac").status_code == 401
+    assert client.get(f"/api/v2/unsubscribe/one-click?t={_token()}").status_code == 405
+
+
+def test_one_click_token_is_bound_to_the_request_academy(db: Any) -> None:
+    with TestClient(_build_app(db, academy_id="acad-b")) as other:
+        assert _one_click(other, _token(academy_id=ACADEMY)).status_code == 401
