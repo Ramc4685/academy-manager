@@ -4,13 +4,10 @@ import { describe, expect, it } from "vitest";
 
 import { DeliveryProblemsList } from "./delivery-problems-panel";
 
-const NOOP = () => {};
-
 describe("DeliveryProblemsList (L11 item 3)", () => {
-  it("offers a retry only on a releasable hard bounce, never on a complaint", () => {
+  it("shows the reason for this academy's own problem and a generic line otherwise", () => {
     const html = renderToStaticMarkup(
       createElement(DeliveryProblemsList, {
-        onClear: NOOP,
         data: {
           suppressed: [
             {
@@ -19,15 +16,13 @@ describe("DeliveryProblemsList (L11 item 3)", () => {
               reason: "hard_bounce",
               bounce_subtype: null,
               last_seen_at: "2026-11-01T00:00:00Z",
-              releasable: true,
             },
             {
               user_id: "p2",
-              email: "spam@example.test",
-              reason: "complaint",
+              email: "shared@example.test",
+              reason: null,
               bounce_subtype: null,
-              last_seen_at: "2026-11-01T00:00:00Z",
-              releasable: false,
+              last_seen_at: null,
             },
           ],
           failed: [
@@ -42,14 +37,16 @@ describe("DeliveryProblemsList (L11 item 3)", () => {
         },
       }),
     );
-    expect(html.match(/Try again/g)).toHaveLength(1);
-    expect(html).toContain("Marked our email as spam");
+    expect(html).toContain("Bounced (mailbox does not exist)");
+    expect(html).toContain("This address is not receiving email");
+    expect(html).not.toContain("spam");
+    expect(html).not.toContain("Try again");
     expect(html).toContain("provider 422");
   });
 
   it("says so when nothing is wrong", () => {
     const html = renderToStaticMarkup(
-      createElement(DeliveryProblemsList, { onClear: NOOP, data: { suppressed: [], failed: [] } }),
+      createElement(DeliveryProblemsList, { data: { suppressed: [], failed: [] } }),
     );
     expect(html).toContain("No delivery problems");
   });

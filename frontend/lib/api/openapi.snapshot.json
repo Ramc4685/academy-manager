@@ -29532,32 +29532,6 @@
         "title": "ReleaseResponse",
         "type": "object"
       },
-      "ReleaseSuppressionRequest": {
-        "properties": {
-          "email": {
-            "title": "Email",
-            "type": "string"
-          }
-        },
-        "required": [
-          "email"
-        ],
-        "title": "ReleaseSuppressionRequest",
-        "type": "object"
-      },
-      "ReleaseSuppressionResponse": {
-        "properties": {
-          "released": {
-            "title": "Released",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "released"
-        ],
-        "title": "ReleaseSuppressionResponse",
-        "type": "object"
-      },
       "RemoveEnrollmentRequest": {
         "properties": {
           "effective_date": {
@@ -32605,17 +32579,27 @@
             "type": "string"
           },
           "last_seen_at": {
-            "format": "date-time",
-            "title": "Last Seen At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
           },
           "reason": {
-            "title": "Reason",
-            "type": "string"
-          },
-          "releasable": {
-            "title": "Releasable",
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           },
           "user_id": {
             "title": "User Id",
@@ -32627,8 +32611,7 @@
           "email",
           "reason",
           "bounce_subtype",
-          "last_seen_at",
-          "releasable"
+          "last_seen_at"
         ],
         "title": "SuppressedMemberView",
         "type": "object"
@@ -39136,7 +39119,7 @@
     },
     "/api/v2/admin/comms/delivery-problems": {
       "get": {
-        "description": "Suppressed addresses and failed campaign sends for this academy's own\npeople only; the global suppression list is never exposed (L11 item 3).",
+        "description": "Suppressed addresses and failed campaign sends for this academy's own\npeople only. Read-only: the suppression list is shared by every academy, so\nclearing an address stays a platform action (L11 item 3).",
         "operationId": "get_delivery_problems_api_v2_admin_comms_delivery_problems_get",
         "parameters": [
           {
@@ -39173,47 +39156,6 @@
           }
         },
         "summary": "Get Delivery Problems",
-        "tags": [
-          "admin.comms"
-        ]
-      }
-    },
-    "/api/v2/admin/comms/delivery-problems/release": {
-      "post": {
-        "operationId": "release_delivery_suppression_api_v2_admin_comms_delivery_problems_release_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReleaseSuppressionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReleaseSuppressionResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Release Delivery Suppression",
         "tags": [
           "admin.comms"
         ]

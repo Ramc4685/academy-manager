@@ -1163,28 +1163,12 @@ export interface paths {
         /**
          * Get Delivery Problems
          * @description Suppressed addresses and failed campaign sends for this academy's own
-         *     people only; the global suppression list is never exposed (L11 item 3).
+         *     people only. Read-only: the suppression list is shared by every academy, so
+         *     clearing an address stays a platform action (L11 item 3).
          */
         get: operations["get_delivery_problems_api_v2_admin_comms_delivery_problems_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v2/admin/comms/delivery-problems/release": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Release Delivery Suppression */
-        post: operations["release_delivery_suppression_api_v2_admin_comms_delivery_problems_release_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -18353,16 +18337,6 @@ export interface components {
             /** Released */
             released: boolean;
         };
-        /** ReleaseSuppressionRequest */
-        ReleaseSuppressionRequest: {
-            /** Email */
-            email: string;
-        };
-        /** ReleaseSuppressionResponse */
-        ReleaseSuppressionResponse: {
-            /** Released */
-            released: boolean;
-        };
         /** RemoveEnrollmentRequest */
         RemoveEnrollmentRequest: {
             /**
@@ -19470,15 +19444,10 @@ export interface components {
             bounce_subtype: string | null;
             /** Email */
             email: string;
-            /**
-             * Last Seen At
-             * Format: date-time
-             */
-            last_seen_at: string;
+            /** Last Seen At */
+            last_seen_at: string | null;
             /** Reason */
-            reason: string;
-            /** Releasable */
-            releasable: boolean;
+            reason: string | null;
             /** User Id */
             user_id: string;
         };
@@ -22611,39 +22580,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeliveryProblemsView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    release_delivery_suppression_api_v2_admin_comms_delivery_problems_release_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReleaseSuppressionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ReleaseSuppressionResponse"];
                 };
             };
             /** @description Validation Error */

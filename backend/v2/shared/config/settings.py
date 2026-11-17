@@ -211,13 +211,6 @@ class Settings(BaseSettings):
             "an idempotency key (L11). 0 => one attempt, as before."
         ),
     )
-    admin_suppression_release_enabled: bool = Field(
-        default=False,
-        description=(
-            "Admins may clear a hard-bounce suppression for their own academy's people "
-            "from the Delivery problems panel (L11). Off => the panel is read-only."
-        ),
-    )
     campaign_background_send_enabled: bool = Field(
         default=False,
         description=(

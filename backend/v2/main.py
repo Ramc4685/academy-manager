@@ -836,10 +836,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.ingest_email_provider_event = compose_ingest_email_provider_event(db)
     app.state.list_email_suppressions = compose_list_email_suppressions(db)
     app.state.release_email_suppression = compose_release_email_suppression(db)
-    (
-        app.state.delivery_problems,
-        app.state.release_member_suppression,
-    ) = compose_delivery_problems(db, settings)
+    app.state.delivery_problems = compose_delivery_problems(db)
 
     # Tenant resolver — wired only in SaaS mode. In non-SaaS mode the
     # middleware falls back to ``settings.default_academy_id`` so existing

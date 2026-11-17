@@ -15,10 +15,6 @@ from backend.v2.contexts.communications.application.errors import (
     EmptyAudienceError,
     SessionAudience,
 )
-from backend.v2.contexts.communications.application.use_cases.delivery_problems import (
-    NotAMember,
-    NotReleasable,
-)
 from backend.v2.contexts.communications.application.use_cases.send_campaign import (
     SendCampaignCommand,
 )
@@ -208,10 +204,11 @@ async def get_coach_digest_log(
 class SuppressedMemberView(BaseModel):
     user_id: str
     email: str
-    reason: str
+    #: Reason and dates are null when the suppression was caused by another
+    #: academy's mail: the row then only says the address is not receiving email.
+    reason: str | None
     bounce_subtype: str | None
-    last_seen_at: datetime
-    releasable: bool
+    last_seen_at: datetime | None
 
 
 class FailedDeliveryView(BaseModel):
@@ -227,14 +224,6 @@ class DeliveryProblemsView(BaseModel):
     failed: list[FailedDeliveryView]
 
 
-class ReleaseSuppressionRequest(BaseModel):
-    email: str
-
-
-class ReleaseSuppressionResponse(BaseModel):
-    released: bool
-
-
 @router.get("/comms/delivery-problems", response_model=DeliveryProblemsView)
 async def get_delivery_problems(
     request: Request,
@@ -242,7 +231,8 @@ async def get_delivery_problems(
     claims: AuthClaims = Depends(require_persona("admin")),
 ) -> DeliveryProblemsView:
     """Suppressed addresses and failed campaign sends for this academy's own
-    people only; the global suppression list is never exposed (L11 item 3)."""
+    people only. Read-only: the suppression list is shared by every academy, so
+    clearing an address stays a platform action (L11 item 3)."""
     result = await request.app.state.delivery_problems.execute(limit=limit)
     return DeliveryProblemsView(
         suppressed=[SuppressedMemberView(**asdict(row)) for row in result.suppressed],
@@ -257,23 +247,6 @@ async def get_delivery_problems(
             for d in result.failed
         ],
     )
-
-
-@router.post("/comms/delivery-problems/release", response_model=ReleaseSuppressionResponse)
-async def release_delivery_suppression(
-    payload: ReleaseSuppressionRequest,
-    request: Request,
-    claims: AuthClaims = Depends(require_persona("admin")),
-) -> ReleaseSuppressionResponse:
-    try:
-        released = await request.app.state.release_member_suppression.execute(
-            email=payload.email, released_by=claims.user_id
-        )
-    except NotAMember as exc:
-        raise HTTPException(status_code=404, detail="Not found") from exc
-    except NotReleasable as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return ReleaseSuppressionResponse(released=released)
 
 
 def _message_view(m: Message, viewer_id: str) -> AdminMessageView:

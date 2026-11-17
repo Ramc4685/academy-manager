@@ -1,5 +1,4 @@
-"""Admin Delivery problems routes (L11 item 3): admin-only, and a release of
-another academy's address or a complaint maps to 404 / 409."""
+"""Admin Delivery problems route (L11 item 3): admin-only and read-only."""
 
 from __future__ import annotations
 
@@ -10,8 +9,6 @@ from fastapi.testclient import TestClient
 
 from backend.v2.contexts.communications.application.use_cases.delivery_problems import (
     DeliveryProblems,
-    NotAMember,
-    NotReleasable,
     SuppressedMember,
 )
 from backend.v2.interfaces.admin.comms_routes import router
@@ -29,20 +26,17 @@ class _Get:
                     reason="hard_bounce",
                     bounce_subtype="General",
                     last_seen_at=datetime(2026, 11, 1, tzinfo=UTC),
-                    releasable=True,
-                )
+                ),
+                SuppressedMember(
+                    user_id="s1",
+                    email="shared@example.test",
+                    reason=None,
+                    bounce_subtype=None,
+                    last_seen_at=None,
+                ),
             ],
             failed=[],
         )
-
-
-class _Release:
-    async def execute(self, *, email: str, released_by: str) -> bool:
-        if email == "spam@example.test":
-            raise NotReleasable("Only a hard bounce can be cleared here")
-        if email != "bounce@example.test":
-            raise NotAMember(email)
-        return True
 
 
 def _client(roles: tuple[str, ...]) -> TestClient:
@@ -50,7 +44,6 @@ def _client(roles: tuple[str, ...]) -> TestClient:
     register_exception_handlers(app)
     app.include_router(router, prefix="/api/v2/admin")
     app.state.delivery_problems = _Get()
-    app.state.release_member_suppression = _Release()
     app.dependency_overrides[get_auth_claims] = lambda: AuthClaims(
         user_id="u1",
         email="u1@example.test",
@@ -66,7 +59,8 @@ def test_admin_sees_the_academys_problems() -> None:
     assert res.status_code == 200
     body = res.json()
     assert body["suppressed"][0]["email"] == "bounce@example.test"
-    assert body["suppressed"][0]["releasable"] is True
+    assert body["suppressed"][1]["reason"] is None
+    assert body["suppressed"][1]["last_seen_at"] is None
     assert body["failed"] == []
 
 
@@ -75,9 +69,8 @@ def test_a_parent_cannot_read_it() -> None:
     assert res.status_code in (401, 403, 404)
 
 
-def test_release_status_mapping() -> None:
-    client = _client(("admin",))
-    url = "/api/v2/admin/comms/delivery-problems/release"
-    assert client.post(url, json={"email": "bounce@example.test"}).json() == {"released": True}
-    assert client.post(url, json={"email": "spam@example.test"}).status_code == 409
-    assert client.post(url, json={"email": "elsewhere@example.test"}).status_code == 404
+def test_there_is_no_academy_side_clear() -> None:
+    res = _client(("admin",)).post(
+        "/api/v2/admin/comms/delivery-problems/release", json={"email": "x@example.test"}
+    )
+    assert res.status_code in (404, 405)

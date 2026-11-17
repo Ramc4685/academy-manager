@@ -1,21 +1,15 @@
 "use client";
 
 /**
- * L11 item 3: who in this academy is not getting email, and why. Suppressions
- * come from provider bounce and complaint reports; only a hard bounce can be
- * cleared here (a complaint means the person marked mail as spam).
+ * L11 item 3: who in this academy is not getting email. Read-only. The block
+ * list is shared by every academy, so the reason and date show only when the
+ * problem came from this academy's own mail; clearing an address is a
+ * platform support action.
  */
 
-import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
-import { Button } from "@/components/ds/button";
-import {
-  getDeliveryProblems,
-  releaseDeliverySuppression,
-  type DeliveryProblemsView,
-} from "@/lib/api/admin";
+import { getDeliveryProblems, type DeliveryProblemsView } from "@/lib/api/admin";
 import { formatAcademyDate } from "@/lib/format/academy-time";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -25,15 +19,13 @@ const REASON_LABEL: Record<string, string> = {
   manual: "Blocked by support",
 };
 
-export function DeliveryProblemsList({
-  data,
-  onClear,
-}: {
-  data: DeliveryProblemsView;
-  onClear: (email: string) => void;
-}) {
+export function DeliveryProblemsList({ data }: { data: DeliveryProblemsView }) {
   if (data.suppressed.length === 0 && data.failed.length === 0) {
-    return <p data-testid="delivery-problems-empty">No delivery problems. Every email is getting through.</p>;
+    return (
+      <p data-testid="delivery-problems-empty">
+        No delivery problems. Every email is getting through.
+      </p>
+    );
   }
   return (
     <div data-testid="delivery-problems">
@@ -43,16 +35,21 @@ export function DeliveryProblemsList({
           <ul>
             {data.suppressed.map((row) => (
               <li key={row.email} data-testid="delivery-problem-suppressed">
-                <span>{row.email}</span> · <span>{REASON_LABEL[row.reason] ?? row.reason}</span> ·{" "}
-                <span>since {formatAcademyDate(row.last_seen_at, null)}</span>
-                {row.releasable && (
-                  <Button size="sm" variant="secondary" onClick={() => onClear(row.email)}>
-                    Try again
-                  </Button>
+                <span>{row.email}</span> ·{" "}
+                {row.reason ? (
+                  <>
+                    <span>{REASON_LABEL[row.reason] ?? row.reason}</span>
+                    {row.last_seen_at && (
+                      <span> · since {formatAcademyDate(row.last_seen_at, null)}</span>
+                    )}
+                  </>
+                ) : (
+                  <span>This address is not receiving email</span>
                 )}
               </li>
             ))}
           </ul>
+          <p>To send to one of these addresses again, contact support.</p>
         </>
       )}
       {data.failed.length > 0 && (
@@ -73,39 +70,11 @@ export function DeliveryProblemsList({
 }
 
 export function DeliveryProblemsPanel() {
-  const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: queryKeys.admin.deliveryProblems(),
     queryFn: getDeliveryProblems,
   });
-  const [pending, setPending] = useState<string | null>(null);
-  const clear = useMutation({
-    mutationFn: releaseDeliverySuppression,
-    onSuccess: () => {
-      setPending(null);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.deliveryProblems() });
-    },
-  });
-
   if (query.isLoading) return <p>Loading delivery problems…</p>;
   if (query.isError || !query.data) return <p role="alert">Could not load delivery problems.</p>;
-
-  return (
-    <>
-      <DeliveryProblemsList data={query.data} onClear={setPending} />
-      <ConfirmActionDialog
-        open={pending !== null}
-        onOpenChange={(open) => !open && setPending(null)}
-        overline="Delivery problems"
-        title="Send to this address again?"
-        subject={pending}
-        consequence="We will start emailing this address again. If it bounces again it is blocked again automatically."
-        confirmLabel="Try again"
-        confirmVariant="primary"
-        pending={clear.isPending}
-        error={clear.error ? clear.error.message : null}
-        onConfirm={() => pending && clear.mutate(pending)}
-      />
-    </>
-  );
+  return <DeliveryProblemsList data={query.data} />;
 }

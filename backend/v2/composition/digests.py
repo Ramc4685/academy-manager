@@ -47,7 +47,6 @@ from backend.v2.contexts.communications.application.unsubscribe_token import (
 )
 from backend.v2.contexts.communications.application.use_cases.delivery_problems import (
     GetDeliveryProblems,
-    ReleaseMemberSuppression,
 )
 from backend.v2.contexts.communications.application.use_cases.get_digest_delivery_log import (
     GetDigestDeliveryLog,
@@ -1303,21 +1302,10 @@ def compose_release_email_suppression(db: AsyncIOMotorDatabase[Any]) -> ReleaseE
     return ReleaseEmailSuppression(suppressions=MongoSuppressionRepository(db))
 
 
-def compose_delivery_problems(
-    db: AsyncIOMotorDatabase[Any], settings: Any
-) -> tuple[GetDeliveryProblems, ReleaseMemberSuppression]:
-    """The admin Delivery problems read and its hard-bounce clear (L11 item 3)."""
-    resolver = MongoAudienceResolver(db=db)
-    suppressions = MongoSuppressionRepository(db)
-    enabled = settings.admin_suppression_release_enabled
-    return (
-        GetDeliveryProblems(
-            resolver=resolver,
-            suppressions=suppressions,
-            deliveries=MongoDeliveryRepository(db),
-            release_enabled=enabled,
-        ),
-        ReleaseMemberSuppression(
-            resolver=resolver, suppressions=suppressions, release_enabled=enabled
-        ),
+def compose_delivery_problems(db: AsyncIOMotorDatabase[Any]) -> GetDeliveryProblems:
+    """The admin Delivery problems read (L11 item 3)."""
+    return GetDeliveryProblems(
+        resolver=MongoAudienceResolver(db=db),
+        suppressions=MongoSuppressionRepository(db),
+        deliveries=MongoDeliveryRepository(db),
     )
