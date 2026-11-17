@@ -1,6 +1,6 @@
 # payout-period-atomic-writes
 
-PR: TBD
+PR: #1199
 
 ## What changed
 A coach payout can no longer be approved, paid, reopened, recomputed or line-edited from a screen showing an older version of it. The payout page sends the version it shows; if someone else changed the payout since, nothing is saved and the page says "Someone else changed this payout — reload to see it." with a Reload button, instead of a raw error. Generating a period writes its lines before the period that points at them, so a crash or a reader in between never sees a total with no lines, and two simultaneous generates of the same month store one period and one audit entry. Lines can only be rewritten on a draft, even if a caller skips the use case's check. Approval is refused (409) while another payout period for the same coach overlaps its dates, whatever that period's status, so overlapping windows stored before generation refused them can no longer both be paid. Retrying an approve or a mark-paid whose response was lost (same payment details) returns the stored result instead of a 409. A coach swap's draft recompute retries once on a lost race and logs an error if the period was approved meanwhile. Every payout audit entry records the period version it produced.
