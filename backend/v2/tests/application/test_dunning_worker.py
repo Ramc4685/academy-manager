@@ -536,11 +536,17 @@ def test_every_park_reason_is_re_claimable_by_the_repository() -> None:
     from backend.v2.contexts.billing.application.use_cases.process_dunning_retries import (
         _PARK_REASONS,
     )
+    from backend.v2.contexts.billing.domain.dunning import EXISTING_CHARGE_NEEDS_REVIEW
     from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
         MongoDunningStateRepository,
     )
 
-    stranded = _PARK_REASONS - MongoDunningStateRepository.retryable_parked_reasons
+    # The one deliberate exception: a found charge that was refunded or disputed must
+    # not be charged again by the robot; it waits for a person (billing-health shows it).
+    awaiting_a_person = {EXISTING_CHARGE_NEEDS_REVIEW}
+    stranded = (
+        _PARK_REASONS - MongoDunningStateRepository.retryable_parked_reasons - awaiting_a_person
+    )
     assert not stranded, f"park reasons never re-claimed: {sorted(stranded)}"
 
 
