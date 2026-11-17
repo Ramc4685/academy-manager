@@ -1601,6 +1601,8 @@ class FakeOccurrenceBilling:
             "billing_policy": "cancelled_date_credited",
             "billing_result": "credited=1,override=written",
             "credits": {"enr-1": "credit-671"},
+            "credited_cents": 3000,
+            "skip_counts": {"covered_by_free_classes": 1},
         }
 
 

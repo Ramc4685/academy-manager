@@ -646,6 +646,10 @@ class CancelSessionOccurrenceResponse(BaseModel):
     #: Approved trials that were assigned to this date and are pending again (#671).
     trials_reopened: int = 0
     credits_issued: int = 0
+    #: #1207: the date's credits in total, and skip reason → families, so the
+    #: admin sees "nobody was owed" (a free extra class) as plainly as a credit.
+    credit_total_cents: int = 0
+    credit_skips: dict[str, int] = Field(default_factory=dict)
     billing_result: str | None = None
     notified: bool = False
 

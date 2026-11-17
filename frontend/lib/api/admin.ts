@@ -1949,6 +1949,9 @@ export interface CancelSessionOccurrenceResponse {
   roster_entries_removed: number;
   makeups_reopened: number;
   credits_issued: number;
+  /** #1207: the date's credits in total, and skip reason → families. */
+  credit_total_cents?: number;
+  credit_skips?: Record<string, number>;
   billing_result: string | null;
   notified: boolean;
 }

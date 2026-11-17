@@ -12399,6 +12399,15 @@ export interface components {
             affected_enrollment_ids?: string[];
             /** Billing Result */
             billing_result?: string | null;
+            /** Credit Skips */
+            credit_skips?: {
+                [key: string]: number;
+            };
+            /**
+             * Credit Total Cents
+             * @default 0
+             */
+            credit_total_cents: number;
             /**
              * Credits Issued
              * @default 0

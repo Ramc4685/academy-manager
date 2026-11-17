@@ -466,6 +466,8 @@ async def cancel_session_occurrence(
         makeups_reopened=result.makeups_reopened,
         trials_reopened=result.trials_reopened,
         credits_issued=result.credits_issued,
+        credit_total_cents=result.credit_total_cents,
+        credit_skips=dict(result.credit_skips),
         billing_result=result.billing_result,
         notified=result.notified,
     )

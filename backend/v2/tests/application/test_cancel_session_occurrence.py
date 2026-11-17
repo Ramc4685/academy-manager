@@ -543,3 +543,32 @@ async def test_website_guests_on_the_cancelled_date_are_told_and_not_on_the_rost
     assert call["reason"] == "hall flooded"
     # A guest has no Student row, so the roster notifier is never asked about it.
     assert notifier.calls[0]["extra_student_ids"] == []
+
+
+@pytest.mark.asyncio
+async def test_result_carries_the_credit_total_and_why_families_were_skipped() -> None:
+    """#1207: Month dates shows the money per date, and says when none was owed."""
+    billing = FakeBilling(
+        result={
+            "billing_result": "credited=1,skipped=2",
+            "credits": {"enr-1": "cr-1"},
+            "credited_cents": 3000,
+            "skip_counts": {"covered_by_free_classes": 1, "first_month_proration_excludes_date": 1},
+        }
+    )
+    use_case = _build(
+        occurrences=FakeOccurrences({"occ-1": _occurrence()}),
+        enrollments=FakeEnrollments([_enrollment("enr-1", "st-1")]),
+        billing=billing,
+    )
+
+    result = await use_case.execute(
+        CancelSessionOccurrenceCommand(occurrence_id="occ-1", reason="gym closed")
+    )
+
+    assert result.credits_issued == 1
+    assert result.credit_total_cents == 3000
+    assert result.credit_skips == {
+        "covered_by_free_classes": 1,
+        "first_month_proration_excludes_date": 1,
+    }

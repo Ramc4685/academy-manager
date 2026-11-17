@@ -100,6 +100,8 @@ class OccurrenceBillingSyncAdapter:
             "period": result.period,
             "override_written": result.override_written,
             "credits": result.credits,
+            "credited_cents": result.credited_cents,
+            "skip_counts": result.skip_counts,
         }
 
 

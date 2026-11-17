@@ -113,6 +113,9 @@ class CancelSessionOccurrenceResult(BaseModel):
     makeups_reopened: int = 0
     trials_reopened: int = 0
     credits_issued: int = 0
+    #: What the date credited in total, and skip reason → families (#1207).
+    credit_total_cents: int = 0
+    credit_skips: dict[str, int] = Field(default_factory=dict)
     billing_result: str | None = None
     notified: bool = False
     #: The notice inputs a deferred caller needs to tell the families itself.
@@ -263,6 +266,8 @@ class CancelSessionOccurrence:
             makeups_reopened=makeups_reopened,
             trials_reopened=len(reopened_trials),
             credits_issued=sum(1 for value in credits.values() if value),
+            credit_total_cents=int(billing.get("credited_cents") or 0),
+            credit_skips=dict(billing.get("skip_counts") or {}),
             billing_result=billing_result,
             notified=notified,
             one_time_student_ids=tuple(one_time_student_ids),

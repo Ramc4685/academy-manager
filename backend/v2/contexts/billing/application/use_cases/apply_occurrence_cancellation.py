@@ -231,6 +231,9 @@ class ApplyOccurrenceCancellationCommand(BaseModel):
     start_at: datetime
     reason: str = Field(default="", max_length=500)
     actor_id: str | None = None
+    #: Price every family exactly as a real run would, writing nothing: the
+    #: "credit a missed class" preview (#1207) quotes the cents confirm issues.
+    dry_run: bool = False
 
 
 @dataclass(frozen=True)
@@ -238,7 +241,7 @@ class OccurrenceCreditDecision:
     enrollment_id: str
     credit_id: str | None
     amount_cents: int
-    outcome: str  # credited | already_credited | skipped:<reason>
+    outcome: str  # credited | already_credited | would_credit (dry run) | skipped:<reason>
 
 
 @dataclass(frozen=True)
@@ -252,6 +255,21 @@ class ApplyOccurrenceCancellationResult:
     def credits(self) -> dict[str, str]:
         """enrollment_id → credit_id for every family holding a credit for this date."""
         return {d.enrollment_id: d.credit_id for d in self.decisions if d.credit_id}
+
+    @property
+    def credited_cents(self) -> int:
+        """What this date credited (or, in a dry run, would credit) in total."""
+        return sum(d.amount_cents for d in self.decisions if d.outcome in _CREDITED_OUTCOMES)
+
+    @property
+    def skip_counts(self) -> dict[str, int]:
+        """skip reason → families, so the admin is told why a date credited nobody."""
+        counts: dict[str, int] = {}
+        for d in self.decisions:
+            if d.outcome.startswith("skipped:"):
+                reason = d.outcome.removeprefix("skipped:")
+                counts[reason] = counts.get(reason, 0) + 1
+        return counts
 
     @property
     def billing_result(self) -> str:
@@ -319,6 +337,10 @@ class ApplyOccurrenceCancellation:
             # Nothing was charged for it, so there is nothing to credit; the
             # override is still recorded under the id the generator would use.
             billing_id = _synthesised_id(cmd, pricing.timezone)
+            if cmd.dry_run:
+                return ApplyOccurrenceCancellationResult(
+                    period=period, billing_occurrence_id=billing_id, override_written=False
+                )
             await self._overrides.mark_cancelled(
                 session_id=cmd.session_id,
                 occurrence_id=billing_id,
@@ -334,13 +356,14 @@ class ApplyOccurrenceCancellation:
         # for the period, including the one being cancelled now and any
         # cancelled before it. See ``_NEVER_SCHEDULED_STATUSES``.
         priced = [o for o in occurrences if o.status not in _NEVER_SCHEDULED_STATUSES]
-        await self._overrides.mark_cancelled(
-            session_id=cmd.session_id,
-            occurrence_id=target.occurrence_id,
-            source_occurrence_id=cmd.occurrence_id,
-            reason=cmd.reason,
-            now=now,
-        )
+        if not cmd.dry_run:
+            await self._overrides.mark_cancelled(
+                session_id=cmd.session_id,
+                occurrence_id=target.occurrence_id,
+                source_occurrence_id=cmd.occurrence_id,
+                reason=cmd.reason,
+                now=now,
+            )
 
         decisions: list[OccurrenceCreditDecision] = []
         fee_sized: list[_FeeSizedCredit] = []
@@ -357,7 +380,7 @@ class ApplyOccurrenceCancellation:
             decisions.append(decision)
             if sized is not None:
                 fee_sized.append(sized)
-        if fee_sized and self._fence is not None:
+        if fee_sized and self._fence is not None and not cmd.dry_run:
             settled = await self._settled_fence(cmd.session_id)
             if fence is None or settled is None or settled != fence:
                 decisions = await self._resize_to_current_fee(
@@ -366,7 +389,7 @@ class ApplyOccurrenceCancellation:
         return ApplyOccurrenceCancellationResult(
             period=period,
             billing_occurrence_id=target.occurrence_id,
-            override_written=True,
+            override_written=not cmd.dry_run,
             decisions=tuple(decisions),
         )
 
@@ -598,6 +621,12 @@ class ApplyOccurrenceCancellation:
         )
         if amount <= 0:
             return _skip(enrollment, "zero_amount"), False, 0
+        if cmd.dry_run:
+            return (
+                OccurrenceCreditDecision(enrollment.enrollment_id, None, amount, "would_credit"),
+                False,
+                0,
+            )
 
         local_day = target.start_at.astimezone(ZoneInfo(pricing.timezone)).date().isoformat()
         entry = CreditLedgerEntry(
@@ -648,6 +677,8 @@ class ApplyOccurrenceCancellation:
 #: crediting the result would refund a purchase that has nothing to do with
 #: the cancelled class (#671).
 _TUITION_LINE_TYPES: frozenset[str] = frozenset({"tuition", "discount"})
+
+_CREDITED_OUTCOMES: frozenset[str] = frozenset({"credited", "already_credited", "would_credit"})
 
 
 def _billed_classes(

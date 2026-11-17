@@ -12435,6 +12435,18 @@
             ],
             "title": "Billing Result"
           },
+          "credit_skips": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Credit Skips",
+            "type": "object"
+          },
+          "credit_total_cents": {
+            "default": 0,
+            "title": "Credit Total Cents",
+            "type": "integer"
+          },
           "credits_issued": {
             "default": 0,
             "title": "Credits Issued",

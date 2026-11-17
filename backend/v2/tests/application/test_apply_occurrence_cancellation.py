@@ -655,3 +655,81 @@ async def test_continuing_family_second_cancellation_credits_the_four_class_rate
 
     assert {d.outcome for d in result.decisions} == {"credited"}
     assert {row.amount_cents for row in credits.rows} == {1750}
+
+
+# --- #1207: preview a missed class, and say what each date credited ---------
+
+
+def _mixed_reader() -> FakeReader:
+    """An invoiced family (credited), a free-class family (skipped) and an
+    un-invoiced ongoing family (credited from the class fee)."""
+    continuing = _enrollment("enr-1", billing_start_at=None)
+    free_class = _enrollment("enr-2", billing_start_at=WEDNESDAYS[0])
+    fee_based = _enrollment("enr-3", billing_start_at=None)
+    return FakeReader(
+        occurrences=[_wednesday(i) for i in range(5)],
+        enrollments=[continuing, free_class, fee_based],
+        bases={
+            "enr-1": PeriodChargeBasis(
+                calculation_type="MONTHLY_TUITION",
+                final_amount_cents=12000,
+                total_eligible_classes=4,
+                billable_remaining_classes=4,
+            ),
+            f"{free_class.student_id}:sess-1": _five_class_basis(),
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_dry_run_prices_every_family_exactly_as_the_real_run_and_writes_nothing() -> None:
+    """The missed-class preview must quote the cents the confirm then issues."""
+    invoices = FakeInvoices({"enr-1": _invoice("enr-1", subtotal=12000)})
+    credits, overrides = FakeCredits(), FakeOverrides()
+    use_case = _build(_mixed_reader(), invoices, credits, overrides)
+
+    preview = await use_case.execute(_cmd(start_at=WEDNESDAYS[2], dry_run=True))
+
+    assert credits.rows == [] and overrides.written == []
+    quoted = {d.enrollment_id: (d.outcome, d.amount_cents) for d in preview.decisions}
+    assert quoted == {
+        "enr-1": ("would_credit", 3000),
+        "enr-2": ("skipped:covered_by_free_classes", 0),
+        "enr-3": ("would_credit", 2400),
+    }
+    assert preview.credited_cents == 5400
+
+    real = await use_case.execute(_cmd(start_at=WEDNESDAYS[2]))
+
+    issued = {d.enrollment_id: (d.outcome, d.amount_cents) for d in real.decisions}
+    assert issued == {
+        "enr-1": ("credited", 3000),
+        "enr-2": ("skipped:covered_by_free_classes", 0),
+        "enr-3": ("credited", 2400),
+    }
+    assert sorted(row.amount_cents for row in credits.rows) == [2400, 3000]
+
+
+@pytest.mark.asyncio
+async def test_dry_run_after_the_real_run_reports_the_credits_already_issued() -> None:
+    invoices = FakeInvoices({"enr-1": _invoice("enr-1", subtotal=12000)})
+    credits = FakeCredits()
+    use_case = _build(_mixed_reader(), invoices, credits, FakeOverrides())
+    await use_case.execute(_cmd(start_at=WEDNESDAYS[2]))
+
+    again = await use_case.execute(_cmd(start_at=WEDNESDAYS[2], dry_run=True))
+
+    assert {d.outcome for d in again.decisions if d.credit_id} == {"already_credited"}
+    assert again.credited_cents == 5400
+    assert len(credits.rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_result_summarises_credited_cents_and_skip_reasons() -> None:
+    invoices = FakeInvoices({"enr-1": _invoice("enr-1", subtotal=12000)})
+    result = await _build(_mixed_reader(), invoices, FakeCredits(), FakeOverrides()).execute(
+        _cmd(start_at=WEDNESDAYS[2])
+    )
+
+    assert result.credited_cents == 5400
+    assert result.skip_counts == {"covered_by_free_classes": 1}

@@ -25,6 +25,7 @@ import {
 } from "@/lib/api/admin";
 import { postSessionAnnouncement } from "@/lib/api/v2/announcements";
 import {
+  creditOutcome,
   datesToCancel,
   groupMonthDates,
   isEditable,
@@ -61,6 +62,8 @@ export default function AdminMonthDatesPage() {
   const [pasted, setPasted] = useState("");
   const [suggested, setSuggested] = useState<Map<string, string>>(new Map());
   const [suggestNote, setSuggestNote] = useState<string | null>(null);
+  // #1207: what each called-off date credited, shown until the next action.
+  const [credits, setCredits] = useState<{ id: string; label: string; outcome: string }[]>([]);
 
   const sessions = useQuery({
     queryKey: queryKeys.admin.sessions("window-all"),
@@ -151,16 +154,27 @@ export default function AdminMonthDatesPage() {
       const failed: string[] = [];
       let creditNotSynced = 0;
       let oneTimeSeatsRemoved = 0;
+      const outcomes: { id: string; label: string; outcome: string }[] = [];
+      const byId = new Map(dates.flatMap((d) => d.classes).map((c) => [c.occurrence.occurrence_id, c]));
       for (const id of toCancel) {
         try {
           const result = await cancelSessionOccurrence(id, { reason: reason.trim(), notify: false });
-          if (result.billing_result && NOT_CREDITED.has(result.billing_result)) creditNotSynced += 1;
+          const syncFailed = Boolean(result.billing_result && NOT_CREDITED.has(result.billing_result));
+          if (syncFailed) creditNotSynced += 1;
           oneTimeSeatsRemoved += result.roster_entries_removed;
+          const c = byId.get(id);
+          outcomes.push({
+            id,
+            label: c ? `${formatAcademyDate(c.occurrence.start_at, timeZone)} · ${c.sessionTitle}` : id,
+            outcome: syncFailed
+              ? "Billing did not run, so nobody was credited yet."
+              : creditOutcome(result.credits_issued, result.credit_total_cents ?? 0, result.credit_skips),
+          });
         } catch {
           failed.push(id);
         }
       }
-      return { failed, creditNotSynced, oneTimeSeatsRemoved };
+      return { failed, creditNotSynced, oneTimeSeatsRemoved, outcomes };
     },
     onSettled: async (outcome) => {
       setNotice(null);
@@ -175,6 +189,7 @@ export default function AdminMonthDatesPage() {
       setReason("");
       setSuggested(new Map());
       setSuggestNote(null);
+      setCredits(outcome?.outcomes ?? []);
       const failed = outcome?.failed ?? [];
       const problems: string[] = [];
       if (failed.length) {
@@ -269,6 +284,7 @@ export default function AdminMonthDatesPage() {
               setSuggestNote(null);
               setNotice(null);
               setError(null);
+              setCredits([]);
             }}
             className="ml-2 min-h-touch rounded-lg border border-rally-line px-3 text-sm"
             data-testid="month-dates-month"
@@ -288,6 +304,22 @@ export default function AdminMonthDatesPage() {
         <p role="alert" className="rounded-lg bg-status-red-50 px-3 py-2 text-sm text-status-red-800">
           {error}
         </p>
+      )}
+      {credits.length > 0 && (
+        <Card p={16} data-testid="month-dates-credits">
+          <h2 className="text-base font-semibold text-rally-ink">Credits for the dates you called off</h2>
+          <p className="mt-1 text-sm text-rally-muted">
+            Credits come off each family&apos;s next invoice. A family&apos;s record shows every credit under Billing.
+          </p>
+          <ul className="mt-2 divide-y divide-rally-line">
+            {credits.map((c) => (
+              <li key={c.id} className="py-2 text-sm" data-testid="month-dates-credit-row">
+                <p className="font-semibold text-rally-ink">{c.label}</p>
+                <p className="text-rally-muted">{c.outcome}</p>
+              </li>
+            ))}
+          </ul>
+        </Card>
       )}
 
       <Card p={16}>
