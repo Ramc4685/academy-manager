@@ -52,6 +52,7 @@ from .public_page_routes import router as public_page_router
 from .referral_routes import router as referral_router
 from .registration_routes import router as registration_router
 from .reports_routes import router as reports_router
+from .schedule_publish_routes import router as schedule_publish_router
 from .self_service_policy_routes import router as self_service_policy_router
 from .self_service_request_routes import router as self_service_request_router
 from .session_type_routes import router as session_type_router
@@ -109,6 +110,7 @@ router.include_router(progress_settings_router)
 router.include_router(plan_router)
 router.include_router(progress_router)
 router.include_router(self_service_policy_router)
+router.include_router(schedule_publish_router)
 router.include_router(self_service_request_router)
 router.include_router(trial_outcome_router)
 router.include_router(pipeline_router)

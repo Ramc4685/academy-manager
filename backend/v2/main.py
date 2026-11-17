@@ -241,6 +241,7 @@ from backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo imp
 )
 from backend.v2.interfaces.admin.progress_routes import resolve_certificate_display
 from backend.v2.interfaces.admin.router import router as admin_router
+from backend.v2.interfaces.calendar_feed_routes import router as calendar_feed_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.email_webhook_routes import router as email_webhook_router
 from backend.v2.interfaces.magic_link_routes import router as magic_link_router
@@ -3110,6 +3111,7 @@ def create_app() -> FastAPI:
     app.include_router(magic_link_router, prefix="/api/v2")
     app.include_router(password_reset_router, prefix="/api/v2")
     app.include_router(unsubscribe_router, prefix="/api/v2")
+    app.include_router(calendar_feed_router, prefix="/api/v2")
     app.include_router(email_webhook_router, prefix="/api/v2")
     # Anonymous, host-resolved, rate limited (interfaces/public/__init__.py).
     app.include_router(public_router, prefix="/api/v2")

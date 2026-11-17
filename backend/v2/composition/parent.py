@@ -16,6 +16,7 @@ from pymongo.errors import OperationFailure
 
 from backend.v2.composition.absence_notifications import compose_absence_notifier
 from backend.v2.composition.ai_video_consent import compose_parent_ai_video_consent
+from backend.v2.composition.calendar_feed import compose_calendar_feed
 from backend.v2.composition.families import compose_system_family_autopay_pause
 from backend.v2.composition.level_up_lifecycle import compose_expire_level_up_recommendations
 from backend.v2.composition.lifecycle_billing import (
@@ -2621,6 +2622,7 @@ def compose_parent(
                 "brand_color": None,
                 "self_service": self_service,
                 "payment_instructions": policy.payment_instructions or None,
+                "schedule_published_through": policy.schedule_published_through,
             }
         return {
             "display_name": str(doc.get("display_name") or "Academy"),
@@ -2633,6 +2635,7 @@ def compose_parent(
             "brand_color": doc.get("brand_color"),
             "self_service": self_service,
             "payment_instructions": policy.payment_instructions or None,
+            "schedule_published_through": policy.schedule_published_through,
         }
 
     async def get_child_schedule(
@@ -3059,6 +3062,12 @@ def compose_parent(
         get_parent_home=get_parent_home,
         resolve_assigned_classes=resolve_assigned_classes,
         ai_video_consent=compose_parent_ai_video_consent(db),
+        calendar_feed=compose_calendar_feed(
+            db,
+            list_children_for_parent=list_children_for_parent,
+            get_child_schedule=get_child_schedule,
+            clock=clock,
+        ),
         # #828: claiming a held seat inside the three-day window.
         confirm_waitlist_offer=compose_confirm_waitlist_offer(db, settings),
         decline_waitlist_offer=compose_decline_waitlist_offer(db, promote=promote),

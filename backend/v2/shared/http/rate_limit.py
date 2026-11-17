@@ -77,6 +77,9 @@ _PER_HOST_LIMITS: dict[tuple[str, str], tuple[int, int]] = {
 # so a client walking tokens shares a single budget instead of one per token.
 _PREFIX_LIMITS: dict[tuple[str, str], tuple[int, int]] = {
     ("GET", "/api/v2/public/certificates/"): (60, 60),
+    # Phone calendars poll a subscribed feed about hourly; a family with a
+    # few devices stays far below this.
+    ("GET", "/api/v2/calendar-feed/"): (60, 60),
 }
 
 _PROXY_AUTH_HEADER = "x-cm-proxy-auth"
