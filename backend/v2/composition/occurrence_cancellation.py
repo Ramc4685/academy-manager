@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.v2.composition.payout_input_lock import compose_payout_input_lock
@@ -149,9 +149,8 @@ def compose_apply_occurrence_cancellation(
     db: Any, *, clock: Callable[[], datetime] | None = None
 ) -> ApplyOccurrenceCancellation:
     """``clock`` pins "now" for tests: whether a month is past decides crediting."""
-    extra = {"clock": clock} if clock is not None else {}
     return ApplyOccurrenceCancellation(
-        **extra,
+        clock=clock or (lambda: datetime.now(UTC)),
         reader=MongoOccurrenceCancellationReader(db),
         overrides=MongoOccurrenceOverrideRepository(db),
         invoices=MongoBillingLedgerRepository(db),
