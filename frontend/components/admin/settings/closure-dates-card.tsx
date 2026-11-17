@@ -65,7 +65,7 @@ export function ClosureDatesCard() {
   };
   const ready = Boolean(start && reason.trim()) && (!end || end >= start);
   const error = previewMutation.error ?? applyMutation.error;
-  const count = preview?.dates.length ?? 0;
+  const count = preview?.dates?.length ?? 0;
 
   return (
     <Card p={24} className="max-w-3xl" data-testid="closure-dates-card">
@@ -146,7 +146,7 @@ export function ClosureDatesCard() {
                 {count} class date{count === 1 ? "" : "s"} will be cancelled:
               </p>
               <ul className="mt-2 space-y-1 text-sm">
-                {preview.dates.map((d) => (
+                {(preview.dates ?? []).map((d) => (
                   <li key={d.occurrence_id}>
                     {d.session_title ?? "Class"}, {when(d.start_at)}
                   </li>
@@ -169,13 +169,13 @@ export function ClosureDatesCard() {
       {done && (
         <div className="mt-4 text-sm" role="status" data-testid="closure-result">
           <p className="font-medium text-rally-ink">
-            {done.cancelled} class date{done.cancelled === 1 ? "" : "s"} cancelled
-            {done.credits_issued > 0 ? `, ${done.credits_issued} credits issued` : ""}
-            {notify ? `, ${done.families_notified} families emailed` : ""}.
+            {done.cancelled ?? 0} class date{done.cancelled === 1 ? "" : "s"} cancelled
+            {(done.credits_issued ?? 0) > 0 ? `, ${done.credits_issued} credits issued` : ""}
+            {notify ? `, ${done.families_notified ?? 0} families emailed` : ""}.
           </p>
-          {done.skipped > 0 && (
+          {(done.skipped ?? 0) > 0 && (
             <ul className="mt-2 space-y-1 text-rally-muted">
-              {done.dates
+              {(done.dates ?? [])
                 .filter((d) => d.status === "skipped")
                 .map((d) => (
                   <li key={d.occurrence_id}>

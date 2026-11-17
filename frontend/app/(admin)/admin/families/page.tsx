@@ -93,6 +93,7 @@ import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { PipelineBoard } from "@/components/admin/people/pipeline-board";
 
 import { FamilyImportPanel } from "./FamilyImportPanel";
+import { QuickAddFamily } from "./QuickAddFamily";
 
 const PAGE_SIZE = 50;
 /** Bounded walk of the Billing Setup pages for the bulk invite's recipients. */
@@ -304,6 +305,8 @@ function FamiliesView() {
           </Card>
         ))}
       </div>
+
+      <QuickAddFamily onAdded={refreshAll} />
 
       <BulkInviteNotInvited onInvited={refreshAll} />
 
