@@ -25,7 +25,7 @@ def _failed(academy: str, delivery_id: str, reason: str) -> Delivery:
     ).mark_failed(reason=reason)
 
 
-async def test_failed_deliveries_stay_in_the_academy_and_skip_gate_refusals(real_db) -> None:
+async def test_failed_deliveries_stay_in_the_academy_and_skip_suppressions(real_db) -> None:
     repo = MongoDeliveryRepository(real_db)
     with tenant_scope("acad-a"):
         await repo.save_many(
@@ -39,7 +39,8 @@ async def test_failed_deliveries_stay_in_the_academy_and_skip_gate_refusals(real
         await repo.save_many([_failed("acad-b", "d-b", "provider 422")])
     with tenant_scope("acad-a"):
         failed = await repo.list_failed(limit=10)
-    assert [d.delivery_id for d in failed] == ["d-a"]
+    # Suppression refusals are the shared list's; an unsubscribe is the academy's own.
+    assert sorted(d.delivery_id for d in failed) == ["d-a", "d-unsub"]
 
 
 async def test_suppression_lookup_returns_only_the_addresses_asked_for(real_db) -> None:

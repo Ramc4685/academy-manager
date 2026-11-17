@@ -701,6 +701,7 @@ class TestCampaignIdempotency:
         retry = await use_case.execute(_parent_command())
 
         assert retry.deduplicated is True
+        assert retry.queued is False  # inline send finished: real counts
         assert retry.campaign_id == first.campaign_id
         assert retry.total_recipients == 2
         assert retry.sent_count == 2
@@ -1159,3 +1160,15 @@ async def test_a_delivery_that_keeps_crashing_is_given_up_so_the_campaign_closes
     assert deliveries.saved[0].status == DeliveryStatus.FAILED
     assert deliveries.saved[0].failed_reason == "send_gave_up"
     assert campaigns.saved[0].status == CampaignStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_a_retry_while_the_queue_drains_reports_queued() -> None:
+    use_case, worker, _, _, _, _ = _background()
+    await use_case.execute(_parent_command())
+    retry = await use_case.execute(_parent_command())
+    assert (retry.deduplicated, retry.queued) == (True, True)
+    assert (retry.total_recipients, retry.sent_count) == (3, 0)
+    await worker.execute()
+    done = await use_case.execute(_parent_command())
+    assert (done.deduplicated, done.queued, done.sent_count) == (True, False, 3)

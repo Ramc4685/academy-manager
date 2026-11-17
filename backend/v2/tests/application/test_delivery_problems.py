@@ -20,6 +20,7 @@ from backend.v2.contexts.communications.domain.models import (
     Delivery,
     DeliveryStatus,
 )
+from backend.v2.shared.comms.public_failure import SUPPRESSION_REFUSAL
 from backend.v2.shared.tenancy import current_academy_id, tenant_scope
 
 T = datetime(2026, 11, 1, tzinfo=UTC)
@@ -73,14 +74,16 @@ def _failed(delivery_id: str, reason: str) -> Delivery:
 
 
 class _Deliveries:
-    """Returns a gate refusal too, as a repository that forgot the filter would."""
+    """What ``MongoDeliveryRepository.list_failed`` returns: suppression
+    refusals are filtered in the query, unsubscribe refusals are not."""
 
     async def list_failed(self, *, limit: int) -> list[Delivery]:
-        return [
+        rows = [
             _failed("d1", "Resend 422: The to address is invalid"),
             _failed("d2", "suppressed:complaint"),
             _failed("d3", "unsubscribed:campaigns"),
         ]
+        return [d for d in rows if not SUPPRESSION_REFUSAL.match(d.failed_reason or "")]
 
 
 def _use_case(store: _Suppressions) -> GetDeliveryProblems:
@@ -100,7 +103,7 @@ async def test_lists_only_this_academys_people_with_no_reason() -> None:
     assert result.suppressed_emails == ["mine@example.test", "shared@example.test"]
 
 
-async def test_failed_sends_hide_gate_refusals_and_provider_text() -> None:
+async def test_failed_sends_map_provider_text_and_name_unsubscribes() -> None:
     with tenant_scope("acad-a"):
         result = await _use_case(_Suppressions()).execute()
     assert result.failed == [
@@ -108,5 +111,10 @@ async def test_failed_sends_hide_gate_refusals_and_provider_text() -> None:
             delivery_id="d1",
             recipient_email="mine@example.test",
             failed_reason="email_delivery_failed",
-        )
+        ),
+        FailedSend(
+            delivery_id="d3",
+            recipient_email="mine@example.test",
+            failed_reason="recipient_unsubscribed",
+        ),
     ]

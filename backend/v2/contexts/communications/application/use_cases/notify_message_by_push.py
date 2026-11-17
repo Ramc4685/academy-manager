@@ -45,17 +45,16 @@ class NotifyMessageByPush:
     preferences: EmailPreferenceRepository
     # (academy_id, user_id) -> the inbox that user's shell opens. DMs reach
     # coaches and staff as well as parents; broadcasts only reach parents.
-    inbox_path: Callable[[str, str], Awaitable[str]] | None = None
+    inbox_path: Callable[[str, str], Awaitable[str]]
 
     async def direct_message(self, message: Message) -> None:
         if not message.recipient_id or not self.push.allows(PushEvent.DIRECT_MESSAGE):
             return
-        url = _PARENT_INBOX
-        if self.inbox_path is not None:
-            try:
-                url = await self.inbox_path(current_academy_id(), message.recipient_id)
-            except Exception:
-                log.warning("message push inbox lookup failed", exc_info=True)
+        try:
+            url = await self.inbox_path(current_academy_id(), message.recipient_id)
+        except Exception:
+            log.warning("message push inbox lookup failed", exc_info=True)
+            url = _PARENT_INBOX
         await self._send(
             [message.recipient_id], PushEvent.DIRECT_MESSAGE, "New message", message.body, url
         )

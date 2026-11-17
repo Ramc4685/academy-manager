@@ -52,6 +52,7 @@ from backend.v2.contexts.communications.domain.models import (
     AcademyAudience,
     Audience,
     Campaign,
+    CampaignStatus,
     CoachAudience,
     Delivery,
     DeliveryStatus,
@@ -270,6 +271,8 @@ class SendCampaign:
                 sent_count=sum(1 for r in rows if r.status == DeliveryStatus.SENT),
                 failed_count=sum(1 for r in rows if r.status == DeliveryStatus.FAILED),
                 deduplicated=True,
+                # A retry while the queue drains reports "queued", not "0 of N delivered".
+                queued=existing.status == CampaignStatus.SENDING,
             )
 
         # Persist the QUEUED batch before any email leaves, so a mid-loop
@@ -288,8 +291,9 @@ class SendCampaign:
 
         if self.background:
             # Only now, with the whole queue persisted, hand it to the worker.
-            # A crash before this line leaves an inline SENDING campaign that no
-            # worker resumes and that sent nothing, which an admin can see.
+            # A crash before this line leaves an inline SENDING campaign that
+            # sent nothing and that no worker resumes; the ops digest flags it
+            # ("Email campaigns stuck sending").
             await self.campaigns.save(replace(campaign, background=True))
             return SendCampaignResult(
                 campaign_id=campaign.campaign_id,

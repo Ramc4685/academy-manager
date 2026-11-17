@@ -21,14 +21,20 @@ describe("DeliveryProblemsList (L11 item 3)", () => {
               recipient_email: "slow@example.test",
               failed_reason: "send_gave_up",
             },
+            {
+              delivery_id: "d3",
+              recipient_email: "optout@example.test",
+              failed_reason: "recipient_unsubscribed",
+            },
           ],
         },
       }),
     );
     expect(html).toContain("This address is not receiving email");
     expect(html).not.toMatch(/bounced|spam|since/i);
-    expect(html).toContain("Send failed");
+    expect(html).toContain("Delivery failed");
     expect(html).toContain("Gave up after repeated errors");
+    expect(html).toContain("They unsubscribed from these emails");
   });
 
   it("says so when nothing is wrong", () => {

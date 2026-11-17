@@ -6,6 +6,7 @@ direct os.environ reads outside this module.
 
 from __future__ import annotations
 
+import logging
 import os
 from functools import lru_cache
 from typing import Annotated, Literal
@@ -292,6 +293,23 @@ class Settings(BaseSettings):
         if isinstance(value, list | tuple):
             return ",".join(str(item) for item in value)
         return str(value or "")
+
+    @field_validator("marketing_sender_email", mode="before")
+    @classmethod
+    def _validate_marketing_sender(cls, value: object) -> str | None:
+        """One clean address or ``None``. Checked once, when settings load: a
+        typo or a header-breaking newline would otherwise fail every campaign
+        at the provider, so it is dropped with an error log and campaigns
+        leave from the transactional sender."""
+        from backend.v2.shared.comms.sender_identity import InvalidSenderValue, validate_reply_to
+
+        try:
+            return validate_reply_to(value if isinstance(value, str) else None)
+        except InvalidSenderValue:
+            logging.getLogger(__name__).error(
+                "marketing_sender_email_invalid: campaigns use the transactional sender"
+            )
+            return None
 
     @field_validator("sentry_cron_jobs", mode="before")
     @classmethod

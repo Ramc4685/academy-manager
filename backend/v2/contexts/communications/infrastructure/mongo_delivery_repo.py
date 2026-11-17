@@ -7,6 +7,7 @@ from typing import Any
 
 from backend.v2.contexts.communications.application.ports import DeliveryRepository
 from backend.v2.contexts.communications.domain.models import Delivery, DeliveryStatus
+from backend.v2.shared.comms.public_failure import SUPPRESSION_REFUSAL
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 
@@ -94,11 +95,11 @@ class MongoDeliveryRepository(TenantScopedRepository, DeliveryRepository):
         return int(result.modified_count)
 
     async def list_failed(self, *, limit: int) -> list[Delivery]:
-        # Gate refusals carry a shared-suppression reason; never list them.
+        # A suppression refusal carries the shared list's reason; never list it.
         cursor = self._find_many(
             {
                 "status": str(DeliveryStatus.FAILED),
-                "failed_reason": {"$not": {"$regex": "^(suppressed|unsubscribed):"}},
+                "failed_reason": {"$not": {"$regex": SUPPRESSION_REFUSAL.pattern}},
             },
             sort=[("_id", -1)],
             limit=limit,

@@ -6,9 +6,10 @@ academy. So the academy view shows only *which of its own people* are not
 receiving email, never why or since when: a reason could describe a bounce or
 complaint about another academy's mail.
 
-Failed campaign sends are this academy's own rows, minus send-time gate
-refusals (``suppressed:`` / ``unsubscribed:``, which would leak the same
-reason), with provider text mapped to a safe code.
+Failed campaign sends are this academy's own rows, minus suppression-list
+refusals (``suppressed:``, which would leak the same reason), with provider
+text mapped to a safe code. An unsubscribe refusal stays listed as
+``recipient_unsubscribed``: email preferences are the academy's own data.
 
 There is no academy-side clear: membership is not ownership of a global row.
 """
@@ -24,7 +25,7 @@ from backend.v2.contexts.communications.application.ports import (
 )
 from backend.v2.contexts.communications.domain.email_suppression import normalize_email
 from backend.v2.contexts.communications.domain.models import AcademyAudience, AudienceRole
-from backend.v2.shared.comms.public_failure import GATE_REFUSAL, public_failure
+from backend.v2.shared.comms.public_failure import public_failure
 
 _ROLES: tuple[AudienceRole, ...] = ("parent", "coach", "admin", "owner")
 _FAILED_LIMIT = 100
@@ -69,8 +70,6 @@ class GetDeliveryProblems:
                 failed_reason=public_failure(d.failed_reason, "email_delivery_failed"),
             )
             for d in await self.deliveries.list_failed(limit=_FAILED_LIMIT)
-            # Belt and braces: the repository already excludes these.
-            if not GATE_REFUSAL.match(d.failed_reason or "")
         ]
         return DeliveryProblems(
             suppressed_emails=sorted(row.email for row in rows if row.email in members),

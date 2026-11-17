@@ -38,6 +38,7 @@ from backend.v2.interfaces.admin.views import (
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.comms import Message
+from backend.v2.shared.comms.public_failure import public_failure
 from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["admin.comms"])
@@ -174,7 +175,12 @@ async def send_coach_digest_test(
         status=result.status,
         coach_id=result.coach_id,
         email=result.email,
-        detail=result.detail,
+        # A failure detail can be a raw suppression reason from the shared list.
+        detail=(
+            public_failure(result.detail, "email_delivery_failed")
+            if result.status == "failed"
+            else result.detail
+        ),
     )
 
 
@@ -199,7 +205,11 @@ async def get_coach_digest_log(
                 status=str(row.status),
                 kind=row.kind,
                 sent_at=row.sent_at,
-                failed_reason=row.failed_reason,
+                failed_reason=(
+                    public_failure(row.failed_reason, "email_delivery_failed")
+                    if row.failed_reason
+                    else None
+                ),
                 created_at=row.created_at,
             )
             for row in rows

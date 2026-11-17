@@ -85,6 +85,10 @@ def _msg(kind: str = "announcement", recipient_id: str | None = None) -> Message
     )
 
 
+async def _parent_inbox(academy_id: str, user_id: str) -> str:
+    return "/parent/messages"
+
+
 def _notifier(extra: str) -> tuple[NotifyMessageByPush, _Sender, _Audiences]:
     sender, audiences = _Sender(), _Audiences()
     push = SendPushToUser(
@@ -96,6 +100,7 @@ def _notifier(extra: str) -> tuple[NotifyMessageByPush, _Sender, _Audiences]:
         push=push,
         audiences=audiences,  # type: ignore[arg-type]
         preferences=_Prefs(),  # type: ignore[arg-type]
+        inbox_path=_parent_inbox,
     )
     return notifier, sender, audiences
 

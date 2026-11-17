@@ -9,11 +9,8 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { getDeliveryProblems, type DeliveryProblemsView } from "@/lib/api/admin";
+import { emailFailureLabel } from "@/lib/format/email-failure";
 import { queryKeys } from "@/lib/query/keys";
-
-const FAILED_LABEL: Record<string, string> = {
-  send_gave_up: "Gave up after repeated errors",
-};
 
 export function DeliveryProblemsList({ data }: { data: DeliveryProblemsView }) {
   if (data.suppressed_emails.length === 0 && data.failed.length === 0) {
@@ -45,7 +42,7 @@ export function DeliveryProblemsList({ data }: { data: DeliveryProblemsView }) {
             {data.failed.map((d) => (
               <li key={d.delivery_id} data-testid="delivery-problem-failed">
                 <span>{d.recipient_email ?? "No email on file"}</span> ·{" "}
-                <span>{FAILED_LABEL[d.failed_reason] ?? "Send failed"}</span>
+                <span>{emailFailureLabel(d.failed_reason)}</span>
               </li>
             ))}
           </ul>

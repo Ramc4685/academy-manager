@@ -308,7 +308,7 @@ class DeliveryRepository(Protocol):
 
     async def list_failed(self, *, limit: int) -> list[Delivery]:
         """The academy's most recent FAILED campaign deliveries, excluding
-        send-time gate refusals (``suppressed:`` / ``unsubscribed:``) (L11 item 3)."""
+        refusals by the shared suppression list (``suppressed:``) (L11 item 3)."""
         ...
 
 
