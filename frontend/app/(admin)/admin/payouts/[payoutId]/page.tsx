@@ -638,10 +638,14 @@ function PayLog({
 }) {
   const [correctingOccurrenceId, setCorrectingOccurrenceId] = useState<string | null>(null);
 
+  // A replacement correction already recomputes the draft on the server, bumping
+  // its version; recompute from a fresh read so the old version can't 409.
   const handleCorrectionApplied = async () => {
-    const updated = await recomputePayoutPeriod(period.period_id, period.version);
     setCorrectingOccurrenceId(null);
-    onChanged(updated);
+    const fresh = await getPayoutPeriod(period.period_id);
+    onChanged(
+      fresh.status === "draft" ? await recomputePayoutPeriod(fresh.period_id, fresh.version) : fresh,
+    );
   };
 
   return (
