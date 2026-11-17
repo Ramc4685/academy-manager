@@ -53,6 +53,7 @@ from backend.v2.composition.email_adapters import (
     AddCardReminderEmailAdapter,
     InvoiceEmailAdapter,
     LoginInviteEmailAdapter,
+    compose_signed_pay_link,
 )
 from backend.v2.composition.event_handlers import (
     install_dispute_notifier,
@@ -1285,6 +1286,7 @@ def compose_admin(
             contact_copies=build_invoice_contact_copies(db, sender=_email_sender),
             pay_page_url=pay_page_url,
             pay_link=parent_payments_link(db),
+            signed_pay_link=compose_signed_pay_link(db, settings),
         )
 
     async def send_billing_invoice(invoice_id: str) -> dict[str, Any]:
@@ -2190,7 +2192,7 @@ def compose_admin(
     send_add_card_reminder = SendAddCardReminder(
         contacts=_BillingSetupParentContactAdapter(users_r),
         links=_BillingSetupCardSetupLinkAdapter(),
-        sender=AddCardReminderEmailAdapter(sender=_email_sender),
+        sender=AddCardReminderEmailAdapter(sender=_email_sender, academies=academy_repo),
         academies=academy_repo,
         return_url_for=_billing_setup_return_url,
         brands=AcademyEmailBrands(academy_repo),

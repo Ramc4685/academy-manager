@@ -2465,6 +2465,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # and must not page anyone. Never fatal: a mail outage must not stop the app
     # from serving requests.
     await _verify_email_credentials(compose_email_credential_probe())
+    # L11 item 9: production must not boot silently without bounce ingestion
+    # or unsubscribe links. A warning, never a crash.
+    for warning in settings.email_config_warnings():
+        log.warning("email_config_incomplete: %s", warning)
+        capture_message(f"Email configuration incomplete: {warning}")
     scheduler.add_job(
         _send_ops_digest,
         "cron",
@@ -3092,6 +3097,7 @@ def create_app() -> FastAPI:
             db=getattr(app.state, "db", None),
             scheduler=getattr(app.state, "scheduler", None),
             dispatcher=getattr(app.state, "dispatcher", None),
+            config_warnings=settings.email_config_warnings(),
         )
         if not healthy:
             response.status_code = 503

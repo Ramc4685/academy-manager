@@ -38,6 +38,7 @@ log = logging.getLogger(__name__)
 
 _LOGO_URL_MAX_LENGTH = 2048
 _CONTACT_MAX_LENGTH = 254
+_ADDRESS_MAX_LENGTH = 300
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -81,6 +82,7 @@ def brand_from_academy_doc(doc: dict[str, Any] | None, *, fallback_name: str) ->
         contact_phone=_text(doc.get("contact_phone"), max_length=_CONTACT_MAX_LENGTH),
         sender_name=identity.sender_name,
         reply_to=identity.reply_to,
+        postal_address=_text(doc.get("address"), max_length=_ADDRESS_MAX_LENGTH),
     )
 
 

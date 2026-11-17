@@ -21,8 +21,13 @@ _FALLBACK_TEXT = (
 )
 
 
-def render_unsubscribe_footer(unsubscribe_url: str | None) -> str:
-    """An HTML footer block. Never empty — the notice ships either way."""
+def render_unsubscribe_footer(
+    unsubscribe_url: str | None, postal_address: str | None = None
+) -> str:
+    """An HTML footer block. Never empty — the notice ships either way.
+
+    ``postal_address`` is the sender's physical address CAN-SPAM asks of
+    commercial mail (L11 item 8); omitted, the footer is exactly as before."""
     if unsubscribe_url:
         inner = (
             f'<a href="{html.escape(unsubscribe_url, quote=True)}" '
@@ -30,12 +35,16 @@ def render_unsubscribe_footer(unsubscribe_url: str | None) -> str:
         )
     else:
         inner = html.escape(_FALLBACK_TEXT)
+    if postal_address:
+        inner = f"{inner}<br>{html.escape(postal_address)}"
     return (
         f'<p style="font-size:12px;color:{_MUTED};margin:20px 0 0;'
         f'border-top:1px solid {LINE};padding-top:10px;">{inner}</p>'
     )
 
 
-def append_unsubscribe_footer(body: str, unsubscribe_url: str | None) -> str:
+def append_unsubscribe_footer(
+    body: str, unsubscribe_url: str | None, postal_address: str | None = None
+) -> str:
     """Append the footer to an already-rendered HTML body."""
-    return f"{body}{render_unsubscribe_footer(unsubscribe_url)}"
+    return f"{body}{render_unsubscribe_footer(unsubscribe_url, postal_address)}"

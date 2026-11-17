@@ -41,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -62,6 +63,7 @@ from backend.v2.contexts.communications.application.ports import (
 )
 from backend.v2.contexts.communications.domain.email_category import EmailCategory
 from backend.v2.shared.comms.email_theme import html_to_text
+from backend.v2.shared.comms.send_idempotency import next_send_idempotency_key
 from backend.v2.shared.comms.sender_identity import format_from_header
 
 log = logging.getLogger(__name__)
@@ -84,6 +86,20 @@ REQUEST_TIMEOUT_SECONDS = 30.0
 # composition), requests go through this transport if one is set. Production
 # never sets it. It carries no credential — the key is always the port's own.
 default_transport: httpx.AsyncBaseTransport | None = None
+
+# Resend's 409 answers when an Idempotency-Key is reused (L11 item 6). The first
+# means a message with this key already went out — exactly what a replayed
+# outbox event should learn — so it is reported as sent. The second means the
+# first request is still in flight and is worth one more try.
+_KEY_ALREADY_USED = "invalid_idempotent_request"
+_KEY_IN_FLIGHT = "concurrent_idempotent_requests"
+
+
+def _status_code(exc: ResendError) -> int:
+    try:
+        return int(str(getattr(exc, "code", "")))
+    except ValueError:
+        return 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,12 +125,25 @@ class ResendEmailSendPort(EmailSendPort):
         from_address: str,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
+        marketing_from_address: str | None = None,
+        max_retries: int = 0,
+        retry_base_delay: float = 0.5,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         # The key lives on the instance only. Never assign ``resend.api_key``:
         # that global is shared by every port in the process.
         self._api_key = api_key or ""
         self._from_address = from_address
         self._transport = transport
+        # L11 item 8: campaign mail may leave from its own address (a separate
+        # subdomain keeps marketing complaints off the invoice sender's
+        # reputation). Unset ⇒ every category uses ``from_address``, as before.
+        self._marketing_from_address = marketing_from_address or None
+        # L11 item 6: extra attempts after a 429, or after a 5xx when the send
+        # carries an idempotency key. 0 (the default) is the old single attempt.
+        self._max_retries = max(0, max_retries)
+        self._retry_base_delay = retry_base_delay
+        self._sleep = sleep
 
     def _headers(self) -> dict[str, str]:
         # Byte-for-byte the headers ``resend.request.Request`` sends, except the
@@ -125,7 +154,13 @@ class ResendEmailSendPort(EmailSendPort):
             "User-Agent": f"resend-python:{get_version()}",
         }
 
-    async def _request(self, method: str, path: str, payload: dict[str, Any]) -> Any:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any],
+        extra_headers: dict[str, str] | None = None,
+    ) -> Any:
         """One authenticated call, with the SDK's response/error semantics.
 
         Mirrors ``resend.request.Request.perform_with_content``: a transport
@@ -150,7 +185,9 @@ class ResendEmailSendPort(EmailSendPort):
                 timeout=REQUEST_TIMEOUT_SECONDS,
                 transport=self._transport or default_transport,
             ) as client:
-                resp = await client.request(method, url, headers=self._headers(), json=body)
+                resp = await client.request(
+                    method, url, headers={**self._headers(), **(extra_headers or {})}, json=body
+                )
         except Exception as exc:  # safety net, as in the SDK
             raise ResendError(
                 code=500,
@@ -243,16 +280,22 @@ class ResendEmailSendPort(EmailSendPort):
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
         sender_name: str | None = None,
+        unsubscribe_url: str | None = None,
     ) -> SendOutcome:
-        # ``category`` is a routing/gating concern consumed by
-        # ``GatedEmailSendPort`` before we are reached; Resend has no field for
-        # it, so it is deliberately not forwarded into ``SendParams``.
+        # ``category`` is mainly a gating concern consumed by
+        # ``GatedEmailSendPort``; here it only picks the marketing sender.
         if not recipient.email:
             return SendOutcome(ok=False, provider_message_id=None, failed_reason="no email address")
+        idempotency_key = next_send_idempotency_key()
+        from_address = (
+            self._marketing_from_address
+            if category == EmailCategory.CAMPAIGN and self._marketing_from_address
+            else self._from_address
+        )
         try:
             params: resend.Emails.SendParams = {
                 # Per-academy display name, platform-owned address (L9a).
-                "from": format_from_header(sender_name, self._from_address),
+                "from": format_from_header(sender_name, from_address),
                 "to": [recipient.email],
                 "subject": subject,
                 "html": body,
@@ -267,13 +310,50 @@ class ResendEmailSendPort(EmailSendPort):
                 params["bcc"] = bcc
             if reply_to:
                 params["reply_to"] = reply_to
-            response = await self._request("post", "/emails", dict(params))
+            if unsubscribe_url:
+                # RFC 8058 one-click: the mailbox provider POSTs
+                # "List-Unsubscribe=One-Click" to this URL.
+                params["headers"] = {
+                    "List-Unsubscribe": f"<{unsubscribe_url}>",
+                    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+                }
+            response = await self._post_with_retry(dict(params), idempotency_key)
             msg_id = response.get("id") if isinstance(response, dict) else str(response)
             return SendOutcome(ok=True, provider_message_id=msg_id, failed_reason=None)
-        except (MissingApiKeyError, InvalidApiKeyError) as exc:
-            # A credential failure is an outage, not one bad recipient: without
-            # its own log line it is indistinguishable from a rejected address.
-            log.error("resend_send_rejected_credentials: %s", exc)
+        except ResendError as exc:
+            if idempotency_key and getattr(exc, "error_type", None) == _KEY_ALREADY_USED:
+                log.info("resend_send_already_sent: key=%s", idempotency_key)
+                return SendOutcome(ok=True, provider_message_id=None, failed_reason=None)
+            if isinstance(exc, (MissingApiKeyError, InvalidApiKeyError)):
+                # A credential failure is an outage, not one bad recipient:
+                # without its own log line it reads as a rejected address.
+                log.error("resend_send_rejected_credentials: %s", exc)
             return SendOutcome(ok=False, provider_message_id=None, failed_reason=str(exc))
         except Exception as exc:
             return SendOutcome(ok=False, provider_message_id=None, failed_reason=str(exc))
+
+    async def _post_with_retry(self, payload: dict[str, Any], idempotency_key: str | None) -> Any:
+        headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+        attempt = 0
+        while True:
+            try:
+                return await self._request("post", "/emails", payload, headers)
+            except ResendError as exc:
+                if attempt >= self._max_retries or not _retryable(exc, keyed=bool(headers)):
+                    raise
+                # shortcut: ignores Retry-After; fine at a handful of retries.
+                await self._sleep(self._retry_base_delay * 2**attempt)
+                attempt += 1
+
+
+def _retryable(exc: ResendError, *, keyed: bool) -> bool:
+    """429 is never processed, so it is always safe to repeat. A 5xx or a
+    transport failure (``HttpClientError`` is code 500) may already have sent
+    the mail, so it is repeated only under an idempotency key, which makes the
+    provider drop the duplicate."""
+    code = _status_code(exc)
+    if code == 429:
+        return True
+    if not keyed:
+        return False
+    return code >= 500 or getattr(exc, "error_type", None) == _KEY_IN_FLIGHT

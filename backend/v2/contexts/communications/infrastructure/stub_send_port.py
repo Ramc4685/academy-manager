@@ -34,6 +34,7 @@ class StubEmailSendPort(EmailSendPort):
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
         sender_name: str | None = None,
+        unsubscribe_url: str | None = None,
     ) -> SendOutcome:
         record_id = f"stub-{len(self.sent) + 1:06d}"
         self.sent.append(
@@ -48,6 +49,7 @@ class StubEmailSendPort(EmailSendPort):
                 "reply_to": reply_to,
                 "category": category,
                 "sender_name": sender_name,
+                "unsubscribe_url": unsubscribe_url,
             }
         )
         return SendOutcome(

@@ -49,6 +49,7 @@ class GatedEmailSendPort(EmailSendPort):
         reply_to: str | None = None,
         category: EmailCategory = EmailCategory.TRANSACTIONAL,
         sender_name: str | None = None,
+        unsubscribe_url: str | None = None,
     ) -> SendOutcome:
         if recipient.email:
             for gate in (self.suppressions, self.preferences, self.prospects):
@@ -66,6 +67,9 @@ class GatedEmailSendPort(EmailSendPort):
                         failed_reason=verdict.reason or "blocked",
                         suppressed=True,
                     )
+        # Forwarded only when set, so an inner port that predates the field
+        # (several test fakes) keeps working for every other send.
+        extra = {"unsubscribe_url": unsubscribe_url} if unsubscribe_url else {}
         return await self.inner.send(
             recipient=recipient,
             subject=subject,
@@ -75,4 +79,5 @@ class GatedEmailSendPort(EmailSendPort):
             reply_to=reply_to,
             category=category,
             sender_name=sender_name,
+            **extra,
         )

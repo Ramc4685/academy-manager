@@ -195,6 +195,36 @@ class Settings(BaseSettings):
         default=False,
         description="When True and resend_api_key is set, emails are sent via Resend. Stub adapter used otherwise.",
     )
+    marketing_sender_email: str | None = Field(
+        default=None,
+        description=(
+            "From address for campaign (marketing) mail (L11). Unset => campaigns leave "
+            "from the transactional sender, as before."
+        ),
+    )
+    email_send_max_retries: int = Field(
+        default=0,
+        ge=0,
+        le=5,
+        description=(
+            "Extra attempts per email after a provider 429, or a 5xx when the send carries "
+            "an idempotency key (L11). 0 => one attempt, as before."
+        ),
+    )
+    email_list_unsubscribe_enabled: bool = Field(
+        default=False,
+        description=(
+            "Campaign mail carries RFC 8058 List-Unsubscribe headers and the academy's "
+            "postal address in its footer (L11). Needs unsubscribe_token_secret."
+        ),
+    )
+    dunning_signed_pay_link_enabled: bool = Field(
+        default=False,
+        description=(
+            "The autopay-failed email's button is a one-time sign-in link that lands on "
+            "the invoice's pay page (L11). Off => the plain pay-page link, as before."
+        ),
+    )
     ai_enabled: bool = Field(
         default=False,
         description=(
@@ -402,6 +432,24 @@ class Settings(BaseSettings):
         See :func:`resolve_sender_address` — the one place this is decided.
         """
         return resolve_sender_address(self.sender_email, self.frontend_url)
+
+    def email_config_warnings(self) -> list[str]:
+        """Production email that runs without bounce ingestion or one-click
+        unsubscribe (L11 item 9). Warned at boot and on /healthz, never fatal:
+        mail still goes out, it just cannot learn from bounces or honour links."""
+        if self.env != "prod" or not (self.email_delivery_enabled and self.resend_api_key):
+            return []
+        warnings: list[str] = []
+        if not self.resend_webhook_secret:
+            warnings.append(
+                "RESEND_WEBHOOK_SECRET is unset: bounces and complaints are not ingested, "
+                "so dead addresses keep being mailed"
+            )
+        if not self.unsubscribe_token_secret:
+            warnings.append(
+                "UNSUBSCRIBE_TOKEN_SECRET is unset: digests and campaigns carry no unsubscribe link"
+            )
+        return warnings
 
     def _validate_production_settings(self) -> None:
         if self.env != "prod":

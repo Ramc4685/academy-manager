@@ -1085,7 +1085,12 @@ def _build_email_sender(settings: Any, db: AsyncIOMotorDatabase[Any] | None = No
                 "Email delivery is enabled but no sender address resolves: set "
                 "SENDER_EMAIL (or V2_SENDER_EMAIL) or FRONTEND_URL."
             )
-        inner = ResendEmailSendPort(api_key=settings.resend_api_key, from_address=from_address)
+        inner = ResendEmailSendPort(
+            api_key=settings.resend_api_key,
+            from_address=from_address,
+            marketing_from_address=getattr(settings, "marketing_sender_email", None),
+            max_retries=int(getattr(settings, "email_send_max_retries", 0) or 0),
+        )
     else:
         inner = StubEmailSendPort()
     if db is None:
@@ -1242,6 +1247,7 @@ def compose_send_campaign(
         unsubscribe_links=compose_unsubscribe_link_builder(settings),
         academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
         brands=_AcademyBrandLookup(MongoAcademyRepository(db)),
+        list_unsubscribe=bool(getattr(settings, "email_list_unsubscribe_enabled", False)),
     )
 
 
