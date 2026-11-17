@@ -326,13 +326,13 @@ export async function reauthenticate(method: ReauthMethod, password = ""): Promi
 export async function signOutCurrent(): Promise<void> {
   // App shell only (no-op in browsers); needs the session, so it runs first.
   await stopPushNotifications();
-  // The next person on a shared phone must not inherit this app lock.
-  disableBiometricLock();
   clearBffIdentityCookie();
   // Leave no persona hint behind for the next user of a shared device (#451).
   clearPersonaHintCookie();
-  if (E2E_BYPASS) return;
-  await signOut(auth());
+  if (!E2E_BYPASS) await signOut(auth());
+  // Only once the session is gone: the next person on a shared phone must not
+  // inherit this app lock, but a failed sign-out must not drop it either.
+  disableBiometricLock();
 }
 
 export function onAuthChange(cb: (user: User | null) => void): () => void {

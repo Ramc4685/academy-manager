@@ -26,7 +26,7 @@ export async function unsentMarkCount(): Promise<number> {
  * replayed under the next user's sign-in) and the service worker's cached
  * coach reads (rosters, the whole-academy Today view).
  */
-async function clearDeviceData(): Promise<void> {
+export async function clearDeviceData(): Promise<void> {
   await Promise.allSettled([
     clearOfflineQueue(),
     typeof caches === "undefined"

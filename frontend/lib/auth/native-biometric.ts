@@ -12,10 +12,10 @@
  * App builds without the plugin keep working and just never offer the lock.
  */
 
+import { APP_LOCK_KEY } from "@/lib/auth/app-lock-key";
 import { hasNativePlugin } from "@/lib/auth/native-sign-in";
 
 const PLUGIN = "NativeBiometric";
-const SETTING_KEY = "am.biometricLock";
 /** Coming back sooner than this (a quick app switch) does not ask again. */
 export const LOCK_AFTER_MS = 60_000;
 
@@ -40,7 +40,7 @@ export function canUseBiometricLock(): boolean {
 export function isBiometricLockOn(): boolean {
   if (!canUseBiometricLock()) return false;
   try {
-    return window.localStorage.getItem(SETTING_KEY) === "1";
+    return window.localStorage.getItem(APP_LOCK_KEY) === "1";
   } catch {
     return false;
   }
@@ -48,8 +48,8 @@ export function isBiometricLockOn(): boolean {
 
 function saveSetting(on: boolean): void {
   try {
-    if (on) window.localStorage.setItem(SETTING_KEY, "1");
-    else window.localStorage.removeItem(SETTING_KEY);
+    if (on) window.localStorage.setItem(APP_LOCK_KEY, "1");
+    else window.localStorage.removeItem(APP_LOCK_KEY);
   } catch {
     // Storage blocked: the lock simply stays off.
   }

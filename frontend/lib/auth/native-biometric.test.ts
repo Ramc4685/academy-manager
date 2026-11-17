@@ -84,4 +84,23 @@ describe("app lock (Face ID / fingerprint)", () => {
     const lock = await load();
     expect(await lock.verifyWithBiometrics("Unlock")).toBe(false);
   });
+
+  it("hides the page before first paint only when the lock is on in the app", async () => {
+    installShell();
+    const { APP_LOCK_BOOT_SCRIPT } = await import("@/lib/auth/app-lock-key");
+    const lock = await load();
+    const run = () => {
+      const attrs = new Set<string>();
+      const win = (globalThis as { window: Record<string, unknown> }).window;
+      new Function("window", "localStorage", "document", APP_LOCK_BOOT_SCRIPT)(
+        win,
+        win.localStorage,
+        { documentElement: { setAttribute: (name: string) => attrs.add(name) } },
+      );
+      return attrs.has("data-app-lock");
+    };
+    expect(run()).toBe(false);
+    await lock.enableBiometricLock();
+    expect(run()).toBe(true);
+  });
 });

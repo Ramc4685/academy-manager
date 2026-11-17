@@ -32,6 +32,7 @@ export function BiometricLock() {
     if (ok) {
       needsUnlock.current = false;
       setCovered(false);
+      document.documentElement.removeAttribute("data-app-lock");
     }
   }, []);
 
@@ -40,6 +41,9 @@ export function BiometricLock() {
       needsUnlock.current = true;
       setCovered(true);
       void unlock();
+    } else {
+      // Setting gone (e.g. signed out in another tab): drop the pre-paint cover.
+      document.documentElement.removeAttribute("data-app-lock");
     }
 
     function onVisibility() {
@@ -62,9 +66,28 @@ export function BiometricLock() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [unlock]);
 
+  // Same clean-up as the profile's Log out button, minus the in-memory query
+  // cache, which the full page load below drops anyway.
   async function signOut() {
-    const { signOutCurrent } = await import("@/lib/auth/firebase");
+    const [{ signOutCurrent }, { clearDeviceData, unsentMarkCount }, { clearPersistedQueryCache }] =
+      await Promise.all([
+        import("@/lib/auth/firebase"),
+        import("@/components/persona/logout-button"),
+        import("@/lib/query/persistence"),
+      ]);
+    const unsent = await unsentMarkCount();
+    if (
+      unsent > 0 &&
+      !window.confirm(
+        `${unsent} attendance ${unsent === 1 ? "mark hasn't" : "marks haven't"} been sent yet. ` +
+          "Signing out deletes them from this phone. Sign out anyway?",
+      )
+    ) {
+      return;
+    }
     await signOutCurrent();
+    await clearDeviceData();
+    clearPersistedQueryCache();
     window.location.replace("/login");
   }
 
@@ -75,6 +98,7 @@ export function BiometricLock() {
       aria-modal="true"
       aria-labelledby="app-lock-title"
       data-testid="app-lock"
+      data-app-lock-cover=""
       className="fixed inset-0 z-[1000] flex flex-col items-center justify-center gap-4 bg-rally-paper px-6 text-center"
     >
       <h1 id="app-lock-title" className="text-xl font-semibold text-rally-ink">
