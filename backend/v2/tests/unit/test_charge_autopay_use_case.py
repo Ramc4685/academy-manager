@@ -19,6 +19,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
+    autopay_idempotency_key,
     ChargeInvoiceViaAutopay,
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
@@ -546,7 +547,7 @@ async def test_charge_routes_payment_intent_through_ready_connected_account() ->
     # PaymentIntent created ON that account, the account in the key.
     assert call["stripe_account"] == "acct_ready"
     assert (call["customer_id"], call["payment_method_id"]) == ("cus_on_acct", "pm_on_acct")
-    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000:acct:acct_ready"
+    assert call["idempotency_key"] == autopay_idempotency_key("inv-1", None) + ":acct:acct_ready"
     assert saved.calls == [{"parent_id": "parent-1", "stripe_account_id": "acct_ready"}]
     # Never the platform-wide Customer search on a direct route.
     assert stripe.lookup_calls == []
@@ -626,7 +627,7 @@ async def test_ach_payment_method_adds_discount_line_before_charge_amount_and_ke
     assert result.attempted_amount_cents == 9_750
     assert stripe.retrieve_payment_method_calls == ["pm_1"]
     assert stripe.create_calls[0]["amount_cents"] == 9_750
-    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:9750"
+    assert stripe.create_calls[0]["idempotency_key"] == autopay_idempotency_key("inv-1", None)
     assert stripe.create_calls[0]["metadata"]["disclosure_version"] == "cash-discount-v1"
     assert repo.payment_attempts[0]["amount_cents"] == 9_750
     assert repo.recorded_payments[0][0].amount_cents == 9_750
@@ -715,7 +716,7 @@ async def test_saved_card_payment_method_funding_does_not_add_discount_or_fee(
 
     assert repo.lines_by_invoice.get("inv-1", []) == []
     assert stripe.create_calls[0]["amount_cents"] == 10_000
-    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:10000"
+    assert stripe.create_calls[0]["idempotency_key"] == autopay_idempotency_key("inv-1", None)
     assert "ach_discount_cents" not in stripe.create_calls[0]["metadata"]
     assert "processing_fee_cents" not in stripe.create_calls[0]["metadata"]
     assert "payment_method_fee_cents" not in stripe.create_calls[0]["metadata"]
@@ -791,7 +792,7 @@ async def test_existing_ach_discount_is_removed_when_current_payment_method_is_c
 
     assert [line.line_type for line in repo.lines_by_invoice["inv-1"]] == []
     assert stripe.create_calls[0]["amount_cents"] == 10_000
-    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:10000"
+    assert stripe.create_calls[0]["idempotency_key"] == autopay_idempotency_key("inv-1", None)
 
 
 async def test_existing_ach_discount_is_removed_when_payment_method_retrieve_fails() -> None:
@@ -815,7 +816,7 @@ async def test_existing_ach_discount_is_removed_when_payment_method_retrieve_fai
 
     assert [line.line_type for line in repo.lines_by_invoice["inv-1"]] == []
     assert stripe.create_calls[0]["amount_cents"] == 10_000
-    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:10000"
+    assert stripe.create_calls[0]["idempotency_key"] == autopay_idempotency_key("inv-1", None)
 
 
 async def test_existing_ach_discount_is_removed_when_settings_are_disabled() -> None:
@@ -835,7 +836,7 @@ async def test_existing_ach_discount_is_removed_when_settings_are_disabled() -> 
 
     assert [line.line_type for line in repo.lines_by_invoice["inv-1"]] == []
     assert stripe.create_calls[0]["amount_cents"] == 10_000
-    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:10000"
+    assert stripe.create_calls[0]["idempotency_key"] == autopay_idempotency_key("inv-1", None)
 
 
 async def test_repeated_ach_charge_does_not_duplicate_existing_discount_line() -> None:
@@ -861,7 +862,7 @@ async def test_repeated_ach_charge_does_not_duplicate_existing_discount_line() -
     ]
     assert discount_lines == [existing_line]
     assert stripe.create_calls[0]["amount_cents"] == 9_750
-    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:9750"
+    assert stripe.create_calls[0]["idempotency_key"] == autopay_idempotency_key("inv-1", None)
 
 
 async def test_existing_ach_discount_is_reconciled_when_current_settings_change() -> None:
@@ -892,7 +893,7 @@ async def test_existing_ach_discount_is_reconciled_when_current_settings_change(
     assert discount_lines[0].unit_amount_cents == -300
     assert discount_lines[0].source_id == "cash-discount-v2"
     assert stripe.create_calls[0]["amount_cents"] == 9_700
-    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-1:2026-06:9700"
+    assert stripe.create_calls[0]["idempotency_key"] == autopay_idempotency_key("inv-1", None)
     assert stripe.create_calls[0]["metadata"]["ach_discount_cents"] == "300"
     assert stripe.create_calls[0]["metadata"]["disclosure_version"] == "cash-discount-v2"
     recorded_payment = repo.recorded_payments[0][0]
@@ -1238,14 +1239,14 @@ async def test_requires_action_returns_charge_result_false_with_flag() -> None:
     assert repo.recorded_payments == []
 
 
-async def test_idempotency_key_uses_invoice_id_period_and_balance_due() -> None:
-    """Stripe PI idempotency key is scoped by invoice, period, and attempted amount."""
+async def test_idempotency_key_uses_invoice_id_and_scope_only() -> None:
+    """Stripe PI idempotency key is the invoice and retry rung, never the amount."""
     repo = FakeLedgerRepo(invoices=[_invoice(invoice_id="inv-xyz-99", status="open")])
     stripe = FakeStripeSucceeds()
     await _uc(repo, stripe).execute("inv-xyz-99")
 
     call = stripe.create_calls[0]
-    assert call["idempotency_key"] == "autopay:inv-xyz-99:2026-06:10000"
+    assert call["idempotency_key"] == autopay_idempotency_key("inv-xyz-99", None)
 
 
 async def test_saved_card_lookup_uses_invoice_academy_and_parent() -> None:
@@ -1287,8 +1288,8 @@ async def test_admin_charge_source_and_actor_are_recorded_in_stripe_metadata() -
     assert metadata["actor_id"] == "admin-1"
 
 
-async def test_idempotency_key_same_on_retry_with_same_period_and_balance() -> None:
-    """A true replay for the same invoice, period, and balance reuses the same PI key."""
+async def test_idempotency_key_same_on_retry() -> None:
+    """A true replay for the same invoice and rung reuses the same PI key."""
     repo = FakeLedgerRepo(invoices=[_invoice(invoice_id="inv-retry", status="open")])
     stripe = FakeStripeSucceeds()
     uc = _uc(repo, stripe)
@@ -1299,7 +1300,7 @@ async def test_idempotency_key_same_on_retry_with_same_period_and_balance() -> N
     await uc.execute("inv-retry")
 
     keys = [call["idempotency_key"] for call in stripe.create_calls]
-    assert keys[0] == keys[1] == "autopay:inv-retry:2026-06:10000"
+    assert keys[0] == keys[1] == autopay_idempotency_key("inv-retry", None)
 
 
 async def test_default_idempotency_key_remains_slice_c_shape_without_retry_scope() -> None:
@@ -1308,7 +1309,9 @@ async def test_default_idempotency_key_remains_slice_c_shape_without_retry_scope
 
     await _uc(repo, stripe).execute("inv-default-scope")
 
-    assert stripe.create_calls[0]["idempotency_key"] == "autopay:inv-default-scope:2026-06:10000"
+    assert stripe.create_calls[0]["idempotency_key"] == autopay_idempotency_key(
+        "inv-default-scope", None
+    )
     assert repo.payment_attempts[0]["idempotency_key"] == (
         "autopay-attempt:inv-default-scope:2026-06:10000:succeeded:pi_test_123"
     )
@@ -1325,8 +1328,8 @@ async def test_dunning_retry_scope_changes_pi_and_attempt_idempotency_keys() -> 
     await uc.execute("inv-dunning-scope", retry_scope="dunning-attempt:2")
 
     assert [call["idempotency_key"] for call in stripe.create_calls] == [
-        "autopay:inv-dunning-scope:2026-06:10000:dunning-attempt:1",
-        "autopay:inv-dunning-scope:2026-06:10000:dunning-attempt:2",
+        autopay_idempotency_key("inv-dunning-scope", "dunning-attempt:1"),
+        autopay_idempotency_key("inv-dunning-scope", "dunning-attempt:2"),
     ]
     assert [attempt["idempotency_key"] for attempt in repo.payment_attempts] == [
         "autopay-attempt:inv-dunning-scope:2026-06:10000:dunning-attempt:1:succeeded:pi_test_123",
@@ -1334,8 +1337,9 @@ async def test_dunning_retry_scope_changes_pi_and_attempt_idempotency_keys() -> 
     ]
 
 
-async def test_idempotency_key_changes_when_balance_due_changes() -> None:
-    """Same invoice and period with a changed balance must create a new PI key and amount."""
+async def test_idempotency_key_ignores_a_changed_balance() -> None:
+    """A changed amount on the same rung keeps the key, so Stripe refuses it instead
+    of a fresh key charging again after a first charge whose answer was lost."""
     repo = FakeLedgerRepo(invoices=[_invoice(invoice_id="inv-balance", status="open")])
     stripe = FakeStripeSucceeds()
     uc = _uc(repo, stripe)
@@ -1349,30 +1353,10 @@ async def test_idempotency_key_changes_when_balance_due_changes() -> None:
     await uc.execute("inv-balance")
 
     assert [call["idempotency_key"] for call in stripe.create_calls] == [
-        "autopay:inv-balance:2026-06:10000",
-        "autopay:inv-balance:2026-06:6500",
+        autopay_idempotency_key("inv-balance", None),
+        autopay_idempotency_key("inv-balance", None),
     ]
     assert [call["amount_cents"] for call in stripe.create_calls] == [10_000, 6_500]
-
-
-async def test_idempotency_key_changes_when_invoice_period_changes() -> None:
-    """Same invoice and balance in a new billing period must create a new PI key."""
-    repo = FakeLedgerRepo(invoices=[_invoice(invoice_id="inv-period", status="open")])
-    stripe = FakeStripeSucceeds()
-    uc = _uc(repo, stripe)
-
-    await uc.execute("inv-period")
-    repo._invoices["inv-period"] = _invoice(
-        invoice_id="inv-period",
-        status="open",
-        period="2026-07",
-    )
-    await uc.execute("inv-period")
-
-    assert [call["idempotency_key"] for call in stripe.create_calls] == [
-        "autopay:inv-period:2026-06:10000",
-        "autopay:inv-period:2026-07:10000",
-    ]
 
 
 async def test_stripe_not_configured_returns_decline() -> None:
@@ -1545,7 +1529,7 @@ async def test_autopay_default_fee_is_zero_and_request_is_unchanged() -> None:
     assert result.success is True
     call = stripe.create_calls[0]
     assert call["application_fee_cents"] == 0
-    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000:acct:acct_ready"
+    assert call["idempotency_key"] == autopay_idempotency_key("inv-1", None) + ":acct:acct_ready"
     # Recorded as 0, not None: month close must not estimate a fee for it.
     assert repo.recorded_payments[0][0].application_fee_cents == 0
 
@@ -1568,9 +1552,9 @@ async def test_autopay_sends_the_academy_fee_and_scopes_the_idempotency_key() ->
     call = stripe.create_calls[0]
     assert call["stripe_account"] == "acct_ready"
     assert call["application_fee_cents"] == 250  # 2.5% of $100.00
-    # A fee change inside Stripe's idempotency window must not replay the old
-    # key, and a direct charge's key names the account.
-    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000:fee250:acct:acct_ready"
+    # The key carries no fee (a changed fee on the same rung is refused by
+    # Stripe and parks), and a direct charge's key names the account.
+    assert call["idempotency_key"] == autopay_idempotency_key("inv-1", None) + ":acct:acct_ready"
     # Phase 2 A1: the sync success records the fee itself; the webhook replay
     # of ``autopay-pi:{pi}`` returns this row unchanged, so it must carry it.
     payment, key = repo.recorded_payments[0]
@@ -1599,7 +1583,7 @@ async def test_autopay_platform_fallback_charge_carries_no_fee() -> None:
     call = stripe.create_calls[0]
     assert call["stripe_account"] is None
     assert call["application_fee_cents"] == 0
-    assert call["idempotency_key"] == "autopay:inv-1:2026-06:10000"
+    assert call["idempotency_key"] == autopay_idempotency_key("inv-1", None)
 
 
 def _seed_generator_discounted_month(repo: FakeLedgerRepo) -> None:
