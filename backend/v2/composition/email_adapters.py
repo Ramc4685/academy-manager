@@ -19,7 +19,7 @@ import html
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import date, datetime
-from typing import Any
+from typing import Any, TypedDict
 from urllib.parse import quote
 
 from pydantic import BaseModel
@@ -101,7 +101,12 @@ async def _academy_brand(academies: Any, academy_name: str) -> EmailBrand:
     return branded_as(await lookup_academy_brand(academies, current_academy_id()), academy_name)
 
 
-async def _identity(academies: Any) -> dict[str, str | None]:
+class _SenderIdentityKwargs(TypedDict):
+    sender_name: str | None
+    reply_to: str | None
+
+
+async def _identity(academies: Any) -> _SenderIdentityKwargs:
     """The academy's From display name and Reply-To as send kwargs (L9a; billing
     mail joined in L11). Never raises: a failed lookup sends with neither."""
     identity = await sender_identity_for_current_academy(academies)
