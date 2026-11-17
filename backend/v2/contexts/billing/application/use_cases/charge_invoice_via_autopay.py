@@ -663,14 +663,15 @@ class ChargeInvoiceViaAutopay:
             status = str(pi.get("status") or "")
             if covered != wanted:
                 # Another charge covered a different set: record nothing here and
-                # park; the webhook or reconcile settles it and the next check sees it.
+                # park for review; the daily review recheck resolves the rung once the
+                # webhook or reconcile settles that charge, without searching again.
                 log.warning(
                     "charge_autopay: pi=%s covers %s, not %s; parking",
                     pi_id,
                     sorted(covered),
                     sorted(wanted),
                 )
-                return _refused(lead, None)
+                return _refused(lead, EXISTING_CHARGE_NEEDS_REVIEW)
             total = sum(i.balance_due_cents for i in invoices)
             unsafe = _why_not_settleable(pi, total)
             if unsafe is not None:
@@ -727,7 +728,7 @@ class ChargeInvoiceViaAutopay:
                         pi_id,
                         invoice.invoice_id,
                     )
-                    return _refused(lead, None)
+                    return _refused(lead, EXISTING_CHARGE_NEEDS_REVIEW)
             return _attempt_result(target, "succeeded", None)
         return None
 

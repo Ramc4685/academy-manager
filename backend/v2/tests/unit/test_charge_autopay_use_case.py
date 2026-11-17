@@ -19,8 +19,8 @@ from datetime import UTC, date, datetime
 import pytest
 
 from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
-    autopay_idempotency_key,
     ChargeInvoiceViaAutopay,
+    autopay_idempotency_key,
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount

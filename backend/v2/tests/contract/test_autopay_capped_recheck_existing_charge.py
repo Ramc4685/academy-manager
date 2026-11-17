@@ -16,7 +16,19 @@ from typing import Any
 
 import pytest
 
+from backend.v2.contexts.billing.application.use_cases.record_manual_payment import (
+    RecordManualPayment,
+    RecordManualPaymentCommand,
+)
 from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
+from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import (
+    MongoBillingLedgerRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_dunning_state_repo import (
+    MongoDunningStateRepository,
+)
+from backend.v2.shared.observability.ops_digest import _dunning_parked_count
+from backend.v2.shared.tenancy.context import tenant_scope
 from backend.v2.tests.contract.test_family_combined_charge import (
     ACAD,
     NOW,
@@ -204,6 +216,17 @@ def _seed_pi(stripe: FakeStripeGateway, **overrides: Any) -> None:
         ),
         pytest.param({"latest_charge": {"id": "ch_1", "disputed": True}}, id="disputed"),
         pytest.param({"amount": 4_000}, id="amount-differs"),
+        pytest.param(
+            {
+                "metadata": {
+                    "academy_id": ACAD,
+                    "parent_id": PARENT,
+                    "invoice_ids": "inv-a,inv-other",
+                    "source": "autopay",
+                }
+            },
+            id="covers-another-set",
+        ),
         pytest.param({"latest_charge": "ch_unexpanded"}, id="charge-not-expanded"),
         pytest.param(
             {
@@ -257,6 +280,7 @@ async def test_a_found_charge_that_leaves_a_balance_is_not_reported_paid(real_db
     result = await charge.execute("inv-a", check_existing=True)
 
     assert not result.success
+    assert result.decline_code == "existing_charge_needs_review"
     assert stripe.off_session_payment_intents == []
 
 
@@ -287,12 +311,24 @@ async def test_a_lost_charge_is_not_recharged_after_a_non_technical_park(real_db
     assert (await _invoice(real_db, "inv-a"))["status"] == "paid"
 
 
+async def _park_for_review(real_db: Any, stripe: FakeStripeGateway) -> Any:
+    """Lose a charge's answer, refund it in Stripe, then let the capped recheck find it."""
+    await _seed(real_db, "inv-a")
+    await _tick(real_db, stripe, FakeOutbox())
+    (pi,) = stripe.off_session_payment_intents
+    stripe._payment_intents_by_id[pi["id"]]["latest_charge"].update(
+        {"refunded": True, "amount_refunded": 10_000}
+    )
+    stripe.expire_idempotency_keys()
+    return await _tick(real_db, stripe, FakeOutbox(), at=LATER)
+
+
 async def test_a_refunded_lost_charge_parks_once_for_review_and_is_not_rechecked(
     real_db, acad
 ) -> None:
     """The lost charge was refunded in Stripe before the capped recheck found it. It
-    must not settle, must not be charged again, and must not re-park every day: the
-    rung parks once for a person to review and the ladder stops asking Stripe."""
+    must not settle, must not be charged again, and must not ask Stripe every day:
+    the rung parks once for a person to review and its daily recheck only re-parks."""
     await _seed(real_db, "inv-a")
     stripe = _CrashOnceStripe()
     await _tick(real_db, stripe, FakeOutbox())
@@ -317,12 +353,43 @@ async def test_a_refunded_lost_charge_parks_once_for_review_and_is_not_rechecked
     assert result.technical_failures == 1  # counted once, for the admin
     assert searches == 1
 
-    for days in (2, 3):
+    for days in (2, 3, 4):
         later = await _tick(real_db, stripe, FakeOutbox(), at=NOW + timedelta(days=days))
         assert later.parked == 0 and later.technical_failures == 0
     after = await real_db["dunning_states"].find_one({"invoice_id": "inv-a"})
-    assert after["suppressed_at"] == state["suppressed_at"]
+    assert after["status"] == "active"
+    assert after["suppression_reason"] == "existing_charge_needs_review"
+    assert after["suppressed_at"] > state["suppressed_at"]  # rechecked, re-parked
     assert searches == 1
     assert len(stripe.off_session_payment_intents) == 1
     assert await _payments(real_db) == []
     assert (await _invoice(real_db, "inv-a"))["status"] == "open"
+
+
+async def test_a_review_park_resolves_once_the_invoice_is_paid_by_hand(real_db, acad) -> None:
+    """A person settles the reviewed invoice by hand: the next daily recheck stands
+    the ladder down, it leaves billing-health and the ops digest, and Stripe is
+    never charged again."""
+    stripe = _CrashOnceStripe()
+    await _park_for_review(real_db, stripe)
+    repo = MongoDunningStateRepository(real_db)
+    parked = await real_db["dunning_states"].find_one({"invoice_id": "inv-a"})
+    assert parked["attempt_count"] == 0  # no rung spent, still on billing-health
+    with tenant_scope(ACAD):
+        assert [r["invoice_id"] for r in await repo.list_admin_rows()] == ["inv-a"]
+        await RecordManualPayment(
+            ledger=MongoBillingLedgerRepository(real_db), clock=lambda: LATER
+        ).execute(RecordManualPaymentCommand(invoice_id="inv-a", amount_cents=10_000))
+    assert (await _invoice(real_db, "inv-a"))["status"] == "paid"
+
+    result = await _tick(real_db, stripe, FakeOutbox(), at=LATER + timedelta(days=1, hours=1))
+
+    state = await real_db["dunning_states"].find_one({"invoice_id": "inv-a"})
+    assert state["status"] != "active"
+    assert result.technical_failures == 0
+    assert (await _dunning_parked_count(real_db, LATER + timedelta(days=3)))[
+        "dunning_parked_stale"
+    ] == 0
+    with tenant_scope(ACAD):
+        assert await repo.list_admin_rows() == []
+    assert len(stripe.off_session_payment_intents) == 1
