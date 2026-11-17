@@ -210,6 +210,9 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # copilot may see real spreadsheet values is the owner's call.
         ("GET", f"{_ADMIN}/ai/import-sharing"),
         ("PUT", f"{_ADMIN}/ai/import-sharing"),
+        # ai_controls_routes.py (L13): the AI caps and the coach-review switch.
+        ("GET", f"{_ADMIN}/ai/controls"),
+        ("PUT", f"{_ADMIN}/ai/controls"),
     }
 )
 

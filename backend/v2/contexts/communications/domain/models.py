@@ -179,6 +179,10 @@ class Campaign:
     created_at: datetime
     sent_at: datetime | None
     idempotency_key: str | None = None
+    #: Sent by ``ProcessCampaignQueue`` rather than inside the request (L11
+    #: item 7). Only these are ever resumed: an inline send writes its delivery
+    #: states after its loop, so its QUEUED rows may already have been mailed.
+    background: bool = False
 
     @classmethod
     def new(
@@ -193,6 +197,7 @@ class Campaign:
         created_at: datetime,
         channel: Channel = "email",
         idempotency_key: str | None = None,
+        background: bool = False,
     ) -> Campaign:
         return cls(
             campaign_id=campaign_id,
@@ -206,6 +211,7 @@ class Campaign:
             created_at=created_at,
             sent_at=None,
             idempotency_key=idempotency_key,
+            background=background,
         )
 
     def mark_sending(self) -> Campaign:

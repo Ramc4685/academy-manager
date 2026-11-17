@@ -6,10 +6,12 @@ from fastapi import APIRouter
 
 from .academy_routes import router as academy_router
 from .account_deletion_routes import router as account_deletion_router
+from .ai_controls_routes import router as ai_controls_router
 from .ai_curriculum_routes import router as ai_curriculum_router
 from .ai_import_routes import router as ai_import_router
 from .ai_pipeline_routes import router as ai_pipeline_router
 from .ai_reports_routes import router as ai_reports_router
+from .ai_schedule_routes import router as ai_schedule_router
 from .ai_usage_routes import router as ai_usage_router
 from .ai_win_back_routes import router as ai_win_back_router
 from .audit_routes import router as audit_router
@@ -52,6 +54,7 @@ from .public_page_routes import router as public_page_router
 from .referral_routes import router as referral_router
 from .registration_routes import router as registration_router
 from .reports_routes import router as reports_router
+from .schedule_publish_routes import router as schedule_publish_router
 from .self_service_policy_routes import router as self_service_policy_router
 from .self_service_request_routes import router as self_service_request_router
 from .session_type_routes import router as session_type_router
@@ -102,13 +105,16 @@ router.include_router(coach_pay_rate_router)
 router.include_router(comms_router)
 router.include_router(academy_router)
 router.include_router(ai_usage_router)
+router.include_router(ai_controls_router)
 router.include_router(ai_import_router)
+router.include_router(ai_schedule_router)
 router.include_router(waiver_router)
 router.include_router(pathway_router)
 router.include_router(progress_settings_router)
 router.include_router(plan_router)
 router.include_router(progress_router)
 router.include_router(self_service_policy_router)
+router.include_router(schedule_publish_router)
 router.include_router(self_service_request_router)
 router.include_router(trial_outcome_router)
 router.include_router(pipeline_router)

@@ -150,6 +150,8 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     "send_nurture_steps": timedelta(hours=3),
     # L9 A6-11: website-lead owner alerts re-sent (hourly ticks, once per local day).
     "resend_due_owner_alerts": timedelta(hours=3),
+    # L11 item 7: the background campaign queue (every minute).
+    "process_campaign_queue": timedelta(minutes=30),
     # L9 C2: the referral sweep (hourly ticks, once per local day).
     "process_referrals": timedelta(hours=3),
     # Tap-to-master: evening auto-approval of queued level-ups.
@@ -216,6 +218,8 @@ class OpsDigestSnapshot:
     dunning_parked_stale: int = 0
     digest_sends_failed: int = 0
     digest_sends_failed_exhausted: int = 0
+    #: Email campaigns still ``sending`` after CAMPAIGN_STUCK_AFTER (L11).
+    campaigns_stuck_sending: int = 0
     last_invoice_run: dict[str, Any] | None = None
     last_invoice_tick_at: datetime | None = None
     #: Last heartbeat per scheduled job, straight from ``ops_job_runs``.
@@ -236,6 +240,7 @@ class OpsDigestSnapshot:
             or self.dunning_terminals_recent
             or self.dunning_parked_stale
             or self.digest_sends_failed_exhausted
+            or self.campaigns_stuck_sending
             or self.stale_jobs
             or self.errors
         )
@@ -403,6 +408,7 @@ _PARK_REASONS_NEEDING_ATTENTION = (
     "attempt_indeterminate",
     "charge_technical_failure",
     "connected_account_not_ready",
+    "existing_charge_needs_review",
     "stripe_not_configured",
     "stripe_unavailable",
     "technical_failure_capped",
@@ -467,6 +473,21 @@ async def _digest_send_failure_counts(
     }
 
 
+CAMPAIGN_STUCK_AFTER = timedelta(minutes=30)
+
+
+async def _campaigns_stuck_count(db: AsyncIOMotorDatabase[Any], now: datetime) -> dict[str, int]:
+    """Campaigns still ``sending`` long after they started. Nothing resumes an
+    inline campaign whose request died (mid-send, or before the hand-off to the
+    background queue), and no admin page lists it, so this is where it shows.
+    A very large background campaign still draining also lands here.
+    Cross-tenant on purpose, like every count in the digest."""
+    count = await db["message_campaigns"].count_documents(
+        {"status": "sending", "created_at": {"$lte": now - CAMPAIGN_STUCK_AFTER}}
+    )
+    return {"campaigns_stuck_sending": int(count)}
+
+
 async def collect_ops_digest(
     db: AsyncIOMotorDatabase[Any],
     *,
@@ -489,6 +510,7 @@ async def collect_ops_digest(
         ("dunning_terminals", _dunning_terminal_count(db, since)),
         ("dunning_parked", _dunning_parked_count(db, generated_at)),
         ("digest_sends", _digest_send_failure_counts(db, since)),
+        ("campaigns_stuck", _campaigns_stuck_count(db, generated_at)),
         ("last_invoice_run", _last_invoice_run(db)),
         ("job_ticks", _job_ticks(db)),
     ]
@@ -577,6 +599,7 @@ def render_ops_digest(snapshot: OpsDigestSnapshot) -> tuple[str, str]:
             True,
         ),
         ("Digest sends failed", snapshot.digest_sends_failed, "incl. will-retry", False),
+        ("Email campaigns stuck sending", snapshot.campaigns_stuck_sending, "over 30m", True),
     ]
     row_html = "".join(
         f"<tr><td>{escape(label)}</td><td align='right'>"

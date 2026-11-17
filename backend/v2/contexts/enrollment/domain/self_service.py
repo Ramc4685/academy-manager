@@ -214,6 +214,10 @@ def compute_self_cancel_terms(
 PAYMENT_INSTRUCTIONS_MAX_LENGTH = 1000
 
 
+#: A calendar month, "YYYY-MM".
+SCHEDULE_MONTH_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])$"
+
+
 class ParentSelfServicePolicy(BaseModel):
     """Academy-scoped policy governing parent self-service actions."""
 
@@ -249,6 +253,11 @@ class ParentSelfServicePolicy(BaseModel):
     welcome_email_absence_policy_default: str = Field(
         default="", max_length=PAYMENT_INSTRUCTIONS_MAX_LENGTH
     )
+    #: Last month ("YYYY-MM") whose class dates the academy has published as
+    #: final. None = never published: parents see every date with no
+    #: "not confirmed" banner and the calendar feed carries everything, which
+    #: is today's behaviour, so the publish step is opt-in per academy.
+    schedule_published_through: str | None = Field(default=None, pattern=SCHEDULE_MONTH_PATTERN)
 
     @staticmethod
     def default(academy_id: str) -> ParentSelfServicePolicy:

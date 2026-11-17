@@ -16,6 +16,7 @@ from pymongo.errors import OperationFailure
 
 from backend.v2.composition.absence_notifications import compose_absence_notifier
 from backend.v2.composition.ai_video_consent import compose_parent_ai_video_consent
+from backend.v2.composition.calendar_feed import compose_calendar_feed
 from backend.v2.composition.families import compose_system_family_autopay_pause
 from backend.v2.composition.level_up_lifecycle import compose_expire_level_up_recommendations
 from backend.v2.composition.lifecycle_billing import (
@@ -430,6 +431,9 @@ class ParentComposition:
     resolve_assigned_classes: object = None
     # Per-child AI/video opt-in and revoke (Phase 3 E1).
     ai_video_consent: object = None
+    # Phone-calendar subscription (composition/calendar_feed.py); None when
+    # the sign-in repos were not passed in.
+    calendar_feed: object = None
 
 
 class _MongoTransactionRunner:
@@ -725,6 +729,8 @@ def compose_parent(
     *,
     academy_id: str | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    auth_users: Any | None = None,
+    auth_memberships: Any | None = None,
 ) -> ParentComposition:
     """`clock` is the seam the checkout-start path prices against.
 
@@ -2621,6 +2627,7 @@ def compose_parent(
                 "brand_color": None,
                 "self_service": self_service,
                 "payment_instructions": policy.payment_instructions or None,
+                "schedule_published_through": policy.schedule_published_through,
             }
         return {
             "display_name": str(doc.get("display_name") or "Academy"),
@@ -2633,6 +2640,7 @@ def compose_parent(
             "brand_color": doc.get("brand_color"),
             "self_service": self_service,
             "payment_instructions": policy.payment_instructions or None,
+            "schedule_published_through": policy.schedule_published_through,
         }
 
     async def get_child_schedule(
@@ -3059,6 +3067,20 @@ def compose_parent(
         get_parent_home=get_parent_home,
         resolve_assigned_classes=resolve_assigned_classes,
         ai_video_consent=compose_parent_ai_video_consent(db),
+        # The feed checks access with sign-in's own repos; without them there
+        # is no feed at all (fail closed), not a weaker check.
+        calendar_feed=(
+            compose_calendar_feed(
+                db,
+                list_children_for_parent=list_children_for_parent,
+                get_child_schedule=get_child_schedule,
+                users=auth_users,
+                memberships=auth_memberships,
+                clock=clock,
+            )
+            if auth_users is not None and auth_memberships is not None
+            else None
+        ),
         # #828: claiming a held seat inside the three-day window.
         confirm_waitlist_offer=compose_confirm_waitlist_offer(db, settings),
         decline_waitlist_offer=compose_decline_waitlist_offer(db, promote=promote),

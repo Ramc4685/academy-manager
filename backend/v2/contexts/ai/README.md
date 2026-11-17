@@ -15,7 +15,7 @@ or child data goes to any model.** This README is the contract; the tests in
 | `domain/errors.py` | `AiDisabled` (503), `AiMonthlyCapReached` (429), `AiDailyCapReached` (429), `AiProviderError` (502) |
 | `application/ports.py` | `LlmPort`, `AiCallRepository`, `AiCallCounterRepository`, `MonthlyCapSource`, `DailyCapSource` |
 | `application/use_cases/record_ai_call.py` | `RecordAiCall`: `async with reserve(feature)` holds a cap slot around the model call; `execute()` always writes one row |
-| `infrastructure/anthropic_llm_port.py` | the one `LlmPort` adapter: Anthropic Messages API over plain `httpx`, no SDK |
+| `infrastructure/anthropic_llm_port.py` | the one `LlmPort` adapter: Anthropic Messages API over plain `httpx`, no SDK; one retry on 429/529, a non-JSON body is `AiProviderError`, `stop_reason: max_tokens` sets `LlmResult.truncated` (recorded, then refused by `RecordAiCall.execute` as "cut off") |
 | `infrastructure/disabled_llm_port.py` | wired whenever AI is off; every call raises `AiDisabled` |
 | `infrastructure/mongo_ai_call_repo.py` | `MongoAiCallRepository(TenantScopedRepository)`, collection `ai_calls` |
 | `infrastructure/mongo_ai_call_counter_repo.py` | `MongoAiCallCounterRepository`, collection `ai_call_counters` (migration 0226, unique `(academy_id, key)`) |
@@ -39,7 +39,8 @@ Collection `ai_calls`, one document per model call.
 | `academy_id` | stamped by the repository from the tenant scope |
 | `feature` | the calling feature's key in `PROMPTS` |
 | `prompt_version` | `PromptVersion.version` that produced the call |
-| `model`, `input_tokens`, `output_tokens`, `cost_cents` | from `LlmResult`; cost is list price rounded up to a whole cent |
+| `model`, `input_tokens`, `output_tokens`, `cost_cents` | from `LlmResult`; `cost_cents` is list price rounded up to a whole cent per call |
+| `cost_microcents` | exact list price in millionths of a cent (sum this for spend; rows before L13 lack it) |
 | `approver` | user id of the human who approved the output, or `null` |
 | `created_at` | UTC |
 
@@ -68,8 +69,11 @@ from `ai_calls`.
 ceiling on a `day:YYYY-MM-DD:<feature>` counter, reserved after the month slot
 the same way and refused with `AiDailyCapReached` (429, same error shape),
 which gives the month slot back. Absent or invalid means no daily ceiling.
-There is no write path for either cap yet; they are set by hand until a
-Growth-tier screen exists. The usage meter below still counts `ai_calls`
+The owner sets both caps, and `ai.coach_review_narratives`, through
+`GET`/`PUT /admin/ai/controls` (`interfaces/admin/ai_controls_routes.py`,
+owner-only; Settings > Notifications, "AI limits"); `composition/ai.py::AcademyAiControls`
+writes them and records each change as one `ai_controls.changed` row in
+`audit_logs`. An academy that never saved keeps the defaults above. The usage meter below still counts `ai_calls`
 rows, not the counters.
 
 ## Features
@@ -133,6 +137,21 @@ The human approves in the browser: `FamilyImportPanel` shows the draft as an
 editable table, `applyColumnMapping` rewrites the CSV client side, and the
 rewritten text goes through the existing import preview and commit, which stay
 the only write path for families and students.
+
+### Month dates helper (prompt `schedule-dates-v1`)
+
+Feature key `schedule_dates`, use case
+`application/use_cases/suggest_no_class_dates.py`, route
+`POST /admin/schedule/suggest-no-class-dates` (`interfaces/admin/ai_schedule_routes.py`,
+admin persona, rate limited), wired by `composition/ai_schedule.py` at
+`app.state.ai_schedule`. The model sees only the text the admin pasted (a
+rental agreement or a typed note, at most 8000 characters, labelled untrusted)
+and the month's class dates with their weekday: no class, student or family
+names. Order: `reserve` (429) -> `complete` -> `record_ai_call` -> strict parse
+(502 when a date is not one of the class dates, repeats, or the shape is off).
+It writes nothing but the `ai_calls` row. The Month dates page pre-ticks the
+suggested dates and fills the reason; the admin's "Call off dates" click stays
+the only write. With AI off (503) the page reads plain dates itself.
 
 ### Pipeline reply draft (B3, paid, prompt `pipeline-reply-v1`)
 

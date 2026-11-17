@@ -45,6 +45,9 @@ from backend.v2.contexts.communications.application.parent_digest_view import (
 from backend.v2.contexts.communications.application.unsubscribe_token import (
     UnsubscribeLinkBuilder,
 )
+from backend.v2.contexts.communications.application.use_cases.delivery_problems import (
+    GetDeliveryProblems,
+)
 from backend.v2.contexts.communications.application.use_cases.get_digest_delivery_log import (
     GetDigestDeliveryLog,
 )
@@ -56,6 +59,7 @@ from backend.v2.contexts.communications.application.use_cases.list_email_suppres
     ReleaseEmailSuppression,
 )
 from backend.v2.contexts.communications.application.use_cases.send_campaign import (
+    ProcessCampaignQueue,
     SendCampaign,
 )
 from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
@@ -153,11 +157,7 @@ from backend.v2.contexts.student_progress.application.use_cases.get_teaching_foc
 )
 from backend.v2.shared.comms.email_brand import lookup_academy_brand
 from backend.v2.shared.comms.email_theme import EmailBrand, format_money
-from backend.v2.shared.comms.sender_identity import (
-    InvalidSenderValue,
-    resolve_sender,
-    validate_reply_to,
-)
+from backend.v2.shared.comms.sender_identity import resolve_sender
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.config.settings import resolve_sender_address
 from backend.v2.shared.tenancy import current_academy_id
@@ -997,19 +997,6 @@ class _ParentDigestProvider:
 _REAL_EMAIL_ENVS = frozenset({"staging", "prod"})
 
 
-def marketing_from_address(settings: Any) -> str | None:
-    """``V2_MARKETING_SENDER_EMAIL`` as a From address, or ``None`` (campaigns
-    then leave from the transactional sender). A value that is not one clean
-    email address (blank, a typo, a header-breaking newline) is refused with
-    an error log instead of failing every campaign at the provider."""
-    raw = resolve_sender_address(getattr(settings, "marketing_sender_email", None), None)
-    try:
-        return validate_reply_to(raw)
-    except InvalidSenderValue:
-        log.error("marketing_sender_email_invalid: campaigns use the transactional sender")
-        return None
-
-
 def _build_email_sender(settings: Any, db: AsyncIOMotorDatabase[Any] | None = None) -> Any:
     """Resend/Stub gating — and send-time recipient gates — for every send path.
 
@@ -1049,7 +1036,7 @@ def _build_email_sender(settings: Any, db: AsyncIOMotorDatabase[Any] | None = No
         inner = ResendEmailSendPort(
             api_key=settings.resend_api_key,
             from_address=from_address,
-            marketing_from_address=marketing_from_address(settings),
+            marketing_from_address=getattr(settings, "marketing_sender_email", None),
             max_retries=int(getattr(settings, "email_send_max_retries", 0) or 0),
         )
     else:
@@ -1208,6 +1195,23 @@ def compose_send_campaign(
         academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
         brands=_AcademyBrandLookup(MongoAcademyRepository(db)),
         list_unsubscribe=bool(getattr(settings, "email_list_unsubscribe_enabled", False)),
+        background=bool(getattr(settings, "campaign_background_send_enabled", False)),
+    )
+
+
+def compose_process_campaign_queue(
+    db: AsyncIOMotorDatabase[Any], settings: Any
+) -> ProcessCampaignQueue:
+    """The background campaign worker (L11 item 7): same gated sender, footer,
+    brand and one-click settings as ``compose_send_campaign``."""
+    return ProcessCampaignQueue(
+        campaigns=MongoCampaignRepository(db),
+        deliveries=MongoDeliveryRepository(db),
+        sender=_build_email_sender(settings, db),
+        unsubscribe_links=compose_unsubscribe_link_builder(settings),
+        academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
+        brands=_AcademyBrandLookup(MongoAcademyRepository(db)),
+        list_unsubscribe=bool(getattr(settings, "email_list_unsubscribe_enabled", False)),
     )
 
 
@@ -1239,3 +1243,12 @@ def compose_list_email_suppressions(db: AsyncIOMotorDatabase[Any]) -> ListEmailS
 
 def compose_release_email_suppression(db: AsyncIOMotorDatabase[Any]) -> ReleaseEmailSuppression:
     return ReleaseEmailSuppression(suppressions=MongoSuppressionRepository(db))
+
+
+def compose_delivery_problems(db: AsyncIOMotorDatabase[Any]) -> GetDeliveryProblems:
+    """The admin Delivery problems read (L11 item 3)."""
+    return GetDeliveryProblems(
+        resolver=MongoAudienceResolver(db=db),
+        suppressions=MongoSuppressionRepository(db),
+        deliveries=MongoDeliveryRepository(db),
+    )

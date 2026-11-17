@@ -157,7 +157,7 @@ class SendCoachDigestTest:
                 status="failed",
                 coach_id=recipient.user_id,
                 email=None,
-                detail="Recipient has no email address.",
+                detail="no_email",
             )
 
         brand = await self._brand(command.academy_id)

@@ -131,6 +131,13 @@ class MongoSuppressionRepository:
         cursor = self._suppressions.find({"active": True}).sort([("last_seen_at", -1)]).limit(limit)
         return [_to_model(doc) async for doc in cursor]
 
+    async def list_active_for(self, emails: list[str]) -> list[EmailSuppression]:
+        keys = sorted({normalize_email(e) for e in emails if e})
+        if not keys:
+            return []
+        cursor = self._suppressions.find({"email": {"$in": keys}, "active": True})
+        return [_to_model(doc) async for doc in cursor]
+
     async def release(self, *, email: str, released_by: str) -> bool:
         result = await self._suppressions.update_one(
             {"email": normalize_email(email), "active": True},

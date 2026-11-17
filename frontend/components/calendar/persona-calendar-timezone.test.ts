@@ -212,7 +212,7 @@ describe("persona calendars render in the academy zone (#1043)", () => {
       parentEntry("2026-11-06T00:00:00Z", "2026-11-06T01:00:00Z", "cancelled"),
       { childName: "Ava", color: "#2563eb" },
     );
-    expect(event.title.startsWith("Cancelled — ")).toBe(true);
+    expect(event.title.startsWith("No class (")).toBe(true);
     expect(onGrid(event.start, "America/Chicago")).toBe("11/05/2026, 18:00");
   });
 
@@ -254,7 +254,8 @@ describe("PersonaCalendarView wiring (#1043)", () => {
   });
 
   it("keeps the mobile day view, desktop month/week views and the safe-URL guard", () => {
-    expect(view).toContain('initialView={phone ? "dayGridDay" : "dayGridMonth"}');
+    // Phones open on the day view unless the page asks for the month (parent).
+    expect(view).toContain('initialView={phone && !monthFirst ? "dayGridDay" : "dayGridMonth"}');
     expect(view).toContain('"dayGridMonth,dayGridWeek"');
     expect(view).toContain('event.url.startsWith("/") && !event.url.startsWith("//")');
   });

@@ -10,7 +10,7 @@ from typing import get_args
 import pytest
 from mongomock_motor import AsyncMongoMockClient
 
-from backend.v2.composition.ai import AiComposition, PlatformAiEntitlement
+from backend.v2.composition.ai import AcademyAiControls, AiComposition, PlatformAiEntitlement
 from backend.v2.composition.ai_curriculum import (
     CurriculumProgramSportLookup,
     compose_ai_curriculum,
@@ -27,8 +27,10 @@ from backend.v2.contexts.ai.domain.errors import AiDisabled, AiMonthlyCapReached
 from backend.v2.contexts.ai.domain.models import DEFAULT_MODEL, AiCallRecord, LlmResult
 from backend.v2.contexts.ai.domain.prompts import PROMPTS
 from backend.v2.contexts.ai.infrastructure.disabled_llm_port import DisabledLlmPort
+from backend.v2.contexts.ai.infrastructure.mongo_ai_controls_audit import MongoAiControlsAudit
 from backend.v2.contexts.curriculum.domain.models import Program, ScoringType
 from backend.v2.contexts.curriculum.infrastructure.mongo_program_repo import MongoProgramRepository
+from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
 from backend.v2.shared.tenancy import tenant_scope
 from backend.v2.tests.fixtures.ai_counters import counters_at
 
@@ -215,16 +217,23 @@ async def test_sport_lookup_is_tenant_scoped() -> None:
 def test_compose_reports_enabled_only_off_the_disabled_port() -> None:
     db = AsyncMongoMockClient()["test_db"]
     record = RecordAiCall(calls=FakeCalls(), counters=counters_at(), cap_source=FakeCap())
+    controls = AcademyAiControls(MongoAcademyRepository(db), MongoAiControlsAudit(db))
     off = compose_ai_curriculum(
         db,
         AiComposition(
-            llm=DisabledLlmPort(), record_ai_call=record, entitlement=PlatformAiEntitlement(None)
+            llm=DisabledLlmPort(),
+            record_ai_call=record,
+            entitlement=PlatformAiEntitlement(None),
+            controls=controls,
         ),
     )
     on = compose_ai_curriculum(
         db,
         AiComposition(
-            llm=FakeLlm("{}"), record_ai_call=record, entitlement=PlatformAiEntitlement(None)
+            llm=FakeLlm("{}"),
+            record_ai_call=record,
+            entitlement=PlatformAiEntitlement(None),
+            controls=controls,
         ),
     )
     assert (off.enabled, on.enabled) == (False, True)

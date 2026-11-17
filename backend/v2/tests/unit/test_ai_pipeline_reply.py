@@ -237,6 +237,18 @@ def test_parse_rejects_bare_domain_and_mailto_links(text: str) -> None:
         parse_reply_draft(_body(text), allowed_url=CONTEXT.public_page_url)
 
 
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"subject": "Book at evil.example now", "body": "Hi.", "key_points": []},
+        {"subject": "Hi", "body": "Hi.", "key_points": ["Visit www.evil.example"]},
+    ],
+)
+def test_parse_rejects_links_in_the_subject_and_key_points(fields: dict[str, object]) -> None:
+    with pytest.raises(AiProviderError):
+        parse_reply_draft(json.dumps(fields), allowed_url=CONTEXT.public_page_url)
+
+
 def test_parse_accepts_the_public_url_with_or_without_a_trailing_slash() -> None:
     url = CONTEXT.public_page_url
     assert url is not None

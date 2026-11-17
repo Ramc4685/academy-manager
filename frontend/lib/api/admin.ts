@@ -3359,6 +3359,8 @@ export interface SendEmailCampaignResponse {
   total_recipients: number;
   sent_count: number;
   failed_count: number;
+  /** True when the send went to the background queue (counts are still zero). */
+  queued?: boolean;
 }
 
 export function sendEmailCampaign(
@@ -4129,6 +4131,13 @@ export function getCoachDigestLog(limit = 20): Promise<CoachDigestLogView> {
   });
 }
 
+/** L11: suppressed addresses and failed campaign sends, this academy's people only. */
+export type DeliveryProblemsView = components["schemas"]["DeliveryProblemsView"];
+
+export function getDeliveryProblems(): Promise<DeliveryProblemsView> {
+  return apiFetch<DeliveryProblemsView>("/admin/comms/delivery-problems", { method: "GET" });
+}
+
 /** AI usage meter (plan 2026-11-04 Phase 2, slice A3): this month's drafts against the plan's cap. */
 export interface AiUsage {
   used: number;
@@ -4558,6 +4567,30 @@ export function updateAdminAiWinBackPersonalised(enabled: boolean): Promise<{ en
   });
 }
 
+/** L13: the owner's AI limits (owner-only, 404 otherwise). */
+export interface AdminAiControlsView {
+  monthly_call_cap: number;
+  /** feature -> calls per day; an absent feature has no daily limit. */
+  daily_call_caps: Record<string, number>;
+  coach_review_narratives: boolean;
+  features: string[];
+}
+
+export type UpdateAdminAiControlsRequest = Omit<AdminAiControlsView, "features">;
+
+export function getAdminAiControls(): Promise<AdminAiControlsView> {
+  return apiFetch<AdminAiControlsView>("/admin/ai/controls", { method: "GET" });
+}
+
+export function updateAdminAiControls(
+  payload: UpdateAdminAiControlsRequest
+): Promise<AdminAiControlsView> {
+  return apiFetch<AdminAiControlsView>("/admin/ai/controls", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 /** B1: whether AI drafting is on for this academy (V2_AI_ENABLED + key). */
 export function fetchAdminAiStatus(): Promise<{ enabled: boolean }> {
   return apiFetch<{ enabled: boolean }>("/admin/ai/status", { method: "GET" });
@@ -4609,5 +4642,36 @@ export function previewAdminNurtureStep(step: NurtureStepInput): Promise<Nurture
   return apiFetch<NurturePreview>("/admin/crm/nurture-sequence/preview", {
     method: "POST",
     body: JSON.stringify(step),
+  });
+}
+
+/** The last month the academy calls final ("YYYY-MM"), or null (never published). */
+export interface SchedulePublishView {
+  published_through: string | null;
+}
+
+export function getSchedulePublish(): Promise<SchedulePublishView> {
+  return apiFetch<SchedulePublishView>("/admin/schedule/publish", { method: "GET" });
+}
+
+export function setSchedulePublish(publishedThrough: string | null): Promise<SchedulePublishView> {
+  return apiFetch<SchedulePublishView>("/admin/schedule/publish", {
+    method: "PUT",
+    body: JSON.stringify({ published_through: publishedThrough }),
+  });
+}
+
+/** The Month dates AI helper's suggestion; nothing is saved until the admin calls the dates off. */
+export interface NoClassSuggestion {
+  no_class: { date: string; reason: string }[];
+  notes: string;
+  prompt_version: string;
+}
+
+export function suggestNoClassDates(input: { text: string; classDates: string[] }): Promise<NoClassSuggestion> {
+  return apiFetch<NoClassSuggestion>("/admin/schedule/suggest-no-class-dates", {
+    method: "POST",
+    body: JSON.stringify({ text: input.text, class_dates: input.classDates }),
+    dedup: false,
   });
 }

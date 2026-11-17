@@ -751,11 +751,13 @@ def test_each_job_uses_its_own_threshold() -> None:
 
     # `process_stalled_hold_reclaims` ticks every 15 minutes (its own
     # 1-hour threshold), so a 2h-old heartbeat is genuinely stale for it
-    # too — same reasoning as the two sub-daily jobs below.
+    # too — same reasoning as the two sub-daily jobs below. The campaign
+    # queue (L11) ticks every minute with a 30-minute threshold.
     assert stale_ids == {
         "process_stripe_webhook_events",
         "reconcile_stripe_payment_intents",
         "process_stalled_hold_reclaims",
+        "process_campaign_queue",
     }
 
 
@@ -841,6 +843,7 @@ async def test_boot_seed_stops_the_first_digest_flagging_itself() -> None:
             "process_stripe_webhook_events",
             "reconcile_stripe_payment_intents",
             "process_stalled_hold_reclaims",
+            "process_campaign_queue",
         }:
             doc["last_tick_at"] = NOW - timedelta(minutes=1)
 

@@ -4,8 +4,9 @@ Financial status invariant: this use case ONLY changes financial status when the
 succeeds immediately. On decline the invoice stays open/partially_paid. The delivery
 axis (sent_at, delivery_status) is never touched here.
 
-PI idempotency is scoped to invoice, billing period, and attempted balance so true
-replays dedupe without replaying stale amounts after the invoice balance changes.
+PI idempotency is scoped to the invoice and its retry rung only, never the amount:
+a replay of the same rung with a changed amount is refused by Stripe and parks,
+so a retry can never charge a second time under a fresh key.
 
 Where the charge runs follows the academy's ChargeRoute:
 
@@ -46,7 +47,6 @@ from backend.v2.contexts.billing.application.ports import (
 )
 from backend.v2.contexts.billing.application.use_cases.application_fee import (
     application_fee_kwargs,
-    idempotency_key_with_fee,
 )
 from backend.v2.contexts.billing.application.use_cases.checkout_allocation import (
     allocate_checkout_payment_across_invoices,
@@ -56,7 +56,11 @@ from backend.v2.contexts.billing.domain.checkout_hold import (
     CHECKOUT_HOLD_DECLINE_CODE,
     active_checkout_hold,
 )
-from backend.v2.contexts.billing.domain.dunning import NO_SAVED_PAYMENT_METHOD, STRIPE_UNAVAILABLE
+from backend.v2.contexts.billing.domain.dunning import (
+    EXISTING_CHARGE_NEEDS_REVIEW,
+    NO_SAVED_PAYMENT_METHOD,
+    STRIPE_UNAVAILABLE,
+)
 from backend.v2.contexts.billing.domain.errors import StripeUnavailable
 from backend.v2.contexts.billing.domain.fees import compute_ach_discount
 from backend.v2.contexts.billing.domain.ledger import (
@@ -200,6 +204,13 @@ _ATTEMPT_MESSAGES: dict[str, str | None] = {
 }
 
 
+def autopay_idempotency_key(invoice_id: str, retry_scope: str | None) -> str:
+    """The single-invoice PaymentIntent key before route scoping: the invoice and
+    its retry rung, never the amount or fee (see ``execute``)."""
+    digest = hashlib.sha256(f"{invoice_id}|{retry_scope or ''}".encode()).hexdigest()[:32]
+    return f"autopay:{digest}"
+
+
 def _attempt_status(pi_status: str, decline_code: str | None) -> str:
     """The attempt row status for a PaymentIntent answer."""
     if decline_code is not None:
@@ -337,16 +348,14 @@ class ChargeInvoiceViaAutopay:
             funding_type=funding_type,
         )
 
-        # 4. Create off-session PaymentIntent (idempotency key prevents stale amount replay)
-        base_idempotency_key = (
-            f"autopay:{invoice.invoice_id}:{invoice.period}:{invoice.balance_due_cents}"
-        )
-        idempotency_key = (
-            f"{base_idempotency_key}:{retry_scope}" if retry_scope else base_idempotency_key
+        # 4. Create off-session PaymentIntent. No amount (or amount-derived fee) in
+        # the key: a retry whose amount changed (the ACH discount dropped because the
+        # payment-method lookup failed, say) must hit Stripe's reused-key error and
+        # park, not mint a new key that debits again after the first went through.
+        idempotency_key = route.idempotency_key(
+            autopay_idempotency_key(invoice.invoice_id, retry_scope)
         )
         fee_cents = route.application_fee_cents(invoice.balance_due_cents)
-        idempotency_key = idempotency_key_with_fee(idempotency_key, fee_cents)
-        idempotency_key = route.idempotency_key(idempotency_key)
         pi_metadata = {
             "invoice_id": invoice.invoice_id,
             "academy_id": invoice.academy_id,
@@ -654,23 +663,29 @@ class ChargeInvoiceViaAutopay:
             status = str(pi.get("status") or "")
             if covered != wanted:
                 # Another charge covered a different set: record nothing here and
-                # park; the webhook or reconcile settles it and the next check sees it.
+                # park for review; the daily review recheck resolves the rung once the
+                # webhook or reconcile settles that charge, without searching again.
                 log.warning(
                     "charge_autopay: pi=%s covers %s, not %s; parking",
                     pi_id,
                     sorted(covered),
                     sorted(wanted),
                 )
-                return _refused(lead, None)
+                return _refused(lead, EXISTING_CHARGE_NEEDS_REVIEW)
             total = sum(i.balance_due_cents for i in invoices)
             unsafe = _why_not_settleable(pi, total)
             if unsafe is not None:
                 # Real money touched these invoices but not as this charge: never
                 # record it as one and never charge on top of it; a person decides.
-                log.warning(
-                    "charge_autopay: pi=%s covers %s but %s; parking", pi_id, sorted(wanted), unsafe
+                # A distinct code, not None: None parks as a technical failure that
+                # is rechecked (and found again) every day.
+                log.error(
+                    "charge_autopay: pi=%s covers %s but %s; parking for review",
+                    pi_id,
+                    sorted(wanted),
+                    unsafe,
                 )
-                return _refused(lead, None)
+                return _refused(lead, EXISTING_CHARGE_NEEDS_REVIEW)
             log.warning(
                 "charge_autopay: invoices=%s already charged by pi=%s status=%s; not charging",
                 sorted(wanted),
@@ -713,7 +728,7 @@ class ChargeInvoiceViaAutopay:
                         pi_id,
                         invoice.invoice_id,
                     )
-                    return _refused(lead, None)
+                    return _refused(lead, EXISTING_CHARGE_NEEDS_REVIEW)
             return _attempt_result(target, "succeeded", None)
         return None
 

@@ -15,6 +15,7 @@ import {
 } from "@/lib/api/admin-family-crm";
 import { getCurrentUser } from "@/lib/api/me";
 import { usePhoneCountryCode } from "@/lib/phone-country";
+import { emailFailureLabel } from "@/lib/format/email-failure";
 import { formatInstantDay } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -452,7 +453,9 @@ function MessageRow({
         </p>
       )}
       {entry.failed_reason && (
-        <p className="text-xs text-status-red-700">Not delivered: {entry.failed_reason}</p>
+        <p className="text-xs text-status-red-700">
+          Not delivered: {emailFailureLabel(entry.failed_reason)}
+        </p>
       )}
       {entry.detail && (
         <p className="mt-0.5 whitespace-pre-line break-words text-rally-muted">{entry.detail}</p>

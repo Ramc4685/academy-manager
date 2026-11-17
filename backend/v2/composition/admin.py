@@ -361,6 +361,7 @@ from backend.v2.contexts.enrollment.application.use_cases.self_cancel import (
 )
 from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
     GetSelfServicePolicy,
+    SetSchedulePublishedThrough,
     UpdateSelfServicePolicy,
 )
 from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
@@ -4248,6 +4249,7 @@ def compose_admin(
         deactivate_billing_product=deactivate_billing_product,
         self_service_policy=get_self_service_policy,
         update_self_service_policy=update_self_service_policy,
+        set_schedule_published_through=SetSchedulePublishedThrough(self_service_policy_repo),
         list_makeup_requests_for_admin=list_makeup_requests_for_admin,
         approve_makeup_request=approve_makeup_request,
         deny_makeup_request=deny_makeup_request,

@@ -700,7 +700,12 @@ class RealStripeGateway(StripeGateway):
             else:
                 self._stripe.Subscription.delete(stripe_subscription_id)
 
-        await asyncio.to_thread(_cancel)
+        try:
+            await asyncio.to_thread(_cancel)
+        except self._stripe.StripeError as exc:
+            if not _is_resource_missing(self._stripe, exc):
+                raise
+            # Stripe no longer has it: already cancelled, so the caller converges.
 
     async def pause_subscription_collection(
         self,

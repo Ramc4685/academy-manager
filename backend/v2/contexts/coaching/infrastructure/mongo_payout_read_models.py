@@ -227,9 +227,13 @@ class MongoPayableOccurrenceQuery:
                 ):
                     continue
                 tuition = 0
+            # The class is keyed the way ``occurrence_session_id`` keys it: a D2 term
+            # clone's occurrences name the template the invoice billed only in
+            # ``template_session_id``, so a ``session_id``-only lookup found none of
+            # them and every one read as a missing invoice.
             query: dict[str, Any] = {
                 "academy_id": academy_id,
-                "session_id": session_id,
+                "$or": [{"session_id": session_id}, {"template_session_id": session_id}],
                 "start_at": {"$gte": month_start, "$lt": month_end},
                 "is_payable": {"$ne": False},
             }
@@ -238,8 +242,11 @@ class MongoPayableOccurrenceQuery:
             ids = [
                 str(row["occurrence_id"])
                 async for row in self._db["session_occurrences"].find(
-                    query, {"occurrence_id": 1}, sort=[("start_at", 1), ("occurrence_id", 1)]
+                    query,
+                    {"occurrence_id": 1, "session_id": 1, "template_session_id": 1},
+                    sort=[("start_at", 1), ("occurrence_id", 1)],
                 )
+                if occurrence_session_id(row) == session_id
             ]
             if not ids:
                 continue

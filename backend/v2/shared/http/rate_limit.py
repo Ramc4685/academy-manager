@@ -59,6 +59,7 @@ _PATH_LIMIT_OVERRIDES: dict[tuple[str, str], tuple[int, int]] = {
     ("POST", "/api/v2/admin/imports/families/preview"): (10, 60),
     ("POST", "/api/v2/admin/imports/families/commit"): (10, 60),
     ("POST", "/api/v2/admin/imports/families/map-columns"): (10, 60),
+    ("POST", "/api/v2/admin/schedule/suggest-no-class-dates"): (10, 60),
 }
 
 # Second, per-HOST ceiling for anonymous writes that land on one academy
@@ -77,6 +78,11 @@ _PER_HOST_LIMITS: dict[tuple[str, str], tuple[int, int]] = {
 # so a client walking tokens shares a single budget instead of one per token.
 _PREFIX_LIMITS: dict[tuple[str, str], tuple[int, int]] = {
     ("GET", "/api/v2/public/certificates/"): (60, 60),
+    # iPhones poll from the phone, but Google and Outlook fetch every
+    # subscribed feed from a small shared IP pool, so this per-IP ceiling is
+    # high. Guessing stays hopeless: each link carries a 32-char HMAC.
+    # shortcut: one fixed ceiling; allowlist provider ranges if 429s appear.
+    ("GET", "/api/v2/calendar-feed/"): (600, 60),
 }
 
 _PROXY_AUTH_HEADER = "x-cm-proxy-auth"

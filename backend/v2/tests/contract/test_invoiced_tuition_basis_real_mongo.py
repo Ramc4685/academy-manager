@@ -426,3 +426,36 @@ async def test_percent_coach_is_paid_on_the_invoiced_share(real_db, acad) -> Non
     assert statement.total_minor == 1_800
     assert statement.lines[0].percent_bps == 3_000
     assert statement.lines[0].expected_revenue_minor == 6_000
+
+
+async def test_a_term_class_shares_the_tuition_invoiced_to_its_template(real_db, acad) -> None:
+    """D2: a term's occurrences carry their own ``session_id`` and the template the
+    enrollment (and so the invoice) points at as ``template_session_id``. The share
+    used to look the class's occurrences up by ``session_id`` alone, found none,
+    and reported every one of them as a missing invoice although it was invoiced."""
+    await _occurrences(real_db, "term-fall", _tuesdays())
+    await real_db["session_occurrences"].update_many(
+        {"session_id": "term-fall"}, {"$set": {"template_session_id": "tmpl-1"}}
+    )
+    await _enroll(real_db, "enr-1", "tmpl-1")
+    await _invoice(real_db, "inv-1", enrollment_id="enr-1", lines=[("tuition", 8_000)])
+
+    assert await _shares(real_db) == {f"term-fall-occ-{i}": 2_000 for i in range(4)}
+
+
+async def test_a_template_and_its_term_do_not_split_each_others_tuition(real_db, acad) -> None:
+    """The template's own occurrences and a term clone's are two classes: each shares
+    only its own key's tuition."""
+    await _occurrences(real_db, "tmpl-1", _tuesdays(2))
+    await _occurrences(real_db, "term-fall", _tuesdays(4))
+    await real_db["session_occurrences"].update_many(
+        {"session_id": "term-fall"}, {"$set": {"template_session_id": "term-fall-tmpl"}}
+    )
+    await _enroll(real_db, "enr-1", "tmpl-1")
+    await _enroll(real_db, "enr-2", "term-fall-tmpl")
+    await _invoice(real_db, "inv-1", enrollment_id="enr-1", lines=[("tuition", 6_000)])
+    await _invoice(real_db, "inv-2", enrollment_id="enr-2", lines=[("tuition", 4_000)])
+
+    shares = await _shares(real_db)
+    assert [shares[f"tmpl-1-occ-{i}"] for i in range(2)] == [3_000, 3_000]
+    assert [shares[f"term-fall-occ-{i}"] for i in range(4)] == [1_000] * 4

@@ -276,6 +276,8 @@ export interface ParentScheduleEntry {
    * one-time approved attendance. Optional for responses that predate it.
    */
   source?: ParentScheduleSource;
+  /** Why a cancelled date is off ("Gym not available"); null for a class. */
+  cancellation_reason?: string | null;
 }
 
 export type ParentScheduleSource = "regular" | "makeup" | "trial";
@@ -526,11 +528,25 @@ export function listParentPauseRequests(): Promise<{
 
 export function getChildSchedule(
   studentId: string,
+  range?: { from: string; to: string },
 ): Promise<ParentScheduleResponse> {
+  const query = range
+    ? `?${new URLSearchParams({ from: range.from, to: range.to, limit: "200" })}`
+    : "";
   return apiFetch(
-    `/parent/children/${encodeURIComponent(studentId)}/schedule`,
+    `/parent/children/${encodeURIComponent(studentId)}/schedule${query}`,
     { method: "GET" },
   );
+}
+
+/** The parent's private phone-calendar subscription link (404 when off). */
+export function getCalendarFeedLink(): Promise<{ url: string }> {
+  return apiFetch("/parent/calendar-feed", { method: "GET" });
+}
+
+/** A new link; every older one stops working. */
+export function resetCalendarFeedLink(): Promise<{ url: string }> {
+  return apiFetch("/parent/calendar-feed/reset", { method: "POST" });
 }
 
 export interface ParentSelfServiceSwitches {
@@ -565,6 +581,11 @@ export interface ParentAcademy {
   self_service?: ParentSelfServiceSwitches;
   // Owner-edited plain text for manual payers; null/empty = nothing shown.
   payment_instructions?: string | null;
+  /**
+   * Last month ("YYYY-MM") whose class dates the academy published as final.
+   * null = the academy does not publish, so no "not confirmed" banner.
+   */
+  schedule_published_through?: string | null;
 }
 
 export function getParentAcademy(): Promise<ParentAcademy> {

@@ -498,6 +498,7 @@ class ParentScheduleEntryView(BaseModel):
     # "regular" (standing enrollment) or "makeup" / "trial" for a one-time
     # approved attendance (issue #1038).
     source: Literal["regular", "makeup", "trial"] = "regular"
+    cancellation_reason: str | None = None
 
 
 class ParentScheduleResponse(BaseModel):
@@ -591,6 +592,9 @@ class ParentAcademyView(BaseModel):
     #: Owner-edited plain text for manual payers (Settings overhaul Phase 1
     #: Lane C item 5). None/empty = nothing shown.
     payment_instructions: str | None = None
+    #: Last published month ("YYYY-MM"); None = the academy never publishes,
+    #: so no "not confirmed yet" banner is shown.
+    schedule_published_through: str | None = None
 
 
 # ---------------------------------------------------------------------------

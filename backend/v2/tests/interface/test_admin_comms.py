@@ -403,3 +403,29 @@ def test_digest_log_not_configured_503(admin_client):
 def test_digest_log_wrong_persona_404(parent_on_admin_client):
     r = parent_on_admin_client.get("/api/v2/admin/comms/digests/log")
     assert r.status_code == 404
+
+
+def test_digest_failures_never_show_a_raw_suppression_reason(admin_client):
+    """The shared block list's reason (another academy's bounce or complaint)
+    must not reach this academy through the test send or the log."""
+    admin_client.use_cases.send_coach_digest_test = _FakeTestSend(
+        result=SendCoachDigestTestResult(
+            status="failed",
+            coach_id="coach-1",
+            email="c1@example.test",
+            detail="suppressed:complaint",
+        )
+    )
+    admin_client.use_cases.get_digest_delivery_log = _FakeDeliveryLog(
+        rows=[
+            _log_row(digest_id="dg-1", status="failed", failed_reason="suppressed:hard_bounce"),
+            _log_row(digest_id="dg-2", status="failed", failed_reason="unsubscribed:digests"),
+        ]
+    )
+
+    sent = admin_client.post("/api/v2/admin/comms/digests/test-send", json={"coach_id": "coach-1"})
+    log = admin_client.get("/api/v2/admin/comms/digests/log")
+
+    assert sent.json()["detail"] == "email_delivery_failed"
+    reasons = [e["failed_reason"] for e in log.json()["entries"]]
+    assert reasons == ["email_delivery_failed", "recipient_unsubscribed"]

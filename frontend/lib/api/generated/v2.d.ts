@@ -193,6 +193,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/ai/controls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Ai Controls */
+        get: operations["get_ai_controls_api_v2_admin_ai_controls_get"];
+        /** Put Ai Controls */
+        put: operations["put_ai_controls_api_v2_admin_ai_controls_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/ai/import-sharing": {
         parameters: {
             query?: never;
@@ -1164,6 +1182,27 @@ export interface paths {
         put?: never;
         /** Repair Coach Pay Rate Window */
         post: operations["repair_coach_pay_rate_window_api_v2_admin_coaches__coach_id__pay_rates_repair_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/comms/delivery-problems": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Delivery Problems
+         * @description Suppressed addresses and failed campaign sends for this academy's own
+         *     people only. Read-only: clearing an address stays a platform action (L11).
+         */
+        get: operations["get_delivery_problems_api_v2_admin_comms_delivery_problems_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3679,6 +3718,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/schedule/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Schedule Publish */
+        get: operations["get_schedule_publish_api_v2_admin_schedule_publish_get"];
+        /** Set Schedule Publish */
+        put: operations["set_schedule_publish_api_v2_admin_schedule_publish_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/schedule/suggest-no-class-dates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Suggest No Class Dates */
+        post: operations["suggest_no_class_dates_api_v2_admin_schedule_suggest_no_class_dates_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/seed-lesson-cards": {
         parameters: {
             query?: never;
@@ -5047,6 +5121,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/calendar-feed/{token}.ics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Calendar Feed */
+        get: operations["get_calendar_feed_api_v2_calendar_feed__token__ics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/coach/academy": {
         parameters: {
             query?: never;
@@ -6044,6 +6135,40 @@ export interface paths {
         put?: never;
         /** Create a Stripe customer portal session */
         post: operations["open_billing_portal_api_v2_parent_billing_portal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/parent/calendar-feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Calendar Feed Link */
+        get: operations["get_calendar_feed_link_api_v2_parent_calendar_feed_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/parent/calendar-feed/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset Calendar Feed Link */
+        post: operations["reset_calendar_feed_link_api_v2_parent_calendar_feed_reset_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11405,6 +11530,30 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** AiControlsRequest */
+        AiControlsRequest: {
+            /** Coach Review Narratives */
+            coach_review_narratives: boolean;
+            /** Daily Call Caps */
+            daily_call_caps: {
+                [key: string]: number;
+            };
+            /** Monthly Call Cap */
+            monthly_call_cap: number;
+        };
+        /** AiControlsView */
+        AiControlsView: {
+            /** Coach Review Narratives */
+            coach_review_narratives: boolean;
+            /** Daily Call Caps */
+            daily_call_caps: {
+                [key: string]: number;
+            };
+            /** Features */
+            features: string[];
+            /** Monthly Call Cap */
+            monthly_call_cap: number;
+        };
         /** AiUsageView */
         AiUsageView: {
             /** Cap */
@@ -12202,6 +12351,11 @@ export interface components {
             status: "INTRODUCED" | "LEARNING" | "PRACTICING" | "TEST_READY" | "NEEDS_REVIEW";
             /** Student Ids */
             student_ids: string[];
+        };
+        /** CalendarFeedLinkView */
+        CalendarFeedLinkView: {
+            /** Url */
+            url: string;
         };
         /** CancelAccountDeletionPayload */
         CancelAccountDeletionPayload: {
@@ -13537,6 +13691,13 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** DeliveryProblemsView */
+        DeliveryProblemsView: {
+            /** Failed */
+            failed: components["schemas"]["FailedDeliveryView"][];
+            /** Suppressed Emails */
+            suppressed_emails: string[];
+        };
         /** DenyMakeupRequestBody */
         DenyMakeupRequestBody: {
             /** Reason */
@@ -13882,6 +14043,15 @@ export interface components {
             outcome: "dropped" | "failed";
             /** Session Id */
             session_id: string;
+        };
+        /** FailedDeliveryView */
+        FailedDeliveryView: {
+            /** Delivery Id */
+            delivery_id: string;
+            /** Failed Reason */
+            failed_reason: string;
+            /** Recipient Email */
+            recipient_email: string | null;
         };
         /** FailedPaymentRowDto */
         FailedPaymentRowDto: {
@@ -15798,6 +15968,19 @@ export interface components {
             /** Youtube Links */
             youtube_links?: components["schemas"]["VideoLink"][];
         };
+        /** NoClassDate */
+        NoClassDate: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
         /** NoteBody */
         NoteBody: {
             /** Body */
@@ -16015,6 +16198,8 @@ export interface components {
             logo_url?: string | null;
             /** Payment Instructions */
             payment_instructions?: string | null;
+            /** Schedule Published Through */
+            schedule_published_through?: string | null;
             self_service?: components["schemas"]["ParentSelfServiceSwitchesView"];
             /** Timezone */
             timezone?: string | null;
@@ -16604,6 +16789,8 @@ export interface components {
         };
         /** ParentScheduleEntryView */
         ParentScheduleEntryView: {
+            /** Cancellation Reason */
+            cancellation_reason?: string | null;
             /** Coach Name */
             coach_name?: string | null;
             /**
@@ -18592,6 +18779,16 @@ export interface components {
             /** Plan Id */
             plan_id: string;
         };
+        /** SchedulePublishRequest */
+        SchedulePublishRequest: {
+            /** Published Through */
+            published_through: string | null;
+        };
+        /** SchedulePublishView */
+        SchedulePublishView: {
+            /** Published Through */
+            published_through?: string | null;
+        };
         /**
          * ScheduledClassFee
          * @description A class whose fee moves at a future month ("Scheduled: $X from <Month>").
@@ -18726,6 +18923,11 @@ export interface components {
             deduplicated: boolean;
             /** Failed Count */
             failed_count: number;
+            /**
+             * Queued
+             * @default false
+             */
+            queued: boolean;
             /** Sent Count */
             sent_count: number;
             /** Total Recipients */
@@ -19325,6 +19527,16 @@ export interface components {
             created_at: string;
             /** Delete Student Profile */
             delete_student_profile: boolean;
+            /**
+             * Enforced
+             * @default false
+             */
+            enforced: boolean;
+            /**
+             * Operator Note
+             * @default Recorded only: nothing is deleted or redacted. A platform admin must work the checklist in docs/policy/governance-deletion-cascade.md.
+             */
+            operator_note: string;
             /** Pii Handling Policy */
             pii_handling_policy: {
                 [key: string]: unknown;
@@ -19441,6 +19653,25 @@ export interface components {
             /** Current Period End */
             current_period_end?: string | null;
         };
+        /** SuggestNoClassDatesBody */
+        SuggestNoClassDatesBody: {
+            /** Class Dates */
+            class_dates: string[];
+            /** Text */
+            text: string;
+        };
+        /** SuggestNoClassDatesResponse */
+        SuggestNoClassDatesResponse: {
+            /** No Class */
+            no_class: components["schemas"]["NoClassDate"][];
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
+            /** Prompt Version */
+            prompt_version: string;
+        };
         /** SupportAccessGrantPayload */
         SupportAccessGrantPayload: {
             /** Academy Id */
@@ -19465,6 +19696,11 @@ export interface components {
              */
             created_at: string;
             /**
+             * Enforced
+             * @default false
+             */
+            enforced: boolean;
+            /**
              * Expires At
              * Format: date-time
              */
@@ -19473,6 +19709,11 @@ export interface components {
             granted_by_platform_role: string;
             /** Granted By User Id */
             granted_by_user_id: string;
+            /**
+             * Operator Note
+             * @default Recorded only: no sign-in path reads support access grants, so this grants no access.
+             */
+            operator_note: string;
             /** Purpose */
             purpose: string;
             /** Revoke Reason */
@@ -19508,10 +19749,20 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Enforced
+             * @default false
+             */
+            enforced: boolean;
             /** Impersonation Enabled */
             impersonation_enabled: boolean;
             /** Impersonation Request Id */
             impersonation_request_id: string;
+            /**
+             * Operator Note
+             * @default Recorded only: impersonation is not built; no session can be issued.
+             */
+            operator_note: string;
             /** Purpose */
             purpose: string;
             /** Requested By Platform Role */
@@ -19573,8 +19824,18 @@ export interface components {
             created_at: string;
             /** Deletion Request Id */
             deletion_request_id: string;
+            /**
+             * Enforced
+             * @default false
+             */
+            enforced: boolean;
             /** Hard Delete Allowed */
             hard_delete_allowed: boolean;
+            /**
+             * Operator Note
+             * @default Recorded only: nothing is deleted. A platform admin must work the checklist in docs/policy/governance-deletion-cascade.md.
+             */
+            operator_note: string;
             /** Reason */
             reason: string;
             /** Requested By Membership Id */
@@ -19621,10 +19882,20 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Enforced
+             * @default false
+             */
+            enforced: boolean;
             /** Export Request Id */
             export_request_id: string;
             /** Include Pii */
             include_pii: boolean;
+            /**
+             * Operator Note
+             * @default Recorded only: no worker builds governance exports. Download the data from the tenant page export (Data export and purge).
+             */
+            operator_note: string;
             /** Pii Handling Policy */
             pii_handling_policy: {
                 [key: string]: unknown;
@@ -20950,6 +21221,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccountDeletionList"];
+                };
+            };
+        };
+    };
+    get_ai_controls_api_v2_admin_ai_controls_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiControlsView"];
+                };
+            };
+        };
+    };
+    put_ai_controls_api_v2_admin_ai_controls_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiControlsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiControlsView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -22665,6 +22989,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_delivery_problems_api_v2_admin_comms_delivery_problems_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryProblemsView"];
                 };
             };
         };
@@ -27450,6 +27794,92 @@ export interface operations {
             };
         };
     };
+    get_schedule_publish_api_v2_admin_schedule_publish_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulePublishView"];
+                };
+            };
+        };
+    };
+    set_schedule_publish_api_v2_admin_schedule_publish_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SchedulePublishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulePublishView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suggest_no_class_dates_api_v2_admin_schedule_suggest_no_class_dates_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuggestNoClassDatesBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestNoClassDatesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     seed_lesson_cards_route_api_v2_admin_seed_lesson_cards_post: {
         parameters: {
             query?: never;
@@ -30257,6 +30687,42 @@ export interface operations {
             };
         };
     };
+    get_calendar_feed_api_v2_calendar_feed__token__ics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No calendar for this link on this host. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_academy_api_v2_coach_academy_get: {
         parameters: {
             query?: never;
@@ -32265,6 +32731,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_calendar_feed_link_api_v2_parent_calendar_feed_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarFeedLinkView"];
+                };
+            };
+        };
+    };
+    reset_calendar_feed_link_api_v2_parent_calendar_feed_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarFeedLinkView"];
                 };
             };
         };

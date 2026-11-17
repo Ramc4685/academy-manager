@@ -15,6 +15,7 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     ladder_eligibility,
 )
 from backend.v2.contexts.billing.domain.dunning import (
+    EXISTING_CHARGE_NEEDS_REVIEW,
     FIRST_ATTEMPT_LOCAL_HOUR,
     NO_SAVED_PAYMENT_METHOD,
     STRIPE_UNAVAILABLE,
@@ -35,9 +36,10 @@ from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 #: reminders both read this, so "no late fee yet" and "no reminder yet" cannot
 #: drift apart. Waiting on the parent to add a card is not a retry in flight:
 #: the invoice stays due, earns its late fee and gets its reminders (A4-1, L8).
-#: A ladder capped after a day of technical failures still counts as a retry:
-#: the cap is our fault, so no late fee or reminder, and a late fee would change
-#: balance_due_cents and with it the autopay idempotency key (A7-6).
+#: A ladder capped after a day of technical failures, or parked for a person to
+#: review a charge Stripe already holds, still counts as a retry: the hold-up is
+#: on our side, so no late fee or reminder (A7-6). (The autopay key no longer
+#: carries the balance, so a late fee would not change it.)
 ACTIVE_RETRY_FILTER: dict[str, Any] = {
     "status": {"$in": ["active", "processing"]},
     "suppression_reason": {"$ne": NO_SAVED_PAYMENT_METHOD},
@@ -71,6 +73,12 @@ class MongoDunningStateRepository(TenantScopedRepository):
         # Retried every tick so autopay picks up a card the parent adds (A4-1).
         NO_SAVED_PAYMENT_METHOD,
     }
+
+    #: Parked reasons re-claimed once a day instead of every tick (A7-6). A review
+    #: park only runs the stand-down checks on that recheck; it is never charged.
+    daily_recheck_parked_reasons: ClassVar[frozenset[str]] = frozenset(
+        {TECHNICAL_FAILURE_CAPPED, EXISTING_CHARGE_NEEDS_REVIEW}
+    )
 
     #: Local hour (academy timezone) before which no NEW ladder is prepared on
     #: its due date, so the first autopay attempt lands in the morning of the
@@ -329,10 +337,12 @@ class MongoDunningStateRepository(TenantScopedRepository):
                     },
                     # A capped ladder is rechecked once a day (A7-6), so a paid or
                     # voided invoice stands down and a recovered charge path collects.
+                    # A review park is rechecked daily too, never charged: only
+                    # the stand-down checks run, so a paid invoice resolves it.
                     {
                         "status": "active",
                         "next_attempt_at": None,
-                        "suppression_reason": TECHNICAL_FAILURE_CAPPED,
+                        "suppression_reason": {"$in": sorted(self.daily_recheck_parked_reasons)},
                         "suppressed_at": {"$lte": now - TECHNICAL_PARK_CAP},
                     },
                     {"status": "processing", "lease_expires_at": {"$lte": now}},
@@ -464,15 +474,21 @@ class MongoDunningStateRepository(TenantScopedRepository):
     ) -> tuple[LedgerInvoice, DunningState] | None:
         academy_id = current_academy_id()
         state = self._state_from_doc(state_doc)
-        capped_recheck = (
-            state.suppression_reason == TECHNICAL_FAILURE_CAPPED
-            and state.suppressed_at is not None
-            and state.suppressed_at <= now - TECHNICAL_PARK_CAP
+        daily_recheck_due = (
+            state.suppressed_at is not None and state.suppressed_at <= now - TECHNICAL_PARK_CAP
+        )
+        capped_recheck = state.suppression_reason == TECHNICAL_FAILURE_CAPPED and daily_recheck_due
+        review_recheck = (
+            state.suppression_reason == EXISTING_CHARGE_NEEDS_REVIEW and daily_recheck_due
         )
         parked_for_retry_recheck = (
             state.status == "active"
             and state.next_attempt_at is None
-            and (state.suppression_reason in self.retryable_parked_reasons or capped_recheck)
+            and (
+                state.suppression_reason in self.retryable_parked_reasons
+                or capped_recheck
+                or review_recheck
+            )
         )
         parked_for_payment_processing = (
             parked_for_retry_recheck and state.suppression_reason == "payment_processing"
@@ -502,7 +518,9 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 "enrollment_id": str(invoice_doc.get("enrollment_id") or ""),
             }
         )
-        if (
+        # A review park may mean we already hold the family's money, so turning
+        # autopay off must not hide it from billing-health; only paid/void clears it.
+        if not review_recheck and (
             enrollment is None
             or enrollment.get("autopay_enrollment_status") != AUTOPAY_ACTIVE_STATUS
         ):
@@ -512,6 +530,13 @@ class MongoDunningStateRepository(TenantScopedRepository):
         latest_status = str(latest.get("status")) if latest else None
         if latest_status == "succeeded":
             await self._store_state(state.resolve(now=now))
+            return None
+        if review_recheck:
+            # Still owed and still awaiting a person: restart the daily clock, never
+            # hand it to the worker (no Stripe call, no failure counted).
+            await self._store_state(
+                state.model_copy(update={"suppressed_at": now, "updated_at": now})
+            )
             return None
         if latest_status == "processing":
             parked = state.model_copy(update={"status": "processing"}).park(
@@ -730,6 +755,8 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 "$or": [
                     {"status": "dunned"},
                     {"status": "active", "attempt_count": {"$gt": 0}},
+                    # A first attempt can park for review: still a person's job.
+                    {"status": "active", "suppression_reason": EXISTING_CHARGE_NEEDS_REVIEW},
                     {"status": "processing"},
                 ],
             },

@@ -18,13 +18,17 @@ payment and over-credit the invoice. The policy:
 
 Concurrency (A5): the cache check alone is check-then-act, so two submits that
 both miss the cache both recorded (a double-click recorded one payment per
-click). Each recording therefore CLAIMS its key first, an insert the unique
-``idempotency_keys.key`` index lets exactly one caller win. The loser replays
-the winner's result when it is there, and otherwise gets a 409: "in progress"
-for a keyed submit, "possible duplicate" for a keyless one. A keyed claim whose
-owner died is taken over after :data:`IN_FLIGHT_WINDOW`; that is safe because a
-keyed recording uses a payment id derived from the key, so the ledger's own
-idempotency keys dedupe whatever the dead attempt already wrote.
+click). Each recording therefore CLAIMS its key first on the shared
+idempotency store (``IdempotencyStore.claim``), which lets exactly one caller
+win. The loser replays the winner's result when it is there, and otherwise gets
+a 409: "in progress" for a keyed submit, "possible duplicate" for a keyless one.
+
+A keyed recording uses a payment id derived from the key, so the ledger's own
+idempotency keys dedupe whatever an earlier attempt already wrote. Its claim is
+therefore given back when the recording raises (the retry runs at once) and a
+claim whose owner died is taken over once stale. A keyless recording has no
+such id: its claim is never given back or taken over, so an identical retry
+after any failure is a 409 the admin confirms with a key, never a second payment.
 
 Tenancy (#544): the store is global, so every key embeds the request academy.
 Without it, academy B sending academy A's invoice id got A's cached payment
@@ -35,7 +39,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from pymongo.errors import DuplicateKeyError
@@ -46,17 +50,8 @@ from backend.v2.contexts.billing.application.use_cases.record_manual_payment imp
     RecordManualPaymentCommand,
 )
 from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
+from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.ids import new_ulid
-
-#: A keyed claim younger than this is a submission still in flight; an older
-#: one is assumed abandoned (its process died) and may be taken over.
-IN_FLIGHT_WINDOW = timedelta(seconds=60)
-
-
-class IdempotencyStore(Protocol):
-    async def get(self, key: str) -> dict[str, Any] | None: ...
-
-    async def put(self, key: str, value: dict[str, Any]) -> None: ...
 
 
 class AuditLog(Protocol):
@@ -110,44 +105,6 @@ async def check_manual_payment_idempotency(
         _reject_other_payload(cached, payload_fingerprint)
         return dict(cached["payload"])
     raise ValueError(_POSSIBLE_DUPLICATE)
-
-
-async def claim_manual_payment(
-    store: IdempotencyStore,
-    *,
-    storage_key: str,
-    payload_fingerprint: str,
-    keyed: bool,
-    now: datetime,
-) -> dict[str, Any] | None:
-    """Claim the right to record, or return the payload a concurrent winner cached.
-
-    Returns None when this caller must record. Raises ValueError (409/422) when
-    another submission holds the claim.
-    """
-    claim_key = f"{storage_key}:claim"
-    claim = {"started_at": now.isoformat(), "fingerprint": payload_fingerprint}
-    try:
-        await store.put(claim_key, claim)
-        return None
-    except DuplicateKeyError:
-        pass
-    cached = await check_manual_payment_idempotency(
-        store, storage_key=storage_key, payload_fingerprint=payload_fingerprint, keyed=keyed
-    )
-    if cached is not None:
-        return cached
-    if not keyed:
-        raise ValueError(_POSSIBLE_DUPLICATE)
-    held = await store.get(claim_key) or {}
-    _reject_other_payload(held, payload_fingerprint)
-    started_at = held.get("started_at")
-    if started_at and datetime.fromisoformat(str(started_at)) > now - IN_FLIGHT_WINDOW:
-        raise ValueError(
-            "manual payment already in progress for this Idempotency-Key; "
-            "wait a moment and retry with the same key"
-        )
-    return None  # abandoned claim: the key-derived payment id makes the takeover safe
 
 
 async def store_manual_payment_idempotency(
@@ -224,32 +181,54 @@ async def record_manual_payment_once(
     # an id from another academy is a plain "not found" that leaves no trace.
     if await ledger.get_invoice(invoice_id) is None:
         raise ValueError(f"invoice {invoice_id!r} not found")
-    cached = await claim_manual_payment(
-        store, storage_key=storage_key, payload_fingerprint=fingerprint, keyed=keyed, now=clock()
-    )
-    if cached is not None:
-        return cached
-    result = await RecordManualPayment(ledger=ledger, clock=clock).execute(
-        RecordManualPaymentCommand(
-            invoice_id=invoice_id,
-            amount_cents=amount_cents,
-            payment_method=payment_method,
-            reference_number=reference_number,
-            notes=notes,
-            payment_id=manual_payment_id(storage_key) if keyed else None,
+    claim_key = f"{storage_key}:claim"
+    token = await store.claim(claim_key, takeover=keyed)
+    if token is None:
+        cached = await check_manual_payment_idempotency(
+            store, storage_key=storage_key, payload_fingerprint=fingerprint, keyed=keyed
         )
-    )
-    # Record the idempotency result right after the durable money movement and
-    # BEFORE the audit append, so an audit failure cannot drive a retry into a
-    # second payment.
-    payload = await store_manual_payment_idempotency(
-        store,
-        storage_key=storage_key,
-        payload_key=payload_key,
-        payload_fingerprint=fingerprint,
-        payload=result.model_dump(mode="python"),
-        keyed=keyed,
-    )
+        if cached is not None:
+            return cached
+        if keyed:
+            # A different payload under a held key is a client error (422), not
+            # "wait and retry" (409): retrying it would never succeed.
+            _reject_other_payload(await store.get(f"{storage_key}:fp") or {}, fingerprint)
+            _reject_other_payload(await store.get(claim_key) or {}, fingerprint)
+        raise ValueError(_IN_PROGRESS if keyed else _POSSIBLE_DUPLICATE)
+    try:
+        if keyed:
+            # A claim written before the shared store carries its fingerprint in
+            # its value. Pin that fingerprint to the durable marker BEFORE any
+            # rejection: releasing the claim below would otherwise drop the only
+            # record of the original payload and let the next retry rebind the key.
+            legacy = await store.get(claim_key) or {}
+            await _bind_key_to_payload(store, storage_key, legacy.get("fingerprint") or fingerprint)
+            _reject_other_payload(legacy, fingerprint)
+        result = await RecordManualPayment(ledger=ledger, clock=clock).execute(
+            RecordManualPaymentCommand(
+                invoice_id=invoice_id,
+                amount_cents=amount_cents,
+                payment_method=payment_method,
+                reference_number=reference_number,
+                notes=notes,
+                payment_id=manual_payment_id(storage_key) if keyed else None,
+            )
+        )
+        # Record the idempotency result right after the durable money movement and
+        # BEFORE the audit append, so an audit failure cannot drive a retry into a
+        # second payment.
+        payload = await store_manual_payment_idempotency(
+            store,
+            storage_key=storage_key,
+            payload_key=payload_key,
+            payload_fingerprint=fingerprint,
+            payload=result.model_dump(mode="python"),
+            keyed=keyed,
+        )
+    except BaseException:
+        if keyed:  # the key-derived payment id makes the retry safe
+            await store.release(claim_key, token)
+        raise
     # P0-4: append-only audit of who recorded the manual payment (money
     # movement), mirroring the refund audit. Overpayment that became an account
     # credit is captured in `after` so the trail explains where the excess went.
@@ -275,10 +254,26 @@ async def record_manual_payment_once(
     return payload
 
 
+_IN_PROGRESS = (
+    "manual payment already in progress for this Idempotency-Key; "
+    "wait a moment and retry with the same key"
+)
+
 _POSSIBLE_DUPLICATE = (
     "possible duplicate: an identical manual payment was recorded "
     "recently; resend with an Idempotency-Key header to confirm"
 )
+
+
+async def _bind_key_to_payload(store: IdempotencyStore, storage_key: str, fingerprint: str) -> None:
+    """Pin a key to the first payload that claimed it, durably: the claim is given
+    back on failure, and the key-derived payment id must never record another
+    amount or method on a retry."""
+    marker = f"{storage_key}:fp"
+    try:
+        await store.put(marker, {"fingerprint": fingerprint})
+    except DuplicateKeyError:
+        _reject_other_payload(await store.get(marker) or {}, fingerprint)
 
 
 def _reject_other_payload(entry: dict[str, Any], payload_fingerprint: str) -> None:

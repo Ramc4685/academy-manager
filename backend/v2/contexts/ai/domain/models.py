@@ -20,6 +20,10 @@ class LlmResult(BaseModel):
     output_tokens: int = Field(ge=0)
     cost_cents: int = Field(ge=0)
     model: str
+    #: List price in millionths of a cent; ``cost_cents`` rounds every call up.
+    cost_microcents: int = Field(default=0, ge=0)
+    #: The provider stopped at ``max_tokens``: the answer is cut off.
+    truncated: bool = False
 
 
 class AiCallRecord(BaseModel):
@@ -34,6 +38,7 @@ class AiCallRecord(BaseModel):
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
     cost_cents: int = Field(ge=0)
+    cost_microcents: int = Field(default=0, ge=0)
     approver: str | None = None
     created_at: datetime
     #: Minted at construction so a later approval can set ``approver`` on the row.

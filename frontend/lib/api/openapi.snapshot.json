@@ -9979,6 +9979,70 @@
         "title": "AgreementAcceptanceRequest",
         "type": "object"
       },
+      "AiControlsRequest": {
+        "properties": {
+          "coach_review_narratives": {
+            "title": "Coach Review Narratives",
+            "type": "boolean"
+          },
+          "daily_call_caps": {
+            "additionalProperties": {
+              "maximum": 1000.0,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "title": "Daily Call Caps",
+            "type": "object"
+          },
+          "monthly_call_cap": {
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Monthly Call Cap",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "monthly_call_cap",
+          "daily_call_caps",
+          "coach_review_narratives"
+        ],
+        "title": "AiControlsRequest",
+        "type": "object"
+      },
+      "AiControlsView": {
+        "properties": {
+          "coach_review_narratives": {
+            "title": "Coach Review Narratives",
+            "type": "boolean"
+          },
+          "daily_call_caps": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Daily Call Caps",
+            "type": "object"
+          },
+          "features": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "monthly_call_cap": {
+            "title": "Monthly Call Cap",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "monthly_call_cap",
+          "daily_call_caps",
+          "coach_review_narratives",
+          "features"
+        ],
+        "title": "AiControlsView",
+        "type": "object"
+      },
       "AiUsageView": {
         "properties": {
           "cap": {
@@ -12251,6 +12315,19 @@
           "status"
         ],
         "title": "BulkStatusBody",
+        "type": "object"
+      },
+      "CalendarFeedLinkView": {
+        "properties": {
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "CalendarFeedLinkView",
         "type": "object"
       },
       "CancelAccountDeletionPayload": {
@@ -15885,6 +15962,30 @@
         "title": "DeleteExpenseRequest",
         "type": "object"
       },
+      "DeliveryProblemsView": {
+        "properties": {
+          "failed": {
+            "items": {
+              "$ref": "#/components/schemas/FailedDeliveryView"
+            },
+            "title": "Failed",
+            "type": "array"
+          },
+          "suppressed_emails": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Suppressed Emails",
+            "type": "array"
+          }
+        },
+        "required": [
+          "suppressed_emails",
+          "failed"
+        ],
+        "title": "DeliveryProblemsView",
+        "type": "object"
+      },
       "DenyMakeupRequestBody": {
         "properties": {
           "reason": {
@@ -17106,6 +17207,36 @@
           "outcome"
         ],
         "title": "EnrollmentStopResultView",
+        "type": "object"
+      },
+      "FailedDeliveryView": {
+        "properties": {
+          "delivery_id": {
+            "title": "Delivery Id",
+            "type": "string"
+          },
+          "failed_reason": {
+            "title": "Failed Reason",
+            "type": "string"
+          },
+          "recipient_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient Email"
+          }
+        },
+        "required": [
+          "delivery_id",
+          "recipient_email",
+          "failed_reason"
+        ],
+        "title": "FailedDeliveryView",
         "type": "object"
       },
       "FailedPaymentRowDto": {
@@ -22526,6 +22657,27 @@
         "title": "NextSkillView",
         "type": "object"
       },
+      "NoClassDate": {
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date"
+        ],
+        "title": "NoClassDate",
+        "type": "object"
+      },
       "NoteBody": {
         "additionalProperties": false,
         "properties": {
@@ -23037,6 +23189,17 @@
               }
             ],
             "title": "Payment Instructions"
+          },
+          "schedule_published_through": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Published Through"
           },
           "self_service": {
             "$ref": "#/components/schemas/ParentSelfServiceSwitchesView"
@@ -24586,6 +24749,17 @@
       },
       "ParentScheduleEntryView": {
         "properties": {
+          "cancellation_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Reason"
+          },
           "coach_name": {
             "anyOf": [
               {
@@ -30143,6 +30317,44 @@
         "title": "SchedulePriceChangeRequest",
         "type": "object"
       },
+      "SchedulePublishRequest": {
+        "properties": {
+          "published_through": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published Through"
+          }
+        },
+        "required": [
+          "published_through"
+        ],
+        "title": "SchedulePublishRequest",
+        "type": "object"
+      },
+      "SchedulePublishView": {
+        "properties": {
+          "published_through": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published Through"
+          }
+        },
+        "title": "SchedulePublishView",
+        "type": "object"
+      },
       "ScheduledClassFee": {
         "description": "A class whose fee moves at a future month (\"Scheduled: $X from <Month>\").",
         "properties": {
@@ -30506,6 +30718,11 @@
           "failed_count": {
             "title": "Failed Count",
             "type": "integer"
+          },
+          "queued": {
+            "default": false,
+            "title": "Queued",
+            "type": "boolean"
           },
           "sent_count": {
             "title": "Sent Count",
@@ -32195,6 +32412,16 @@
             "title": "Delete Student Profile",
             "type": "boolean"
           },
+          "enforced": {
+            "default": false,
+            "title": "Enforced",
+            "type": "boolean"
+          },
+          "operator_note": {
+            "default": "Recorded only: nothing is deleted or redacted. A platform admin must work the checklist in docs/policy/governance-deletion-cascade.md.",
+            "title": "Operator Note",
+            "type": "string"
+          },
           "pii_handling_policy": {
             "additionalProperties": true,
             "title": "Pii Handling Policy",
@@ -32503,6 +32730,61 @@
         "title": "SubscriptionSummary",
         "type": "object"
       },
+      "SuggestNoClassDatesBody": {
+        "additionalProperties": false,
+        "properties": {
+          "class_dates": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "maxItems": 62,
+            "minItems": 1,
+            "title": "Class Dates",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "class_dates"
+        ],
+        "title": "SuggestNoClassDatesBody",
+        "type": "object"
+      },
+      "SuggestNoClassDatesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "no_class": {
+            "items": {
+              "$ref": "#/components/schemas/NoClassDate"
+            },
+            "title": "No Class",
+            "type": "array"
+          },
+          "notes": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Notes",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "no_class",
+          "prompt_version"
+        ],
+        "title": "SuggestNoClassDatesResponse",
+        "type": "object"
+      },
       "SupportAccessGrantPayload": {
         "properties": {
           "academy_id": {
@@ -32547,6 +32829,11 @@
             "title": "Created At",
             "type": "string"
           },
+          "enforced": {
+            "default": false,
+            "title": "Enforced",
+            "type": "boolean"
+          },
           "expires_at": {
             "format": "date-time",
             "title": "Expires At",
@@ -32558,6 +32845,11 @@
           },
           "granted_by_user_id": {
             "title": "Granted By User Id",
+            "type": "string"
+          },
+          "operator_note": {
+            "default": "Recorded only: no sign-in path reads support access grants, so this grants no access.",
+            "title": "Operator Note",
             "type": "string"
           },
           "purpose": {
@@ -32666,12 +32958,22 @@
             "title": "Created At",
             "type": "string"
           },
+          "enforced": {
+            "default": false,
+            "title": "Enforced",
+            "type": "boolean"
+          },
           "impersonation_enabled": {
             "title": "Impersonation Enabled",
             "type": "boolean"
           },
           "impersonation_request_id": {
             "title": "Impersonation Request Id",
+            "type": "string"
+          },
+          "operator_note": {
+            "default": "Recorded only: impersonation is not built; no session can be issued.",
+            "title": "Operator Note",
             "type": "string"
           },
           "purpose": {
@@ -32847,9 +33149,19 @@
             "title": "Deletion Request Id",
             "type": "string"
           },
+          "enforced": {
+            "default": false,
+            "title": "Enforced",
+            "type": "boolean"
+          },
           "hard_delete_allowed": {
             "title": "Hard Delete Allowed",
             "type": "boolean"
+          },
+          "operator_note": {
+            "default": "Recorded only: nothing is deleted. A platform admin must work the checklist in docs/policy/governance-deletion-cascade.md.",
+            "title": "Operator Note",
+            "type": "string"
           },
           "reason": {
             "title": "Reason",
@@ -32971,6 +33283,11 @@
             "title": "Created At",
             "type": "string"
           },
+          "enforced": {
+            "default": false,
+            "title": "Enforced",
+            "type": "boolean"
+          },
           "export_request_id": {
             "title": "Export Request Id",
             "type": "string"
@@ -32978,6 +33295,11 @@
           "include_pii": {
             "title": "Include Pii",
             "type": "boolean"
+          },
+          "operator_note": {
+            "default": "Recorded only: no worker builds governance exports. Download the data from the tenant page export (Data export and purge).",
+            "title": "Operator Note",
+            "type": "string"
           },
           "pii_handling_policy": {
             "additionalProperties": true,
@@ -36884,6 +37206,66 @@
         ]
       }
     },
+    "/api/v2/admin/ai/controls": {
+      "get": {
+        "operationId": "get_ai_controls_api_v2_admin_ai_controls_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiControlsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Ai Controls",
+        "tags": [
+          "admin.ai-controls"
+        ]
+      },
+      "put": {
+        "operationId": "put_ai_controls_api_v2_admin_ai_controls_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiControlsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiControlsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Ai Controls",
+        "tags": [
+          "admin.ai-controls"
+        ]
+      }
+    },
     "/api/v2/admin/ai/import-sharing": {
       "get": {
         "operationId": "get_import_sharing_api_v2_admin_ai_import_sharing_get",
@@ -39260,6 +39642,28 @@
         "summary": "Repair Coach Pay Rate Window",
         "tags": [
           "admin.coach-pay-rates"
+        ]
+      }
+    },
+    "/api/v2/admin/comms/delivery-problems": {
+      "get": {
+        "description": "Suppressed addresses and failed campaign sends for this academy's own\npeople only. Read-only: clearing an address stays a platform action (L11).",
+        "operationId": "get_delivery_problems_api_v2_admin_comms_delivery_problems_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryProblemsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Delivery Problems",
+        "tags": [
+          "admin.comms"
         ]
       }
     },
@@ -46289,6 +46693,107 @@
         ]
       }
     },
+    "/api/v2/admin/schedule/publish": {
+      "get": {
+        "operationId": "get_schedule_publish_api_v2_admin_schedule_publish_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePublishView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Schedule Publish",
+        "tags": [
+          "admin.schedule"
+        ]
+      },
+      "put": {
+        "operationId": "set_schedule_publish_api_v2_admin_schedule_publish_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchedulePublishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePublishView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Schedule Publish",
+        "tags": [
+          "admin.schedule"
+        ]
+      }
+    },
+    "/api/v2/admin/schedule/suggest-no-class-dates": {
+      "post": {
+        "operationId": "suggest_no_class_dates_api_v2_admin_schedule_suggest_no_class_dates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestNoClassDatesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuggestNoClassDatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Suggest No Class Dates",
+        "tags": [
+          "admin.schedule"
+        ]
+      }
+    },
     "/api/v2/admin/seed-lesson-cards": {
       "post": {
         "operationId": "seed_lesson_cards_route_api_v2_admin_seed_lesson_cards_post",
@@ -50446,6 +50951,44 @@
         ]
       }
     },
+    "/api/v2/calendar-feed/{token}.ics": {
+      "get": {
+        "operationId": "get_calendar_feed_api_v2_calendar_feed__token__ics_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No calendar for this link on this host."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Calendar Feed",
+        "tags": [
+          "calendar-feed"
+        ]
+      }
+    },
     "/api/v2/coach/academy": {
       "get": {
         "operationId": "get_academy_api_v2_coach_academy_get",
@@ -53454,6 +53997,48 @@
         "summary": "Create a Stripe customer portal session",
         "tags": [
           "parent.payments"
+        ]
+      }
+    },
+    "/api/v2/parent/calendar-feed": {
+      "get": {
+        "operationId": "get_calendar_feed_link_api_v2_parent_calendar_feed_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarFeedLinkView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Calendar Feed Link",
+        "tags": [
+          "parent.calendar-feed"
+        ]
+      }
+    },
+    "/api/v2/parent/calendar-feed/reset": {
+      "post": {
+        "operationId": "reset_calendar_feed_link_api_v2_parent_calendar_feed_reset_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarFeedLinkView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Reset Calendar Feed Link",
+        "tags": [
+          "parent.calendar-feed"
         ]
       }
     },

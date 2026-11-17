@@ -7,12 +7,14 @@ fake instead of Mongo.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
 from backend.v2.contexts.enrollment.domain.self_service import (
     PAYMENT_INSTRUCTIONS_MAX_LENGTH,
+    SCHEDULE_MONTH_PATTERN,
     ParentSelfServicePolicy,
 )
 
@@ -76,4 +78,22 @@ class UpdateSelfServicePolicy:
         fields = cmd.fields()
         if fields:
             await self._policies.update_fields(fields)
+        return await self._policies.get_or_default()
+
+
+class SetSchedulePublishedThrough:
+    """Publish class dates up to and including ``month`` ("YYYY-MM"), or
+    withdraw publishing entirely with ``None``.
+
+    A single-field write (``update_fields``), so it can never overwrite what a
+    Settings panel saved to the same document at the same time.
+    """
+
+    def __init__(self, policies: SelfServicePolicyRepo) -> None:
+        self._policies = policies
+
+    async def execute(self, month: str | None) -> ParentSelfServicePolicy:
+        if month is not None and not re.fullmatch(SCHEDULE_MONTH_PATTERN, month):
+            raise ValueError("month must be YYYY-MM")
+        await self._policies.update_fields({"schedule_published_through": month})
         return await self._policies.get_or_default()

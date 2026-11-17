@@ -156,6 +156,7 @@ export const queryKeys = {
     notifications: () => ["admin", "academy", "notifications"] as const,
     // Shared with slice B1's AI status card: both read the same key.
     aiImportSharing: () => ["admin", "ai", "import-sharing"] as const,
+    aiControls: () => ["admin", "ai", "controls"] as const,
     aiStatus: () => ["admin", "ai", "status"] as const,
     publicPage: () => ["admin", "academy", "public-page"] as const,
     programs: () => ["admin", "programs"] as const,
@@ -184,6 +185,7 @@ export const queryKeys = {
     lessonCards: (programId: string) =>
       ["admin", "pathway", programId, "lesson-cards"] as const,
     coachDigestLog: () => ["admin", "comms", "digests", "log"] as const,
+    deliveryProblems: () => ["admin", "comms", "delivery-problems"] as const,
     reconciliationRuns: () =>
       ["admin", "billing", "reconciliation-runs"] as const,
     failedAttempts: () => ["admin", "billing", "failed-attempts"] as const,

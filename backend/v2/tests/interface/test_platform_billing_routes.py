@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import FakeStripeGateway
 from backend.v2.contexts.platform.audit.application.use_cases import (
     RecordPlatformAuditEventCommand,
 )
@@ -120,6 +121,7 @@ def _billing_use_cases(
         schedule_cancellation=ScheduleTenantCancellation(
             plans=plans,
             subscriptions=subscriptions,
+            stripe=FakeStripeGateway(),
             clock=_clock,
             audit_recorder=audit.record_event if audit else None,
         ),

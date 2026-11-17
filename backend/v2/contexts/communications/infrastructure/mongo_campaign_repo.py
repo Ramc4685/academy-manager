@@ -54,6 +54,10 @@ class MongoCampaignRepository(TenantScopedRepository, CampaignRepository):
             return None
         return self._from_doc(doc)
 
+    async def list_background_sending(self) -> list[Campaign]:
+        cursor = self._find_many({"status": str(CampaignStatus.SENDING), "dispatch": "background"})
+        return [self._from_doc(d) async for d in cursor]
+
     @staticmethod
     def _to_doc(c: Campaign) -> dict[str, Any]:
         desc = audience_descriptor(c.audience)
@@ -69,6 +73,7 @@ class MongoCampaignRepository(TenantScopedRepository, CampaignRepository):
             "created_at": c.created_at,
             "sent_at": c.sent_at,
             "idempotency_key": c.idempotency_key,
+            "dispatch": "background" if c.background else "inline",
         }
 
     @staticmethod
@@ -93,4 +98,5 @@ class MongoCampaignRepository(TenantScopedRepository, CampaignRepository):
             created_at=doc["created_at"],
             sent_at=doc.get("sent_at"),
             idempotency_key=doc.get("idempotency_key"),
+            background=doc.get("dispatch") == "background",
         )

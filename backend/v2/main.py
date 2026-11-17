@@ -39,10 +39,12 @@ from backend.v2.composition.digests import (
 )
 from backend.v2.composition.digests import (
     _build_email_sender,
+    compose_delivery_problems,
     compose_email_credential_probe,
     compose_ingest_email_provider_event,
     compose_list_email_suppressions,
     compose_ops_digest_sender,
+    compose_process_campaign_queue,
     compose_release_email_suppression,
     compose_send_coach_daily_digest,
     compose_send_parent_daily_digest,
@@ -72,7 +74,7 @@ from backend.v2.composition.prospect_email import compose_unsubscribe_prospect
 from backend.v2.composition.public_page_admin import compose_admin_public_page
 from backend.v2.composition.public_page_read import compose_public_page_read
 from backend.v2.composition.public_trial_requests import compose_public_trial_requests
-from backend.v2.composition.push import _build_push_sender
+from backend.v2.composition.push import _build_push_sender, compose_message_push
 from backend.v2.composition.referrals import compose_referrals
 from backend.v2.composition.student import compose_student
 from backend.v2.composition.waitlist_offers import (
@@ -241,6 +243,7 @@ from backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo imp
 )
 from backend.v2.interfaces.admin.progress_routes import resolve_certificate_display
 from backend.v2.interfaces.admin.router import router as admin_router
+from backend.v2.interfaces.calendar_feed_routes import router as calendar_feed_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.email_webhook_routes import router as email_webhook_router
 from backend.v2.interfaces.magic_link_routes import router as magic_link_router
@@ -571,6 +574,13 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "checkin_margin": 30,
         "max_runtime": 30,
     },
+    # L11 item 7: the background campaign queue, every minute. Each delivery is
+    # claimed before it is sent, so an extra run never sends twice.
+    "process_campaign_queue": {
+        "schedule": {"type": "interval", "value": 1, "unit": "minute"},
+        "checkin_margin": 5,
+        "max_runtime": 10,
+    },
     # L9 C2: the referral sweep; a no-op while the programme is off, and every
     # write is exactly-once, so an extra run grants nothing twice.
     "process_referrals": {
@@ -835,6 +845,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.ingest_email_provider_event = compose_ingest_email_provider_event(db)
     app.state.list_email_suppressions = compose_list_email_suppressions(db)
     app.state.release_email_suppression = compose_release_email_suppression(db)
+    app.state.delivery_problems = compose_delivery_problems(db)
+    app.state.message_push = compose_message_push(db, settings)
 
     # Tenant resolver — wired only in SaaS mode. In non-SaaS mode the
     # middleware falls back to ``settings.default_academy_id`` so existing
@@ -895,10 +907,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         invoice_prefix_assigner=compose_invoice_prefix_assigner(db),
         default_application_fee_assigner=compose_default_application_fee_assigner(db),
     )
-    app.state.platform_billing = build_platform_billing_use_cases(db)
-
     # Stripe gateway shared across all BFFs that need it.
     stripe_gw = _build_stripe(settings)
+    app.state.platform_billing = build_platform_billing_use_cases(db, stripe=stripe_gw)
 
     # Coach BFF wiring — exposed as app.state.coach for routes via deps.py.
     app.state.coach = compose_coach(db, outbox, idempotency_store, stripe_gw)
@@ -911,6 +922,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         idempotency_store,
         stripe_gw,
         academy_id=runtime_academy_id,
+        auth_users=users_repo,
+        auth_memberships=membership_repo,
     )
     stripe_webhook_processors = {runtime_academy_id: app.state.parent.handle_webhook_event}
 
@@ -1002,6 +1015,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.ai_import import compose_ai_import
 
     app.state.ai_import = compose_ai_import(db, app.state.ai)
+    from backend.v2.composition.ai_schedule import compose_ai_schedule
+
+    app.state.ai_schedule = compose_ai_schedule(app.state.ai)
     from backend.v2.composition.evening_wins import compose_send_parent_evening_wins
 
     app.state.parent_evening_wins = compose_send_parent_evening_wins(db)
@@ -1301,6 +1317,27 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 totals[key] += result[key]
         if totals["expired"]:
             log.info("waitlist_offers_swept", extra=totals)
+
+    async def _process_campaign_queue() -> None:
+        await _run_leased_job(
+            "process_campaign_queue", timedelta(minutes=5), _process_campaign_queue_body
+        )
+
+    async def _process_campaign_queue_body() -> None:
+        # L11 item 7: background campaigns. Each delivery is claimed before it
+        # is sent, so a crash here resumes on the next tick without a resend.
+        worker = compose_process_campaign_queue(db, settings)
+        attempted = 0
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db), scheduler_fallback_academy_id
+        ):
+            try:
+                with tenant_scope(academy_id):
+                    attempted += await worker.execute()
+            except Exception:
+                log.exception("campaign_queue_failed", extra={"academy_id": academy_id})
+        if attempted:
+            log.info("campaign_queue_processed", extra={"attempted": attempted})
 
     async def _execute_account_deletions() -> None:
         await _run_leased_job(
@@ -2190,6 +2227,17 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         "cron",
         minute=15,
         id="process_scheduled_cancellation_actions",
+        replace_existing=True,
+        max_instances=1,
+    )
+    # Always registered: with the setting off nothing is queued, so a tick is
+    # one empty read per academy, and a campaign queued before a switch-off
+    # still drains instead of sitting in "sending".
+    scheduler.add_job(
+        _process_campaign_queue,
+        "interval",
+        minutes=1,
+        id="process_campaign_queue",
         replace_existing=True,
         max_instances=1,
     )
@@ -3111,6 +3159,7 @@ def create_app() -> FastAPI:
     app.include_router(magic_link_router, prefix="/api/v2")
     app.include_router(password_reset_router, prefix="/api/v2")
     app.include_router(unsubscribe_router, prefix="/api/v2")
+    app.include_router(calendar_feed_router, prefix="/api/v2")
     app.include_router(email_webhook_router, prefix="/api/v2")
     # Anonymous, host-resolved, rate limited (interfaces/public/__init__.py).
     app.include_router(public_router, prefix="/api/v2")

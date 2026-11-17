@@ -29,6 +29,18 @@ FLY_REQUEST_ID_HEADER = "Fly-Request-Id"
 # Fly polls this every 30s; one INFO line per poll would drown real traffic.
 _QUIET_PATHS = frozenset({"/api/v2/healthz"})
 
+# Paths whose last segment IS the credential (a calendar subscription, a
+# certificate share link). They never reach logs or Sentry in full.
+SECRET_PATH_PREFIXES = ("/api/v2/calendar-feed/", "/api/v2/public/certificates/")
+
+
+def redact_secret_path(path: str) -> str:
+    for prefix in SECRET_PATH_PREFIXES:
+        if path.startswith(prefix):
+            return prefix + "[redacted]"
+    return path
+
+
 _request_log = logging.getLogger("backend.v2.http.request")
 
 # Inbound ids are client-controlled: only accept short, log/tag-safe values
@@ -108,7 +120,7 @@ class RequestLogMiddleware:
 
     @staticmethod
     def _log(scope: Scope, status_code: int | None, started: float, academy_id: str | None) -> None:
-        path = scope.get("path", "")
+        path = redact_secret_path(scope.get("path", ""))
         route = scope.get("route")
         fields = {
             "method": scope.get("method"),
