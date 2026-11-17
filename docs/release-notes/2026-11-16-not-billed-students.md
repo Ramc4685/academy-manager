@@ -1,6 +1,6 @@
 # not-billed-students
 
-PR: TBD
+PR: #1198
 
 ## What changed
 The owner can mark a class "Not billed" (Owner's child, Coach's child, Scholarship, or Other with a note) from the student Sessions panel or the family Billing tab, and "Start billing" again later. Marking writes the importer's existing `NoCharge` billing type, so the monthly run, the sibling discount and the billed-students count treat it like an imported no-charge class. It takes effect going forward, is recorded in the billing audit log, and can optionally void that class's open, unpaid invoices. "Start billing" restores the previous type and skips the current month, so the first new invoice is next month's. The class row shows "Not billed · Owner's child", and the sibling badge reads "not billed (Owner's child)".
