@@ -188,6 +188,21 @@ class FamilyManualPayment(_View):
     void_blocked_reason: Literal["credit_spent", "legacy_allocation"] | None = None
 
 
+class FamilyAccountCredit(_View):
+    """One account credit on the family record (#1207)."""
+
+    credit_id: str
+    type: str
+    status: str
+    amount_cents: int
+    remaining_amount_cents: int
+    reason: str
+    created_at: str | None = None
+    #: Who approved it (``approved_by``); ``None`` for system credits.
+    approved_by_name: str | None = None
+    applied_invoices: list[str] = []
+
+
 class AdminFamilyBillingView(_View):
     generated_at: str
     timezone: str
@@ -197,6 +212,7 @@ class AdminFamilyBillingView(_View):
     students: list[FamilyStudent] = []
     invoices: list[FamilyInvoice] = []
     manual_payments: list[FamilyManualPayment] = []
+    credits: list[FamilyAccountCredit] = []
     timeline: list[FamilyTimelineEntry] = []
     actions: list[FamilyAction] = []
     warnings: list[str] = []

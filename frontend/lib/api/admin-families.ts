@@ -192,6 +192,20 @@ export interface FamilyParent {
   phone: string | null;
 }
 
+/** One account credit on the family record (#1207). */
+export interface FamilyAccountCredit {
+  credit_id: string;
+  type: string;
+  status: string;
+  amount_cents: number;
+  remaining_amount_cents: number;
+  reason: string;
+  created_at: string | null;
+  approved_by_name: string | null;
+  /** Invoice numbers the credit was spent on. */
+  applied_invoices: string[];
+}
+
 export interface AdminFamilyBillingView {
   generated_at: string;
   timezone: string;
@@ -201,6 +215,7 @@ export interface AdminFamilyBillingView {
   students: FamilyStudent[];
   invoices: FamilyInvoice[];
   manual_payments?: FamilyManualPayment[];
+  credits?: FamilyAccountCredit[];
   timeline: FamilyTimelineEntry[];
   actions: FamilyAction[];
   warnings: string[];

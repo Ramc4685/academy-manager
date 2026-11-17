@@ -8748,6 +8748,11 @@ export interface components {
              * @default []
              */
             actions: ("send_invite" | "autopay_on" | "autopay_off" | "send_invoice" | "record_payment")[];
+            /**
+             * Credits
+             * @default []
+             */
+            credits: components["schemas"]["FamilyAccountCredit"][];
             /** Generated At */
             generated_at: string;
             header: components["schemas"]["FamilyHeader"];
@@ -14120,6 +14125,33 @@ export interface components {
             with_reason: number;
             /** Without Reason */
             without_reason: number;
+        };
+        /**
+         * FamilyAccountCredit
+         * @description One account credit on the family record (#1207).
+         */
+        FamilyAccountCredit: {
+            /** Amount Cents */
+            amount_cents: number;
+            /**
+             * Applied Invoices
+             * @default []
+             */
+            applied_invoices: string[];
+            /** Approved By Name */
+            approved_by_name?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Credit Id */
+            credit_id: string;
+            /** Reason */
+            reason: string;
+            /** Remaining Amount Cents */
+            remaining_amount_cents: number;
+            /** Status */
+            status: string;
+            /** Type */
+            type: string;
         };
         /** FamilyAllocation */
         FamilyAllocation: {

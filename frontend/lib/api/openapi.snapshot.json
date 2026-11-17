@@ -2462,6 +2462,14 @@
             "title": "Actions",
             "type": "array"
           },
+          "credits": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FamilyAccountCredit"
+            },
+            "title": "Credits",
+            "type": "array"
+          },
           "generated_at": {
             "title": "Generated At",
             "type": "string"
@@ -17398,6 +17406,75 @@
           "without_reason"
         ],
         "title": "FamiliesLostView",
+        "type": "object"
+      },
+      "FamilyAccountCredit": {
+        "description": "One account credit on the family record (#1207).",
+        "properties": {
+          "amount_cents": {
+            "title": "Amount Cents",
+            "type": "integer"
+          },
+          "applied_invoices": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Applied Invoices",
+            "type": "array"
+          },
+          "approved_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By Name"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "credit_id": {
+            "title": "Credit Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "remaining_amount_cents": {
+            "title": "Remaining Amount Cents",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "credit_id",
+          "type",
+          "status",
+          "amount_cents",
+          "remaining_amount_cents",
+          "reason"
+        ],
+        "title": "FamilyAccountCredit",
         "type": "object"
       },
       "FamilyAllocation": {

@@ -141,6 +141,22 @@ class CreditFacts:
 
 
 @dataclass(frozen=True)
+class FamilyCreditFacts:
+    """One account credit the family holds or held (#1207): what, why, who, where it went."""
+
+    credit_id: str
+    type: str
+    status: str
+    amount_cents: int
+    remaining_amount_cents: int
+    reason: str
+    created_at: datetime | None
+    approved_by_name: str | None
+    #: Invoice numbers (or ids) the credit was spent on, oldest first.
+    applied_invoices: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ManualPaymentFacts:
     """A live, non-Stripe ledger payment that settled one of this family's invoices.
 
@@ -288,6 +304,7 @@ class FamilyFacts:
     #: taking the whole family page down (the #748 503 pattern).
     email_delivery: EmailDeliveryFacts | None = None
     manual_payments: tuple[ManualPaymentFacts, ...] = ()
+    credits: tuple[FamilyCreditFacts, ...] = ()
 
 
 # --------------------------------------------------------------------------- helpers
@@ -1080,6 +1097,20 @@ def build_family_billing_view(
         ],
         "invoices": invoice_rows,
         "manual_payments": [_manual_payment_payload(p) for p in facts.manual_payments],
+        "credits": [
+            {
+                "credit_id": c.credit_id,
+                "type": c.type,
+                "status": c.status,
+                "amount_cents": c.amount_cents,
+                "remaining_amount_cents": c.remaining_amount_cents,
+                "reason": c.reason,
+                "created_at": _iso(c.created_at),
+                "approved_by_name": c.approved_by_name,
+                "applied_invoices": list(c.applied_invoices),
+            }
+            for c in facts.credits
+        ],
         "timeline": build_timeline(facts, zone=zone),
         "actions": family_actions(
             state=state, has_card=facts.customer.has_card, invoices=facts.invoices
