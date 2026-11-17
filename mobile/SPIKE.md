@@ -107,6 +107,18 @@ pins stay put.
 - Not covered: Stripe Checkout, real push send, Sign in with Apple (needs a paid
   team), physical device.
 
+## Supported OS versions
+
+- iOS 16.4 and newer (Xcode deployment target). The web app inside the shell is built
+  for Safari 16.4+ (Next.js 16 default targets, Tailwind 4), and the app runs in the
+  OS's own WebKit, so older iOS would install an app that renders broken. Raised from
+  15.0 on 2026-11-17; this drops iPhone 6s, 7 and SE (1st gen).
+- Android 7.0 (API 24) and newer. The WebView updates through the Play Store, and even
+  Android 7 gets Chrome 119, above the web app's Chrome 111 floor. A phone whose
+  WebView was never updated is the remaining risk.
+- Not yet run on an older simulator or emulator (iOS 16.4, Android 8/11): the dev Mac
+  needs ~15 GB free for those images.
+
 ## Store builds
 
 Only `mobile/` changes need a new TestFlight / Play build; web deploys reach the apps
