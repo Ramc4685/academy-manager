@@ -626,12 +626,27 @@ def _paid_subscription(**overrides: object) -> TenantSubscription:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("at_period_end", "mode"), [(True, "period_end"), (False, "now")])
-async def test_cancellation_hits_stripe_once_with_a_stable_idempotency_key(
+async def test_a_retry_after_a_stripe_failure_reuses_the_idempotency_key(
     at_period_end: bool, mode: str
 ) -> None:
+    class FlakyStripe(FakeStripeGateway):
+        def __init__(self) -> None:
+            super().__init__()
+            self.keys: list[str | None] = []
+
+        async def cancel_subscription(
+            self, sub_id: str, *, at_period_end: bool, idempotency_key: str | None = None
+        ) -> None:
+            self.keys.append(idempotency_key)
+            if len(self.keys) == 1:
+                raise RuntimeError("timeout")
+            await super().cancel_subscription(
+                sub_id, at_period_end=at_period_end, idempotency_key=idempotency_key
+            )
+
     subscriptions = FakeTenantSubscriptionRepository()
     await subscriptions.save(_paid_subscription())
-    stripe = FakeStripeGateway()
+    stripe = FlakyStripe()
     use_case = ScheduleTenantCancellation(
         plans=FakePlanRepository([_plan()]),
         subscriptions=subscriptions,
@@ -642,16 +657,47 @@ async def test_cancellation_hits_stripe_once_with_a_stable_idempotency_key(
         academy_id="academy-1", cancel_at_period_end=at_period_end
     )
 
+    with pytest.raises(StripeCancellationFailed):
+        await use_case.execute(command)
     await use_case.execute(command)
-    await use_case.execute(command)  # a double click or retry
 
+    expected = f"platform_cancel:sub_platform_123:{mode}:{_clock().isoformat()}"
+    assert stripe.keys == [expected, expected]
     assert stripe.cancelled_subscriptions == [
         {
             "stripe_subscription_id": "sub_platform_123",
             "at_period_end": at_period_end,
-            "idempotency_key": f"platform_cancel:sub_platform_123:{mode}",
+            "idempotency_key": expected,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_cancel_resume_cancel_sends_a_fresh_key_to_stripe() -> None:
+    subscriptions = FakeTenantSubscriptionRepository()
+    await subscriptions.save(_paid_subscription())
+    stripe = FakeStripeGateway()
+    later = _clock() + timedelta(hours=2)
+    use_case = ScheduleTenantCancellation(
+        plans=FakePlanRepository([_plan()]),
+        subscriptions=subscriptions,
+        stripe=stripe,
+        clock=_clock,
+    )
+    command = ScheduleTenantCancellationCommand(academy_id="academy-1", cancel_at_period_end=True)
+
+    await use_case.execute(command)
+    # The owner resumes in Stripe; the subscription sync writes the row back.
+    resumed = subscriptions.by_academy["academy-1"].model_copy(
+        update={"cancellation_status": "none", "cancel_at_period_end": False, "updated_at": later}
+    )
+    await subscriptions.save(resumed)
+    await use_case.execute(command)
+
+    keys = [c["idempotency_key"] for c in stripe.cancelled_subscriptions]
+    assert len(keys) == 2 and keys[0] != keys[1]
+    assert keys[1] == f"platform_cancel:sub_platform_123:period_end:{later.isoformat()}"
+    assert subscriptions.by_academy["academy-1"].cancellation_status == "scheduled"
 
 
 @pytest.mark.asyncio

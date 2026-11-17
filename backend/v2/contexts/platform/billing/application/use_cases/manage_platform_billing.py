@@ -60,7 +60,6 @@ class StripeCancellationFailed(DomainError):
     status_code = 502
 
 
-
 class UpsertPlatformPlanCommand(BaseModel):
     plan_id: str = Field(min_length=1)
     academy_id: str = Field(default="platform", min_length=1)
@@ -369,8 +368,12 @@ class ScheduleTenantCancellation:
 
     async def _cancel_at_stripe(self, existing: TenantSubscription, *, at_period_end: bool) -> None:
         """Stripe first, so a failure leaves the row (and the academy's plan)
-        exactly as Stripe still bills it. The key is stable per subscription and
-        mode, so a retry or double click replays Stripe's first answer."""
+        exactly as Stripe still bills it.
+
+        The key is subscription + mode + the row's ``updated_at``: a retry after
+        a failure (row untouched) replays Stripe's first answer, while a cancel
+        after a resume (the resume's Stripe sync moved ``updated_at``) gets a
+        fresh key, so Stripe never replays a stale cancel inside its 24h window."""
         sub_id = existing.stripe_subscription_id
         if not sub_id:
             return  # a local trial: nothing is billed at Stripe
@@ -381,7 +384,9 @@ class ScheduleTenantCancellation:
             await self._stripe.cancel_subscription(
                 sub_id,
                 at_period_end=at_period_end,
-                idempotency_key=f"platform_cancel:{sub_id}:{mode}",
+                idempotency_key=(
+                    f"platform_cancel:{sub_id}:{mode}:{existing.updated_at.isoformat()}"
+                ),
             )
         except Exception as exc:
             log.warning(

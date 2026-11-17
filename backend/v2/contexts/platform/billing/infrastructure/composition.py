@@ -25,7 +25,9 @@ from backend.v2.contexts.platform.billing.infrastructure.mongo_repositories impo
 )
 
 
-def build_platform_billing_use_cases(db: Any, *, stripe: Any | None = None) -> PlatformBillingUseCases:
+def build_platform_billing_use_cases(
+    db: Any, *, stripe: Any | None = None
+) -> PlatformBillingUseCases:
     plans = MongoPlatformPlanRepository(db)
     subscriptions = MongoTenantSubscriptionRepository(db)
     platform_audit = PlatformAuditService(
