@@ -437,6 +437,13 @@ Rules the index keeps:
   index (the Students page lists them).
 - **The child state is the Students page's state.** `lifecycle_snapshots` is
   the same derivation `/admin/students` runs. The CRM only ranks it.
+- **Not-billed children are not headcount.** A child whose every live
+  enrollment is not billed (`shared/billing_type.is_not_billed`: the owner's
+  or a coach's child, a scholarship, imported `NoCharge`/`Waived`) keeps its
+  family stage, but the scope tiles roll up billed children only;
+  `not_billed_families` counts the families that drop off a tile because of
+  it. The at-risk report leaves them out the same way and reports
+  `not_billed`.
 - **Money is the Billing tab's money.** `balance_cents` and
   `open_invoice_count` come from `billing/application/family_money.open_balance`,
   which `build_family_billing_view` also calls. Money is computed once and
