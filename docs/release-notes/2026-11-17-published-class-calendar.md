@@ -1,6 +1,6 @@
 # published-class-calendar
 
-PR: TBD
+PR: #1204
 
 ## What changed
 Academies can now set which days have class each month and publish that month to parents. A new admin page, Sessions → Month dates, lists every class date in the chosen month. The admin unticks a class or a whole day and saves. Each unticked date goes through the existing "cancel this date" path: the coach is not paid, and a family is credited only if they end up with fewer classes than they paid for. "Publish {month}" marks the month as final. It can also email each class's families their class and no-class dates as a session announcement.
