@@ -58,6 +58,10 @@ export function DeliveryProblemsPanel() {
     queryFn: getDeliveryProblems,
   });
   if (query.isLoading) return <p>Loading delivery problems…</p>;
-  if (query.isError || !query.data) return <p role="alert">Could not load delivery problems.</p>;
-  return <DeliveryProblemsList data={query.data} />;
+  // A malformed answer must not take the whole Messages page down with it.
+  const data = query.data;
+  if (query.isError || !Array.isArray(data?.suppressed_emails) || !Array.isArray(data?.failed)) {
+    return <p role="alert">Could not load delivery problems.</p>;
+  }
+  return <DeliveryProblemsList data={data} />;
 }
