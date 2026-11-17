@@ -1,6 +1,6 @@
 # digest-sign-in-link
 
-PR: TBD
+PR: #1202
 
 ## What changed
 The parent daily digest no longer emails a one-time auto-login link to parents who have never signed in. An emailed link that grants a session is a bearer credential, and a digest is forwardable mail (OWASP authentication cheat sheet, NIST 800-63B). The "set up your account" button now always opens the sign-in page with the parent's email prefilled and a `returnTo` of `/parent/payments` when a balance is owed, or `/parent/dashboard` otherwise. The login page checks `returnTo` with `sanitizeReturnPath`. After a fresh sign-in on that page, the parent lands on `returnTo` only once #1201's login handler change is on main (it is merged in before this ships). A parent who instead sets a password through the "Forgot password?" email still ends on the dashboard, not the payments page.
