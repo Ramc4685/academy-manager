@@ -109,8 +109,7 @@ async def test_healthz_reports_config_warnings_without_failing() -> None:
 def test_marketing_sender_is_validated_and_falls_back(
     raw: str | None, expected: str | None
 ) -> None:
-    from types import SimpleNamespace
-
-    from backend.v2.composition.digests import marketing_from_address
-
-    assert marketing_from_address(SimpleNamespace(marketing_sender_email=raw)) == expected
+    # The field validator runs once, when settings load.
+    assert Settings.model_validate({"marketing_sender_email": raw}).marketing_sender_email == (
+        expected
+    )

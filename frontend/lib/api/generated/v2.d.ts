@@ -1153,6 +1153,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/comms/delivery-problems": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Delivery Problems
+         * @description Suppressed addresses and failed campaign sends for this academy's own
+         *     people only. Read-only: clearing an address stays a platform action (L11).
+         */
+        get: operations["get_delivery_problems_api_v2_admin_comms_delivery_problems_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/comms/digests/log": {
         parameters: {
             query?: never;
@@ -13426,6 +13447,13 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** DeliveryProblemsView */
+        DeliveryProblemsView: {
+            /** Failed */
+            failed: components["schemas"]["FailedDeliveryView"][];
+            /** Suppressed Emails */
+            suppressed_emails: string[];
+        };
         /** DenyMakeupRequestBody */
         DenyMakeupRequestBody: {
             /** Reason */
@@ -13771,6 +13799,15 @@ export interface components {
             outcome: "dropped" | "failed";
             /** Session Id */
             session_id: string;
+        };
+        /** FailedDeliveryView */
+        FailedDeliveryView: {
+            /** Delivery Id */
+            delivery_id: string;
+            /** Failed Reason */
+            failed_reason: string;
+            /** Recipient Email */
+            recipient_email: string | null;
         };
         /** FailedPaymentRowDto */
         FailedPaymentRowDto: {
@@ -18613,6 +18650,11 @@ export interface components {
             deduplicated: boolean;
             /** Failed Count */
             failed_count: number;
+            /**
+             * Queued
+             * @default false
+             */
+            queued: boolean;
             /** Sent Count */
             sent_count: number;
             /** Total Recipients */
@@ -22519,6 +22561,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_delivery_problems_api_v2_admin_comms_delivery_problems_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryProblemsView"];
                 };
             };
         };

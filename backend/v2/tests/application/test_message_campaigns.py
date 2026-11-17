@@ -16,8 +16,9 @@ Stream L):
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -178,19 +179,77 @@ class InMemoryCampaignRepository(CampaignRepository):
                 return c
         return None
 
+    async def list_background_sending(self) -> list[Campaign]:
+        return [c for c in self.saved if c.status == CampaignStatus.SENDING and c.background]
+
 
 @dataclass
 class InMemoryDeliveryRepository(DeliveryRepository):
+    """Mirrors ``MongoDeliveryRepository``: ``save_many`` upserts one row at a
+    time (yielding between rows, as each real write awaits Mongo), and the claim
+    fields live beside the row like the real document's."""
+
     saved: list[Delivery] = field(default_factory=list)
+    claimed: dict[str, datetime] = field(default_factory=dict)
+    tokens: dict[str, str] = field(default_factory=dict)
+    attempts: dict[str, int] = field(default_factory=dict)
 
     async def save_many(self, deliveries: list[Delivery]) -> None:
-        # mimic upsert keyed by delivery_id
-        incoming = {d.delivery_id for d in deliveries}
-        self.saved = [d for d in self.saved if d.delivery_id not in incoming]
-        self.saved.extend(deliveries)
+        for d in deliveries:
+            self.saved = [x for x in self.saved if x.delivery_id != d.delivery_id]
+            self.saved.append(d)
+            await asyncio.sleep(0)
 
     async def list_for_campaign(self, campaign_id: str) -> list[Delivery]:
         return [d for d in self.saved if d.campaign_id == campaign_id]
+
+    async def claim_next_queued(
+        self,
+        campaign_id: str,
+        *,
+        now: datetime,
+        stale_before: datetime,
+        token: str,
+        max_attempts: int,
+    ) -> Delivery | None:
+        for d in self.saved:
+            if d.campaign_id != campaign_id or d.status != DeliveryStatus.QUEUED:
+                continue
+            at = self.claimed.get(d.delivery_id)
+            if (at is None or at < stale_before) and self.attempts.get(
+                d.delivery_id, 0
+            ) < max_attempts:
+                self.claimed[d.delivery_id] = now
+                self.tokens[d.delivery_id] = token
+                self.attempts[d.delivery_id] = self.attempts.get(d.delivery_id, 0) + 1
+                return d
+        return None
+
+    async def finish_claimed(self, delivery: Delivery, *, token: str) -> bool:
+        current = next(d for d in self.saved if d.delivery_id == delivery.delivery_id)
+        if (
+            current.status != DeliveryStatus.QUEUED
+            or self.tokens.get(delivery.delivery_id) != token
+        ):
+            return False
+        self.saved = [d for d in self.saved if d.delivery_id != delivery.delivery_id]
+        self.saved.append(delivery)
+        return True
+
+    async def fail_exhausted(
+        self, campaign_id: str, *, max_attempts: int, stale_before: datetime
+    ) -> int:
+        failed = 0
+        for i, d in enumerate(self.saved):
+            if (
+                d.campaign_id == campaign_id
+                and d.status == DeliveryStatus.QUEUED
+                and self.attempts.get(d.delivery_id, 0) >= max_attempts
+                and self.claimed[d.delivery_id] < stale_before
+            ):
+                self.saved[i] = d.mark_failed(reason="send_gave_up")
+                failed += 1
+        return failed
 
 
 # ---------------------------------------------------------------------------
@@ -642,6 +701,7 @@ class TestCampaignIdempotency:
         retry = await use_case.execute(_parent_command())
 
         assert retry.deduplicated is True
+        assert retry.queued is False  # inline send finished: real counts
         assert retry.campaign_id == first.campaign_id
         assert retry.total_recipients == 2
         assert retry.sent_count == 2
@@ -906,3 +966,209 @@ async def test_postal_address_is_escaped_in_the_footer() -> None:
     use_case, sender = _compliance_use_case(list_unsubscribe=True, address="<b>1 Court</b>")
     await use_case.execute(_parent_command())
     assert "&lt;b&gt;1 Court&lt;/b&gt;" in sender.sent[0]["body"]
+
+
+# -- L11 item 7: resumable background campaign send ----------------------------
+
+
+def _background(sender: Any = None, recipients: int = 3):
+    from backend.v2.contexts.communications.application.use_cases.send_campaign import (
+        ProcessCampaignQueue,
+    )
+
+    resolver = FakeAudienceResolver(by_academy=[_recipient(f"p{i}") for i in range(recipients)])
+    use_case, _, sender, campaigns, deliveries = _build_use_case(resolver=resolver, sender=sender)
+    use_case.background = True
+    clock = {"now": datetime(2026, 5, 21, 12, 0, tzinfo=UTC)}
+    worker = ProcessCampaignQueue(
+        campaigns=campaigns,
+        deliveries=deliveries,
+        sender=sender,
+        now=lambda: clock["now"],
+    )
+    return use_case, worker, sender, campaigns, deliveries, clock
+
+
+@pytest.mark.asyncio
+async def test_background_campaign_queues_without_sending() -> None:
+    use_case, _, sender, campaigns, deliveries, _ = _background()
+    result = await use_case.execute(_parent_command())
+    assert result.queued is True
+    assert (result.total_recipients, result.sent_count) == (3, 0)
+    assert sender.sent == []
+    assert campaigns.saved[0].status == CampaignStatus.SENDING
+    assert campaigns.saved[0].background is True
+    assert {d.status for d in deliveries.saved} == {DeliveryStatus.QUEUED}
+
+
+@pytest.mark.asyncio
+async def test_worker_sends_each_person_once_and_closes_the_campaign() -> None:
+    use_case, worker, sender, campaigns, deliveries, _ = _background()
+    await use_case.execute(_parent_command())
+    await worker.execute()
+    await worker.execute()  # a second tick finds nothing to do
+    assert sorted(r["user_id"] for r in sender.sent) == ["p0", "p1", "p2"]
+    assert all("Unsubscribe" in r["body"] or "email preferences" in r["body"] for r in sender.sent)
+    assert {d.status for d in deliveries.saved} == {DeliveryStatus.SENT}
+    assert campaigns.saved[0].status == CampaignStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_a_crashed_tick_resumes_without_double_sending() -> None:
+    from backend.v2.shared.comms.send_idempotency import next_send_idempotency_key
+
+    @dataclass
+    class _CrashOnce(StubEmailSendPort):
+        crashed: bool = False
+        scopes: list[str | None] = field(default_factory=list)
+
+        async def send(self, **kwargs: Any) -> SendOutcome:
+            key = next_send_idempotency_key("probe@example.test")
+            self.scopes.append(key.rsplit(":", 2)[0] if key else None)
+            if len(self.sent) == 1 and not self.crashed:
+                self.crashed = True
+                raise RuntimeError("process died mid-send")
+            return await super().send(**kwargs)
+
+    sender = _CrashOnce()
+    use_case, worker, _, campaigns, deliveries, clock = _background(sender=sender)
+    await use_case.execute(_parent_command())
+    with pytest.raises(RuntimeError):
+        await worker.execute()
+    assert [r["user_id"] for r in sender.sent] == ["p0"]
+
+    await worker.execute()  # the crashed row is still claimed: skipped, not resent
+    assert sorted(r["user_id"] for r in sender.sent) == ["p0", "p2"]
+    assert campaigns.saved[0].status == CampaignStatus.SENDING
+
+    clock["now"] = clock["now"] + timedelta(minutes=30)  # claim goes stale
+    await worker.execute()
+    assert sorted(r["user_id"] for r in sender.sent) == ["p0", "p1", "p2"]
+    assert campaigns.saved[0].status == CampaignStatus.SENT
+    # the re-attempt reuses the crashed attempt's provider idempotency scope
+    p1_delivery = next(d for d in deliveries.saved if d.recipient_user_id == "p1")
+    assert sender.scopes.count(f"campaign:{p1_delivery.delivery_id}") == 2
+
+
+@pytest.mark.asyncio
+async def test_worker_ignores_inline_campaigns() -> None:
+    """An inline send records its delivery states only after its loop, so a
+    crashed inline campaign must never be resumed: its QUEUED rows may
+    already have been mailed."""
+    use_case, worker, sender, campaigns, deliveries, _ = _background()
+    use_case.background = False
+    await use_case.execute(_parent_command())
+    sender.sent.clear()
+    campaigns.saved = [c.mark_sending() for c in campaigns.saved]
+    deliveries.saved = [
+        Delivery.queued(
+            delivery_id=d.delivery_id,
+            academy_id=d.academy_id,
+            campaign_id=d.campaign_id,
+            recipient=_recipient(d.recipient_user_id),
+        )
+        for d in deliveries.saved
+    ]
+    await worker.execute()
+    assert sender.sent == []
+
+
+@pytest.mark.asyncio
+async def test_a_tick_during_queueing_cannot_close_the_campaign_half_queued() -> None:
+    """Risk review: the campaign used to be visible to the worker before its
+    deliveries were all written; a tick in that window closed it with rows
+    still QUEUED. Run a tick at every yield of the row-by-row save."""
+    use_case, worker, sender, campaigns, deliveries, _ = _background(recipients=5)
+    done = asyncio.Event()
+
+    async def ticker() -> None:
+        while not done.is_set():
+            await worker.execute()
+            await asyncio.sleep(0)
+
+    async def queue() -> None:
+        await use_case.execute(_parent_command())
+        done.set()
+
+    await asyncio.gather(queue(), ticker())
+    await worker.execute()
+    assert sorted(r["user_id"] for r in sender.sent) == [f"p{i}" for i in range(5)]
+    assert {d.status for d in deliveries.saved} == {DeliveryStatus.SENT}
+    assert campaigns.saved[0].status == CampaignStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_a_crash_between_claim_and_queue_leaves_nothing_for_the_worker() -> None:
+    use_case, worker, sender, campaigns, deliveries, _ = _background()
+
+    async def boom(_: list[Delivery]) -> None:
+        raise RuntimeError("died while queueing")
+
+    deliveries.save_many = boom  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        await use_case.execute(_parent_command())
+    await worker.execute()
+    assert campaigns.saved[0].background is False
+    assert campaigns.saved[0].status == CampaignStatus.SENDING  # visible, not "sent"
+    assert sender.sent == []
+
+
+@pytest.mark.asyncio
+async def test_a_stale_worker_cannot_overwrite_the_newer_result() -> None:
+    use_case, _, _, _, deliveries, _ = _background(recipients=1)
+    await use_case.execute(_parent_command())
+    t0 = datetime(2026, 5, 21, 12, 0, tzinfo=UTC)
+    first = await deliveries.claim_next_queued(
+        deliveries.saved[0].campaign_id, now=t0, stale_before=t0, token="old", max_attempts=5
+    )
+    t1 = t0 + timedelta(minutes=20)
+    second = await deliveries.claim_next_queued(
+        first.campaign_id,
+        now=t1,
+        stale_before=t1 - timedelta(minutes=10),
+        token="new",
+        max_attempts=5,
+    )
+    assert second is not None
+    assert await deliveries.finish_claimed(
+        second.mark_sent(provider_message_id="p", sent_at=t1), token="new"
+    )
+    assert not await deliveries.finish_claimed(first.mark_failed(reason="timeout"), token="old")
+    assert deliveries.saved[0].status == DeliveryStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_a_delivery_that_keeps_crashing_is_given_up_so_the_campaign_closes() -> None:
+    from backend.v2.contexts.communications.application.use_cases.send_campaign import (
+        MAX_CLAIM_ATTEMPTS,
+    )
+
+    @dataclass
+    class _AlwaysCrash(StubEmailSendPort):
+        async def send(self, **kwargs: Any) -> SendOutcome:
+            raise RuntimeError("worker killed")
+
+    use_case, worker, _, campaigns, deliveries, clock = _background(
+        sender=_AlwaysCrash(), recipients=1
+    )
+    await use_case.execute(_parent_command())
+    for _ in range(MAX_CLAIM_ATTEMPTS):
+        with pytest.raises(RuntimeError):
+            await worker.execute()
+        clock["now"] = clock["now"] + timedelta(minutes=11)
+    await worker.execute()
+    assert deliveries.saved[0].status == DeliveryStatus.FAILED
+    assert deliveries.saved[0].failed_reason == "send_gave_up"
+    assert campaigns.saved[0].status == CampaignStatus.SENT
+
+
+@pytest.mark.asyncio
+async def test_a_retry_while_the_queue_drains_reports_queued() -> None:
+    use_case, worker, _, _, _, _ = _background()
+    await use_case.execute(_parent_command())
+    retry = await use_case.execute(_parent_command())
+    assert (retry.deduplicated, retry.queued) == (True, True)
+    assert (retry.total_recipients, retry.sent_count) == (3, 0)
+    await worker.execute()
+    done = await use_case.execute(_parent_command())
+    assert (done.deduplicated, done.queued, done.sent_count) == (True, False, 3)

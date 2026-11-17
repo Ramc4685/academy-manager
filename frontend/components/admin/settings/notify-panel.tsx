@@ -23,6 +23,7 @@ import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 import { useReportSettingsDirty } from "@/components/admin/settings/settings-dirty-context";
 import { SavedNote, savedAtNow } from "@/components/admin/settings/saved-note";
+import { emailFailureLabel } from "@/lib/format/email-failure";
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
 
@@ -395,7 +396,7 @@ function describeTestResult(res: CoachDigestTestSendResponse): string {
   if (res.status === "sent") return `Test digest sent to ${res.email ?? res.coach_id}.`;
   if (res.status === "skipped_empty")
     return res.detail ?? "Nothing to send — no sessions for today.";
-  return res.detail ?? "Test digest failed to send.";
+  return `Test digest failed to send: ${emailFailureLabel(res.detail)}.`;
 }
 
 function statusLabel(status: string): string {

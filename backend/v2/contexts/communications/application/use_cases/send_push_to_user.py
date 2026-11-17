@@ -20,6 +20,7 @@ from backend.v2.contexts.communications.application.ports import (
     PushSendPort,
 )
 from backend.v2.contexts.communications.domain.push_device import PushSendResult
+from backend.v2.contexts.communications.domain.push_events import ALWAYS_ON, PushEvent
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +29,11 @@ log = logging.getLogger(__name__)
 class SendPushToUser:
     devices: PushDeviceRepository
     sender: PushSendPort
+    #: The push event catalogue (L11 item 5); see ``domain.push_events``.
+    enabled_events: frozenset[PushEvent] = ALWAYS_ON
+
+    def allows(self, event: PushEvent) -> bool:
+        return event in self.enabled_events
 
     async def execute(
         self,
@@ -37,7 +43,10 @@ class SendPushToUser:
         title: str,
         body: str,
         data: Mapping[str, str] | None = None,
+        event: PushEvent | None = None,
     ) -> PushSendResult:
+        if event is not None and not self.allows(event):
+            return PushSendResult()
         try:
             tokens = await self.devices.tokens_for_user(academy_id, user_id)
             if not tokens:

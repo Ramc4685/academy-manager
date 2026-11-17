@@ -6,6 +6,7 @@ direct os.environ reads outside this module.
 
 from __future__ import annotations
 
+import logging
 import os
 from functools import lru_cache
 from typing import Annotated, Literal
@@ -211,6 +212,13 @@ class Settings(BaseSettings):
             "an idempotency key (L11). 0 => one attempt, as before."
         ),
     )
+    campaign_background_send_enabled: bool = Field(
+        default=False,
+        description=(
+            "Campaigns are queued by the request and sent by a once-a-minute resumable "
+            "job (L11). Off => campaigns send inside the HTTP request, as before."
+        ),
+    )
     email_list_unsubscribe_enabled: bool = Field(
         default=False,
         description=(
@@ -227,6 +235,14 @@ class Settings(BaseSettings):
     )
     anthropic_api_key: SecretStr | None = Field(default=None)
 
+    push_extra_events: str = Field(
+        default="",
+        description=(
+            "Comma-separated opt-in push events (L11): direct_message, academy_broadcast, "
+            "class_announcement. Empty => only the four original events push. "
+            "PUSH_DELIVERY_ENABLED stays the global switch."
+        ),
+    )
     push_delivery_enabled: bool = Field(
         default=False,
         description=(
@@ -277,6 +293,23 @@ class Settings(BaseSettings):
         if isinstance(value, list | tuple):
             return ",".join(str(item) for item in value)
         return str(value or "")
+
+    @field_validator("marketing_sender_email", mode="before")
+    @classmethod
+    def _validate_marketing_sender(cls, value: object) -> str | None:
+        """One clean address or ``None``. Checked once, when settings load: a
+        typo or a header-breaking newline would otherwise fail every campaign
+        at the provider, so it is dropped with an error log and campaigns
+        leave from the transactional sender."""
+        from backend.v2.shared.comms.sender_identity import InvalidSenderValue, validate_reply_to
+
+        try:
+            return validate_reply_to(value if isinstance(value, str) else None)
+        except InvalidSenderValue:
+            logging.getLogger(__name__).error(
+                "marketing_sender_email_invalid: campaigns use the transactional sender"
+            )
+            return None
 
     @field_validator("sentry_cron_jobs", mode="before")
     @classmethod

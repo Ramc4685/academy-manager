@@ -3339,6 +3339,8 @@ export interface SendEmailCampaignResponse {
   total_recipients: number;
   sent_count: number;
   failed_count: number;
+  /** True when the send went to the background queue (counts are still zero). */
+  queued?: boolean;
 }
 
 export function sendEmailCampaign(
@@ -4107,6 +4109,13 @@ export function getCoachDigestLog(limit = 20): Promise<CoachDigestLogView> {
   return apiFetch<CoachDigestLogView>(`/admin/comms/digests/log?limit=${limit}`, {
     method: "GET",
   });
+}
+
+/** L11: suppressed addresses and failed campaign sends, this academy's people only. */
+export type DeliveryProblemsView = components["schemas"]["DeliveryProblemsView"];
+
+export function getDeliveryProblems(): Promise<DeliveryProblemsView> {
+  return apiFetch<DeliveryProblemsView>("/admin/comms/delivery-problems", { method: "GET" });
 }
 
 /** AI usage meter (plan 2026-11-04 Phase 2, slice A3): this month's drafts against the plan's cap. */

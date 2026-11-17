@@ -15725,6 +15725,30 @@
         "title": "DeleteExpenseRequest",
         "type": "object"
       },
+      "DeliveryProblemsView": {
+        "properties": {
+          "failed": {
+            "items": {
+              "$ref": "#/components/schemas/FailedDeliveryView"
+            },
+            "title": "Failed",
+            "type": "array"
+          },
+          "suppressed_emails": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Suppressed Emails",
+            "type": "array"
+          }
+        },
+        "required": [
+          "suppressed_emails",
+          "failed"
+        ],
+        "title": "DeliveryProblemsView",
+        "type": "object"
+      },
       "DenyMakeupRequestBody": {
         "properties": {
           "reason": {
@@ -16946,6 +16970,36 @@
           "outcome"
         ],
         "title": "EnrollmentStopResultView",
+        "type": "object"
+      },
+      "FailedDeliveryView": {
+        "properties": {
+          "delivery_id": {
+            "title": "Delivery Id",
+            "type": "string"
+          },
+          "failed_reason": {
+            "title": "Failed Reason",
+            "type": "string"
+          },
+          "recipient_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient Email"
+          }
+        },
+        "required": [
+          "delivery_id",
+          "recipient_email",
+          "failed_reason"
+        ],
+        "title": "FailedDeliveryView",
         "type": "object"
       },
       "FailedPaymentRowDto": {
@@ -30336,6 +30390,11 @@
             "title": "Failed Count",
             "type": "integer"
           },
+          "queued": {
+            "default": false,
+            "title": "Queued",
+            "type": "boolean"
+          },
           "sent_count": {
             "title": "Sent Count",
             "type": "integer"
@@ -39048,6 +39107,28 @@
         "summary": "Repair Coach Pay Rate Window",
         "tags": [
           "admin.coach-pay-rates"
+        ]
+      }
+    },
+    "/api/v2/admin/comms/delivery-problems": {
+      "get": {
+        "description": "Suppressed addresses and failed campaign sends for this academy's own\npeople only. Read-only: clearing an address stays a platform action (L11).",
+        "operationId": "get_delivery_problems_api_v2_admin_comms_delivery_problems_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryProblemsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Delivery Problems",
+        "tags": [
+          "admin.comms"
         ]
       }
     },

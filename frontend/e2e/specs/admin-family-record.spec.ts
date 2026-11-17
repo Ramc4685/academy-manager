@@ -448,7 +448,7 @@ test.describe("Family record (People CRM §4)", () => {
     const failed = page.getByTestId("family-message-campaign");
     await expect(failed).toHaveAttribute("data-status", "failed");
     await expect(failed).toContainText("Email: Term dates");
-    await expect(failed).toContainText("Not delivered: mailbox full");
+    await expect(failed).toContainText("Not delivered: Mailbox full");
 
     // Handoffs open the staff member's own app; the app never sends SMS or WhatsApp.
     // Row 11: a bare US number gets the +1 calling code (it was a dead link).

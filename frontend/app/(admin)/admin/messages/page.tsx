@@ -32,8 +32,10 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { formatAcademyDate, formatAcademyDateTime } from "@/lib/format/academy-time";
+import { sessionAudienceLabel } from "@/lib/format/campaign-audience";
 
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { DeliveryProblemsPanel } from "@/components/admin/delivery-problems-panel";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -305,6 +307,11 @@ function AdminMessagesContent() {
       <Card p={20} id="campaign">
         <LaneHeader index="03" title="Email campaign" />
         <EmailCampaignComposer />
+      </Card>
+
+      <Card p={20} id="delivery-problems">
+        <LaneHeader index="04" title="Delivery problems" />
+        <DeliveryProblemsPanel />
       </Card>
     </section>
   );
@@ -780,7 +787,12 @@ function EmailCampaignComposer() {
   const [sessionId, setSessionId] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
-  const [result, setResult] = useState<{ sent: number; failed: number; total: number } | null>(null);
+  const [result, setResult] = useState<{
+    sent: number;
+    failed: number;
+    total: number;
+    queued: boolean;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const parentCount = useParentRecipientCount();
@@ -811,7 +823,12 @@ function EmailCampaignComposer() {
             : { type: "academy", role: "parent" },
       }),
     onSuccess: (r) => {
-      setResult({ sent: r.sent_count, failed: r.failed_count, total: r.total_recipients });
+      setResult({
+        sent: r.sent_count,
+        failed: r.failed_count,
+        total: r.total_recipients,
+        queued: r.queued ?? false,
+      });
       setSubject("");
       setBody("");
       setError(null);
@@ -828,12 +845,13 @@ function EmailCampaignComposer() {
     (audienceType === "academy" || sessionId.length > 0);
 
   // #838: say who this reaches before it goes. A session send reaches the
-  // families on that roster; an academy send reaches every parent.
+  // families on that roster (one email per family, #1029); an academy send
+  // reaches every parent.
   const selectedSession = sessions.find((s) => s.session_id === sessionId);
   const audienceLabel =
     audienceType === "session"
       ? selectedSession
-        ? `${selectedSession.enrolled_count === 1 ? "1 family" : `${selectedSession.enrolled_count} families`} on ${selectedSession.title}`
+        ? sessionAudienceLabel(selectedSession.enrolled_count, selectedSession.title)
         : "the selected session"
       : recipientLabel(parentCount);
 
@@ -841,10 +859,18 @@ function EmailCampaignComposer() {
     return (
       <div className="space-y-4">
         <div className="rounded-md border border-green-200 bg-green-50 p-4">
-          <p className="font-semibold text-green-800">Campaign sent!</p>
+          <p className="font-semibold text-green-800">
+            {result.queued ? "Campaign queued" : "Campaign sent!"}
+          </p>
           <p className="mt-1 text-sm text-green-700">
-            {result.sent} of {result.total} delivered
-            {result.failed > 0 && ` · ${result.failed} failed`}
+            {result.queued ? (
+              `Queued for ${result.total} · emails go out over the next few minutes`
+            ) : (
+              <>
+                {result.sent} of {result.total} delivered
+                {result.failed > 0 && ` · ${result.failed} failed`}
+              </>
+            )}
           </p>
         </div>
         <Button variant="secondary" size="sm" onClick={() => setResult(null)}>

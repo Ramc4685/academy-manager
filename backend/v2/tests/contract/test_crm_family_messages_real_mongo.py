@@ -85,7 +85,8 @@ async def test_campaign_deliveries_by_alias_with_subject(real_db: Any) -> None:
                 "recipient_user_id": "p-1",
                 "status": "failed",
                 "sent_at": None,
-                "failed_reason": "bounced",
+                # a raw gate reason from the shared block list: never shown as is
+                "failed_reason": "suppressed:complaint",
             },
             # another family, and the same parent id in another academy
             {
@@ -109,7 +110,7 @@ async def test_campaign_deliveries_by_alias_with_subject(real_db: Any) -> None:
     assert entries["campaign:d-1"].summary == "Email: Holiday schedule"
     assert entries["campaign:d-1"].recipient == "parent@example.test"
     assert entries["campaign:d-2"].status == "failed"
-    assert entries["campaign:d-2"].failed_reason == "bounced"
+    assert entries["campaign:d-2"].failed_reason == "email_delivery_failed"
     assert entries["campaign:d-2"].at == T0  # queued/failed: dated by the campaign
 
 

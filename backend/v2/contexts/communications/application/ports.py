@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
 from backend.v2.contexts.communications.application.whatsapp_groups_block import (
@@ -259,6 +260,10 @@ class CampaignRepository(Protocol):
         """Look up the campaign that holds the given idempotency claim."""
         ...
 
+    async def list_background_sending(self) -> list[Campaign]:
+        """SENDING campaigns queued for the background worker (L11 item 7)."""
+        ...
+
 
 class DeliveryRepository(Protocol):
     async def save_many(self, deliveries: list[Delivery]) -> None:
@@ -271,6 +276,40 @@ class DeliveryRepository(Protocol):
         ...
 
     async def list_for_campaign(self, campaign_id: str) -> list[Delivery]: ...
+
+    async def claim_next_queued(
+        self,
+        campaign_id: str,
+        *,
+        now: datetime,
+        stale_before: datetime,
+        token: str,
+        max_attempts: int,
+    ) -> Delivery | None:
+        """Atomically claim one QUEUED delivery that is unclaimed, or whose claim
+        is older than ``stale_before`` (a worker died mid-send) and has been
+        claimed fewer than ``max_attempts`` times. Stamps ``token`` on the row and
+        counts the attempt. Two workers can never hold the same row (L11 item 7)."""
+        ...
+
+    async def finish_claimed(self, delivery: Delivery, *, token: str) -> bool:
+        """Write the final SENT/FAILED state only if the row is still QUEUED under
+        ``token``. False means another worker reclaimed it: drop this result, so a
+        stale worker can never overwrite the newer state."""
+        ...
+
+    async def fail_exhausted(
+        self, campaign_id: str, *, max_attempts: int, stale_before: datetime
+    ) -> int:
+        """Mark FAILED the QUEUED rows already claimed ``max_attempts`` times whose
+        last claim is stale, so a delivery that keeps crashing its worker cannot
+        hold the campaign open forever. Returns how many were failed."""
+        ...
+
+    async def list_failed(self, *, limit: int) -> list[Delivery]:
+        """The academy's most recent FAILED campaign deliveries, excluding
+        refusals by the shared suppression list (``suppressed:``) (L11 item 3)."""
+        ...
 
 
 class DigestSendRepository(Protocol):
@@ -339,6 +378,11 @@ class SuppressionRepository(Protocol):
     async def get_active(self, email: str) -> EmailSuppression | None: ...
 
     async def list_active(self, *, limit: int = 100) -> list[EmailSuppression]: ...
+
+    async def list_active_for(self, emails: list[str]) -> list[EmailSuppression]:
+        """Active suppressions among ``emails`` (normalized) only, so an academy
+        view never reads the rest of the global list (L11 item 3)."""
+        ...
 
     async def release(self, *, email: str, released_by: str) -> bool:
         """Deactivate a suppression. Returns False when there was none."""
