@@ -15,5 +15,5 @@ Owners get an "AI limits" card under Settings > Notifications, backed by `GET`/`
 
 ## Risk / rollback
 - Risk: with Stripe unconfigured, cancelling a paid platform subscription now returns 502 instead of changing only the local row. That is intended.
-- Risk: the stricter link check on progress notes may refuse an odd narrative containing something like an email address or a lowercase word glued to the previous sentence ("footwork.next"). The coach sees a 502 and can draft again.
+- Risk: the stricter link check on progress notes may refuse an odd narrative containing something like an email address or a word glued to the next sentence without a space ("footwork.Next"). The coach sees a 502 and can draft again.
 - Rollback: revert the PR. Nothing is stored in a new shape, apart from the extra `cost_microcents` field and any limits an owner saved under `ai.*`.

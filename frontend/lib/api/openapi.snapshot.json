@@ -9987,6 +9987,8 @@
           },
           "daily_call_caps": {
             "additionalProperties": {
+              "maximum": 1000.0,
+              "minimum": 0.0,
               "type": "integer"
             },
             "title": "Daily Call Caps",
@@ -10001,6 +10003,7 @@
         },
         "required": [
           "monthly_call_cap",
+          "daily_call_caps",
           "coach_review_narratives"
         ],
         "title": "AiControlsRequest",

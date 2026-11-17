@@ -229,16 +229,22 @@ def test_parse_refuses_invented_numbers_skills_length_and_shape(raw: str):
         parse_narrative(raw, INPUT)
 
 
+def test_an_ellipsis_is_not_a_link():
+    assert not LINK_LIKE.search("Great day...and more drills next week.")
+
+
 @pytest.mark.parametrize(
     "text",
-    ["Great day...and more drills next week.", "Strong footwork.Next we work on serves."],
+    [
+        "Practice videos at blno.com this week.",
+        "Practice videos at blno.COM this week.",
+        "Practice videos at Blno.Com this week.",
+        "Practice videos at bit.Ly this week.",
+        "Strong footwork.Next we work on serves.",  # refused: safety over this false positive
+    ],
 )
-def test_an_ellipsis_or_a_missed_space_is_not_a_link(text: str):
-    assert not LINK_LIKE.search(text)
-
-
-def test_a_real_domain_is_still_a_link():
-    assert LINK_LIKE.search("Practice videos at blno.com this week.")
+def test_a_domain_in_any_case_is_a_link(text: str):
+    assert LINK_LIKE.search(text)
 
 
 def test_parse_strips_a_json_fence_and_collapses_whitespace():

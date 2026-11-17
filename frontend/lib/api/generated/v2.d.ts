@@ -11411,7 +11411,7 @@ export interface components {
             /** Coach Review Narratives */
             coach_review_narratives: boolean;
             /** Daily Call Caps */
-            daily_call_caps?: {
+            daily_call_caps: {
                 [key: string]: number;
             };
             /** Monthly Call Cap */
