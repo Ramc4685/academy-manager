@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { assignableCoaches, hasCoachRole } from "./coach-roles";
+import { assignableCoaches, hasCoachRole, syncRolesDraft } from "./coach-roles";
 
 describe("hasCoachRole", () => {
   it("is true for a primary coach", () => {
@@ -41,5 +41,26 @@ describe("assignableCoaches", () => {
 
   it("keeps the coach already assigned so the select shows it", () => {
     expect(assignableCoaches(users, "d").map((u) => u.user_id)).toEqual(["a", "d"]);
+  });
+});
+
+describe("syncRolesDraft (admin user roles panel)", () => {
+  it("keeps an unsaved edit when the user is refetched with the same roles", () => {
+    // Coach unchecked, then the profile form saves and the user refetches.
+    expect(syncRolesDraft("coach|parent", ["coach", "parent"], true, ["parent"])).toBeNull();
+  });
+
+  it("keeps an unsaved edit even when the stored roles change underneath it", () => {
+    expect(syncRolesDraft("coach|parent", ["coach"], true, ["parent"])).toEqual({
+      syncedKey: "coach",
+      selected: ["parent"],
+    });
+  });
+
+  it("follows the stored roles after a save or when nothing was edited", () => {
+    expect(syncRolesDraft("coach|parent", ["parent"], false, ["coach", "parent"])).toEqual({
+      syncedKey: "parent",
+      selected: ["parent"],
+    });
   });
 });

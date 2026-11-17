@@ -24,7 +24,7 @@ import {
   type CoachPayBillingUnit,
   type LoginInviteOutcome,
 } from "@/lib/api/admin";
-import { hasCoachRole } from "@/lib/admin/coach-roles";
+import { hasCoachRole, syncRolesDraft } from "@/lib/admin/coach-roles";
 import { roleLabel } from "@/lib/admin/role-label";
 import { ROLE_HINTS, planRoleChanges } from "@/lib/admin/staff-roles";
 import { assignableRoles, canManageUser } from "@/lib/auth/assignable-roles";
@@ -830,14 +830,11 @@ function RolesPanel({
   const [submitOk, setSubmitOk] = useState(false);
   const [confirmOwner, setConfirmOwner] = useState(false);
   const [rolesEdited, setRolesEdited] = useState(false);
-  // Follow the stored roles only when they actually change, and never over an
-  // unsaved edit: every refetch (the profile form's Save, say) used to reset the
-  // draft, so the profile said "Saved." while the unchecked role came back.
-  const storedKey = initialRoles.join("|");
-  const [syncedKey, setSyncedKey] = useState(storedKey);
-  if (storedKey !== syncedKey) {
-    setSyncedKey(storedKey);
-    if (!rolesEdited) setSelected(initialRoles);
+  const [syncedKey, setSyncedKey] = useState(initialRoles.join("|"));
+  const synced = syncRolesDraft(syncedKey, initialRoles, rolesEdited, selected);
+  if (synced) {
+    setSyncedKey(synced.syncedKey);
+    setSelected(synced.selected);
   }
 
   const mutation = useMutation({

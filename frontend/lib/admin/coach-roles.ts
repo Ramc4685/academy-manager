@@ -29,3 +29,21 @@ export function assignableCoaches<T extends { user_id: string; status: string }>
 ): T[] {
   return users.filter((user) => user.status === "active" || user.user_id === keepId);
 }
+
+/**
+ * The roles draft after a refetch of the stored roles, or null when nothing
+ * changes. The draft follows the stored roles only when they actually changed,
+ * and never over an unsaved edit: every refetch (the profile form's Save, say)
+ * used to reset the draft, so the page said "Saved." while the unchecked role
+ * came back.
+ */
+export function syncRolesDraft<R extends string>(
+  syncedKey: string,
+  storedRoles: readonly R[],
+  edited: boolean,
+  selected: R[],
+): { syncedKey: string; selected: R[] } | null {
+  const storedKey = storedRoles.join("|");
+  if (storedKey === syncedKey) return null;
+  return { syncedKey: storedKey, selected: edited ? selected : [...storedRoles] };
+}
