@@ -28,6 +28,7 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     invoice_is_chargeable,
 )
 from backend.v2.contexts.billing.domain.dunning import (
+    EXISTING_CHARGE_NEEDS_REVIEW,
     MAX_DUNNING_ATTEMPTS,
     TECHNICAL_FAILURE_CAPPED,
 )
@@ -217,7 +218,8 @@ def has_failed_attempt(
     if dunning_status == _DUNNED_STATUS:
         return True
     # Capped after a day of technical failures: no rung spent, but not scheduled (A7-6).
-    if suppression_reason == TECHNICAL_FAILURE_CAPPED:
+    # Parked for a person to review a charge Stripe already holds: not scheduled.
+    if suppression_reason in (TECHNICAL_FAILURE_CAPPED, EXISTING_CHARGE_NEEDS_REVIEW):
         return True
     return dunning_status in _FAILED_LADDER_STATUSES and attempt_count >= 1
 

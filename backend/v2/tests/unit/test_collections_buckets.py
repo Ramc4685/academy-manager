@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from urllib.parse import quote
 
+import pytest
+
 from backend.v2.contexts.billing.application.collections_buckets import (
     BUCKET_ACTIONS,
     BUCKET_ORDER,
@@ -147,14 +149,16 @@ def test_dunned_family_is_failed_autopay_with_disabled_flag() -> None:
     assert row.payload["failure"]["attempt_count"] == 4
 
 
-def test_a_ladder_capped_on_its_first_attempt_is_failed_autopay() -> None:
-    """A7-6 review P1: a capped ladder spent no rung, but autopay is not scheduled."""
+@pytest.mark.parametrize("reason", ["technical_failure_capped", "existing_charge_needs_review"])
+def test_a_ladder_parked_on_its_first_attempt_for_our_side_is_failed_autopay(reason: str) -> None:
+    """A7-6 review P1: a capped or review-parked ladder spent no rung, but autopay is
+    not scheduled."""
     family = _family(
         invoices=(
             _autopay_invoice(
                 dunning_status="active",
                 dunning_attempt_count=0,
-                dunning_suppression_reason="technical_failure_capped",
+                dunning_suppression_reason=reason,
             ),
         )
     )

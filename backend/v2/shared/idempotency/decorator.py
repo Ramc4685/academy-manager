@@ -43,8 +43,11 @@ class IdempotencyStore(Protocol):
     async def get(self, key: str) -> dict[str, Any] | None: ...
     async def put(self, key: str, value: dict[str, Any]) -> None: ...
 
-    async def claim(self, key: str) -> object | None:
-        """Atomically take ``key``: a token for the one caller that got it, else None."""
+    async def claim(self, key: str, *, takeover: bool = True) -> object | None:
+        """Atomically take ``key``: a token for the one caller that got it, else None.
+
+        ``takeover=False`` never takes over a stale claim, for a caller whose
+        retry is not safe to run twice."""
         ...
 
     async def release(self, key: str, token: object) -> None:

@@ -403,6 +403,7 @@ _PARK_REASONS_NEEDING_ATTENTION = (
     "attempt_indeterminate",
     "charge_technical_failure",
     "connected_account_not_ready",
+    "existing_charge_needs_review",
     "stripe_not_configured",
     "stripe_unavailable",
     "technical_failure_capped",

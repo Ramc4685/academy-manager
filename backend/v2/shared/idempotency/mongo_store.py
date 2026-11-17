@@ -48,7 +48,7 @@ class MongoIdempotencyStore:
             }
         )
 
-    async def claim(self, key: str) -> datetime | None:
+    async def claim(self, key: str, *, takeover: bool = True) -> datetime | None:
         # Millisecond precision: Mongo stores dates in ms, and the token must
         # match the stored value exactly when it is released.
         now = datetime.now(UTC)
@@ -57,9 +57,19 @@ class MongoIdempotencyStore:
             await self._collection.insert_one({"key": key, "claimed_at": now, "created_at": now})
             return now
         except DuplicateKeyError:
-            # Take over a stale claim atomically: only one retry can match it.
+            if not takeover:
+                return None
+            # Take over a stale claim atomically: only one retry can match it. A
+            # claim written by put() before claims existed has no claimed_at.
             taken = await self._collection.update_one(
-                {"key": key, "claimed_at": {"$lt": now - CLAIM_STALE_AFTER}},
+                {
+                    "key": key,
+                    "$or": [
+                        {"claimed_at": {"$lt": now - CLAIM_STALE_AFTER}},
+                        # Legacy claim shape only, never a stored put() result.
+                        {"claimed_at": {"$exists": False}, "value.started_at": {"$exists": True}},
+                    ],
+                },
                 {"$set": {"claimed_at": now, "created_at": now}},
             )
             return now if taken.modified_count == 1 else None
