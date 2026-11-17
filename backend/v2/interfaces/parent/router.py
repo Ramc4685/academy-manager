@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from .absence_routes import router as absence_router
 from .academy_routes import router as academy_router
 from .activity_routes import router as activity_router
+from .calendar_feed_routes import router as calendar_feed_router
 from .email_preference_routes import router as email_preference_router
 from .enrollment_routes import router as enrollment_router
 from .home_routes import router as home_router
@@ -30,6 +31,7 @@ from .webhook_routes import router as webhook_router
 router = APIRouter(prefix="/parent")
 router.include_router(absence_router)
 router.include_router(academy_router)
+router.include_router(calendar_feed_router)
 router.include_router(activity_router)
 router.include_router(email_preference_router)
 router.include_router(enrollment_router)

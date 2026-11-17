@@ -135,6 +135,9 @@ class ParentUseCases:
     resolve_assigned_classes: object | None = None
     # Per-child AI/video opt-in and revoke (Phase 3 E1). Defaulted for old fixtures.
     ai_video_consent: ParentAiVideoConsent | None = None
+    # Phone-calendar subscription (composition/calendar_feed.py): the parent's
+    # link and the public .ics it serves. Defaulted for old fixtures.
+    calendar_feed: Any | None = None
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

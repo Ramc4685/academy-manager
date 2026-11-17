@@ -4600,3 +4600,34 @@ export function previewAdminNurtureStep(step: NurtureStepInput): Promise<Nurture
     body: JSON.stringify(step),
   });
 }
+
+/** The last month the academy calls final ("YYYY-MM"), or null (never published). */
+export interface SchedulePublishView {
+  published_through: string | null;
+}
+
+export function getSchedulePublish(): Promise<SchedulePublishView> {
+  return apiFetch<SchedulePublishView>("/admin/schedule/publish", { method: "GET" });
+}
+
+export function setSchedulePublish(publishedThrough: string | null): Promise<SchedulePublishView> {
+  return apiFetch<SchedulePublishView>("/admin/schedule/publish", {
+    method: "PUT",
+    body: JSON.stringify({ published_through: publishedThrough }),
+  });
+}
+
+/** The Month dates AI helper's suggestion; nothing is saved until the admin calls the dates off. */
+export interface NoClassSuggestion {
+  no_class: { date: string; reason: string }[];
+  notes: string;
+  prompt_version: string;
+}
+
+export function suggestNoClassDates(input: { text: string; classDates: string[] }): Promise<NoClassSuggestion> {
+  return apiFetch<NoClassSuggestion>("/admin/schedule/suggest-no-class-dates", {
+    method: "POST",
+    body: JSON.stringify({ text: input.text, class_dates: input.classDates }),
+    dedup: false,
+  });
+}

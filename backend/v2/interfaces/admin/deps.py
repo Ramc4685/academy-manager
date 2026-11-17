@@ -122,6 +122,7 @@ from backend.v2.contexts.enrollment.application.use_cases.self_cancel import (
 )
 from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
     GetSelfServicePolicy,
+    SetSchedulePublishedThrough,
     UpdateSelfServicePolicy,
 )
 from backend.v2.contexts.enrollment.application.use_cases.stop_all_classes import (
@@ -453,6 +454,7 @@ class AdminUseCases:
     # Parent self-service policy (#absence/makeup/cancel Slice 1)
     self_service_policy: GetSelfServicePolicy | None = None
     update_self_service_policy: UpdateSelfServicePolicy | None = None
+    set_schedule_published_through: SetSchedulePublishedThrough | None = None
     # Admin makeup review + absence queue (R2, Task 5)
     list_makeup_requests_for_admin: ListMakeupRequestsForAdmin | None = None
     approve_makeup_request: ApproveMakeupRequest | None = None

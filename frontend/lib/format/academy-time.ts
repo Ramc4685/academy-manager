@@ -172,3 +172,13 @@ export function academyMonthKey(
   const shifted = new Date(Date.UTC(year, month - 1 + offset, 1));
   return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}`;
 }
+
+/** "December 2026" for a "YYYY-MM" month key. */
+export function monthLabel(month: string): string {
+  const [year, m] = month.split("-").map(Number);
+  return new Date(Date.UTC(year, m - 1, 1)).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}

@@ -12253,6 +12253,19 @@
         "title": "BulkStatusBody",
         "type": "object"
       },
+      "CalendarFeedLinkView": {
+        "properties": {
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "CalendarFeedLinkView",
+        "type": "object"
+      },
       "CancelAccountDeletionPayload": {
         "properties": {
           "reason": {
@@ -22409,6 +22422,27 @@
         "title": "NextSkillView",
         "type": "object"
       },
+      "NoClassDate": {
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date"
+        ],
+        "title": "NoClassDate",
+        "type": "object"
+      },
       "NoteBody": {
         "additionalProperties": false,
         "properties": {
@@ -22920,6 +22954,17 @@
               }
             ],
             "title": "Payment Instructions"
+          },
+          "schedule_published_through": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Published Through"
           },
           "self_service": {
             "$ref": "#/components/schemas/ParentSelfServiceSwitchesView"
@@ -24469,6 +24514,17 @@
       },
       "ParentScheduleEntryView": {
         "properties": {
+          "cancellation_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Reason"
+          },
           "coach_name": {
             "anyOf": [
               {
@@ -30026,6 +30082,44 @@
         "title": "SchedulePriceChangeRequest",
         "type": "object"
       },
+      "SchedulePublishRequest": {
+        "properties": {
+          "published_through": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published Through"
+          }
+        },
+        "required": [
+          "published_through"
+        ],
+        "title": "SchedulePublishRequest",
+        "type": "object"
+      },
+      "SchedulePublishView": {
+        "properties": {
+          "published_through": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published Through"
+          }
+        },
+        "title": "SchedulePublishView",
+        "type": "object"
+      },
       "ScheduledClassFee": {
         "description": "A class whose fee moves at a future month (\"Scheduled: $X from <Month>\").",
         "properties": {
@@ -32389,6 +32483,61 @@
           "cancel_at_period_end"
         ],
         "title": "SubscriptionSummary",
+        "type": "object"
+      },
+      "SuggestNoClassDatesBody": {
+        "additionalProperties": false,
+        "properties": {
+          "class_dates": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "maxItems": 62,
+            "minItems": 1,
+            "title": "Class Dates",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "class_dates"
+        ],
+        "title": "SuggestNoClassDatesBody",
+        "type": "object"
+      },
+      "SuggestNoClassDatesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "no_class": {
+            "items": {
+              "$ref": "#/components/schemas/NoClassDate"
+            },
+            "title": "No Class",
+            "type": "array"
+          },
+          "notes": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Notes",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "no_class",
+          "prompt_version"
+        ],
+        "title": "SuggestNoClassDatesResponse",
         "type": "object"
       },
       "SupportAccessGrantPayload": {
@@ -46158,6 +46307,107 @@
         ]
       }
     },
+    "/api/v2/admin/schedule/publish": {
+      "get": {
+        "operationId": "get_schedule_publish_api_v2_admin_schedule_publish_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePublishView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Schedule Publish",
+        "tags": [
+          "admin.schedule"
+        ]
+      },
+      "put": {
+        "operationId": "set_schedule_publish_api_v2_admin_schedule_publish_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchedulePublishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePublishView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Schedule Publish",
+        "tags": [
+          "admin.schedule"
+        ]
+      }
+    },
+    "/api/v2/admin/schedule/suggest-no-class-dates": {
+      "post": {
+        "operationId": "suggest_no_class_dates_api_v2_admin_schedule_suggest_no_class_dates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestNoClassDatesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuggestNoClassDatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Suggest No Class Dates",
+        "tags": [
+          "admin.schedule"
+        ]
+      }
+    },
     "/api/v2/admin/seed-lesson-cards": {
       "post": {
         "operationId": "seed_lesson_cards_route_api_v2_admin_seed_lesson_cards_post",
@@ -50315,6 +50565,44 @@
         ]
       }
     },
+    "/api/v2/calendar-feed/{token}.ics": {
+      "get": {
+        "operationId": "get_calendar_feed_api_v2_calendar_feed__token__ics_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No calendar for this link on this host."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Calendar Feed",
+        "tags": [
+          "calendar-feed"
+        ]
+      }
+    },
     "/api/v2/coach/academy": {
       "get": {
         "operationId": "get_academy_api_v2_coach_academy_get",
@@ -53323,6 +53611,48 @@
         "summary": "Create a Stripe customer portal session",
         "tags": [
           "parent.payments"
+        ]
+      }
+    },
+    "/api/v2/parent/calendar-feed": {
+      "get": {
+        "operationId": "get_calendar_feed_link_api_v2_parent_calendar_feed_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarFeedLinkView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Calendar Feed Link",
+        "tags": [
+          "parent.calendar-feed"
+        ]
+      }
+    },
+    "/api/v2/parent/calendar-feed/reset": {
+      "post": {
+        "operationId": "reset_calendar_feed_link_api_v2_parent_calendar_feed_reset_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarFeedLinkView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Reset Calendar Feed Link",
+        "tags": [
+          "parent.calendar-feed"
         ]
       }
     },

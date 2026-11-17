@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 
@@ -14,6 +14,30 @@ import { Card } from "@/components/ds/card";
 import { Skeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
 import { CalendarTimeZoneUnavailable } from "@/components/calendar/CalendarTimeZoneUnavailable";
+import { AddToCalendar } from "@/components/parent/AddToCalendar";
+import { ScheduleList, type ScheduleListRow } from "@/components/parent/ScheduleList";
+import { academyMonthKey } from "@/lib/format/academy-time";
+
+/** This month through two months ahead, on the academy's calendar. */
+function scheduleRange(timeZone: string | null | undefined) {
+  const last = academyMonthKey(timeZone, 2);
+  const [year, month] = last.split("-").map(Number);
+  // `to` is read as a UTC day: run one day past the month so an evening class
+  // on its last day (already the next day in UTC) is still fetched.
+  const dayAfter = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+  return { from: `${academyMonthKey(timeZone, 0)}-01`, to: dayAfter };
+}
+
+type View = "list" | "month";
+
+/** Phones open on the list; a month grid is hard to read at 400px. */
+function useDefaultView(): [View, (view: View) => void] {
+  const [view, setView] = useState<View>("list");
+  useEffect(() => {
+    if (window.matchMedia?.("(min-width: 768px)").matches) setView("month");
+  }, []);
+  return [view, setView];
+}
 
 // FullCalendar (~250 KB) is loaded client-side only, out of the initial
 // parent bundle — same pattern as AdminCalendarView.
@@ -47,13 +71,15 @@ export default function ParentCalendarPage() {
 
   const children = childrenData?.children ?? [];
 
+  const range = scheduleRange(academyQuery.data?.timezone);
   const scheduleQueries = useQueries({
     queries: children.map((child) => ({
-      queryKey: ["parent", "child-schedule", child.student_id],
-      queryFn: () => getChildSchedule(child.student_id),
-      enabled: children.length > 0,
+      queryKey: ["parent", "child-schedule", child.student_id, range.from, range.to],
+      queryFn: () => getChildSchedule(child.student_id, range),
+      enabled: children.length > 0 && academyQuery.isSuccess,
     })),
   });
+  const [view, setView] = useDefaultView();
 
   const isLoading =
     childrenLoading || academyQuery.isLoading || scheduleQueries.some((q) => q.isLoading);
@@ -82,9 +108,42 @@ export default function ParentCalendarPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [children, scheduleSignature]);
 
+  const listRows: ScheduleListRow[] = useMemo(
+    () =>
+      children.flatMap((child, idx) =>
+        (scheduleQueries[idx]?.data?.entries ?? []).map((entry) => ({
+          entry,
+          childName: child.full_name,
+        })),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [children, scheduleSignature],
+  );
+
   return (
     <section data-testid="parent-calendar" className="space-y-4">
-      <h1 className="text-lg font-semibold text-rally-ink">Calendar</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-lg font-semibold text-rally-ink">Calendar</h1>
+        <div role="group" aria-label="Calendar view" className="inline-flex rounded-lg border border-rally-line p-0.5">
+          {(["list", "month"] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={view === option}
+              onClick={() => setView(option)}
+              className={`rounded-md px-3 py-1 text-sm font-semibold ${
+                view === option ? "bg-rally-ink text-white" : "text-rally-muted"
+              }`}
+            >
+              {option === "list" ? "List" : "Month"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {children.length > 0 && academyQuery.data && (
+        <AddToCalendar academyName={academyQuery.data.display_name} />
+      )}
 
       {isError && (
         <Card p={16} style={{ borderColor: "#fecaca", background: "#fef2f2" }}>
@@ -129,8 +188,14 @@ export default function ParentCalendarPage() {
         <Card p={16}>
           <EmptyState title="No children on file" description="Add a child to see their schedule here." />
         </Card>
+      ) : calendarZone.status === "ready" && view === "list" ? (
+        <ScheduleList
+          rows={listRows}
+          timeZone={calendarZone.timeZone}
+          publishedThrough={academyQuery.data?.schedule_published_through}
+        />
       ) : calendarZone.status === "ready" ? (
-        <PersonaCalendarView events={events} timeZone={calendarZone.timeZone} />
+        <PersonaCalendarView events={events} timeZone={calendarZone.timeZone} monthFirst />
       ) : academyQuery.isError ? null : (
         <CalendarTimeZoneUnavailable listHref="/parent/children" listLabel="My children" />
       )}

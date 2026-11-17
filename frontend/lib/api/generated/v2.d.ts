@@ -3683,6 +3683,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/schedule/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Schedule Publish */
+        get: operations["get_schedule_publish_api_v2_admin_schedule_publish_get"];
+        /** Set Schedule Publish */
+        put: operations["set_schedule_publish_api_v2_admin_schedule_publish_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/schedule/suggest-no-class-dates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Suggest No Class Dates */
+        post: operations["suggest_no_class_dates_api_v2_admin_schedule_suggest_no_class_dates_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/seed-lesson-cards": {
         parameters: {
             query?: never;
@@ -5051,6 +5086,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/calendar-feed/{token}.ics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Calendar Feed */
+        get: operations["get_calendar_feed_api_v2_calendar_feed__token__ics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/coach/academy": {
         parameters: {
             query?: never;
@@ -6048,6 +6100,40 @@ export interface paths {
         put?: never;
         /** Create a Stripe customer portal session */
         post: operations["open_billing_portal_api_v2_parent_billing_portal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/parent/calendar-feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Calendar Feed Link */
+        get: operations["get_calendar_feed_link_api_v2_parent_calendar_feed_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/parent/calendar-feed/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset Calendar Feed Link */
+        post: operations["reset_calendar_feed_link_api_v2_parent_calendar_feed_reset_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -12207,6 +12293,11 @@ export interface components {
             /** Student Ids */
             student_ids: string[];
         };
+        /** CalendarFeedLinkView */
+        CalendarFeedLinkView: {
+            /** Url */
+            url: string;
+        };
         /** CancelAccountDeletionPayload */
         CancelAccountDeletionPayload: {
             /** Reason */
@@ -15722,6 +15813,19 @@ export interface components {
             /** Youtube Links */
             youtube_links?: components["schemas"]["VideoLink"][];
         };
+        /** NoClassDate */
+        NoClassDate: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
         /** NoteBody */
         NoteBody: {
             /** Body */
@@ -15939,6 +16043,8 @@ export interface components {
             logo_url?: string | null;
             /** Payment Instructions */
             payment_instructions?: string | null;
+            /** Schedule Published Through */
+            schedule_published_through?: string | null;
             self_service?: components["schemas"]["ParentSelfServiceSwitchesView"];
             /** Timezone */
             timezone?: string | null;
@@ -16528,6 +16634,8 @@ export interface components {
         };
         /** ParentScheduleEntryView */
         ParentScheduleEntryView: {
+            /** Cancellation Reason */
+            cancellation_reason?: string | null;
             /** Coach Name */
             coach_name?: string | null;
             /**
@@ -18516,6 +18624,16 @@ export interface components {
             /** Plan Id */
             plan_id: string;
         };
+        /** SchedulePublishRequest */
+        SchedulePublishRequest: {
+            /** Published Through */
+            published_through: string | null;
+        };
+        /** SchedulePublishView */
+        SchedulePublishView: {
+            /** Published Through */
+            published_through?: string | null;
+        };
         /**
          * ScheduledClassFee
          * @description A class whose fee moves at a future month ("Scheduled: $X from <Month>").
@@ -19369,6 +19487,25 @@ export interface components {
             cancel_at_period_end: boolean;
             /** Current Period End */
             current_period_end?: string | null;
+        };
+        /** SuggestNoClassDatesBody */
+        SuggestNoClassDatesBody: {
+            /** Class Dates */
+            class_dates: string[];
+            /** Text */
+            text: string;
+        };
+        /** SuggestNoClassDatesResponse */
+        SuggestNoClassDatesResponse: {
+            /** No Class */
+            no_class: components["schemas"]["NoClassDate"][];
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
+            /** Prompt Version */
+            prompt_version: string;
         };
         /** SupportAccessGrantPayload */
         SupportAccessGrantPayload: {
@@ -27366,6 +27503,92 @@ export interface operations {
             };
         };
     };
+    get_schedule_publish_api_v2_admin_schedule_publish_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulePublishView"];
+                };
+            };
+        };
+    };
+    set_schedule_publish_api_v2_admin_schedule_publish_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SchedulePublishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulePublishView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suggest_no_class_dates_api_v2_admin_schedule_suggest_no_class_dates_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuggestNoClassDatesBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestNoClassDatesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     seed_lesson_cards_route_api_v2_admin_seed_lesson_cards_post: {
         parameters: {
             query?: never;
@@ -30173,6 +30396,42 @@ export interface operations {
             };
         };
     };
+    get_calendar_feed_api_v2_calendar_feed__token__ics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No calendar for this link on this host. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_academy_api_v2_coach_academy_get: {
         parameters: {
             query?: never;
@@ -32181,6 +32440,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_calendar_feed_link_api_v2_parent_calendar_feed_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarFeedLinkView"];
+                };
+            };
+        };
+    };
+    reset_calendar_feed_link_api_v2_parent_calendar_feed_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarFeedLinkView"];
                 };
             };
         };
