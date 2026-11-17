@@ -22368,6 +22368,27 @@
         "title": "NextSkillView",
         "type": "object"
       },
+      "NoClassDate": {
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date"
+        ],
+        "title": "NoClassDate",
+        "type": "object"
+      },
       "NoteBody": {
         "additionalProperties": false,
         "properties": {
@@ -32403,6 +32424,61 @@
           "cancel_at_period_end"
         ],
         "title": "SubscriptionSummary",
+        "type": "object"
+      },
+      "SuggestNoClassDatesBody": {
+        "additionalProperties": false,
+        "properties": {
+          "class_dates": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "maxItems": 62,
+            "minItems": 1,
+            "title": "Class Dates",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "class_dates"
+        ],
+        "title": "SuggestNoClassDatesBody",
+        "type": "object"
+      },
+      "SuggestNoClassDatesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "no_class": {
+            "items": {
+              "$ref": "#/components/schemas/NoClassDate"
+            },
+            "title": "No Class",
+            "type": "array"
+          },
+          "notes": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Notes",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "no_class",
+          "prompt_version"
+        ],
+        "title": "SuggestNoClassDatesResponse",
         "type": "object"
       },
       "SupportAccessGrantPayload": {
@@ -46205,6 +46281,47 @@
           }
         },
         "summary": "Set Schedule Publish",
+        "tags": [
+          "admin.schedule"
+        ]
+      }
+    },
+    "/api/v2/admin/schedule/suggest-no-class-dates": {
+      "post": {
+        "operationId": "suggest_no_class_dates_api_v2_admin_schedule_suggest_no_class_dates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestNoClassDatesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuggestNoClassDatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Suggest No Class Dates",
         "tags": [
           "admin.schedule"
         ]

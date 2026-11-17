@@ -1004,6 +1004,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.ai_import import compose_ai_import
 
     app.state.ai_import = compose_ai_import(db, app.state.ai)
+    from backend.v2.composition.ai_schedule import compose_ai_schedule
+
+    app.state.ai_schedule = compose_ai_schedule(app.state.ai)
     from backend.v2.composition.evening_wins import compose_send_parent_evening_wins
 
     app.state.parent_evening_wins = compose_send_parent_evening_wins(db)

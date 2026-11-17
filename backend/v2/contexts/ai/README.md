@@ -134,6 +134,21 @@ editable table, `applyColumnMapping` rewrites the CSV client side, and the
 rewritten text goes through the existing import preview and commit, which stay
 the only write path for families and students.
 
+### Month dates helper (prompt `schedule-dates-v1`)
+
+Feature key `schedule_dates`, use case
+`application/use_cases/suggest_no_class_dates.py`, route
+`POST /admin/schedule/suggest-no-class-dates` (`interfaces/admin/ai_schedule_routes.py`,
+admin persona, rate limited), wired by `composition/ai_schedule.py` at
+`app.state.ai_schedule`. The model sees only the text the admin pasted (a
+rental agreement or a typed note, at most 8000 characters, labelled untrusted)
+and the month's class dates with their weekday: no class, student or family
+names. Order: `reserve` (429) -> `complete` -> `record_ai_call` -> strict parse
+(502 when a date is not one of the class dates, repeats, or the shape is off).
+It writes nothing but the `ai_calls` row. The Month dates page pre-ticks the
+suggested dates and fills the reason; the admin's "Call off dates" click stays
+the only write. With AI off (503) the page reads plain dates itself.
+
 ### Pipeline reply draft (B3, paid, prompt `pipeline-reply-v1`)
 
 Feature key `pipeline_reply`, prompt `pipeline-reply-v1`,

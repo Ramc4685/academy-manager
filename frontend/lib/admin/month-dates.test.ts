@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AdminSessionOccurrenceView } from "@/lib/api/admin";
-import { datesToCancel, groupMonthDates, scheduleAnnouncement } from "./month-dates";
+import { datesToCancel, groupMonthDates, plainDatesInMonth, scheduleAnnouncement } from "./month-dates";
 
 const TZ = "America/Chicago";
 const NOW = new Date("2026-11-17T12:00:00Z");
@@ -77,5 +77,34 @@ describe("scheduleAnnouncement", () => {
 
   it("returns null for a class with no dates that month", () => {
     expect(scheduleAnnouncement("A", [], "December 2026", TZ)).toBeNull();
+  });
+});
+
+describe("plainDatesInMonth", () => {
+  const sorted = (s: Set<string>) => [...s].sort();
+
+  it("reads single dates in every common spelling", () => {
+    expect(sorted(plainDatesInMonth("No class Dec 8, December 15th, 12/1 and 2026-12-03", "2026-12"))).toEqual([
+      "2026-12-01",
+      "2026-12-03",
+      "2026-12-08",
+      "2026-12-15",
+    ]);
+  });
+
+  it("fills spans, including across the new year", () => {
+    expect(sorted(plainDatesInMonth("Gym closed Dec 21 - Jan 2", "2026-12"))).toEqual(
+      Array.from({ length: 11 }, (_, i) => `2026-12-${21 + i}`),
+    );
+    expect(sorted(plainDatesInMonth("Gym closed Dec 21 - Jan 2", "2027-01"))).toEqual(["2027-01-01", "2027-01-02"]);
+    expect(sorted(plainDatesInMonth("Closed Nov 26-27", "2026-11"))).toEqual(["2026-11-26", "2026-11-27"]);
+  });
+
+  it("does not read words before a number as a month", () => {
+    expect(sorted(plainDatesInMonth("No class 12/22 and Dec 29", "2026-12"))).toEqual(["2026-12-22", "2026-12-29"]);
+  });
+
+  it("ignores other months, times and non-dates", () => {
+    expect(sorted(plainDatesInMonth("Room 12, 6:30 pm, Jan 5, May 2", "2026-12"))).toEqual([]);
   });
 });

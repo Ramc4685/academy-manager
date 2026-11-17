@@ -5,6 +5,8 @@ PR: TBD
 ## What changed
 Academies can now set which days have class each month and publish that month to parents. A new admin page, Sessions → Month dates, lists every class date in the chosen month. The admin unticks a class or a whole day and saves. Each unticked date goes through the existing "cancel this date" path: the coach is not paid, and a family is credited only if they end up with fewer classes than they paid for. "Publish {month}" marks the month as final. It can also email each class's families their class and no-class dates as a session announcement.
 
+At the top of Month dates the admin can paste a rental agreement or type the days off ("Gym closed Dec 21 – Jan 2", "No class 12/24") and click "Mark the days off". With AI on, the model reads the text and marks the class dates it rules out, with a reason. With AI off, the page reads plain dates and date ranges itself. Either way it only pre-ticks the boxes; nothing is cancelled until the admin clicks "Call off dates".
+
 On the parent calendar, phones now open on a list grouped by month. Each date says "Class" or "No class" with the academy's reason. A month that isn't published yet says its dates aren't confirmed. Wide screens keep the month grid, and a List/Month toggle switches between the two. "Add to my calendar" subscribes the parent's iPhone, Google or Outlook calendar to a private live feed of all their children's classes. A date called off later shows as cancelled in that calendar on its own. The feed covers published months only, or about six months ahead for an academy that never publishes. The parent can reset the link, and old links then stop working.
 
 ## Deploy notes
@@ -17,4 +19,5 @@ On the parent calendar, phones now open on a list grouped by month. Each date sa
 ## Risk / rollback
 - Risk: the feed carries children's first names and class times to the parent's calendar provider. The link is private and can be reset. It uses the same checks as sign-in, so it stops working as soon as the parent could no longer sign in to the academy (disabled, removed, account deleted, or no longer a parent there).
 - Risk: a called-off date can't be restored from Month dates, as with the existing single-date cancel.
+- Risk: with AI on, the pasted text goes to the model provider (new route `POST /api/v2/admin/schedule/suggest-no-class-dates`, admin only, rate-limited, counted against the academy's AI cap as feature `schedule_dates`). It sends the text and the month's class dates only: no student or family names. Admins should not paste anything they would not send there.
 - Rollback: revert the PR. The `calendar_feed_links` collection and the `schedule_published_through` policy field are ignored by the old code.

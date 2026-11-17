@@ -3680,6 +3680,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/schedule/suggest-no-class-dates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Suggest No Class Dates */
+        post: operations["suggest_no_class_dates_api_v2_admin_schedule_suggest_no_class_dates_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/seed-lesson-cards": {
         parameters: {
             query?: never;
@@ -15759,6 +15776,19 @@ export interface components {
             /** Youtube Links */
             youtube_links?: components["schemas"]["VideoLink"][];
         };
+        /** NoClassDate */
+        NoClassDate: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
         /** NoteBody */
         NoteBody: {
             /** Body */
@@ -19415,6 +19445,25 @@ export interface components {
             cancel_at_period_end: boolean;
             /** Current Period End */
             current_period_end?: string | null;
+        };
+        /** SuggestNoClassDatesBody */
+        SuggestNoClassDatesBody: {
+            /** Class Dates */
+            class_dates: string[];
+            /** Text */
+            text: string;
+        };
+        /** SuggestNoClassDatesResponse */
+        SuggestNoClassDatesResponse: {
+            /** No Class */
+            no_class: components["schemas"]["NoClassDate"][];
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
+            /** Prompt Version */
+            prompt_version: string;
         };
         /** SupportAccessGrantPayload */
         SupportAccessGrantPayload: {
@@ -27432,6 +27481,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SchedulePublishView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suggest_no_class_dates_api_v2_admin_schedule_suggest_no_class_dates_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuggestNoClassDatesBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestNoClassDatesResponse"];
                 };
             };
             /** @description Validation Error */

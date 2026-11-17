@@ -21,12 +21,14 @@ import {
   listAdminSessions,
   listSessionOccurrences,
   setSchedulePublish,
+  suggestNoClassDates,
 } from "@/lib/api/admin";
 import { postSessionAnnouncement } from "@/lib/api/v2/announcements";
 import {
   datesToCancel,
   groupMonthDates,
   isEditable,
+  plainDatesInMonth,
   scheduleAnnouncement,
   type MonthDateClass,
 } from "@/lib/admin/month-dates";
@@ -55,6 +57,9 @@ export default function AdminMonthDatesPage() {
   const [emailFamilies, setEmailFamilies] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pasted, setPasted] = useState("");
+  const [suggested, setSuggested] = useState<Map<string, string>>(new Map());
+  const [suggestNote, setSuggestNote] = useState<string | null>(null);
 
   const sessions = useQuery({
     queryKey: queryKeys.admin.sessions("window-all"),
@@ -106,6 +111,37 @@ export default function AdminMonthDatesPage() {
     });
   }
 
+  // Pre-ticks the dates only; the "Call off" confirm stays the one write.
+  const suggest = useMutation({
+    mutationFn: async () => {
+      const classDays = dates.filter((d) => d.classes.some((c) => isEditable(c.occurrence, now))).map((d) => d.day);
+      try {
+        const answer = await suggestNoClassDates({ text: pasted.trim(), classDates: classDays });
+        return { byDay: new Map(answer.no_class.map((n) => [n.date, n.reason])), notes: answer.notes, ai: true };
+      } catch {
+        // AI off, over its cap or unreadable: read plain dates instead.
+        const days = plainDatesInMonth(pasted, activeMonth);
+        return { byDay: new Map(classDays.filter((d) => days.has(d)).map((d) => [d, ""])), notes: "", ai: false };
+      }
+    },
+    onSuccess: ({ byDay, notes, ai }) => {
+      setSuggested(byDay);
+      const ids = dates
+        .filter((d) => byDay.has(d.day))
+        .flatMap((d) => d.classes.filter((c) => isEditable(c.occurrence, now)).map((c) => c.occurrence.occurrence_id));
+      setNoClass(new Set(ids));
+      const reasons = [...byDay.values()].filter(Boolean);
+      if (reasons.length && !reason.trim()) setReason(reasons[0]);
+      setSuggestNote(
+        (byDay.size
+          ? `Marked ${byDay.size} day(s) as No class${ai ? " from your text" : " from the dates you typed"}. Check them below, then call them off.`
+          : ai
+            ? "Nothing in the text rules out a class date this month."
+            : "No dates from this month found. Write them like Dec 22 or 12/22.") + (notes ? ` ${notes}` : ""),
+      );
+    },
+  });
+
   const save = useMutation({
     mutationFn: async () => {
       const failed: string[] = [];
@@ -133,6 +169,8 @@ export default function AdminMonthDatesPage() {
       setConfirmOpen(false);
       setNoClass(new Set());
       setReason("");
+      setSuggested(new Map());
+      setSuggestNote(null);
       const failed = outcome?.failed ?? [];
       const problems: string[] = [];
       if (failed.length) {
@@ -218,6 +256,8 @@ export default function AdminMonthDatesPage() {
               if (!e.target.value) return;
               setMonth(e.target.value);
               setNoClass(new Set());
+              setSuggested(new Map());
+              setSuggestNote(null);
               setNotice(null);
               setError(null);
             }}
@@ -242,6 +282,41 @@ export default function AdminMonthDatesPage() {
       )}
 
       <Card p={16}>
+        <label htmlFor="month-dates-paste" className="text-base font-semibold text-rally-ink">
+          Paste the rental agreement or type the days off
+        </label>
+        <p className="mt-1 text-sm text-rally-muted">
+          For example &ldquo;Gym closed Dec 21 &ndash; Jan 2&rdquo; or &ldquo;No class 12/24, 12/31&rdquo;.
+          We mark those days below for you to check; nothing changes until you call them off.
+        </p>
+        <textarea
+          id="month-dates-paste"
+          value={pasted}
+          onChange={(e) => setPasted(e.target.value)}
+          maxLength={8000}
+          rows={4}
+          className="mt-2 w-full rounded-lg border border-rally-line px-3 py-2 text-sm"
+          data-testid="month-dates-paste"
+        />
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={!pasted.trim() || loading || dates.length === 0 || suggest.isPending}
+            onClick={() => suggest.mutate()}
+            data-testid="month-dates-suggest"
+          >
+            {suggest.isPending ? "Reading…" : "Mark the days off"}
+          </Button>
+          {suggestNote && (
+            <p role="status" className="text-sm text-rally-muted" data-testid="month-dates-suggest-note">
+              {suggestNote}
+            </p>
+          )}
+        </div>
+      </Card>
+
+      <Card p={16}>
         <h2 className="text-base font-semibold text-rally-ink">Which days have class?</h2>
         <p className="mt-1 text-sm text-rally-muted">
           Untick a class, or a whole day, when there is no class. Families get a credit only if
@@ -262,6 +337,9 @@ export default function AdminMonthDatesPage() {
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-semibold text-rally-ink">
                       {formatAcademyDate(d.classes[0].occurrence.start_at, timeZone)}
+                      {suggested.get(d.day) && (
+                        <span className="ml-2 text-xs font-normal text-rally-muted">{suggested.get(d.day)}</span>
+                      )}
                     </p>
                     {editable.length > 0 && (
                       <label className="flex items-center gap-2 text-xs font-medium text-rally-muted">
