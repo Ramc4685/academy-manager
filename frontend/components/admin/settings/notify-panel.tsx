@@ -338,7 +338,8 @@ function AiLimitsControls() {
   const [form, setForm] = useState<AiLimitsForm | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   useEffect(() => {
-    if (query.data) setForm(aiLimitsForm(query.data));
+    // A malformed answer hides the card instead of crashing the Notifications panel.
+    if (query.data && Array.isArray(query.data.features)) setForm(aiLimitsForm(query.data));
   }, [query.data]);
   const payload = form ? aiLimitsPayload(form) : null;
   const mutation = useMutation({
@@ -348,7 +349,7 @@ function AiLimitsControls() {
       setSavedAt(savedAtNow());
     },
   });
-  if (!query.data || !form) return null;
+  if (!query.data || !Array.isArray(query.data.features) || !form) return null;
   const dirty = JSON.stringify(form) !== JSON.stringify(aiLimitsForm(query.data));
   const invalid = payload && "error" in payload ? payload.error : null;
   return (
