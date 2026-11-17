@@ -131,6 +131,9 @@ export default function AdminSessionEconomicsPage() {
                       </div>
                       <div className="mt-1 text-xs text-rally-muted">
                         {formatInteger(session.paid_student_count)} paid · {formatInteger(session.unpaid_student_count)} due
+                        {session.not_billed_enrollment_count
+                          ? ` · +${formatInteger(session.not_billed_enrollment_count)} not billed`
+                          : ""}
                       </div>
                     </td>
                     <NumberCell value={formatCurrency(session.monthly_fee_cents)} />

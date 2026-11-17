@@ -27,6 +27,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, ArrowUpDown, Mail } from "lucide-react";
 
+import { notBilledSuffix } from "@/components/admin/not-billed";
 import { SiblingsChip } from "@/components/admin/siblings";
 import {
   fetchBillingSetup,
@@ -296,7 +297,10 @@ function FamiliesView() {
                 {summary?.tiles[tile.scope] ?? "—"}
               </span>
             </BigNum>
-            <p className="mt-1 text-[11px] text-rally-subtle">{tile.caption}</p>
+            <p className="mt-1 text-[11px] text-rally-subtle">
+              {tile.caption}
+              {tile.scope === "active" && notBilledSuffix(summary?.not_billed_families)}
+            </p>
           </Card>
         ))}
       </div>

@@ -26,6 +26,7 @@ import { Chip } from "@/components/ds/chip";
 import type { MenuItem } from "@/components/ds/menu";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { Overline } from "@/components/ds/typography";
+import { NotBilledChip, NotBilledDialog } from "@/components/admin/not-billed";
 import { useIsOwner } from "@/components/admin/owner-context";
 import {
   SiblingDiscountChip,
@@ -107,6 +108,8 @@ function SessionsPanel({
   const [returning, setReturning] =
     useState<AdminStudentSessionSummary | null>(null);
   const [billingOverride, setBillingOverride] =
+    useState<AdminStudentSessionSummary | null>(null);
+  const [billingChange, setBillingChange] =
     useState<AdminStudentSessionSummary | null>(null);
   const [overrideAmount, setOverrideAmount] = useState("");
   const [targetSessionId, setTargetSessionId] = useState("");
@@ -310,12 +313,22 @@ function SessionsPanel({
   };
 
   const phoneMenuItems = (session: AdminStudentSessionSummary): MenuItem[] =>
-    enrolledSessionActions(session).map((action) => ({
+    enrolledSessionActions(session).map((action): MenuItem => ({
       key: action.key,
       label: action.label,
       description: action.description,
       onSelect: () => runSessionAction(session, action.key),
-    }));
+    })).concat(
+      isOwner
+        ? [
+            {
+              key: "billing",
+              label: session.not_billed ? "Start billing" : "Not billed",
+              onSelect: () => setBillingChange(session),
+            },
+          ]
+        : [],
+    );
 
   return (
     <>
@@ -389,6 +402,12 @@ function SessionsPanel({
                           enrollmentId={session.enrollment_id}
                         />
                         <SiblingDiscountChip row={siblingRow(session.enrollment_id)} view={sibling} />
+                        {session.not_billed && (
+                          <NotBilledChip
+                            reason={session.not_billed_reason}
+                            note={session.not_billed_note}
+                          />
+                        )}
                       </div>
                     </>
                   }
@@ -475,6 +494,12 @@ function SessionsPanel({
                           enrollmentId={session.enrollment_id}
                         />
                         <SiblingDiscountChip row={siblingRow(session.enrollment_id)} view={sibling} />
+                        {session.not_billed && (
+                          <NotBilledChip
+                            reason={session.not_billed_reason}
+                            note={session.not_billed_note}
+                          />
+                        )}
                       </div>
                     </td>
                     <td className="py-3 align-top">
@@ -494,6 +519,15 @@ function SessionsPanel({
                               {action.label}
                             </button>
                           ))}
+                        {isOwner && (
+                          <button
+                            className="text-xs font-medium text-rally-cobalt-600 hover:underline"
+                            data-testid={`not-billed-action-${session.enrollment_id}`}
+                            onClick={() => setBillingChange(session)}
+                          >
+                            {session.not_billed ? "Start billing" : "Not billed"}
+                          </button>
+                        )}
                         <DepartureActions
                           enrollmentId={session.enrollment_id}
                           studentName={session.session_title}
@@ -521,6 +555,23 @@ function SessionsPanel({
 
       <PastEnrollmentsPanel rows={pastEnrollments} />
 
+      <NotBilledDialog
+        enrollmentId={billingChange?.enrollment_id ?? null}
+        className={billingChange?.session_title}
+        notBilled={Boolean(billingChange?.not_billed)}
+        onClose={() => setBillingChange(null)}
+        onSaved={() => {
+          setBillingChange(null);
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.admin.studentDetail(studentId),
+          });
+          if (parentId) {
+            void queryClient.invalidateQueries({
+              queryKey: queryKeys.admin.familySiblingDiscount(parentId),
+            });
+          }
+        }}
+      />
       <HoldEnrollmentDialog
         enrollmentId={holding?.enrollment_id ?? null}
         studentName={studentName}

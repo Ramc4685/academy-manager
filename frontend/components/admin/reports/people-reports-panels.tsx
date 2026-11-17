@@ -22,6 +22,7 @@ import {
   studentsText,
   type RiskRow,
 } from "@/lib/people-reports-view";
+import { notBilledSuffix } from "@/components/admin/not-billed";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 import { Skeleton } from "@/components/ds/skeleton";
@@ -418,7 +419,8 @@ export function AttendanceRiskPanel() {
       ) : (
         <>
           <p className="mt-3 text-sm text-rally-ink" data-testid="people-report-attendance-risk-total">
-            {studentsText(view.atRisk)} at risk of {studentsText(view.students)} in a class.
+            {studentsText(view.atRisk)} at risk of {studentsText(view.students)} in a class
+            {notBilledSuffix(view.notBilled)}.
           </p>
           <h3 className="mt-4 text-sm font-semibold text-rally-ink">By class</h3>
           <RiskTable rows={view.byClass} kind="class" caption="At-risk students by class" />

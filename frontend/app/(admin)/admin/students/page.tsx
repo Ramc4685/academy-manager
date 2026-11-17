@@ -26,6 +26,7 @@ import {
 } from "@/components/ds/list-toolbar";
 import { Th } from "@/components/ds/dialog-chrome";
 import { duesChip } from "@/lib/people-status";
+import { notBilledSuffix } from "@/components/admin/not-billed";
 import {
   ALL_LIFECYCLES,
   OPERATIONAL_LIFECYCLES,
@@ -206,7 +207,9 @@ function SummaryCards({
       <Card p={20} accent="#10b981">
         <Overline>Active</Overline>
         <BigNum size={32}>{stat(() => counts.active ?? 0)}</BigNum>
-        <p className="mt-1 text-[11px] text-rally-subtle">Attending now</p>
+        <p className="mt-1 text-[11px] text-rally-subtle">
+          Attending now{notBilledSuffix(counts.not_billed)}
+        </p>
       </Card>
       <Card p={20} accent="#f59e0b">
         <Overline>At risk</Overline>

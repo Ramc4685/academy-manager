@@ -152,7 +152,7 @@ function invoicedBeforeSetting(): FamilySiblingDiscount {
   };
 }
 
-/** Ava on monthly invoices, Ben marked No charge. */
+/** Ava on monthly invoices, Ben not billed. */
 function oneChildOffTheRun(): FamilySiblingDiscount {
   return {
     period: "2026-11",
@@ -198,14 +198,14 @@ describe("a switched-on sibling family never goes silent", () => {
   it("says plainly why a class is off the monthly invoices", () => {
     const view = oneChildOffTheRun();
     expect(siblingBadgeLabel(view.enrollments[1], view)).toBe(
-      "Not on monthly invoices: marked No charge, so no sibling discount",
+      "Not on monthly invoices: not billed, so no sibling discount",
     );
     // Next month has nothing to promise Ava, so her badge says November was billed.
     expect(siblingBadgeLabel(view.enrollments[0], view)).toBe(
       "November already invoiced without the sibling discount",
     );
     expect(siblingFamilySummary(view, nameOf)).toBe(
-      "November was already invoiced without the sibling discount. Ben: not on monthly invoices (marked No charge), so no sibling discount.",
+      "November was already invoiced without the sibling discount. Ben: not on monthly invoices (not billed), so no sibling discount.",
     );
   });
 
@@ -218,6 +218,9 @@ describe("a switched-on sibling family never goes silent", () => {
       "Not on monthly invoices: tuition waived, so no sibling discount",
     );
     expect(label({ exclusion: "billing_type", billing_type: "Prepaid" })).toContain("billing type Prepaid");
+    expect(
+      label({ exclusion: "billing_type", billing_type: "NoCharge", not_billed_reason: "owner_child" }),
+    ).toBe("Not on monthly invoices: not billed (Owner's child), so no sibling discount");
     expect(label({ exclusion: "deferral" })).toContain("billing deferred this month");
     expect(label({ exclusion: "pending_cancellation" })).toContain("cancels before this month");
     expect(label({ exclusion: "skip_period" })).toContain("skipped this month");

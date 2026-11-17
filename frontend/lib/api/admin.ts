@@ -44,6 +44,8 @@ export interface AdminSessionView {
   amount_cents?: number | null;
   status: "scheduled" | "cancelled" | "completed";
   enrolled_count: number;
+  /** Of enrolled_count: children never invoiced (they still take a seat). */
+  not_billed_count?: number;
   waitlist_count: number;
   // Communication pack (#613) — optional per-session onboarding facts.
   whatsapp_group_link?: string | null;
@@ -205,6 +207,8 @@ export type EnrollmentStatus =
 
 export interface AdminEnrollmentView {
   enrollment_id: string;
+  /** Never invoiced; on the roster but out of the headcount. */
+  not_billed?: boolean;
   session_id: string;
   student_id: string;
   parent_id: string;
@@ -1074,6 +1078,7 @@ export interface AdminSessionEconomicsRow {
   title: string;
   coach_name: string | null;
   active_enrollment_count: number;
+  not_billed_enrollment_count?: number;
   paid_student_count: number;
   unpaid_student_count: number;
   monthly_fee_cents: number;
@@ -3063,6 +3068,7 @@ export interface AdminProjectedIncomeResponse {
   enrollment_count: number;
   autopay_enrollment_count: number;
   manual_enrollment_count: number;
+  not_billed_enrollment_count?: number;
   by_session: AdminProjectedIncomeSessionRow[];
   empty: boolean;
 }
@@ -3198,6 +3204,8 @@ export interface AdminAttendanceRiskResponse {
   by_coach: AdminCoachRiskRow[];
   students: number;
   at_risk: number;
+  /** Not-billed students, left out of the counts above. */
+  not_billed?: number;
 }
 
 export function getAttendanceRisk(): Promise<AdminAttendanceRiskResponse> {

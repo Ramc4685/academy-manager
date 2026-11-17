@@ -698,6 +698,8 @@ export interface PathwayDashboard {
     level_started_at: string;
   }[];
   unplaced_count: number;
+  /** Active not-billed students: in the lists, out of the counts. */
+  not_billed_count?: number;
   coaches: { coach_id: string; coach_name: string; skills_ticked: number }[];
 }
 

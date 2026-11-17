@@ -477,7 +477,7 @@ test.describe("Family billing", () => {
     });
     await expect(page.getByTestId("family-siblings-parent-1")).toHaveText("Siblings · 2");
     await expect(page.getByTestId("admin-family-sibling-summary")).toHaveText(
-      "September was already invoiced without the sibling discount. Hannah: not on monthly invoices (marked No charge), so no sibling discount.",
+      "September was already invoiced without the sibling discount. Hannah: not on monthly invoices (not billed), so no sibling discount.",
     );
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });

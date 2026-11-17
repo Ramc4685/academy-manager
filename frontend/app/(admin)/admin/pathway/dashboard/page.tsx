@@ -10,6 +10,7 @@ import {
 } from "@/lib/api/curriculum";
 import { levelSwatch } from "@/lib/level-color";
 import { queryKeys } from "@/lib/query/keys";
+import { notBilledSuffix } from "@/components/admin/not-billed";
 import { Card } from "@/components/ds/card";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { Skeleton } from "@/components/ds/skeleton";
@@ -102,6 +103,7 @@ function Dashboard({ data }: { data: PathwayDashboard }) {
           <p className="mt-3 text-xs text-rally-muted">
             Use this to plan classes: when a level fills up, open a new group.
             {data.unplaced_count > 0 && ` ${data.unplaced_count} active students are not placed yet.`}
+            {data.not_billed_count ? ` Counts leave out ${data.not_billed_count} not billed.` : ""}
           </p>
         </Card>
         <LevelUpRuleCard data={data} />
