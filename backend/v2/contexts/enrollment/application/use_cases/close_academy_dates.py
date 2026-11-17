@@ -46,6 +46,7 @@ from backend.v2.shared.http.errors import DomainError
 
 log = logging.getLogger(__name__)
 
+
 class ScheduledOccurrenceRange(Protocol):
     async def list_upcoming_scheduled_between(
         self, *, start_at: datetime, end_at: datetime
