@@ -9,6 +9,8 @@ Admin Messages has a new Delivery problems panel: the academy's own people whose
 
 Push now has an event catalogue. The four events that already pushed (class date cancelled, waitlist offer, urgent announcement, dues reminder) are unchanged. Three new opt-in events push the recipients' phones: a direct message from the academy, an academy broadcast, and a routine class announcement. Broadcasts and announcements skip anyone who turned notifications off. `PUSH_DELIVERY_ENABLED` stays the global switch.
 
+The session email campaign no longer calls its enrolled students "families" (#1029): it now says it reaches the families of N students, one email per family, since siblings share a parent email.
+
 ## Deploy notes
 No migration; existing campaign documents read as inline. Optional env vars, all off by default: `V2_CAMPAIGN_BACKGROUND_SEND_ENABLED=true` turns the campaign queue on; `V2_PUSH_EXTRA_EVENTS` is a comma list of `direct_message`, `academy_broadcast` and `class_announcement`. Stacked on the messaging-reliability branch; merge that first.
 

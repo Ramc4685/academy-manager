@@ -32,6 +32,7 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { formatAcademyDate, formatAcademyDateTime } from "@/lib/format/academy-time";
+import { sessionAudienceLabel } from "@/lib/format/campaign-audience";
 
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { DeliveryProblemsPanel } from "@/components/admin/delivery-problems-panel";
@@ -834,12 +835,13 @@ function EmailCampaignComposer() {
     (audienceType === "academy" || sessionId.length > 0);
 
   // #838: say who this reaches before it goes. A session send reaches the
-  // families on that roster; an academy send reaches every parent.
+  // families on that roster (one email per family, #1029); an academy send
+  // reaches every parent.
   const selectedSession = sessions.find((s) => s.session_id === sessionId);
   const audienceLabel =
     audienceType === "session"
       ? selectedSession
-        ? `${selectedSession.enrolled_count === 1 ? "1 family" : `${selectedSession.enrolled_count} families`} on ${selectedSession.title}`
+        ? sessionAudienceLabel(selectedSession.enrolled_count, selectedSession.title)
         : "the selected session"
       : recipientLabel(parentCount);
 
