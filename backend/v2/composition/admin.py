@@ -91,6 +91,7 @@ from backend.v2.composition.scheduled_cancellations import (
     compose_process_scheduled_cancellation_actions,
 )
 from backend.v2.composition.session_announcements import compose_announcements
+from backend.v2.composition.started_occurrences import insert_started_today, occurrence_fields
 from backend.v2.composition.student_autopay import compose_get_admin_student
 from backend.v2.composition.waiver_receipt_email import compose_waiver_receipt_notifier
 from backend.v2.contexts.billing.application.admin_money import (
@@ -2609,23 +2610,6 @@ def compose_admin(
             },
         )
 
-    def _occurrence_insert_doc(academy_id: str, row: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "academy_id": academy_id,
-            "occurrence_id": row["occurrence_id"],
-            "session_id": row["session_id"],
-            "template_session_id": row["template_session_id"],
-            "start_at": row["start_at"],
-            "end_at": row["end_at"],
-            "status": row["status"],
-            "scheduled_coach_id": row["scheduled_coach_id"],
-            "actual_coach_id": None,
-            "substitute_coach_id": None,
-            "assistant_coach_ids": row["assistant_coach_ids"],
-            "is_billable": True,
-            "is_payable": True,
-        }
-
     async def maintain_session_occurrences(session) -> None:
         from backend.v2.shared.tenancy import current_academy_id
 
@@ -2705,32 +2689,7 @@ def compose_admin(
 
         for row in candidates:
             if row["start_at"] < now:
-                # Started earlier today: create it if missing (a class made after
-                # its start time), but never rewrite an existing row (it may be
-                # cancelled or have a substitute already). Any row for this class
-                # earlier today (e.g. before a time edit) blocks the insert, so a
-                # day never gets two payable classes.
-                local_day = (
-                    row["start_at"]
-                    .astimezone(ZoneInfo(zone_name))
-                    .replace(hour=0, minute=0, second=0, microsecond=0)
-                )
-                if await db["session_occurrences"].find_one(
-                    {
-                        "academy_id": academy_id,
-                        "$or": [
-                            {"session_id": session.session_id},
-                            {"template_session_id": session.session_id},
-                        ],
-                        "start_at": {"$gte": local_day, "$lt": now},
-                    }
-                ):
-                    continue
-                await db["session_occurrences"].update_one(
-                    {"academy_id": academy_id, "occurrence_id": row["occurrence_id"]},
-                    {"$setOnInsert": _occurrence_insert_doc(academy_id, row)},
-                    upsert=True,
-                )
+                await insert_started_today(db, academy_id, session.session_id, row, zone_name, now)
                 continue
             existing_doc = existing.get(str(row["occurrence_id"]))
             if existing_doc is not None and not await _is_clean_future_occurrence(
@@ -2740,19 +2699,7 @@ def compose_admin(
             await db["session_occurrences"].update_one(
                 {"academy_id": academy_id, "occurrence_id": row["occurrence_id"]},
                 {
-                    "$set": {
-                        "session_id": row["session_id"],
-                        "template_session_id": row["template_session_id"],
-                        "start_at": row["start_at"],
-                        "end_at": row["end_at"],
-                        "status": row["status"],
-                        "scheduled_coach_id": row["scheduled_coach_id"],
-                        "actual_coach_id": None,
-                        "substitute_coach_id": None,
-                        "assistant_coach_ids": row["assistant_coach_ids"],
-                        "is_billable": True,
-                        "is_payable": True,
-                    },
+                    "$set": occurrence_fields(row),
                     "$setOnInsert": {
                         "academy_id": academy_id,
                         "occurrence_id": row["occurrence_id"],
