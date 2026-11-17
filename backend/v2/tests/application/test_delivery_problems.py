@@ -52,6 +52,7 @@ def _sup(email: str, reason: SuppressionReason, academy: str | None) -> EmailSup
         last_seen_at=T,
         bounce_subtype="General",
         first_seen_academy_id=academy,
+        last_seen_academy_id=academy,
     )
 
 

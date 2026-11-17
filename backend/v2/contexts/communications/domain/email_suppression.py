@@ -84,6 +84,11 @@ class EmailSuppression:
     provider_event_id: str | None = None
     #: Best-effort audit attribution only — NEVER a query filter.
     first_seen_academy_id: str | None = None
+    #: The academy whose event set the current ``reason`` and ``last_seen_at``,
+    #: or ``None`` when unknown (webhook with no tenant, legacy rows, or a later
+    #: event that did not set the reason). Gates the academy-facing detail in
+    #: Delivery problems (L11); still never a send-gate filter.
+    last_seen_academy_id: str | None = None
     released_at: datetime | None = None
     released_by: str | None = None
 

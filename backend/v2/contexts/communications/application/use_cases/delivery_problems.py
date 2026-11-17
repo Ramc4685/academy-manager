@@ -5,8 +5,8 @@ per address, shared by every academy. So the academy view is limited twice:
 
 * only the academy's own people are listed (the list is intersected with the
   academy's members, and the store is asked for those addresses alone);
-* the reason and dates are shown only when the suppression was first recorded
-  while this academy was in scope (``first_seen_academy_id``). Otherwise the
+* the reason and dates are shown only when the event that set the current
+  reason was recorded under this academy (``last_seen_academy_id``). Otherwise the
   row says only that the address is not receiving email, so an admin cannot
   learn that a family bounced or complained about another academy's mail.
 
@@ -72,7 +72,7 @@ class GetDeliveryProblems:
         for row in rows:
             if row.email not in members:
                 continue
-            ours = row.first_seen_academy_id == academy_id
+            ours = row.last_seen_academy_id == academy_id
             suppressed.append(
                 SuppressedMember(
                     user_id=members[row.email],
