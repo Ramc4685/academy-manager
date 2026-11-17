@@ -229,8 +229,9 @@ def _tag_event(event: Event, hint: Hint) -> Event | None:
     """Event processor: read correlation contextvars at event time, and strip
     link credentials out of the request URL."""
     request = event.get("request")
-    if isinstance(request, dict) and isinstance(request.get("url"), str):
-        parts = urlsplit(request["url"])
+    url = request.get("url") if isinstance(request, dict) else None
+    if isinstance(request, dict) and isinstance(url, str):
+        parts = urlsplit(url)
         redacted = redact_secret_path(parts.path)
         if redacted != parts.path:
             request["url"] = urlunsplit((parts.scheme, parts.netloc, redacted, "", ""))
