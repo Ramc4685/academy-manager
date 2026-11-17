@@ -285,6 +285,10 @@ class DeliveryRepository(Protocol):
         never hold the same row (L11 item 7)."""
         ...
 
+    async def list_failed(self, *, limit: int) -> list[Delivery]:
+        """The academy's most recent FAILED campaign deliveries (L11 item 3)."""
+        ...
+
 
 class DigestSendRepository(Protocol):
     """Persistence + claim-based idempotency for coach daily digests.
@@ -352,6 +356,11 @@ class SuppressionRepository(Protocol):
     async def get_active(self, email: str) -> EmailSuppression | None: ...
 
     async def list_active(self, *, limit: int = 100) -> list[EmailSuppression]: ...
+
+    async def list_active_for(self, emails: list[str]) -> list[EmailSuppression]:
+        """Active suppressions among ``emails`` (normalized) only, so an academy
+        view never reads the rest of the global list (L11 item 3)."""
+        ...
 
     async def release(self, *, email: str, released_by: str) -> bool:
         """Deactivate a suppression. Returns False when there was none."""

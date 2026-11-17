@@ -49,6 +49,12 @@ class MongoDeliveryRepository(TenantScopedRepository, DeliveryRepository):
         )
         return self._from_doc(doc) if doc else None
 
+    async def list_failed(self, *, limit: int) -> list[Delivery]:
+        cursor = self._find_many(
+            {"status": str(DeliveryStatus.FAILED)}, sort=[("_id", -1)], limit=limit
+        )
+        return [self._from_doc(d) async for d in cursor]
+
     @staticmethod
     def _to_doc(d: Delivery) -> dict[str, Any]:
         from backend.v2.shared.tenancy.context import current_academy_id

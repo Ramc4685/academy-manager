@@ -15720,6 +15720,30 @@
         "title": "DeleteExpenseRequest",
         "type": "object"
       },
+      "DeliveryProblemsView": {
+        "properties": {
+          "failed": {
+            "items": {
+              "$ref": "#/components/schemas/FailedDeliveryView"
+            },
+            "title": "Failed",
+            "type": "array"
+          },
+          "suppressed": {
+            "items": {
+              "$ref": "#/components/schemas/SuppressedMemberView"
+            },
+            "title": "Suppressed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "suppressed",
+          "failed"
+        ],
+        "title": "DeliveryProblemsView",
+        "type": "object"
+      },
       "DenyMakeupRequestBody": {
         "properties": {
           "reason": {
@@ -16941,6 +16965,53 @@
           "outcome"
         ],
         "title": "EnrollmentStopResultView",
+        "type": "object"
+      },
+      "FailedDeliveryView": {
+        "properties": {
+          "campaign_id": {
+            "title": "Campaign Id",
+            "type": "string"
+          },
+          "delivery_id": {
+            "title": "Delivery Id",
+            "type": "string"
+          },
+          "failed_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed Reason"
+          },
+          "recipient_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient Email"
+          },
+          "recipient_user_id": {
+            "title": "Recipient User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "delivery_id",
+          "campaign_id",
+          "recipient_user_id",
+          "recipient_email",
+          "failed_reason"
+        ],
+        "title": "FailedDeliveryView",
         "type": "object"
       },
       "FailedPaymentRowDto": {
@@ -29461,6 +29532,32 @@
         "title": "ReleaseResponse",
         "type": "object"
       },
+      "ReleaseSuppressionRequest": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "ReleaseSuppressionRequest",
+        "type": "object"
+      },
+      "ReleaseSuppressionResponse": {
+        "properties": {
+          "released": {
+            "title": "Released",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "released"
+        ],
+        "title": "ReleaseSuppressionResponse",
+        "type": "object"
+      },
       "RemoveEnrollmentRequest": {
         "properties": {
           "effective_date": {
@@ -32488,6 +32585,52 @@
           "created_at"
         ],
         "title": "SupportImpersonationResponse",
+        "type": "object"
+      },
+      "SuppressedMemberView": {
+        "properties": {
+          "bounce_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bounce Subtype"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "format": "date-time",
+            "title": "Last Seen At",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "releasable": {
+            "title": "Releasable",
+            "type": "boolean"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "email",
+          "reason",
+          "bounce_subtype",
+          "last_seen_at",
+          "releasable"
+        ],
+        "title": "SuppressedMemberView",
         "type": "object"
       },
       "SuppressionListResponse": {
@@ -38988,6 +39131,91 @@
         "summary": "Repair Coach Pay Rate Window",
         "tags": [
           "admin.coach-pay-rates"
+        ]
+      }
+    },
+    "/api/v2/admin/comms/delivery-problems": {
+      "get": {
+        "description": "Suppressed addresses and failed campaign sends for this academy's own\npeople only; the global suppression list is never exposed (L11 item 3).",
+        "operationId": "get_delivery_problems_api_v2_admin_comms_delivery_problems_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryProblemsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Delivery Problems",
+        "tags": [
+          "admin.comms"
+        ]
+      }
+    },
+    "/api/v2/admin/comms/delivery-problems/release": {
+      "post": {
+        "operationId": "release_delivery_suppression_api_v2_admin_comms_delivery_problems_release_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseSuppressionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseSuppressionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release Delivery Suppression",
+        "tags": [
+          "admin.comms"
         ]
       }
     },

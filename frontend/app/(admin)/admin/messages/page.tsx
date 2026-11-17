@@ -34,6 +34,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { formatAcademyDate, formatAcademyDateTime } from "@/lib/format/academy-time";
 
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { DeliveryProblemsPanel } from "@/components/admin/delivery-problems-panel";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -305,6 +306,11 @@ function AdminMessagesContent() {
       <Card p={20} id="campaign">
         <LaneHeader index="03" title="Email campaign" />
         <EmailCampaignComposer />
+      </Card>
+
+      <Card p={20} id="delivery-problems">
+        <LaneHeader index="04" title="Delivery problems" />
+        <DeliveryProblemsPanel />
       </Card>
     </section>
   );

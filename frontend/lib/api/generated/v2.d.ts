@@ -1153,6 +1153,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/comms/delivery-problems": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Delivery Problems
+         * @description Suppressed addresses and failed campaign sends for this academy's own
+         *     people only; the global suppression list is never exposed (L11 item 3).
+         */
+        get: operations["get_delivery_problems_api_v2_admin_comms_delivery_problems_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/comms/delivery-problems/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Release Delivery Suppression */
+        post: operations["release_delivery_suppression_api_v2_admin_comms_delivery_problems_release_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/comms/digests/log": {
         parameters: {
             query?: never;
@@ -13424,6 +13462,13 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** DeliveryProblemsView */
+        DeliveryProblemsView: {
+            /** Failed */
+            failed: components["schemas"]["FailedDeliveryView"][];
+            /** Suppressed */
+            suppressed: components["schemas"]["SuppressedMemberView"][];
+        };
         /** DenyMakeupRequestBody */
         DenyMakeupRequestBody: {
             /** Reason */
@@ -13769,6 +13814,19 @@ export interface components {
             outcome: "dropped" | "failed";
             /** Session Id */
             session_id: string;
+        };
+        /** FailedDeliveryView */
+        FailedDeliveryView: {
+            /** Campaign Id */
+            campaign_id: string;
+            /** Delivery Id */
+            delivery_id: string;
+            /** Failed Reason */
+            failed_reason: string | null;
+            /** Recipient Email */
+            recipient_email: string | null;
+            /** Recipient User Id */
+            recipient_user_id: string;
         };
         /** FailedPaymentRowDto */
         FailedPaymentRowDto: {
@@ -18295,6 +18353,16 @@ export interface components {
             /** Released */
             released: boolean;
         };
+        /** ReleaseSuppressionRequest */
+        ReleaseSuppressionRequest: {
+            /** Email */
+            email: string;
+        };
+        /** ReleaseSuppressionResponse */
+        ReleaseSuppressionResponse: {
+            /** Released */
+            released: boolean;
+        };
         /** RemoveEnrollmentRequest */
         RemoveEnrollmentRequest: {
             /**
@@ -19395,6 +19463,24 @@ export interface components {
             status: string;
             /** Target User Id */
             target_user_id: string;
+        };
+        /** SuppressedMemberView */
+        SuppressedMemberView: {
+            /** Bounce Subtype */
+            bounce_subtype: string | null;
+            /** Email */
+            email: string;
+            /**
+             * Last Seen At
+             * Format: date-time
+             */
+            last_seen_at: string;
+            /** Reason */
+            reason: string;
+            /** Releasable */
+            releasable: boolean;
+            /** User Id */
+            user_id: string;
         };
         /** SuppressionListResponse */
         SuppressionListResponse: {
@@ -22494,6 +22580,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminCoachPayRateView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_delivery_problems_api_v2_admin_comms_delivery_problems_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryProblemsView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    release_delivery_suppression_api_v2_admin_comms_delivery_problems_release_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReleaseSuppressionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseSuppressionResponse"];
                 };
             };
             /** @description Validation Error */

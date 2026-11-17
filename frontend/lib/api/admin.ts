@@ -4109,6 +4109,20 @@ export function getCoachDigestLog(limit = 20): Promise<CoachDigestLogView> {
   });
 }
 
+/** L11: suppressed addresses and failed campaign sends, this academy's people only. */
+export type DeliveryProblemsView = components["schemas"]["DeliveryProblemsView"];
+
+export function getDeliveryProblems(): Promise<DeliveryProblemsView> {
+  return apiFetch<DeliveryProblemsView>("/admin/comms/delivery-problems", { method: "GET" });
+}
+
+export function releaseDeliverySuppression(email: string): Promise<{ released: boolean }> {
+  return apiFetch<{ released: boolean }>("/admin/comms/delivery-problems/release", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
 /** AI usage meter (plan 2026-11-04 Phase 2, slice A3): this month's drafts against the plan's cap. */
 export interface AiUsage {
   used: number;

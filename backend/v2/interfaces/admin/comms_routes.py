@@ -1,14 +1,23 @@
-"""Admin comms routes — broadcast + DM + inbox + email campaigns + coach digest."""
+"""Admin comms routes — broadcast + DM + inbox + email campaigns + coach digest +
+delivery problems."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from dataclasses import asdict
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 
 from backend.v2.contexts.communications.application.errors import (
     AcademyAudience,
     DuplicateCampaignError,
     EmptyAudienceError,
     SessionAudience,
+)
+from backend.v2.contexts.communications.application.use_cases.delivery_problems import (
+    NotAMember,
+    NotReleasable,
 )
 from backend.v2.contexts.communications.application.use_cases.send_campaign import (
     SendCampaignCommand,
@@ -194,6 +203,77 @@ async def get_coach_digest_log(
             for row in rows
         ]
     )
+
+
+class SuppressedMemberView(BaseModel):
+    user_id: str
+    email: str
+    reason: str
+    bounce_subtype: str | None
+    last_seen_at: datetime
+    releasable: bool
+
+
+class FailedDeliveryView(BaseModel):
+    delivery_id: str
+    campaign_id: str
+    recipient_user_id: str
+    recipient_email: str | None
+    failed_reason: str | None
+
+
+class DeliveryProblemsView(BaseModel):
+    suppressed: list[SuppressedMemberView]
+    failed: list[FailedDeliveryView]
+
+
+class ReleaseSuppressionRequest(BaseModel):
+    email: str
+
+
+class ReleaseSuppressionResponse(BaseModel):
+    released: bool
+
+
+@router.get("/comms/delivery-problems", response_model=DeliveryProblemsView)
+async def get_delivery_problems(
+    request: Request,
+    limit: int = 100,
+    claims: AuthClaims = Depends(require_persona("admin")),
+) -> DeliveryProblemsView:
+    """Suppressed addresses and failed campaign sends for this academy's own
+    people only; the global suppression list is never exposed (L11 item 3)."""
+    result = await request.app.state.delivery_problems.execute(limit=limit)
+    return DeliveryProblemsView(
+        suppressed=[SuppressedMemberView(**asdict(row)) for row in result.suppressed],
+        failed=[
+            FailedDeliveryView(
+                delivery_id=d.delivery_id,
+                campaign_id=d.campaign_id,
+                recipient_user_id=d.recipient_user_id,
+                recipient_email=d.recipient_email,
+                failed_reason=d.failed_reason,
+            )
+            for d in result.failed
+        ],
+    )
+
+
+@router.post("/comms/delivery-problems/release", response_model=ReleaseSuppressionResponse)
+async def release_delivery_suppression(
+    payload: ReleaseSuppressionRequest,
+    request: Request,
+    claims: AuthClaims = Depends(require_persona("admin")),
+) -> ReleaseSuppressionResponse:
+    try:
+        released = await request.app.state.release_member_suppression.execute(
+            email=payload.email, released_by=claims.user_id
+        )
+    except NotAMember as exc:
+        raise HTTPException(status_code=404, detail="Not found") from exc
+    except NotReleasable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ReleaseSuppressionResponse(released=released)
 
 
 def _message_view(m: Message, viewer_id: str) -> AdminMessageView:
