@@ -46,8 +46,8 @@ def test_admin_session_enrolled_count_counts_seat_holding_rows() -> None:
     child. The display count and the seat contract must agree.
     """
     source = _ADMIN.read_text()
-    marker = "enrolled_count = await enrollments_r.collection.count_documents("
-    assert marker in source
+    assert "enrolled_count = await enrollments_r.collection.count_documents(seats)" in source
+    marker = "seats = {"
     window = source[source.index(marker) : source.index(marker) + 300]
     assert '"status": {"$in": sorted(SEAT_HOLDING)}' in window
     assert '"status": "active",' not in window

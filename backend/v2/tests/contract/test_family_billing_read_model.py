@@ -323,6 +323,7 @@ async def test_full_family_view(db, acad) -> None:
     assert header["enrollment_counts"] == {
         "active": 1,
         "held": 0,
+        "not_billed": 0,
         "paused": 1,
         "cancelled": 0,
     }

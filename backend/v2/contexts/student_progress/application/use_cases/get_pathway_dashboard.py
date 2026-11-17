@@ -99,6 +99,8 @@ class PathwayDashboard(BaseModel):
     almost_there: list[AlmostThereStudent]
     stuck: list[StuckStudent]
     unplaced_count: int
+    #: Active not-billed students: still in the skill lists, out of the counts.
+    not_billed_count: int = 0
 
 
 class GetPathwayDashboard:
@@ -128,6 +130,7 @@ class GetPathwayDashboard:
         names = {s.student_id: s.student_name for s in req.students}
         parents = {s.student_id: s.parent_id for s in req.students}
         student_ids = list(names)
+        not_billed = {s.student_id for s in req.students if s.not_billed}
         program_levels = sorted(
             await self._levels.list_levels_for_program(req.program_id),
             key=lambda lv: lv.sequence,  # type: ignore[attr-defined]
@@ -160,6 +163,7 @@ class GetPathwayDashboard:
             if cert.program_id == req.program_id and _aware(cert.issued_at) >= month_start
         )
 
+        placed = {row.student_id for row in active}
         rows_by_level: dict[str, list[str]] = {}
         for row in active:
             rows_by_level.setdefault(row.level_id, []).append(row.student_id)
@@ -228,7 +232,10 @@ class GetPathwayDashboard:
                     level_id=lv.level_id,  # type: ignore[attr-defined]
                     name=lv.name,  # type: ignore[attr-defined]
                     sequence=lv.sequence,  # type: ignore[attr-defined]
-                    player_count=len(rows_by_level.get(lv.level_id, [])),  # type: ignore[attr-defined]
+                    # Headcount: not-billed children left out.
+                    player_count=len(
+                        set(rows_by_level.get(lv.level_id, [])) - not_billed  # type: ignore[attr-defined]
+                    ),
                     requires_admin_approval=bool(getattr(lv, "requires_admin_approval", False)),
                     color=getattr(lv, "display_color", None),
                 )
@@ -240,7 +247,10 @@ class GetPathwayDashboard:
             stuck=sorted(
                 stuck, key=lambda s: (s.last_win_at or s.level_started_at, s.student_name)
             ),
-            unplaced_count=len(student_ids) - len(active),
+            unplaced_count=sum(
+                1 for sid in student_ids if sid not in not_billed and sid not in placed
+            ),
+            not_billed_count=len(not_billed),
         )
 
 

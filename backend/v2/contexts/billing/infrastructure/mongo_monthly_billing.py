@@ -82,6 +82,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo impo
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     class_fee_cents_for_period,
 )
+from backend.v2.shared.billing_type import is_not_billed
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.observability.ops_alerts import capture_message
 from backend.v2.shared.tenancy import current_academy_id
@@ -109,8 +110,6 @@ MONTHLY_KEY_STATUS_REPAIR_FAILED = "repair_failed"
 #: be skipped (#651), so ``active`` is the one status that is invoiced.
 MONTHLY_RUN_ENROLLMENT_STATUSES: tuple[str, ...] = ("active", "paused")
 MONTHLY_INVOICED_ENROLLMENT_STATUS = "active"
-#: ``billing_type`` values the monthly run invoices (missing reads "standard").
-MONTHLY_INVOICED_BILLING_TYPES: frozenset[str] = frozenset({"", "standard", "monthly", "manual"})
 MONTHLY_KEY_STATUS_REVIEWED = "reviewed"
 
 
@@ -1110,8 +1109,7 @@ class MongoMonthlyBillingGenerator:
                     )
                 )
                 continue
-            billing_type = str(enrollment.get("billing_type") or "standard").lower()
-            if billing_type not in MONTHLY_INVOICED_BILLING_TYPES:
+            if is_not_billed(enrollment):
                 skipped_no_charge += 1
                 continue
             existing = await self._repo._find_one(
@@ -1799,6 +1797,14 @@ async def monthly_skip_reason(
             return ("pending_cancellation", pending_period)
     if period in set(enrollment.get("skip_periods") or []):
         return ("skip_period", None)
+    # "Start billing" after "Not billed": the months in between stay unbilled
+    # even when a past period is generated again. A row with no mark time
+    # (imported NoCharge) was never billed before the restart.
+    started_at = _coerce_datetime(enrollment.get("billing_started_at"))
+    if started_at is not None and period <= _local_period_label(started_at, academy_timezone):
+        marked_at = _coerce_datetime(enrollment.get("not_billed_at"))
+        if marked_at is None or period >= _local_period_label(marked_at, academy_timezone):
+            return ("skip_period", None)
     return None
 
 
@@ -2126,6 +2132,12 @@ async def _sibling_preview_row(
         "billing_type": (
             str(enrollment.get("billing_type") or "") if exclusion == "billing_type" else None
         ),
+        # Why the owner marked it not billed (the badge says "not billed (Owner's child)").
+        "not_billed_reason": (
+            str(enrollment.get("not_billed_reason") or "") or None
+            if exclusion == "billing_type"
+            else None
+        ),
     }
 
 
@@ -2393,7 +2405,7 @@ async def _family_exclusion(
     status = str(row.get("status") or "")
     if status != MONTHLY_INVOICED_ENROLLMENT_STATUS:
         return ("paused" if status == "paused" else "not_active"), 0
-    if str(row.get("billing_type") or "standard").lower() not in MONTHLY_INVOICED_BILLING_TYPES:
+    if is_not_billed(row):
         return "billing_type", 0
     skip = await monthly_skip_reason(
         db, enrollment=row, period=period, today=today, academy_timezone=academy_timezone

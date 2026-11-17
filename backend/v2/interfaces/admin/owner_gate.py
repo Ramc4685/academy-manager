@@ -96,6 +96,8 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("POST", f"{_ADMIN}/payments/{{payment_id}}/discount"),
         ("PUT", f"{_ADMIN}/enrollments/{{enrollment_id}}/tuition-discount"),
         ("DELETE", f"{_ADMIN}/enrollments/{{enrollment_id}}/tuition-discount"),
+        # enrollment_billing_routes.py — "Not billed" / "Start billing".
+        ("PUT", f"{_ADMIN}/enrollments/{{enrollment_id}}/billing"),
         ("POST", f"{_ADMIN}/payments/{{payment_id}}/undo-paid"),
         # Voiding a payment changes every money report it was counted in
         # (issue #619), so it sits at the same tier as refund/discount/undo.

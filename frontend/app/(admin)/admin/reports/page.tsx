@@ -47,6 +47,7 @@ import {
   warningLine,
 } from "@/lib/month-close-view";
 import type { MonthCloseTile } from "@/lib/month-close-view";
+import { notBilledSuffix } from "@/components/admin/not-billed";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
@@ -896,6 +897,11 @@ export default function AdminMonthClosePage() {
                     value={formatMoney(projected.manual_cents)}
                   />
                 </dl>
+                {projected.not_billed_enrollment_count ? (
+                  <p className="mt-2 text-xs text-rally-muted" data-testid="projected-income-not-billed">
+                    Leaves out {formatInteger(projected.not_billed_enrollment_count)} not billed.
+                  </p>
+                ) : null}
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[360px] text-left text-sm">

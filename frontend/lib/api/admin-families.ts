@@ -70,7 +70,7 @@ export interface FamilyHeader {
   autopay: FamilyAutopay;
   registration: FamilyRegistration;
   email_delivery?: FamilyEmailDelivery;
-  enrollment_counts: { active: number; paused: number; cancelled: number };
+  enrollment_counts: { active: number; paused: number; cancelled: number; not_billed?: number };
 }
 
 export interface FamilyEnrollment {
@@ -91,6 +91,9 @@ export interface FamilyEnrollment {
   recurring_discount: Record<string, unknown> | null;
   resume_on: string | null;
   actions: "recurring_discount"[];
+  not_billed?: boolean;
+  not_billed_reason?: string | null;
+  not_billed_note?: string | null;
 }
 
 export interface FamilyStudent {
@@ -291,6 +294,8 @@ export interface SiblingDiscountEnrollment {
   exclusion: SiblingExclusion | null;
   /** The class's own billing type, only when that left it out. */
   billing_type: string | null;
+  /** Set when the owner marked the class not billed. */
+  not_billed_reason?: string | null;
 }
 
 export interface SiblingDiscountPeriod {
@@ -515,6 +520,8 @@ export interface FamilyIndexSummary {
    * only when money is visible). Optional: older responses omit it. */
   preset_counts?: Partial<Record<string, number>>;
   warnings: string[];
+  /** Families off every tile only because their children are all not billed. */
+  not_billed_families?: number;
 }
 
 export interface FamilyIndexParams {

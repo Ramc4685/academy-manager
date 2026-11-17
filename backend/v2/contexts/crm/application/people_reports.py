@@ -384,6 +384,8 @@ class RiskStudent:
     student_id: str
     state: str
     live_session_ids: tuple[str, ...]
+    #: Every live class is not billed: not headcount, counted on its own.
+    not_billed: bool = False
 
 
 @dataclass(frozen=True)
@@ -445,6 +447,8 @@ class AttendanceRisk:
     #: Distinct students holding any seat, and how many of them are at_risk.
     students: int
     at_risk: int
+    #: Seated students left out above because every class is not billed.
+    not_billed: int = 0
 
 
 def _rate(part: int, whole: int) -> float | None:
@@ -471,8 +475,12 @@ def summarize_attendance_risk(
     at_risk_members: dict[str, set[str]] = {}
     seated: set[str] = set()
     flagged: set[str] = set()
+    not_billed: set[str] = set()
     for student in facts.students:
         if not student.live_session_ids:
+            continue
+        if student.not_billed:
+            not_billed.add(student.student_id)
             continue
         seated.add(student.student_id)
         risky = student.state == AT_RISK_STATE
@@ -531,6 +539,7 @@ def summarize_attendance_risk(
         by_coach=tuple(coach_rows),
         students=len(seated),
         at_risk=len(flagged),
+        not_billed=len(not_billed),
     )
 
 

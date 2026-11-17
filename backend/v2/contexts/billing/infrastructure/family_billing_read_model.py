@@ -53,6 +53,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_re
     academy_card_route,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoPaymentRepository
+from backend.v2.shared.billing_type import is_not_billed
 from backend.v2.shared.tenancy import current_academy_id
 
 log = logging.getLogger(__name__)
@@ -356,6 +357,9 @@ class MongoFamilyBillingReadModel:
             recurring_discount=discount,
             resume_on=_to_date((deferral or {}).get("resume_on")),
             class_fee_cents=session_amount_cents(session) if session else None,
+            not_billed=is_not_billed(e),
+            not_billed_reason=_opt_str(e.get("not_billed_reason")),
+            not_billed_note=_opt_str(e.get("not_billed_note")),
         )
 
     @staticmethod

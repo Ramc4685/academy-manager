@@ -7,6 +7,7 @@ import type { AdminFamilyBillingView } from "@/lib/api/admin-families";
 import { formatCents, formatInstantDay } from "@/lib/money";
 
 import { describeCardDeclineCode } from "@/lib/people-status";
+import { notBilledSuffix } from "@/components/admin/not-billed";
 
 import {
   autopayToggle,
@@ -216,7 +217,7 @@ export function FamilyHeader({
           overline="Enrollments"
           testId="family-enrollments"
           big={String(header.enrollment_counts.active + header.enrollment_counts.paused)}
-          sub={`${header.enrollment_counts.active} active · ${header.enrollment_counts.paused} paused`}
+          sub={`${header.enrollment_counts.active} active · ${header.enrollment_counts.paused} paused${notBilledSuffix(header.enrollment_counts.not_billed)}`}
         />
       </div>
       {/* #929: refunds used to be invisible here; the family totals say what came back. */}

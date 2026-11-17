@@ -862,6 +862,7 @@ async def test_session_economics_prorates_monthly_fee_and_allocates_costs() -> N
             "title": "Wednesday 5:45 PM Beginner",
             "coach_name": "Kishore",
             "active_enrollment_count": 1,
+            "not_billed_enrollment_count": 0,
             "paid_student_count": 1,
             "unpaid_student_count": 0,
             "monthly_fee_cents": 60_000,

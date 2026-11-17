@@ -283,6 +283,9 @@ class SkillBoardStudentRef(BaseModel):
     student_name: str
     # Only the pathway dashboard fills this: its row actions message the family.
     parent_id: str | None = None
+    #: Only the pathway dashboard fills this: a not-billed child keeps its skill
+    #: rows but is left out of the level headcounts.
+    not_billed: bool = False
 
 
 class SkillBoardCell(BaseModel):

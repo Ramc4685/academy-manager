@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 
+import { notBilledReasonText } from "@/components/admin/not-billed";
 import { Chip } from "@/components/ds";
 import {
   fetchFamilySiblingDiscount,
@@ -33,9 +34,11 @@ export function isSiblingFamily(view: FamilySiblingDiscount): boolean {
 function exclusionText(row: SiblingDiscountEnrollment): string {
   switch (row.exclusion) {
     case "billing_type": {
+      const why = notBilledReasonText(row.not_billed_reason);
+      if (why) return `not billed (${why})`;
       // The only non-monthly types on record are the importer's NoCharge and Waived.
       const type = (row.billing_type ?? "").toLowerCase().replace(/[_\s-]/g, "");
-      if (type === "nocharge") return "marked No charge";
+      if (type === "nocharge") return "not billed";
       if (type === "waived") return "tuition waived";
       return row.billing_type ? `billing type ${row.billing_type}` : "billed outside the monthly run";
     }

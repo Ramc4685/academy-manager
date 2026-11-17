@@ -156,6 +156,9 @@ class AdminFamilyIndexSummary(_View):
     #: Families each non-scope preset chip keeps, keyed by preset id
     #: (``no_card``; ``overdue`` only when money is visible).
     preset_counts: dict[str, int] = Field(default_factory=dict)
+    #: Families left off every scope tile because their enrolled children are
+    #: all not billed ("+N not billed" beside the tiles).
+    not_billed_families: int = 0
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -277,6 +280,7 @@ def summary_view(
         counts_by_stage=summary.counts_by_stage,
         presets=[p for p in VIEW_PRESETS if money_visible or not p.money],
         preset_counts=_preset_counts(summary, money_visible=money_visible),
+        not_billed_families=summary.not_billed_families,
         warnings=list(summary.warnings),
     )
 

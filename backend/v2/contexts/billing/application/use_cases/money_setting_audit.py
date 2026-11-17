@@ -39,6 +39,7 @@ MoneySettingAction = Literal[
     "referral_program_changed",
     "sibling_discount_changed",
     "payroll_settings_changed",
+    "enrollment_billing_changed",
 ]
 
 
@@ -63,6 +64,7 @@ class RecordMoneySettingChange:
         before: dict[str, Any],
         after: dict[str, Any],
         reason: str | None = None,
+        parent_id: str | None = None,
     ) -> bool:
         """Return ``True`` when the entry landed, ``False`` when it did not."""
         if before == after:
@@ -76,6 +78,7 @@ class RecordMoneySettingChange:
                     actor_id=actor_id,
                     at=self._now(),
                     reason=reason,
+                    parent_id=parent_id,
                     before=before,
                     after=after,
                 )

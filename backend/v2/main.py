@@ -51,6 +51,7 @@ from backend.v2.composition.digests import (
     resolve_digest_schedule,
 )
 from backend.v2.composition.email_adapters import build_user_facing_invite_sender
+from backend.v2.composition.enrollment_billing import compose_admin_enrollment_billing
 from backend.v2.composition.families import compose_admin_families
 from backend.v2.composition.families_crm import compose_admin_family_index
 from backend.v2.composition.family_offers import compose_admin_family_offers
@@ -1125,6 +1126,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin_overdue_families = compose_overdue_families(db)
     app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)
     app.state.admin_family_offers = compose_admin_family_offers(db)
+    app.state.admin_enrollment_billing = compose_admin_enrollment_billing(db, app.state.admin)
     app.state.referrals = compose_referrals(db, frontend_url=settings.frontend_url)
     app.state.admin_payment_methods = compose_admin_payment_methods(db)
     # Pricing page under Money (Settings overhaul PR 11b).

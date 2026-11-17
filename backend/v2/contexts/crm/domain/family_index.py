@@ -42,6 +42,9 @@ class FamilyChild:
     #: Sessions the child holds a seat in, and their titles (same order).
     session_ids: tuple[str, ...] = ()
     session_titles: tuple[str, ...] = ()
+    #: Every live class is not billed (owner's or coach's child, scholarship):
+    #: shown with the family but left out of the scope-tile headcounts.
+    not_billed: bool = False
 
 
 @dataclass(frozen=True)

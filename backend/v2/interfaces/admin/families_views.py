@@ -62,9 +62,11 @@ class FamilyRegistration(_View):
 
 
 class FamilyEnrollmentCounts(_View):
+    #: Active classes that are billed; not-billed ones are ``not_billed``.
     active: int
     paused: int
     cancelled: int
+    not_billed: int = 0
 
 
 class FamilyHeader(_View):
@@ -94,6 +96,9 @@ class FamilyEnrollment(_View):
     autopay_status: str | None = None
     recurring_discount: dict[str, Any] | None = None
     resume_on: str | None = None
+    not_billed: bool = False
+    not_billed_reason: str | None = None
+    not_billed_note: str | None = None
     actions: list[EnrollmentAction] = []
 
 

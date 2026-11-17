@@ -1435,6 +1435,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/enrollments/{enrollment_id}/billing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Mark an enrollment not billed, or start billing it (owner only, audited) */
+        put: operations["set_enrollment_billing_api_v2_admin_enrollments__enrollment_id__billing_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/enrollments/{enrollment_id}/cancel-scheduled-drop": {
         parameters: {
             query?: never;
@@ -8503,6 +8520,11 @@ export interface components {
             latest_event_type?: string | null;
             /** Level */
             level?: string | null;
+            /**
+             * Not Billed
+             * @default false
+             */
+            not_billed: boolean;
             /** Parent Id */
             parent_id: string;
             /** Parent Name */
@@ -8724,6 +8746,11 @@ export interface components {
              * Format: date-time
              */
             generated_at: string;
+            /**
+             * Not Billed Families
+             * @default 0
+             */
+            not_billed_families: number;
             /** Preset Counts */
             preset_counts?: {
                 [key: string]: number;
@@ -9610,6 +9637,11 @@ export interface components {
              * @default 0
              */
             manual_enrollment_count: number;
+            /**
+             * Not Billed Enrollment Count
+             * @default 0
+             */
+            not_billed_enrollment_count: number;
             /** Period */
             period: string;
             /**
@@ -10128,6 +10160,11 @@ export interface components {
              */
             monthly_fee_cents: number;
             /**
+             * Not Billed Enrollment Count
+             * @default 0
+             */
+            not_billed_enrollment_count: number;
+            /**
              * Other Expenses Cents
              * @default 0
              */
@@ -10298,6 +10335,11 @@ export interface components {
             enrolled_count: number;
             /** Location */
             location: string;
+            /**
+             * Not Billed Count
+             * @default 0
+             */
+            not_billed_count: number;
             /** Parking Notes */
             parking_notes?: string | null;
             /** Phase */
@@ -10468,6 +10510,11 @@ export interface components {
             lifecycle_as_of?: string | null;
             /** Medical Notes */
             medical_notes?: string | null;
+            /**
+             * Not Billed
+             * @default false
+             */
+            not_billed: boolean;
             /** Notes */
             notes?: string | null;
             /**
@@ -10654,6 +10701,15 @@ export interface components {
             enrollment_id: string;
             /** Location */
             location?: string | null;
+            /**
+             * Not Billed
+             * @default false
+             */
+            not_billed: boolean;
+            /** Not Billed Note */
+            not_billed_note?: string | null;
+            /** Not Billed Reason */
+            not_billed_reason?: string | null;
             /** Payment Mode */
             payment_mode?: string | null;
             /** Pending Cancellation At */
@@ -10704,6 +10760,11 @@ export interface components {
             lifecycle: "active" | "at_risk" | "paused" | "on_hold" | "pending_cancel" | "left" | "never_enrolled" | "trial";
             /** Lifecycle As Of */
             lifecycle_as_of?: string | null;
+            /**
+             * Not Billed
+             * @default false
+             */
+            not_billed: boolean;
             /** Parent Email */
             parent_email?: string | null;
             /** Parent Id */
@@ -11557,6 +11618,11 @@ export interface components {
              * Format: date-time
              */
             generated_at: string;
+            /**
+             * Not Billed
+             * @default 0
+             */
+            not_billed: number;
             /** Students */
             students: number;
         };
@@ -13565,6 +13631,31 @@ export interface components {
             /** Success Url */
             success_url: string;
         };
+        /** EnrollmentBillingView */
+        EnrollmentBillingView: {
+            /** Billing Type */
+            billing_type: string;
+            /** Enrollment Id */
+            enrollment_id: string;
+            /**
+             * Kept Invoice Ids
+             * @default []
+             */
+            kept_invoice_ids: string[];
+            /** Not Billed */
+            not_billed: boolean;
+            /** Not Billed Note */
+            not_billed_note?: string | null;
+            /** Not Billed Reason */
+            not_billed_reason?: ("owner_child" | "coach_child" | "scholarship" | "other") | null;
+            /** Skipped Period */
+            skipped_period?: string | null;
+            /**
+             * Voided Invoice Ids
+             * @default []
+             */
+            voided_invoice_ids: string[];
+        };
         /** EnrollmentDeparturePolicyView */
         EnrollmentDeparturePolicyView: {
             /** Delete Enrollment Requires Owner */
@@ -13864,6 +13955,15 @@ export interface components {
             enrollment_id: string;
             /** Monthly Price Cents */
             monthly_price_cents?: number | null;
+            /**
+             * Not Billed
+             * @default false
+             */
+            not_billed: boolean;
+            /** Not Billed Note */
+            not_billed_note?: string | null;
+            /** Not Billed Reason */
+            not_billed_reason?: string | null;
             /** Override Price Cents */
             override_price_cents?: number | null;
             /** Recurring Discount */
@@ -13887,6 +13987,11 @@ export interface components {
             active: number;
             /** Cancelled */
             cancelled: number;
+            /**
+             * Not Billed
+             * @default 0
+             */
+            not_billed: number;
             /** Paused */
             paused: number;
         };
@@ -16704,6 +16809,11 @@ export interface components {
             level_ups_this_month: number;
             /** Levels */
             levels: components["schemas"]["DashboardLevel"][];
+            /**
+             * Not Billed Count
+             * @default 0
+             */
+            not_billed_count: number;
             /** Program Id */
             program_id: string;
             /** Program Name */
@@ -18699,6 +18809,20 @@ export interface components {
             /** Percent */
             percent?: number | null;
         };
+        /** SetEnrollmentBillingRequest */
+        SetEnrollmentBillingRequest: {
+            /** Not Billed */
+            not_billed: boolean;
+            /** Note */
+            note?: string | null;
+            /** Reason */
+            reason?: ("owner_child" | "coach_child" | "scholarship" | "other") | null;
+            /**
+             * Void Open Invoices
+             * @default false
+             */
+            void_open_invoices: boolean;
+        };
         /**
          * SetNoteVisibilityRequest
          * @description PATCH body for both progress notes and skill notes.
@@ -18806,6 +18930,8 @@ export interface components {
             enrollment_id: string;
             /** Exclusion */
             exclusion?: ("paused" | "not_active" | "billing_type" | "deferral" | "pending_cancellation" | "skip_period" | "no_class_fee") | null;
+            /** Not Billed Reason */
+            not_billed_reason?: string | null;
             /** Percent Bps */
             percent_bps?: number | null;
             /**
@@ -22955,6 +23081,41 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_enrollment_billing_api_v2_admin_enrollments__enrollment_id__billing_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                enrollment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetEnrollmentBillingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrollmentBillingView"];
+                };
             };
             /** @description Validation Error */
             422: {

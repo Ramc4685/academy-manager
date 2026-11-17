@@ -2260,6 +2260,11 @@
             ],
             "title": "Level"
           },
+          "not_billed": {
+            "default": false,
+            "title": "Not Billed",
+            "type": "boolean"
+          },
           "parent_id": {
             "title": "Parent Id",
             "type": "string"
@@ -2840,6 +2845,11 @@
             "format": "date-time",
             "title": "Generated At",
             "type": "string"
+          },
+          "not_billed_families": {
+            "default": 0,
+            "title": "Not Billed Families",
+            "type": "integer"
           },
           "preset_counts": {
             "additionalProperties": {
@@ -5153,6 +5163,11 @@
             "title": "Manual Enrollment Count",
             "type": "integer"
           },
+          "not_billed_enrollment_count": {
+            "default": 0,
+            "title": "Not Billed Enrollment Count",
+            "type": "integer"
+          },
           "period": {
             "title": "Period",
             "type": "string"
@@ -6318,6 +6333,11 @@
             "title": "Monthly Fee Cents",
             "type": "integer"
           },
+          "not_billed_enrollment_count": {
+            "default": 0,
+            "title": "Not Billed Enrollment Count",
+            "type": "integer"
+          },
           "other_expenses_cents": {
             "default": 0,
             "title": "Other Expenses Cents",
@@ -6695,6 +6715,11 @@
           "location": {
             "title": "Location",
             "type": "string"
+          },
+          "not_billed_count": {
+            "default": 0,
+            "title": "Not Billed Count",
+            "type": "integer"
           },
           "parking_notes": {
             "anyOf": [
@@ -7311,6 +7336,11 @@
               }
             ],
             "title": "Medical Notes"
+          },
+          "not_billed": {
+            "default": false,
+            "title": "Not Billed",
+            "type": "boolean"
           },
           "notes": {
             "anyOf": [
@@ -7960,6 +7990,33 @@
             ],
             "title": "Location"
           },
+          "not_billed": {
+            "default": false,
+            "title": "Not Billed",
+            "type": "boolean"
+          },
+          "not_billed_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Billed Note"
+          },
+          "not_billed_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Billed Reason"
+          },
           "payment_mode": {
             "anyOf": [
               {
@@ -8132,6 +8189,11 @@
               }
             ],
             "title": "Lifecycle As Of"
+          },
+          "not_billed": {
+            "default": false,
+            "title": "Not Billed",
+            "type": "boolean"
           },
           "parent_email": {
             "anyOf": [
@@ -10518,6 +10580,11 @@
             "format": "date-time",
             "title": "Generated At",
             "type": "string"
+          },
+          "not_billed": {
+            "default": 0,
+            "title": "Not Billed",
+            "type": "integer"
           },
           "students": {
             "title": "Students",
@@ -16458,6 +16525,84 @@
         "title": "EnrollChildRequest",
         "type": "object"
       },
+      "EnrollmentBillingView": {
+        "properties": {
+          "billing_type": {
+            "title": "Billing Type",
+            "type": "string"
+          },
+          "enrollment_id": {
+            "title": "Enrollment Id",
+            "type": "string"
+          },
+          "kept_invoice_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Kept Invoice Ids",
+            "type": "array"
+          },
+          "not_billed": {
+            "title": "Not Billed",
+            "type": "boolean"
+          },
+          "not_billed_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Billed Note"
+          },
+          "not_billed_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "owner_child",
+                  "coach_child",
+                  "scholarship",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Billed Reason"
+          },
+          "skipped_period": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skipped Period"
+          },
+          "voided_invoice_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Voided Invoice Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "not_billed",
+          "billing_type"
+        ],
+        "title": "EnrollmentBillingView",
+        "type": "object"
+      },
       "EnrollmentDeparturePolicyView": {
         "properties": {
           "delete_enrollment_requires_owner": {
@@ -17378,6 +17523,33 @@
             ],
             "title": "Monthly Price Cents"
           },
+          "not_billed": {
+            "default": false,
+            "title": "Not Billed",
+            "type": "boolean"
+          },
+          "not_billed_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Billed Note"
+          },
+          "not_billed_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Billed Reason"
+          },
           "override_price_cents": {
             "anyOf": [
               {
@@ -17465,6 +17637,11 @@
           },
           "cancelled": {
             "title": "Cancelled",
+            "type": "integer"
+          },
+          "not_billed": {
+            "default": 0,
+            "title": "Not Billed",
             "type": "integer"
           },
           "paused": {
@@ -25099,6 +25276,11 @@
             "title": "Levels",
             "type": "array"
           },
+          "not_billed_count": {
+            "default": 0,
+            "title": "Not Billed Count",
+            "type": "integer"
+          },
           "program_id": {
             "title": "Program Id",
             "type": "string"
@@ -30678,6 +30860,54 @@
         "title": "SetCoachPayRateRequest",
         "type": "object"
       },
+      "SetEnrollmentBillingRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "not_billed": {
+            "title": "Not Billed",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "owner_child",
+                  "coach_child",
+                  "scholarship",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "void_open_invoices": {
+            "default": false,
+            "title": "Void Open Invoices",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "not_billed"
+        ],
+        "title": "SetEnrollmentBillingRequest",
+        "type": "object"
+      },
       "SetNoteVisibilityRequest": {
         "description": "PATCH body for both progress notes and skill notes.",
         "properties": {
@@ -30971,6 +31201,17 @@
               }
             ],
             "title": "Exclusion"
+          },
+          "not_billed_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Billed Reason"
           },
           "percent_bps": {
             "anyOf": [
@@ -39477,6 +39718,58 @@
         "summary": "Cancel Enrollment",
         "tags": [
           "admin.sessions"
+        ]
+      }
+    },
+    "/api/v2/admin/enrollments/{enrollment_id}/billing": {
+      "put": {
+        "operationId": "set_enrollment_billing_api_v2_admin_enrollments__enrollment_id__billing_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "enrollment_id",
+            "required": true,
+            "schema": {
+              "title": "Enrollment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetEnrollmentBillingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentBillingView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark an enrollment not billed, or start billing it (owner only, audited)",
+        "tags": [
+          "admin.enrollment-billing"
         ]
       }
     },

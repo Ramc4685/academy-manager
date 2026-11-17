@@ -440,6 +440,7 @@ def test_view_enrollment_counts_buckets_held_and_reclaim_pending_separately() ->
         "paused": 1,
         "held": 2,
         "cancelled": 4,
+        "not_billed": 0,
     }
 
 

@@ -26,6 +26,7 @@ from .departure_policy_routes import router as departure_policy_router
 from .departures_routes import router as departures_router
 from .directory_routes import router as directory_router
 from .dues_routes import router as dues_router
+from .enrollment_billing_routes import router as enrollment_billing_router
 from .families_routes import router as families_router
 from .family_crm_routes import router as family_crm_router
 from .family_index_routes import router as family_index_router
@@ -90,6 +91,7 @@ router.include_router(billing_setup_router)
 router.include_router(billing_products_router)
 router.include_router(billing_rules_router)
 router.include_router(family_offers_router)
+router.include_router(enrollment_billing_router)
 router.include_router(referral_router)
 router.include_router(payment_methods_router)
 router.include_router(platform_fee_router)

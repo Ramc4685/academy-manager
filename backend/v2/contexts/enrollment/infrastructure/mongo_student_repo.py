@@ -43,11 +43,13 @@ from backend.v2.contexts.enrollment.domain.lifecycle import (
 )
 from backend.v2.contexts.enrollment.domain.models import (
     DROPPED_SPELLINGS,
+    LIVE,
     NON_TERMINAL,
     SEAT_HOLDING,
     TERMINAL,
     Student,
 )
+from backend.v2.shared.billing_type import is_not_billed
 from backend.v2.shared.profile.completeness import CHILD_REQUIRED, ChildFacts, child_gaps
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
@@ -1068,10 +1070,14 @@ class MongoStudentRepository(TenantScopedRepository):
             },
         )
         lifecycle_counts: dict[str, int] = {}
+        # Not-billed children keep their lifecycle label but are not headcount:
+        # counted once under ``not_billed`` instead of their state.
+        not_billed = await self.not_billed_student_ids(academy_id, candidate_ids)
         for row in rows:
             state = lifecycles.get(str(row["student_id"]), _NEVER_ENROLLED)
             row["lifecycle"] = state
-            lifecycle_counts[state.state] = lifecycle_counts.get(state.state, 0) + 1
+            key = "not_billed" if str(row["student_id"]) in not_billed else state.state
+            lifecycle_counts[key] = lifecycle_counts.get(key, 0) + 1
         wanted = set(lifecycle) & PERSON_LIFECYCLES
         if wanted:
             rows = [
@@ -1116,7 +1122,7 @@ class MongoStudentRepository(TenantScopedRepository):
                     parent_name=row.get("parent_name"),  # type: ignore[arg-type]
                     parent_email=row.get("parent_email"),  # type: ignore[arg-type]
                     lifecycle=row.get("lifecycle"),  # type: ignore[arg-type]
-                )
+                ).model_copy(update={"not_billed": student_id in not_billed})
             )
 
         next_cursor = None
@@ -1260,6 +1266,9 @@ class MongoStudentRepository(TenantScopedRepository):
                 or enrollment.get("stripe_subscription_status")
             ),
             amount_cents=self._enrollment_session_amount_cents(enrollment, session),
+            not_billed=is_not_billed(enrollment),
+            not_billed_reason=self._optional_str(enrollment.get("not_billed_reason")),
+            not_billed_note=self._optional_str(enrollment.get("not_billed_note")),
         )
 
     async def _sessions_by_id(
@@ -1986,6 +1995,31 @@ class MongoStudentRepository(TenantScopedRepository):
                 return None
         return None
 
+    async def not_billed_student_ids(
+        self, academy_id: str, student_ids: list[str] | None = None
+    ) -> set[str]:
+        """Students whose every live class (active, paused, held) is not billed.
+
+        Left out of headcounts; a child with one billed class still counts.
+        ``None`` asks for every student in the academy. One query.
+        """
+        if student_ids is not None and not student_ids:
+            return set()
+        query: dict[str, object] = {
+            "academy_id": academy_id,
+            "status": {"$in": sorted(LIVE)},
+            "is_deleted": {"$ne": True},
+        }
+        if student_ids is not None:
+            query["student_id"] = {"$in": student_ids}
+        billed: set[str] = set()
+        unbilled: set[str] = set()
+        async for doc in self._db["enrollments"].find(query, {"student_id": 1, "billing_type": 1}):
+            student_id = str(doc.get("student_id") or "")
+            if student_id:
+                (unbilled if is_not_billed(doc) else billed).add(student_id)
+        return unbilled - billed
+
     async def _enrollment_rows_by_student(
         self,
         academy_id: str,
@@ -2170,11 +2204,13 @@ class MongoStudentRepository(TenantScopedRepository):
                 for sid, att in attendance.items()
             },
         )
+        not_billed = await self.not_billed_student_ids(academy_id, ids)
         return {
             sid: StudentLifecycleSnapshot(
                 state=state.state,
                 as_of=state.as_of,
                 live_session_ids=tuple(sorted(live_sessions.get(sid, ()))),
+                not_billed=sid in not_billed,
             )
             for sid, state in states.items()
         }

@@ -119,6 +119,8 @@ class SiblingDiscountEnrollmentView(BaseModel):
     exclusion: SiblingPreviewExclusion | None = None
     #: The enrollment's own ``billing_type``, only when that excluded it.
     billing_type: str | None = None
+    #: Why an admin marked it not billed, when ``billing_type`` excluded it.
+    not_billed_reason: str | None = None
 
 
 class SiblingDiscountPeriodView(BaseModel):

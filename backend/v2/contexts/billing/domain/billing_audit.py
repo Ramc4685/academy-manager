@@ -100,6 +100,11 @@ BillingAuditAction = Literal[
     # percent coach's invoiced-tuition base is counted. Applies to periods
     # generated or recomputed afterwards; approved and paid ones never move.
     "payroll_settings_changed",
+    # Student Sessions panel / family Billing tab: the owner marked one
+    # enrollment "Not billed" (billing_type NoCharge, with a reason) or started
+    # billing it again. Going forward only; before/after carry the type, the
+    # reason and any invoices voided with it.
+    "enrollment_billing_changed",
 ]
 
 

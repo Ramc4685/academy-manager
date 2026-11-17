@@ -22,6 +22,7 @@ import {
   type AdminSessionList,
   type AdminSessionView,
 } from "@/lib/api/admin";
+import { notBilledSuffix } from "@/components/admin/not-billed";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 // One class form for Create, list Edit and class-page Edit (class-page PR A).
 import { CreateClassDialog, EditClassDialog } from "@/components/admin/sessions/class-form";
@@ -485,6 +486,11 @@ function SessionList({
                       <span className="font-mono font-semibold tabular-nums text-rally-ink">
                         {s.enrolled_count}/{s.capacity}
                       </span>
+                      {s.not_billed_count ? (
+                        <span className="text-xs text-rally-muted">
+                          incl. {s.not_billed_count} not billed
+                        </span>
+                      ) : null}
                       <Chip variant={fill.variant} label={fill.label} />
                     </div>
                   </td>
@@ -554,6 +560,9 @@ function SessionPhoneList({
                 <span className="font-mono text-sm font-semibold tabular-nums text-rally-ink">
                   {s.enrolled_count}/{s.capacity}
                 </span>
+                {s.not_billed_count ? (
+                  <span className="text-xs text-rally-muted">incl. {s.not_billed_count} not billed</span>
+                ) : null}
                 <Chip variant={fill.variant} label={fill.label} />
               </span>
             }

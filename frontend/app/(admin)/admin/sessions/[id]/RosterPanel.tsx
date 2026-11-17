@@ -101,7 +101,8 @@ export function RosterMetrics({
 }) {
   // "In session" is the attending headcount; seats are a different question —
   // a held row is not attending but still occupies a seat (#734).
-  const filled = enrollments.filter((e) => e.status === "active").length;
+  const filled = enrollments.filter((e) => e.status === "active" && !e.not_billed).length;
+  const notBilledCount = enrollments.filter((e) => e.status === "active" && e.not_billed).length;
   const pausedCount = enrollments.filter((e) => e.status === "paused").length;
   const heldCount = enrollments.filter((e) => e.status === "held").length;
   const openSpots = Math.max(capacity - seatsHeldCount(enrollments), 0);
@@ -120,7 +121,11 @@ export function RosterMetrics({
       <RosterMetric
         label="In session"
         value={String(filled)}
-        detail={pausedCount > 0 ? `${pausedCount} paused` : undefined}
+        detail={
+          [pausedCount > 0 ? `${pausedCount} paused` : "", notBilledCount ? `+${notBilledCount} not billed` : ""]
+            .filter(Boolean)
+            .join(" · ") || undefined
+        }
       />
       <RosterMetric
         label="Open spots"

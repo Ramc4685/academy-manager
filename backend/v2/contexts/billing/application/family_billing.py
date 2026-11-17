@@ -107,6 +107,11 @@ class EnrollmentFacts:
     #: ``monthly_price_cents`` above is unchanged because the manual invoice
     #: dialog pre-fills from it.
     class_fee_cents: int | None = None
+    #: "Not billed" (billing_type outside the invoiced types): attends, never
+    #: invoiced, out of every headcount. Reason/note when an admin set it.
+    not_billed: bool = False
+    not_billed_reason: str | None = None
+    not_billed_note: str | None = None
 
 
 @dataclass(frozen=True)
@@ -857,6 +862,9 @@ def _enrollment_payload(e: EnrollmentFacts) -> dict[str, Any]:
         "autopay_status": e.autopay_status,
         "recurring_discount": e.recurring_discount,
         "resume_on": _iso(e.resume_on),
+        "not_billed": e.not_billed,
+        "not_billed_reason": e.not_billed_reason,
+        "not_billed_note": e.not_billed_note,
         "actions": ["recurring_discount"] if live else [],
     }
 
@@ -1051,7 +1059,9 @@ def build_family_billing_view(
                 or facts.parent.email,
             },
             "enrollment_counts": {
-                "active": sum(1 for e in enrollments if e.status == "active"),
+                # Not-billed classes are not headcount; counted on their own.
+                "active": sum(1 for e in enrollments if e.status == "active" and not e.not_billed),
+                "not_billed": sum(1 for e in enrollments if e.status == "active" and e.not_billed),
                 "paused": sum(1 for e in enrollments if e.status == _PAUSED),
                 "held": sum(1 for e in enrollments if e.status in _HELD_ENROLLMENT_STATUSES),
                 "cancelled": sum(
