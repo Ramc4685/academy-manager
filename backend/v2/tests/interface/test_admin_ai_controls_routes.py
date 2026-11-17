@@ -98,6 +98,7 @@ def test_owner_reads_defaults_and_saves_new_limits() -> None:
         {**BODY, "daily_call_caps": {"made_up": 3}},
         {**BODY, "daily_call_caps": {"placeholder": 3}},
         {**BODY, "daily_call_caps": {"skill_ladder": 1001}},
+        {k: v for k, v in BODY.items() if k != "daily_call_caps"},
     ],
 )
 def test_out_of_range_or_unknown_limits_are_refused(body: dict[str, object]) -> None:
@@ -133,6 +134,22 @@ async def test_an_untouched_academy_reads_the_same_defaults_as_the_features(db) 
         assert await AcademyCoachReviewSwitch(academies).coach_review_required() is True
 
 
+async def test_the_audit_row_is_written_before_the_change(db) -> None:  # type: ignore[no-untyped-def]
+    await db.academies.insert_one({"academy_id": "acad-a"})
+
+    class FailingAudit(MongoAiControlsAudit):
+        async def record_changed(self, **_kwargs: object) -> None:
+            raise RuntimeError("audit insert failed")
+
+    controls = AcademyAiControls(MongoAcademyRepository(db), FailingAudit(db))
+    with tenant_scope("acad-a"), pytest.raises(RuntimeError):
+        await controls.set(
+            AiControls(monthly_call_cap=9, daily_call_caps={}, coach_review_narratives=False),
+            user_id="owner-1",
+        )
+    assert "ai" not in (await db.academies.find_one({"academy_id": "acad-a"}))
+
+
 async def test_a_save_reaches_the_readers_and_writes_one_audit_row(db) -> None:  # type: ignore[no-untyped-def]
     await db.academies.insert_one({"academy_id": "acad-a", "ai": {"share_import_values": True}})
     await db.academies.insert_one({"academy_id": "acad-b"})
@@ -150,13 +167,6 @@ async def test_a_save_reaches_the_readers_and_writes_one_audit_row(db) -> None: 
         assert await lookup.monthly_cap() == 400
         assert await lookup.daily_cap("technique_observation") == 30
         assert await AcademyCoachReviewSwitch(academies).coach_review_required() is False
-        with pytest.raises(ValueError):
-            await controls.set(
-                AiControls(
-                    monthly_call_cap=1, daily_call_caps={"x": 1}, coach_review_narratives=True
-                ),
-                user_id="owner-1",
-            )
 
     doc = await db.academies.find_one({"academy_id": "acad-a"})
     assert doc["ai"]["share_import_values"] is True  # sibling settings untouched

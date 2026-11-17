@@ -9,7 +9,7 @@ parents unread, so both routes are ``require_owner`` and listed in
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -34,16 +34,13 @@ class AiControlsView(BaseModel):
 
 class AiControlsRequest(BaseModel):
     monthly_call_cap: int = Field(ge=0, le=MAX_MONTHLY_CALL_CAP)
-    daily_call_caps: dict[str, int] = Field(default_factory=dict)
+    #: Required: the PUT replaces every ceiling, so omitting it must not wipe them.
+    daily_call_caps: dict[str, Annotated[int, Field(ge=0, le=MAX_DAILY_CALL_CAP)]]
     coach_review_narratives: bool
 
 
 def _controls(request: Request) -> Any:
-    ai = getattr(request.app.state, "ai", None)
-    controls = getattr(ai, "controls", None)
-    if controls is None:
-        raise HTTPException(status_code=503, detail="AI controls are not configured")
-    return controls
+    return request.app.state.ai.controls
 
 
 def _view(controls: AiControls) -> AiControlsView:
@@ -70,12 +67,8 @@ async def put_ai_controls(
     controls: Any = Depends(_controls),
 ) -> AiControlsView:
     unknown = sorted(set(body.daily_call_caps) - set(CAPPABLE_FEATURES))
-    bad = sorted(f for f, v in body.daily_call_caps.items() if not 0 <= v <= MAX_DAILY_CALL_CAP)
-    if unknown or bad:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Daily limits must be 0-{MAX_DAILY_CALL_CAP} for known features.",
-        )
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown AI features: {', '.join(unknown)}.")
     saved = await controls.set(
         AiControls(
             monthly_call_cap=body.monthly_call_cap,

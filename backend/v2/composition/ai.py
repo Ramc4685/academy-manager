@@ -107,10 +107,17 @@ class AcademyAiControls:
         )
 
     async def set(self, controls: AiControls, *, user_id: str) -> AiControls:
-        unknown = set(controls.daily_call_caps) - set(CAPPABLE_FEATURES)
-        if unknown:
-            raise ValueError(f"unknown AI features: {sorted(unknown)}")
+        """``controls`` is validated by the route (known features, bounds)."""
         before = await self.get()
+        if controls != before:
+            # Audit first with the intended values, so a failed audit insert
+            # can never leave an unaudited change behind.
+            await self._audit.record_changed(
+                actor_id=user_id,
+                before=_controls_dict(before),
+                after=_controls_dict(controls),
+                at=datetime.now(UTC),
+            )
         academy_id = current_academy_id()
         updated = await self._academies.update_by_id(
             academy_id,
@@ -122,15 +129,7 @@ class AcademyAiControls:
         )
         if updated is None:
             raise AcademyNotFound(f"no academy document for {academy_id}")
-        after = await self.get()
-        if after != before:
-            await self._audit.record_changed(
-                actor_id=user_id,
-                before=_controls_dict(before),
-                after=_controls_dict(after),
-                at=datetime.now(UTC),
-            )
-        return after
+        return await self.get()
 
 
 def _controls_dict(controls: AiControls) -> dict[str, object]:
@@ -159,7 +158,7 @@ class AiComposition:
     llm: LlmPort
     record_ai_call: RecordAiCall
     entitlement: AiEntitlement
-    controls: AcademyAiControls | None = None
+    controls: AcademyAiControls
 
 
 def compose_ai(db: Any, settings: Any, *, has_feature: Any | None = None) -> AiComposition:
