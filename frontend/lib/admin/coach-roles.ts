@@ -17,3 +17,15 @@ export function hasCoachRole(user: {
   const roles = user.roles && user.roles.length > 0 ? user.roles : [user.role];
   return roles.some((r) => (COACH_ROLES as ReadonlyArray<string>).includes(r));
 }
+
+/**
+ * Coaches who may be given a class: active accounts only. A disabled or
+ * inactive coach cannot sign in to run it. ``keepId`` (the coach already on
+ * the class) stays listed so the select can still show the current value.
+ */
+export function assignableCoaches<T extends { user_id: string; status: string }>(
+  users: ReadonlyArray<T>,
+  keepId?: string | null,
+): T[] {
+  return users.filter((user) => user.status === "active" || user.user_id === keepId);
+}

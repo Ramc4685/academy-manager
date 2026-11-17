@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hasCoachRole } from "./coach-roles";
+import { assignableCoaches, hasCoachRole } from "./coach-roles";
 
 describe("hasCoachRole", () => {
   it("is true for a primary coach", () => {
@@ -25,5 +25,21 @@ describe("hasCoachRole", () => {
     expect(hasCoachRole({ role: "coach" })).toBe(true);
     expect(hasCoachRole({ role: "coach", roles: [] })).toBe(true);
     expect(hasCoachRole({ role: "parent", roles: null })).toBe(false);
+  });
+});
+
+describe("assignableCoaches", () => {
+  const users = [
+    { user_id: "a", status: "active" },
+    { user_id: "d", status: "disabled" },
+    { user_id: "i", status: "inactive" },
+  ];
+
+  it("offers only active coaches", () => {
+    expect(assignableCoaches(users).map((u) => u.user_id)).toEqual(["a"]);
+  });
+
+  it("keeps the coach already assigned so the select shows it", () => {
+    expect(assignableCoaches(users, "d").map((u) => u.user_id)).toEqual(["a", "d"]);
   });
 });

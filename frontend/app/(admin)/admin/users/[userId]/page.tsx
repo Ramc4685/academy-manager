@@ -830,10 +830,15 @@ function RolesPanel({
   const [submitOk, setSubmitOk] = useState(false);
   const [confirmOwner, setConfirmOwner] = useState(false);
   const [rolesEdited, setRolesEdited] = useState(false);
-
-  useEffect(() => {
-    setSelected(user.roles.length > 0 ? user.roles : [user.role]);
-  }, [user.roles, user.role]);
+  // Follow the stored roles only when they actually change, and never over an
+  // unsaved edit: every refetch (the profile form's Save, say) used to reset the
+  // draft, so the profile said "Saved." while the unchecked role came back.
+  const storedKey = initialRoles.join("|");
+  const [syncedKey, setSyncedKey] = useState(storedKey);
+  if (storedKey !== syncedKey) {
+    setSyncedKey(storedKey);
+    if (!rolesEdited) setSelected(initialRoles);
+  }
 
   const mutation = useMutation({
     mutationFn: async () => {
