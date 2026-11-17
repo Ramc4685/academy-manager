@@ -2629,7 +2629,8 @@ def compose_admin(
     async def maintain_session_occurrences(session) -> None:
         from backend.v2.shared.tenancy import current_academy_id
 
-        candidates = _series_occurrence_candidates(session, await _session_zone(session))
+        zone_name = await _session_zone(session)
+        candidates = _series_occurrence_candidates(session, zone_name)
         session_is_cancelled = session.status == "cancelled"
         if not candidates and not session_is_cancelled:
             return
@@ -2706,7 +2707,25 @@ def compose_admin(
             if row["start_at"] < now:
                 # Started earlier today: create it if missing (a class made after
                 # its start time), but never rewrite an existing row (it may be
-                # cancelled or have a substitute already).
+                # cancelled or have a substitute already). Any row for this class
+                # earlier today (e.g. before a time edit) blocks the insert, so a
+                # day never gets two payable classes.
+                local_day = (
+                    row["start_at"]
+                    .astimezone(ZoneInfo(zone_name))
+                    .replace(hour=0, minute=0, second=0, microsecond=0)
+                )
+                if await db["session_occurrences"].find_one(
+                    {
+                        "academy_id": academy_id,
+                        "$or": [
+                            {"session_id": session.session_id},
+                            {"template_session_id": session.session_id},
+                        ],
+                        "start_at": {"$gte": local_day, "$lt": now},
+                    }
+                ):
+                    continue
                 await db["session_occurrences"].update_one(
                     {"academy_id": academy_id, "occurrence_id": row["occurrence_id"]},
                     {"$setOnInsert": _occurrence_insert_doc(academy_id, row)},

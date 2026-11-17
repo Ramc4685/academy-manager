@@ -349,6 +349,36 @@ async def test_materialising_creates_todays_started_class_when_missing(
     assert today["start_at"].replace(tzinfo=UTC) < AFTERNOON
 
 
+async def test_time_edit_after_todays_class_ran_adds_no_second_class(
+    real_db: Any, acad: str, monkeypatch: Any
+) -> None:
+    """Moving 09:00 to 08:00 after the 09:00 class ran must not insert a second,
+    payable 08:00 occurrence for today."""
+    _freeze_admin_clock(monkeypatch, AFTERNOON)
+    await _seed_weekly(real_db, "sess-moved")
+    ran = datetime(2026, 1, 5, 15, 0, tzinfo=UTC)  # 09:00 Chicago
+    await real_db["session_occurrences"].insert_one(
+        {
+            "academy_id": TEST_ACADEMY,
+            "occurrence_id": "sess-moved:2026-01-05:09:00",
+            "session_id": "sess-moved",
+            "template_session_id": "sess-moved",
+            "start_at": ran,
+            "end_at": ran + timedelta(hours=1),
+            "status": "scheduled",
+            "scheduled_coach_id": "coach-1",
+        }
+    )
+    await real_db["sessions"].update_one(
+        {"session_id": "sess-moved"}, {"$set": {"start_time": "08:00", "end_time": "09:00"}}
+    )
+    with tenant_scope(TEST_ACADEMY):
+        await _real_maintain(real_db)(await MongoSessionRepository(real_db).get("sess-moved"))
+    assert not await real_db["session_occurrences"].find_one(
+        {"occurrence_id": "sess-moved:2026-01-05:08:00"}
+    )
+
+
 async def test_closure_skips_classes_outside_their_own_dates(
     real_db: Any, acad: str, monkeypatch: Any
 ) -> None:
