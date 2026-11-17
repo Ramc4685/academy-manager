@@ -47,7 +47,7 @@ import {
 } from "@/lib/format/hold-copy";
 import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 import { reEnrollHref } from "@/lib/parent/re-enroll";
-import { scheduleSourceLabel } from "@/lib/parent/schedule-events";
+import { noClassReason, scheduleSourceLabel } from "@/lib/parent/schedule-events";
 import { OneTimeClassChip } from "@/components/parent/one-time-class";
 
 // Avatar gradients are shared with the kid-first Home cards so the same child
@@ -320,7 +320,7 @@ function SessionRow({
           )}
           {cancelled && (
             <p className="text-[11px] mt-0.5 font-semibold text-status-red-800">
-              Cancelled — this class will not run
+              No class — {noClassReason(entry)}
             </p>
           )}
           {(entry.location || entry.coach_name) && (

@@ -410,6 +410,11 @@ test.describe("calendar smoke", () => {
     await page.goto("/parent/calendar");
     await expect(page.getByTestId("parent-calendar")).toBeVisible();
     await expect(page.getByTestId("calendar-child-legend")).toContainText("Ava Kim");
+    // Phones open on the list; wide screens on the month grid. Check both.
+    // The pinned clock is after this class, so the list has nothing upcoming.
+    await page.getByRole("button", { name: "List" }).click();
+    await expect(page.getByText("No upcoming classes on the schedule yet.")).toBeVisible();
+    await page.getByRole("button", { name: "Month" }).click();
     await expect(page.getByTestId("calendar-grid")).toContainText("Junior Beginners");
     await expect(page.getByTestId("calendar-timezone")).toContainText("America/Chicago");
   });
