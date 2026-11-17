@@ -1971,6 +1971,23 @@ export function cancelSessionOccurrence(
   );
 }
 
+export type CloseAcademyDatesRequest = components["schemas"]["CloseAcademyDatesRequest"];
+export type CloseAcademyDatesResponse = components["schemas"]["CloseAcademyDatesResponse"];
+
+/**
+ * Academy-wide closure (L12): every class from start_date to end_date
+ * (academy-local, inclusive) is cancelled with the single-date credit and
+ * notice rules, and each family gets ONE email. `dry_run` previews the dates.
+ */
+export function closeAcademyDates(
+  payload: CloseAcademyDatesRequest
+): Promise<CloseAcademyDatesResponse> {
+  return apiFetch<CloseAcademyDatesResponse>("/admin/closures", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function addSessionReplacement(
   sessionId: string,
   payload: AddSessionReplacementRequest
