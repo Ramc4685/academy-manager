@@ -1,6 +1,6 @@
 # front-desk-tools
 
-PR: TBD
+PR: #1206
 
 ## What changed
 Settings > Academy profile has a new Closure dates card: pick the first and last day closed and a reason, preview the weekly class dates (dates the cancel rules refuse, such as a frozen payout period, show as not cancelled), then cancel them all in one step. Each date goes through the same cancel as doing it by hand (the families are credited the date's share, the coach is not paid, make-ups and trials re-open, guests are told), but each family gets one email listing every class it loses, and each coach and admin gets one summary. The result shows billing warnings, families with no email on file, and whether the emails failed. Closures can be set up to 60 days ahead and cover weekly classes only; one-off classes are cancelled from their class page. Families has a new "New family" form for walk-ins and phone sign-ups: parent, child, optional class and optional login invite, checked against existing families first (a match gets the child added to that family).
