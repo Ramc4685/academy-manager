@@ -229,6 +229,7 @@ async def test_a_found_charge_that_is_not_cleanly_this_one_parks_unpaid(
     result = await _charge(real_db, stripe).execute("inv-a", check_existing=True)
 
     assert not result.success and not result.processing
+    assert result.decline_code == "existing_charge_needs_review"
     assert stripe.off_session_payment_intents == []
     assert await _payments(real_db) == []
     assert (await _invoice(real_db, "inv-a"))["status"] == "open"
@@ -284,3 +285,44 @@ async def test_a_lost_charge_is_not_recharged_after_a_non_technical_park(real_db
 
     assert len(stripe.off_session_payment_intents) == 1
     assert (await _invoice(real_db, "inv-a"))["status"] == "paid"
+
+
+async def test_a_refunded_lost_charge_parks_once_for_review_and_is_not_rechecked(
+    real_db, acad
+) -> None:
+    """The lost charge was refunded in Stripe before the capped recheck found it. It
+    must not settle, must not be charged again, and must not re-park every day: the
+    rung parks once for a person to review and the ladder stops asking Stripe."""
+    await _seed(real_db, "inv-a")
+    stripe = _CrashOnceStripe()
+    await _tick(real_db, stripe, FakeOutbox())
+    (pi,) = stripe.off_session_payment_intents
+    stripe._payment_intents_by_id[pi["id"]]["latest_charge"].update(
+        {"refunded": True, "amount_refunded": 10_000}
+    )
+    searches = 0
+    real_search = stripe.search_app_owned_payment_intents
+
+    async def _search(**kwargs: Any) -> list[dict[str, Any]]:
+        nonlocal searches
+        searches += 1
+        return await real_search(**kwargs)
+
+    stripe.search_app_owned_payment_intents = _search  # type: ignore[method-assign]
+    stripe.expire_idempotency_keys()
+
+    result = await _tick(real_db, stripe, FakeOutbox(), at=LATER)
+    state = await real_db["dunning_states"].find_one({"invoice_id": "inv-a"})
+    assert state["suppression_reason"] == "existing_charge_needs_review"
+    assert result.technical_failures == 1  # counted once, for the admin
+    assert searches == 1
+
+    for days in (2, 3):
+        later = await _tick(real_db, stripe, FakeOutbox(), at=NOW + timedelta(days=days))
+        assert later.parked == 0 and later.technical_failures == 0
+    after = await real_db["dunning_states"].find_one({"invoice_id": "inv-a"})
+    assert after["suppressed_at"] == state["suppressed_at"]
+    assert searches == 1
+    assert len(stripe.off_session_payment_intents) == 1
+    assert await _payments(real_db) == []
+    assert (await _invoice(real_db, "inv-a"))["status"] == "open"
