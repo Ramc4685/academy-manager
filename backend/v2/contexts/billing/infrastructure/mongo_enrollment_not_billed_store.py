@@ -38,11 +38,14 @@ class MongoEnrollmentNotBilledStore(TenantScopedRepository):
             "not_billed_reason": reason,
             "not_billed_note": note,
             "not_billed_by": actor_id,
-            "not_billed_at": at,
             "updated_at": at,
         }
+        # Only a billed row starts a not-billed interval. Re-marking (a reason
+        # change, an imported NoCharge row) keeps the original time, or none,
+        # so payroll's past months never change.
         if previous_billing_type is not None:
             fields["billing_type_before_not_billed"] = previous_billing_type
+            fields["not_billed_at"] = at
         await self._update_one({"enrollment_id": enrollment_id}, {"$set": fields})
 
     async def start_billing(

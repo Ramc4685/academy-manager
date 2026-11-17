@@ -213,7 +213,8 @@ class SetEnrollmentBilling:
         kept: list[str] = []
         reason = f"Not billed: {after['not_billed_note'] or after['not_billed_reason']}"
         for invoice in await self._invoices.list_invoices_for_enrollment(cmd.enrollment_id):
-            if getattr(invoice, "status", None) not in {"draft", "open"}:
+            # partially_paid has money on it: never voided, always reported.
+            if getattr(invoice, "status", None) not in {"draft", "open", "partially_paid"}:
                 continue
             # The void path refuses an invoice with money on it; report it
             # instead so the owner refunds or credits first.

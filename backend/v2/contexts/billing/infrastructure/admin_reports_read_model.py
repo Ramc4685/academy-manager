@@ -1794,6 +1794,10 @@ def make_session_economics_report(
                 enrollment_id = str(enrollment.get("enrollment_id") or "")
                 if not session_id:
                     continue
+                # Mapped even when not billed: invoices issued before the mark
+                # still need their session for paid/outstanding money.
+                if enrollment_id:
+                    enrollment_to_session[enrollment_id] = session_id
                 if is_not_billed(enrollment):
                     # Not billed: no expected tuition, not in the paying headcount.
                     not_billed_by_session[session_id] = not_billed_by_session.get(session_id, 0) + 1
@@ -1801,8 +1805,6 @@ def make_session_economics_report(
                 active_enrollments_by_session[session_id] = (
                     active_enrollments_by_session.get(session_id, 0) + 1
                 )
-                if enrollment_id:
-                    enrollment_to_session[enrollment_id] = session_id
 
         fee_by_session = await projected_fees.fees_for_period(
             {

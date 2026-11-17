@@ -1797,6 +1797,14 @@ async def monthly_skip_reason(
             return ("pending_cancellation", pending_period)
     if period in set(enrollment.get("skip_periods") or []):
         return ("skip_period", None)
+    # "Start billing" after "Not billed": the months in between stay unbilled
+    # even when a past period is generated again. A row with no mark time
+    # (imported NoCharge) was never billed before the restart.
+    started_at = _coerce_datetime(enrollment.get("billing_started_at"))
+    if started_at is not None and period <= _local_period_label(started_at, academy_timezone):
+        marked_at = _coerce_datetime(enrollment.get("not_billed_at"))
+        if marked_at is None or period >= _local_period_label(marked_at, academy_timezone):
+            return ("skip_period", None)
     return None
 
 

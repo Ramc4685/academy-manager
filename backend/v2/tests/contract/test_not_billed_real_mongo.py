@@ -22,6 +22,7 @@ from backend.v2.contexts.billing.application.use_cases.money_setting_audit impor
 from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import (
     make_projected_income_report,
+    make_session_economics_report,
 )
 from backend.v2.contexts.billing.infrastructure.invoiced_tuition_read_model import (
     MongoInvoicedTuitionReadModel,
@@ -312,6 +313,65 @@ async def test_monthly_run_skips_not_billed_and_start_billing_waits_a_month(real
     assert (await run(NOW).generate_monthly_payments("2026-11")).created == 0
     december = datetime(2026, 12, 1, 14, tzinfo=UTC)
     assert (await run(december).generate_monthly_payments("2026-12")).created == 1
+
+
+async def test_months_between_mark_and_restart_stay_unbilled_on_a_rerun(real_db, acad) -> None:
+    await real_db["sessions"].insert_one(
+        {
+            "academy_id": ACAD,
+            "session_id": "sess-1",
+            "title": "Juniors",
+            "monthly_price_cents": 10_000,
+            "days_of_week": ["Tue"],
+            "start_date": "2026-01-01",
+            "end_date": "2026-12-31",
+            "status": "active",
+        }
+    )
+    await real_db["students"].insert_one(
+        {"academy_id": ACAD, "student_id": "kid-1", "parent_id": "parent-1", "full_name": "Kid"}
+    )
+    await _enroll(real_db, "enr-1", student_id="kid-1")
+    setter = _setter(real_db, [])
+    mark = SetEnrollmentBillingCommand(
+        enrollment_id="enr-1", not_billed=True, reason="owner_child", actor_id="owner-1"
+    )
+    await setter.execute(ACAD, mark)
+    marked_oct = datetime(2026, 10, 5, 15, tzinfo=UTC)
+    await real_db["enrollments"].update_one(
+        {"enrollment_id": "enr-1"}, {"$set": {"not_billed_at": marked_oct}}
+    )
+    # A reason change keeps the original mark time, so past months never move.
+    await setter.execute(ACAD, mark.model_copy(update={"reason": "coach_child"}))
+    doc = await real_db["enrollments"].find_one({"enrollment_id": "enr-1"})
+    assert doc["not_billed_at"].replace(tzinfo=UTC) == marked_oct
+
+    await setter.execute(
+        ACAD,
+        SetEnrollmentBillingCommand(enrollment_id="enr-1", not_billed=False, actor_id="owner-1"),
+    )
+    repo = MongoPaymentRepository(
+        real_db, clock=lambda: NOW, ledger_repo=MongoBillingLedgerRepository(real_db)
+    )
+    # October (marked) stays unbilled; September (before the mark) still bills.
+    assert (await repo.generate_monthly_payments("2026-10")).created == 0
+    assert (await repo.generate_monthly_payments("2026-09")).created == 1
+
+
+async def test_session_economics_keeps_money_on_invoices_from_before_the_mark(
+    real_db, acad
+) -> None:
+    await _two_november_classes(real_db)
+    await real_db["sessions"].insert_one(
+        {"academy_id": ACAD, "session_id": "sess-1", "title": "Juniors", "amount_cents": 6_000}
+    )
+    await _enroll(real_db, "enr-1", student_id="kid-1", billing_type="NoCharge")
+    await _invoice(real_db, "inv-1", enrollment_id="enr-1", balance_due_cents=6_000)
+
+    report = await make_session_economics_report(real_db)("2026-11")  # type: ignore[operator]
+    row = next(r for r in report["sessions"] if r["session_id"] == "sess-1")
+    assert row["expected_revenue_cents"] == 0
+    assert row["unpaid_cents"] == 6_000
 
 
 async def test_headcounts_leave_out_children_with_only_not_billed_classes(real_db, acad) -> None:

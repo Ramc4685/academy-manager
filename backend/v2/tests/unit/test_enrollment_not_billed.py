@@ -156,6 +156,7 @@ async def test_void_takes_unpaid_draft_and_open_only() -> None:
             inv("d", "draft"),
             inv("o", "open"),
             inv("p", "open", 40),
+            inv("pp", "partially_paid", 40),
             inv("v", "void"),
             inv("paid", "paid", 0),
         ],
@@ -164,7 +165,7 @@ async def test_void_takes_unpaid_draft_and_open_only() -> None:
 
     assert voided == ["d", "o"]
     assert result.voided_invoice_ids == ["d", "o"]
-    assert result.kept_invoice_ids == ["p"]
+    assert result.kept_invoice_ids == ["p", "pp"]
 
 
 async def test_a_failed_void_is_kept_and_the_change_still_audited() -> None:

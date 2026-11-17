@@ -10,7 +10,7 @@ Not-billed children stay on rosters, attendance and skills, but leave the headco
 Coach payroll: a class whose live children are all not billed now has a $0 percent-of-revenue base instead of a blocking "missing invoiced tuition" warning.
 
 ## Deploy notes
-No migration and no setting. New owner-only route: `PUT /admin/enrollments/{enrollment_id}/billing`. It writes `billing_type`, `not_billed_reason`, `not_billed_note`, `not_billed_by`, `not_billed_at` and `billing_type_before_not_billed` on `enrollments`; "Start billing" adds the current month to `skip_periods`. Existing `NoCharge` and `Waived` rows count as not billed with no reason recorded.
+No migration and no setting. New owner-only route: `PUT /admin/enrollments/{enrollment_id}/billing`. It writes `billing_type`, `not_billed_reason`, `not_billed_note`, `not_billed_by`, `not_billed_at` and `billing_type_before_not_billed` on `enrollments`; "Start billing" adds the current month to `skip_periods` and keeps `not_billed_at`; the monthly run then treats every month from the mark to the restart as unbilled, even when a past period is generated again. Existing `NoCharge` and `Waived` rows count as not billed with no reason recorded.
 
 ## Risk / rollback
 Money path: whether a class is invoiced. A wrong mark is undone with "Start billing", which is audited. Reverting the PR leaves rows marked `NoCharge`, which the monthly run already skipped before this change. A voided invoice stays void, as with any void. Covered by real-Mongo tests for the run skip and restart, the payroll warning, the audit row and the headcounts.
