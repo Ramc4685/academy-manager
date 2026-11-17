@@ -25,6 +25,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 from backend.v2.contexts.communications.application.ports import (
     AcademyBrandLookup,
@@ -256,6 +257,7 @@ class SendCampaign:
                 if self.list_unsubscribe
                 else None
             )
+            extra: dict[str, Any] = {"unsubscribe_url": one_click} if one_click else {}
             outcome = await self.sender.send(
                 recipient=recipient,
                 subject=command.subject,
@@ -264,7 +266,7 @@ class SendCampaign:
                 reply_to=brand.reply_to if brand else None,
                 sender_name=brand.sender_name if brand else None,
                 # Only when set, like GatedEmailSendPort: older ports lack it.
-                **({"unsubscribe_url": one_click} if one_click else {}),
+                **extra,
             )
             if outcome.ok:
                 deliveries.append(
