@@ -40,10 +40,19 @@ function families(n: number): string {
   return `${n} famil${n === 1 ? "y" : "ies"}`;
 }
 
-function SkippedList({ dates, timeZone }: { dates: ClosureDate[]; timeZone: string }) {
+function SkippedList({
+  dates,
+  timeZone,
+}: {
+  dates: ClosureDate[];
+  timeZone: string;
+}) {
   if (dates.length === 0) return null;
   return (
-    <ul className="mt-2 space-y-1 text-sm text-rally-muted" data-testid="closure-skipped">
+    <ul
+      className="mt-2 space-y-1 text-sm text-rally-muted"
+      data-testid="closure-skipped"
+    >
       {dates.map((d) => (
         <li key={d.occurrence_id}>
           Not cancelled: {dateLine(d, timeZone)}
@@ -87,8 +96,15 @@ export function ClosurePreview({
       )}
       <SkippedList dates={refused} timeZone={preview.timezone} />
       {toCancel.length > 0 && (
-        <Button className="mt-3" disabled={pending} onClick={onApply} data-testid="closure-apply">
-          {pending ? "Cancelling..." : `Cancel ${plural(toCancel.length, "class date")}`}
+        <Button
+          className="mt-3"
+          disabled={pending}
+          onClick={onApply}
+          data-testid="closure-apply"
+        >
+          {pending
+            ? "Cancelling..."
+            : `Cancel ${plural(toCancel.length, "class date")}`}
         </Button>
       )}
     </div>
@@ -108,7 +124,9 @@ export function ClosureResult({
   const credits = done.credits_issued ?? 0;
   const affected = done.families_affected ?? 0;
   const emailed = done.families_notified ?? 0;
-  const warnings = dates.filter((d) => d.status === "cancelled" && d.billing_warning);
+  const warnings = dates.filter(
+    (d) => d.status === "cancelled" && d.billing_warning,
+  );
   return (
     <div className="mt-4 text-sm" role="status" data-testid="closure-result">
       <p className="font-medium text-rally-ink">
@@ -118,19 +136,27 @@ export function ClosureResult({
       </p>
       {notify && affected > emailed && !done.notice_failed && (
         <p className="mt-1 text-rally-muted" data-testid="closure-not-emailed">
-          {families(affected - emailed)} on these
-          classes {affected - emailed === 1 ? "has" : "have"} no email on file. Tell them
-          yourself.
+          {families(affected - emailed)} on these classes{" "}
+          {affected - emailed === 1 ? "has" : "have"} no email on file. Tell
+          them yourself.
         </p>
       )}
       {done.notice_failed && (
-        <p className="mt-1 text-red-700" role="alert" data-testid="closure-notice-failed">
-          The family emails did not all send. The classes are cancelled; tell the families
-          yourself.
+        <p
+          className="mt-1 text-red-700"
+          role="alert"
+          data-testid="closure-notice-failed"
+        >
+          The family emails did not all send. The classes are cancelled; tell
+          the families yourself.
         </p>
       )}
       {warnings.length > 0 && (
-        <ul className="mt-2 space-y-1 text-red-700" role="alert" data-testid="closure-billing-warnings">
+        <ul
+          className="mt-2 space-y-1 text-red-700"
+          role="alert"
+          data-testid="closure-billing-warnings"
+        >
           {warnings.map((d) => (
             <li key={d.occurrence_id}>
               {dateLine(d, done.timezone)}: {d.billing_warning}
@@ -138,7 +164,10 @@ export function ClosureResult({
           ))}
         </ul>
       )}
-      <SkippedList dates={dates.filter((d) => d.status === "skipped")} timeZone={done.timezone} />
+      <SkippedList
+        dates={dates.filter((d) => d.status === "skipped")}
+        timeZone={done.timezone}
+      />
     </div>
   );
 }
@@ -149,38 +178,55 @@ export function ClosureResult({
  * rules (families credited, coach not paid), and each family gets ONE email
  * listing every date it loses. Preview first, then confirm.
  */
+type ClosureRequest = {
+  start_date: string;
+  end_date: string;
+  reason: string;
+  notify: boolean;
+};
+
 export function ClosureDatesCard() {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [reason, setReason] = useState("");
   const [notify, setNotify] = useState(true);
-  const [preview, setPreview] = useState<CloseAcademyDatesResponse | null>(null);
+  const [preview, setPreview] = useState<CloseAcademyDatesResponse | null>(
+    null,
+  );
+  // The exact range the preview was made for; confirming sends this, never the live form.
+  const [previewed, setPreviewed] = useState<ClosureRequest | null>(null);
   const [done, setDone] = useState<CloseAcademyDatesResponse | null>(null);
 
-  const payload = (dry_run: boolean) => ({
+  const request = (): ClosureRequest => ({
     start_date: start,
     end_date: end || start,
     reason: reason.trim(),
     notify,
-    dry_run,
   });
   const previewMutation = useMutation({
-    mutationFn: () => closeAcademyDates(payload(true)),
-    onSuccess: (data) => {
+    mutationFn: (body: ClosureRequest) =>
+      closeAcademyDates({ ...body, dry_run: true }),
+    onSuccess: (data, body) => {
+      // The form changed while this preview was in flight: drop the stale answer.
+      if (JSON.stringify(body) !== JSON.stringify(request())) return;
       setDone(null);
       setPreview(data);
+      setPreviewed(body);
     },
   });
   const applyMutation = useMutation({
-    mutationFn: () => closeAcademyDates(payload(false)),
+    mutationFn: (body: ClosureRequest) =>
+      closeAcademyDates({ ...body, dry_run: false }),
     onSuccess: (data) => {
       setPreview(null);
+      setPreviewed(null);
       setDone(data);
     },
   });
   const edit = (setter: (v: string) => void) => (v: string) => {
     setter(v);
     setPreview(null);
+    setPreviewed(null);
   };
   const ready = Boolean(start && reason.trim()) && (!end || end >= start);
   const error = previewMutation.error ?? applyMutation.error;
@@ -189,12 +235,11 @@ export function ClosureDatesCard() {
     <Card p={24} className="max-w-3xl" data-testid="closure-dates-card">
       <Overline>Closure dates</Overline>
       <p className="mt-2 text-sm text-rally-muted">
-        Closed for a holiday or a facility closure? Cancel every weekly class
-        in the range at once. Each date is credited the same way as cancelling
-        it by hand, and each family gets one email listing all of its
-        cancelled classes. You can close dates up to 60 days ahead. One-off
-        classes (camps, workshops) are not included: cancel those from the
-        class page.
+        Closed for a holiday or a facility closure? Cancel every weekly class in
+        the range at once. Each date is credited the same way as cancelling it
+        by hand, and each family gets one email listing all of its cancelled
+        classes. You can close dates up to 60 days ahead. One-off classes
+        (camps, workshops) are not included: cancel those from the class page.
       </p>
       <div className="mt-4 flex flex-wrap items-end gap-3 text-sm">
         <label className="grid gap-1">
@@ -235,7 +280,11 @@ export function ClosureDatesCard() {
         <input
           type="checkbox"
           checked={notify}
-          onChange={(e) => setNotify(e.target.checked)}
+          onChange={(e) => {
+            setNotify(e.target.checked);
+            setPreview(null);
+            setPreviewed(null);
+          }}
           data-testid="closure-notify"
         />
         Email families and coaches
@@ -244,21 +293,23 @@ export function ClosureDatesCard() {
         className="mt-4"
         variant="secondary"
         disabled={!ready || previewMutation.isPending}
-        onClick={() => previewMutation.mutate()}
+        onClick={() => previewMutation.mutate(request())}
         data-testid="closure-preview"
       >
         {previewMutation.isPending ? "Checking..." : "Preview class dates"}
       </Button>
       {error && (
         <p className="mt-3 text-sm text-red-700" role="alert">
-          {error instanceof Error ? error.message : "Could not close these dates."}
+          {error instanceof Error
+            ? error.message
+            : "Could not close these dates."}
         </p>
       )}
       {preview && (
         <ClosurePreview
           preview={preview}
           pending={applyMutation.isPending}
-          onApply={() => applyMutation.mutate()}
+          onApply={() => previewed && applyMutation.mutate(previewed)}
         />
       )}
       {done && <ClosureResult done={done} notify={notify} />}

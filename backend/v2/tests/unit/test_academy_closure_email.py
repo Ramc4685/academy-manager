@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from backend.v2.contexts.communications.application.ports import ResolvedRecipient
+from backend.v2.contexts.communications.application.ports import ResolvedRecipient, SendOutcome
 from backend.v2.contexts.enrollment.application.ports import ClosedClassDate, ClosureNotice
 from backend.v2.shared.tenancy import tenant_scope
 from backend.v2.tests.unit.test_parent_push_hookups import RecordingPush
@@ -123,3 +123,34 @@ async def test_a_failing_send_never_raises_and_reports_the_notice_failed() -> No
     with tenant_scope(ACADEMY):
         notice = await adapter.academy_closed(dates=_ONE_DATE, reason="Snow", actor_id="a-1")
     assert notice.failed is True and notice.families_emailed == 0
+
+
+class RefusingSender:
+    """A provider that answers "not delivered" instead of raising."""
+
+    def __init__(self, *, suppressed: bool) -> None:
+        self.suppressed = suppressed
+
+    async def send(self, **kwargs: Any) -> SendOutcome:
+        return SendOutcome(
+            ok=False,
+            provider_message_id=None,
+            failed_reason="suppressed" if self.suppressed else "email_delivery_failed",
+            suppressed=self.suppressed,
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_provider_refusal_is_not_counted_as_emailed_and_flags_the_notice() -> None:
+    adapter = _closure_adapter(RefusingSender(suppressed=False), parent_email="parent@x.com")
+    with tenant_scope(ACADEMY):
+        notice = await adapter.academy_closed(dates=_ONE_DATE, reason="Snow", actor_id="a-1")
+    assert notice == ClosureNotice(families_affected=1, families_emailed=0, failed=True)
+
+
+@pytest.mark.asyncio
+async def test_a_suppressed_address_is_not_emailed_but_is_not_a_failure() -> None:
+    adapter = _closure_adapter(RefusingSender(suppressed=True), parent_email="parent@x.com")
+    with tenant_scope(ACADEMY):
+        notice = await adapter.academy_closed(dates=_ONE_DATE, reason="Snow", actor_id="a-1")
+    assert notice == ClosureNotice(families_affected=1, families_emailed=0, failed=False)

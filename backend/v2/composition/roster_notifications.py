@@ -34,7 +34,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -888,14 +888,15 @@ class RosterAlertAdapter:
                 for recipient in await self._resolve_users([parent_id]):
                     if not (recipient.email or "").strip():
                         continue
-                    await self._send_one(
+                    result = await self._send_one(
                         recipient=recipient,
                         subject=subject,
                         body=body,
                         category=EmailCategory.TRANSACTIONAL,
                         context=context,
                     )
-                    sent = True
+                    sent = sent or result == "sent"
+                    failed = failed or result == "failed"
                 emailed += int(sent)
                 await self._push_to(
                     parent_id,
@@ -916,7 +917,7 @@ class RosterAlertAdapter:
                     portal_url=None,
                     staff_warnings=warnings,
                 )
-                await self._send_one(
+                result = await self._send_one(
                     recipient=recipient,
                     subject=subject,
                     body=append_unsubscribe_footer(
@@ -928,6 +929,7 @@ class RosterAlertAdapter:
                     category=EmailCategory.NOTIFICATION,
                     context=context,
                 )
+                failed = failed or result == "failed"
             except Exception:
                 failed = True
                 logger.exception("roster_notify.academy_closed_staff_failed")
@@ -1268,8 +1270,8 @@ class RosterAlertAdapter:
         body: str,
         category: EmailCategory,
         context: dict[str, Any],
-    ) -> None:
-        """One recipient, never raising.
+    ) -> Literal["sent", "suppressed", "failed"]:
+        """One recipient, never raising; returns what happened.
 
         A provider failure for one person must not cost the rest of the
         audience their alert, and must not reach the enrollment write.
@@ -1289,16 +1291,20 @@ class RosterAlertAdapter:
                 "enrollment.roster_notification_send_failed",
                 extra={**context, "recipient_user_id": recipient.user_id},
             )
-            return
-        if not outcome.ok and not outcome.suppressed:
-            logger.warning(
-                "enrollment.roster_notification_send_failed",
-                extra={
-                    **context,
-                    "recipient_user_id": recipient.user_id,
-                    "reason": outcome.failed_reason,
-                },
-            )
+            return "failed"
+        if outcome.ok:
+            return "sent"
+        if outcome.suppressed:
+            return "suppressed"
+        logger.warning(
+            "enrollment.roster_notification_send_failed",
+            extra={
+                **context,
+                "recipient_user_id": recipient.user_id,
+                "reason": outcome.failed_reason,
+            },
+        )
+        return "failed"
 
     async def _staff_recipients(
         self,
