@@ -1189,6 +1189,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.ai_win_back = compose_ai_win_back(db, app.state.ai, app.state.win_back)
     app.state.ai_technique = compose_ai_technique(db, app.state.ai)
+    # Class recap: shared taught-skills record per occurrence, with the coach's
+    # report read by AI when a model is wired (manual entry otherwise).
+    from backend.v2.composition.class_recap import compose_class_recap
+
+    app.state.class_recap = compose_class_recap(db, app.state.ai)
     # B5 month-close narrator (paid AI): the gated LlmPort over the month-close reader.
     from backend.v2.composition.ai_reports import compose_ai_reports
 

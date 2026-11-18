@@ -69,6 +69,7 @@ export function ReplacementCoachTable({
   onEdit,
   onCancel,
   onViewAttendance,
+  onViewRecap,
   showStatus = false,
   emptyLabel,
 }: {
@@ -90,6 +91,8 @@ export function ReplacementCoachTable({
    * "Attendance", which opens the per-student marks with a Void action.
    */
   onViewAttendance?: (occurrence: AdminSessionOccurrenceView) => void;
+  /** A date that has started and was not cancelled offers its class recap. */
+  onViewRecap?: (occurrence: AdminSessionOccurrenceView) => void;
   /** Show the Cancelled chip column (#671). */
   showStatus?: boolean;
   emptyLabel?: string;
@@ -194,6 +197,17 @@ export function ReplacementCoachTable({
             onClick={() => onViewAttendance(occurrence)}
           >
             Attendance
+          </Button>
+        )}
+        {onViewRecap && occurrence.status !== "cancelled" && hasStarted(occurrence) && (
+          <Button
+            variant="secondary"
+            size="sm"
+            className={buttonClass}
+            data-testid={`recap-occurrence-${occurrence.occurrence_id}`}
+            onClick={() => onViewRecap(occurrence)}
+          >
+            Class recap
           </Button>
         )}
       </div>

@@ -32,7 +32,7 @@ import {
   type AdminWaitlistEntry,
 } from "@/lib/api/admin";
 import { getFullPathway, placeStudentInLevel } from "@/lib/api/curriculum";
-import { parseAcademyInstant } from "@/lib/format/academy-time";
+import { parseAcademyInstant, resolveAcademyTimeZone } from "@/lib/format/academy-time";
 import { PathwayPlacementUndoWindow } from "@/lib/admin/pathway-placement-undo";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -46,6 +46,7 @@ import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPane
 
 import { HoldEnrollmentDialog, ReturnFromHoldDialog } from "@/components/admin/enrollment/hold-dialogs";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ClassRecapDialog } from "@/components/admin/ClassReportHandoffsCard";
 
 import { AddToRosterDialog, PauseEnrollmentDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";
 import { formatCurrencyCents, sessionTimeRange } from "./format";
@@ -127,6 +128,7 @@ export default function AdminSessionDetailPage() {
   const [attendanceTarget, setAttendanceTarget] = useState<AdminSessionOccurrenceView | null>(
     null,
   );
+  const [recapTarget, setRecapTarget] = useState<AdminSessionOccurrenceView | null>(null);
   const [assistantsOpen, setAssistantsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<DetailTab>("roster");
   // The Welcome email tab keeps unsaved edits, so once opened it stays mounted (hidden) on other tabs.
@@ -595,6 +597,7 @@ export default function AdminSessionDetailPage() {
                 onEdit={setOccurrenceTarget}
                 onCancel={setCancelTarget}
                 onViewAttendance={setAttendanceTarget}
+                onViewRecap={setRecapTarget}
                 showStatus
                 emptyLabel="No dates scheduled yet."
               />
@@ -822,6 +825,20 @@ export default function AdminSessionDetailPage() {
         timezone={session?.timezone ?? null}
         studentNameById={studentNameById}
         onClose={() => setAttendanceTarget(null)}
+      />
+      <ClassRecapDialog
+        occurrenceId={recapTarget?.occurrence_id ?? null}
+        when={
+          recapTarget
+            ? parseAcademyInstant(recapTarget.start_at).toLocaleString("en-US", {
+                weekday: "long",
+                month: "short",
+                day: "numeric",
+                timeZone: resolveAcademyTimeZone(session?.timezone ?? null).timeZone,
+              })
+            : ""
+        }
+        onClose={() => setRecapTarget(null)}
       />
       <OccurrenceReplacementDialog
         sessionId={sessionId}

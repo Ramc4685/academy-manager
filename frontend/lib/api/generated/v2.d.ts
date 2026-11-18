@@ -1136,6 +1136,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/class-reports/handoffs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Class Report Handoffs */
+        get: operations["list_class_report_handoffs_api_v2_admin_class_reports_handoffs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/closures": {
         parameters: {
             query?: never;
@@ -5347,6 +5364,58 @@ export interface paths {
         patch: operations["correct_attendance_api_v2_coach_occurrences__occurrence_id__attendance__student_id__patch"];
         trace?: never;
     };
+    "/api/v2/coach/occurrences/{occurrence_id}/class-recap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Class Recap */
+        get: operations["get_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_get"];
+        /** Save Class Recap */
+        put: operations["save_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/coach/occurrences/{occurrence_id}/class-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Class Report */
+        post: operations["submit_class_report_api_v2_coach_occurrences__occurrence_id__class_reports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/coach/occurrences/{occurrence_id}/class-reports/{report_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Class Report */
+        post: operations["resolve_class_report_api_v2_coach_occurrences__occurrence_id__class_reports__report_id__resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/coach/profile": {
         parameters: {
             query?: never;
@@ -6798,6 +6867,23 @@ export interface paths {
          * @description Turn the public link off; the old link stops working at once (idempotent).
          */
         delete: operations["unshare_certificate_api_v2_parent_students__student_id__certificates__cert_id__share_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/parent/students/{student_id}/class-recaps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Child Class Recaps */
+        get: operations["list_child_class_recaps_api_v2_parent_students__student_id__class_recaps_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -12532,6 +12618,34 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** ChildClassRecapList */
+        ChildClassRecapList: {
+            /** Recaps */
+            recaps: components["schemas"]["ChildClassRecapView"][];
+        };
+        /** ChildClassRecapView */
+        ChildClassRecapView: {
+            /**
+             * Class Starts At
+             * Format: date-time
+             */
+            class_starts_at: string;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Passed Skills */
+            passed_skills: string[];
+            /** Practiced Skills */
+            practiced_skills: string[];
+            /** Taught Skills */
+            taught_skills: string[];
+        };
+        /** ChildPracticeView */
+        ChildPracticeView: {
+            /** Skill Ids */
+            skill_ids: string[];
+            /** Student Id */
+            student_id: string;
+        };
         /** ChildProfileView */
         ChildProfileView: {
             /**
@@ -12619,6 +12733,90 @@ export interface components {
             status?: string | null;
             /** Title */
             title?: string | null;
+        };
+        /** ClassRecapView */
+        ClassRecapView: {
+            /** Ai Enabled */
+            ai_enabled: boolean;
+            /** Can Edit */
+            can_edit: boolean;
+            /** Can Resolve */
+            can_resolve: boolean;
+            /**
+             * Class Starts At
+             * Format: date-time
+             */
+            class_starts_at: string;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Practice */
+            practice: components["schemas"]["ChildPracticeView"][];
+            /** Reports */
+            reports: components["schemas"]["ClassReportView"][];
+            /** Revision */
+            revision: number;
+            /** Roster */
+            roster: components["schemas"]["RecapRosterView"][];
+            /** Skill Options */
+            skill_options: components["schemas"]["RecapSkillView"][];
+            /** Source */
+            source: string | null;
+            /** Taught Skills */
+            taught_skills: components["schemas"]["RecapSkillView"][];
+            /** Updated At */
+            updated_at: string | null;
+        };
+        /** ClassReportHandoffList */
+        ClassReportHandoffList: {
+            /** Reports */
+            reports: components["schemas"]["ClassReportHandoffView"][];
+        };
+        /** ClassReportHandoffView */
+        ClassReportHandoffView: {
+            /** Author Id */
+            author_id: string;
+            /**
+             * Class Starts At
+             * Format: date-time
+             */
+            class_starts_at: string;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Report Id */
+            report_id: string;
+            /**
+             * Submitted At
+             * Format: date-time
+             */
+            submitted_at: string;
+            /** Text */
+            text: string;
+        };
+        /** ClassReportView */
+        ClassReportView: {
+            /** Ai Used */
+            ai_used: boolean;
+            /** Applied Revision */
+            applied_revision: number | null;
+            /** Is Mine */
+            is_mine: boolean;
+            /** Outcome */
+            outcome: string;
+            /** Pass Claims */
+            pass_claims: components["schemas"]["PassClaimView"][];
+            /** Questions */
+            questions: string[];
+            /** Report Id */
+            report_id: string;
+            /** Resolved At */
+            resolved_at: string | null;
+            /**
+             * Submitted At
+             * Format: date-time
+             */
+            submitted_at: string;
+            /** Text */
+            text: string;
         };
         /** ClassRiskView */
         ClassRiskView: {
@@ -17199,6 +17397,13 @@ export interface components {
             /** Waiver Version */
             waiver_version?: string | null;
         };
+        /** PassClaimView */
+        PassClaimView: {
+            /** Skill Id */
+            skill_id: string;
+            /** Student Id */
+            student_id: string;
+        };
         /** PasswordResetRequest */
         PasswordResetRequest: {
             /** Email */
@@ -18324,6 +18529,27 @@ export interface components {
             /** Label */
             label: string | null;
         };
+        /** RecapRosterView */
+        RecapRosterView: {
+            /** Attendance */
+            attendance: string;
+            /** Name */
+            name: string;
+            /** Student Id */
+            student_id: string;
+        };
+        /** RecapSkillView */
+        RecapSkillView: {
+            /**
+             * Level Name
+             * @default
+             */
+            level_name: string;
+            /** Name */
+            name: string;
+            /** Skill Id */
+            skill_id: string;
+        };
         /** RecommendLevelUpBody */
         RecommendLevelUpBody: {
             /** Program Id */
@@ -18898,6 +19124,22 @@ export interface components {
             field: string;
             /** Message */
             message: string;
+        };
+        /** SaveClassRecapBody */
+        SaveClassRecapBody: {
+            /**
+             * Class Starts At
+             * Format: date-time
+             */
+            class_starts_at: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Mutation Id */
+            mutation_id: string;
+            /** Practice */
+            practice?: components["schemas"]["ChildPracticeView"][];
+            /** Taught Skill Ids */
+            taught_skill_ids?: string[];
         };
         /** SchedulePriceChangeRequest */
         SchedulePriceChangeRequest: {
@@ -19772,6 +20014,23 @@ export interface components {
             offset: number;
             /** Total */
             total: number;
+        };
+        /** SubmitClassReportBody */
+        SubmitClassReportBody: {
+            /**
+             * Class Starts At
+             * Format: date-time
+             */
+            class_starts_at: string;
+            /** Report Id */
+            report_id: string;
+            /** Text */
+            text: string;
+            /**
+             * Use Ai
+             * @default false
+             */
+            use_ai: boolean;
         };
         /** SubscriptionSummary */
         SubscriptionSummary: {
@@ -22984,6 +23243,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClassPublicProfileList"];
+                };
+            };
+        };
+    };
+    list_class_report_handoffs_api_v2_admin_class_reports_handoffs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassReportHandoffList"];
                 };
             };
         };
@@ -31205,6 +31484,139 @@ export interface operations {
             };
         };
     };
+    get_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                occurrence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassRecapView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                occurrence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveClassRecapBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassRecapView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_class_report_api_v2_coach_occurrences__occurrence_id__class_reports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                occurrence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitClassReportBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassReportView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_class_report_api_v2_coach_occurrences__occurrence_id__class_reports__report_id__resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                occurrence_id: string;
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassReportView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_profile_api_v2_coach_profile_get: {
         parameters: {
             query?: never;
@@ -34041,6 +34453,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_child_class_recaps_api_v2_parent_students__student_id__class_recaps_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                student_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChildClassRecapList"];
                 };
             };
             /** @description Validation Error */
