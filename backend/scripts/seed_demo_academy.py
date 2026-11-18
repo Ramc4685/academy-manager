@@ -46,6 +46,7 @@ from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import
 from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import (
     MongoTenantBootstrapStore,
 )
+from backend.v2.shared.profile.completeness import MEDICAL_NONE_SENTINEL
 
 DEMO_ACADEMY_ID = "acad_demo_academy"
 SLUG = "demo-academy"
@@ -136,7 +137,6 @@ def _build(now: datetime, user_ids: dict[str, str]) -> dict[str, list[dict[str, 
     """Every tenant-owned document, by collection. Dates follow ``now`` so a
     re-run keeps classes around today (past ~4 weeks, next ~4 weeks)."""
     today = now.astimezone(ZoneInfo(TZ)).date()
-    period = today.strftime("%Y-%m")
     owner, coach, parent = user_ids["owner"], user_ids["coach"], user_ids["parent"]
 
     sessions: list[dict[str, Any]] = []
@@ -181,7 +181,10 @@ def _build(now: datetime, user_ids: dict[str, str]) -> dict[str, list[dict[str, 
             "first_name": first,
             "last_name": "Demo",
             "full_name": f"{first} Demo",
-            "dob": dob,
+            "date_of_birth": dob,
+            "emergency_contact_name": "Jamie Demo",
+            "emergency_contact_phone": "555-0105",
+            "medical_notes": MEDICAL_NONE_SENTINEL,
             "skill_level": "Beginner",
             "parent_id": parent,
             "parent_user_id": parent,
@@ -247,99 +250,110 @@ def _build(now: datetime, user_ids: dict[str, str]) -> dict[str, list[dict[str, 
                     "session_id": occurrence["session_id"],
                     "student_id": enrollment["student_id"],
                     "marked_by": coach,
-                    "marked_at": occurrence["end_at"],
+                    # The class's own start (tz-aware UTC from the Chicago wall time).
+                    "marked_at": occurrence["start_at"],
                     "status": statuses[len(attendance) % len(statuses)],
                     "client_app_version": "demo-seed",
                     "entry_source": "enrollment",
                 }
             )
 
-    # This month's tuition for both children: Sam's paid at the desk in cash,
-    # Alex's open and due in two weeks. Keyed (enrollment, period) like the
+    # Last month's and this month's tuition for both children, all paid in cash
+    # at the desk: the demo has no Stripe account, so an open balance would show
+    # a pay button that can only fail. Keyed (enrollment, period) like the
     # monthly run's own invoices, so that run skips them instead of billing twice.
+    this_month = today.replace(day=1)
+    last_month = (this_month - timedelta(days=1)).replace(day=1)
     invoices: list[dict[str, Any]] = []
     lines: list[dict[str, Any]] = []
-    for seq, (key, enrollment_id, student_id, paid) in enumerate(
-        (
-            ("sam", "demo_enrollment_sam_sat", "demo_student_sam", True),
-            ("alex", "demo_enrollment_alex_sat", "demo_student_alex", False),
-        ),
-        start=1,
-    ):
-        due = today.replace(day=1) + timedelta(days=9) if paid else today + timedelta(days=14)
-        invoices.append(
-            {
-                "academy_id": DEMO_ACADEMY_ID,
-                "invoice_id": f"demo_invoice_{key}",
-                "invoice_number": format_invoice_number(
-                    prefix="DEMO", yyyymm=period.replace("-", ""), seq=seq
-                ),
-                "parent_id": parent,
-                "student_id": student_id,
-                "enrollment_id": enrollment_id,
-                "session_id": "demo_session_sat",
-                "period": period,
-                "status": "paid" if paid else "open",
-                "subtotal_cents": 8000,
-                "discount_cents": 0,
-                "total_cents": 8000,
-                "balance_due_cents": 0 if paid else 8000,
-                "refunded_cents": 0,
-                "currency": "usd",
-                "due_date": datetime.combine(due, time.min, tzinfo=UTC),
-                "delivery_status": "not_sent",
-                "finalized_at": now,
-                "version": 0,
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
-        lines.append(
-            {
-                "academy_id": DEMO_ACADEMY_ID,
-                "line_id": f"demo_line_{key}",
-                "invoice_id": f"demo_invoice_{key}",
-                "line_type": "tuition",
-                "description": f"Junior Beginners tuition {period}",
-                "quantity": 1,
-                "unit_amount_cents": 8000,
-                "amount_cents": 8000,
-                "source_type": "enrollment",
-                "source_id": enrollment_id,
-                "created_at": now,
-            }
-        )
-    paid_at = now - timedelta(days=3)
-    payments = [
-        {
-            "academy_id": DEMO_ACADEMY_ID,
-            "payment_id": "demo_payment_sam",
-            "parent_id": parent,
-            "amount_cents": 8000,
-            "unapplied_amount_cents": 0,
-            "currency": "usd",
-            "status": "succeeded",
-            "refunded_cents": 0,
-            "payment_method": "cash",
-            "stripe_payment_intent_id": None,
-            "paid_at": paid_at,
-            "recorded_by": owner,
-            "notes": "Paid at the front desk",
-            "created_at": paid_at,
-            "updated_at": paid_at,
-        }
-    ]
-    allocations = [
-        {
-            "academy_id": DEMO_ACADEMY_ID,
-            "allocation_id": "demo_allocation_sam",
-            "payment_id": "demo_payment_sam",
-            "invoice_id": "demo_invoice_sam",
-            "amount_cents": 8000,
-            "idempotency_key": "demo_allocation_sam",
-            "created_at": paid_at,
-        }
-    ]
+    payments: list[dict[str, Any]] = []
+    allocations: list[dict[str, Any]] = []
+    for month_start in (last_month, this_month):
+        period = month_start.strftime("%Y-%m")
+        paid_at = min(datetime.combine(month_start, time(16), tzinfo=UTC) + timedelta(days=5), now)
+        for seq, (child, enrollment_id, student_id) in enumerate(
+            (
+                ("sam", "demo_enrollment_sam_sat", "demo_student_sam"),
+                ("alex", "demo_enrollment_alex_sat", "demo_student_alex"),
+            ),
+            start=1,
+        ):
+            key = f"{child}_{period.replace('-', '_')}"
+            invoice_id, payment_id = f"demo_invoice_{key}", f"demo_payment_{key}"
+            invoices.append(
+                {
+                    "academy_id": DEMO_ACADEMY_ID,
+                    "invoice_id": invoice_id,
+                    "invoice_number": format_invoice_number(
+                        prefix="DEMO", yyyymm=period.replace("-", ""), seq=seq
+                    ),
+                    "parent_id": parent,
+                    "student_id": student_id,
+                    "enrollment_id": enrollment_id,
+                    "session_id": "demo_session_sat",
+                    "period": period,
+                    "status": "paid",
+                    "subtotal_cents": 8000,
+                    "discount_cents": 0,
+                    "total_cents": 8000,
+                    "balance_due_cents": 0,
+                    "refunded_cents": 0,
+                    "currency": "usd",
+                    "due_date": datetime.combine(
+                        month_start + timedelta(days=9), time.min, tzinfo=UTC
+                    ),
+                    "delivery_status": "not_sent",
+                    "finalized_at": paid_at,
+                    "version": 0,
+                    "created_at": paid_at,
+                    "updated_at": paid_at,
+                }
+            )
+            lines.append(
+                {
+                    "academy_id": DEMO_ACADEMY_ID,
+                    "line_id": f"demo_line_{key}",
+                    "invoice_id": invoice_id,
+                    "line_type": "tuition",
+                    "description": f"Junior Beginners tuition {period}",
+                    "quantity": 1,
+                    "unit_amount_cents": 8000,
+                    "amount_cents": 8000,
+                    "source_type": "enrollment",
+                    "source_id": enrollment_id,
+                    "created_at": paid_at,
+                }
+            )
+            payments.append(
+                {
+                    "academy_id": DEMO_ACADEMY_ID,
+                    "payment_id": payment_id,
+                    "parent_id": parent,
+                    "amount_cents": 8000,
+                    "unapplied_amount_cents": 0,
+                    "currency": "usd",
+                    "status": "succeeded",
+                    "refunded_cents": 0,
+                    "payment_method": "cash",
+                    "stripe_payment_intent_id": None,
+                    "paid_at": paid_at,
+                    "recorded_by": owner,
+                    "notes": "Paid at the front desk",
+                    "created_at": paid_at,
+                    "updated_at": paid_at,
+                }
+            )
+            allocations.append(
+                {
+                    "academy_id": DEMO_ACADEMY_ID,
+                    "allocation_id": f"demo_allocation_{key}",
+                    "payment_id": payment_id,
+                    "invoice_id": invoice_id,
+                    "amount_cents": 8000,
+                    "idempotency_key": f"demo_allocation_{key}",
+                    "created_at": paid_at,
+                }
+            )
 
     memberships = [
         {
@@ -442,6 +456,10 @@ async def _upsert_user(
         "role": roles[-1],
         "roles": roles,
         "stripe_customer_id": None,
+        # Fictional 555-01xx numbers; a confirmed email and a phone are what the
+        # parent profile's completeness banner asks for.
+        "phone": f"555-010{list(PERSONAS).index(persona)}",
+        "email_confirmed_at": now,
         "updated_at": now,
     }
     require_demo(doc["academy_id"])

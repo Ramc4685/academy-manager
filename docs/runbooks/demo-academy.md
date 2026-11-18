@@ -26,13 +26,16 @@ typed at the last `--apply`.
 
 Two weekly classes taught by Demo Coach ("Junior Beginners" on Saturdays, a free
 Wednesday clinic) with dated classes from four weeks back to four weeks ahead,
-two students enrolled, attendance on past classes, and this month's tuition:
-Sam's invoice paid in cash, Alex's open and due in two weeks.
+two students enrolled, attendance on past classes, and last month's and this
+month's tuition for both children, all paid in cash. Nothing is left owing, so
+the parent never sees a Pay button (the demo has no Stripe account, so checkout
+would fail). The parent's and children's profile details are filled in, and
+both children's waivers are signed.
 
 Nothing can charge or email anyone: no card, Stripe customer, autopay or
 connected account exists, and the four addresses are suppressed as
 `hard_bounce`, so the send gate drops every email to them. The monthly invoice
-run skips this month's tuition (the seeded invoices cover it) but will bill
+run skips both seeded months (the seeded invoices cover them) but will bill
 next month's; that is harmless and the next re-run removes it.
 
 ## Run it on production

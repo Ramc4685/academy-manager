@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -82,13 +83,35 @@ async def test_apply_seeds_the_demo_academy(real_db: Any) -> None:
 
     statuses = await real_db["attendance"].distinct("status")
     assert set(statuses) == {"present", "late", "absent"}
-    invoices = {
-        doc["status"]: doc
-        async for doc in real_db["invoices"].find({"parent_id": parent["user_id"]})
-    }
-    assert invoices["paid"]["balance_due_cents"] == 0
-    assert invoices["open"]["balance_due_cents"] == 8000
-    assert await real_db["ledger_payments"].count_documents({"payment_method": "cash"}) == 1
+    starts = {doc["occurrence_id"]: doc["start_at"] async for doc in occurrences.find({})}
+    async for row in real_db["attendance"].find({}):
+        assert row["marked_at"] == starts[row["occurrence_id"]]
+    # Both classes read at their Chicago wall time, across the DST change too.
+    for session_id, wall in (("demo_session_wed", (17, 30)), ("demo_session_sat", (9, 0))):
+        async for row in real_db["attendance"].find({"session_id": session_id}):
+            local = row["marked_at"].replace(tzinfo=UTC).astimezone(ZoneInfo("America/Chicago"))
+            assert (local.hour, local.minute) == wall
+
+    # Every invoice paid (no pay button can appear), each with its cash payment.
+    invoices = [doc async for doc in real_db["invoices"].find({})]
+    assert {doc["period"] for doc in invoices} == {"2026-10", "2026-11"}
+    assert len(invoices) == 4
+    assert all(doc["parent_id"] == parent["user_id"] for doc in invoices)
+    assert all((d["status"], d["balance_due_cents"]) == ("paid", 0) for d in invoices)
+    allocated = await real_db["payment_allocations"].distinct("invoice_id")
+    assert sorted(allocated) == sorted(doc["invoice_id"] for doc in invoices)
+    assert await real_db["ledger_payments"].count_documents({"payment_method": "cash"}) == 4
+
+    # Nothing for the parent profile's completeness banner to ask for.
+    assert parent["phone"] and parent["email_confirmed_at"]
+    async for child in real_db["students"].find({}):
+        for field in (
+            "date_of_birth",
+            "emergency_contact_name",
+            "emergency_contact_phone",
+            "medical_notes",
+        ):
+            assert child[field], field
     # Nothing that could charge: no Stripe customer, card or autopay anywhere.
     for name in ("parent_billing_customers", "parent_payment_methods", "autopay_consents"):
         assert await real_db[name].count_documents({}) == 0
@@ -104,17 +127,20 @@ async def test_second_apply_restores_the_seeded_state(real_db: Any) -> None:
     coach = await real_db["users"].find_one({"normalized_email": "demo.coach@example.com"})
     await real_db["academy_memberships"].delete_one({"user_id": coach["user_id"]})
     await real_db["invoices"].update_one(
-        {"invoice_id": "demo_invoice_alex"}, {"$set": {"status": "paid", "balance_due_cents": 0}}
+        {"invoice_id": "demo_invoice_alex_2026_11"},
+        {"$set": {"status": "open", "balance_due_cents": 8000}},
     )
-    stray = await real_db["invoices"].find_one({"invoice_id": "demo_invoice_sam"}, {"_id": 0})
+    stray = await real_db["invoices"].find_one(
+        {"invoice_id": "demo_invoice_sam_2026_11"}, {"_id": 0}
+    )
     await real_db["invoices"].insert_one(
         {**stray, "invoice_id": "stray", "invoice_number": "STRAY-1"}
     )
     await _apply(real_db)
 
     assert await _counts(real_db) == seeded
-    alex = await real_db["invoices"].find_one({"invoice_id": "demo_invoice_alex"})
-    assert (alex["status"], alex["balance_due_cents"]) == ("open", 8000)
+    alex = await real_db["invoices"].find_one({"invoice_id": "demo_invoice_alex_2026_11"})
+    assert (alex["status"], alex["balance_due_cents"]) == ("paid", 0)
 
 
 async def test_writes_only_the_demo_academy(real_db: Any) -> None:
