@@ -1,6 +1,6 @@
 # worker-proxy-secret
 
-PR: #0
+PR: #1211
 
 ## What changed
 Nothing visible yet. The production pipeline now copies the GitHub secret `BFF_PROXY_SHARED_SECRET` into the Cloudflare Worker before every frontend deploy. This prepares for multi-academy mode, where the API trusts the forwarded academy host only when the Worker sends the shared secret. The host preflight script now reads `DB_NAME` when `MONGO_DB_NAME` is unset, so it checks the production database on the API machine.
