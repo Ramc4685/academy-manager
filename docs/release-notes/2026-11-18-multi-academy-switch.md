@@ -1,6 +1,6 @@
 # multi-academy-switch
 
-PR: #0
+PR: #1212
 
 ## What changed
 Production switches from single-academy to multi-academy mode, so a second academy can exist beside BLNO. The request host now picks the academy: `<slug>.courtmastr.com`, or a verified domain row. BLNO keeps `blno-academy.courtmastr.com` (its slug) and `academy.courtmastr.com` (a verified row), so BLNO families see no change. Platform routes turn on so a platform admin can create the demo academy at `/platform/tenants`.
