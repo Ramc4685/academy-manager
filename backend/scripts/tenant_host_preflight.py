@@ -536,8 +536,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--database",
-        default=os.environ.get("MONGO_DB_NAME", "academy"),
-        help="Mongo database name (default: $MONGO_DB_NAME or 'academy')",
+        default=os.environ.get("MONGO_DB_NAME") or os.environ.get("DB_NAME", "academy"),
+        help="Mongo database name (default: $MONGO_DB_NAME, then $DB_NAME, then 'academy')",
     )
     parser.add_argument(
         "--project-id",
