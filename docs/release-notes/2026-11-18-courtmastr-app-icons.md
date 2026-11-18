@@ -1,6 +1,6 @@
 # courtmastr-app-icons
 
-PR: TBD
+PR: #1214
 
 ## What changed
 The web app now uses the CourtMastr logo ("Earned Stripes", chosen 2026-11-03) instead of the house academy's yellow "B". That covers the browser favicon, the PWA/home-screen icons and the iOS apple-touch icon. The platform-host login and register header, the CourtMastr landing page, the franchise (owner) shell and the "Bookings and payments by CourtMastr" footer credit also switch from a shuttlecock or monogram to the logo. Academy logos (`logo_url`) and academy monograms on academy hosts are unchanged.
