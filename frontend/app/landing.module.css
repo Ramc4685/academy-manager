@@ -20,31 +20,6 @@
   align-items: center;
   gap: 12px;
 }
-.logomark {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  background: #0f172a;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  overflow: hidden;
-}
-.logomark::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: #facc15;
-  transform: translateY(-50%);
-}
-.logomark svg {
-  position: relative;
-  z-index: 1;
-}
 .brandText {
   display: flex;
   flex-direction: column;

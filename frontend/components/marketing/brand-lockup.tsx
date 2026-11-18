@@ -1,4 +1,5 @@
 import { AcademyMark } from "@/components/ds/academy-mark";
+import { CourtMastrLogo } from "@/components/ds/courtmastr-logo";
 import { brand } from "@/lib/brand";
 import { safeHexColor } from "@/lib/public-page/format";
 
@@ -28,14 +29,18 @@ export function BrandLockup({
 
   return (
     <div className="flex items-center gap-3">
-      <AcademyMark
-        name={title}
-        logoUrl={isAcademyHost ? logoUrl : null}
-        size={40}
-        monogramBg={isAcademyHost ? safeHexColor(brandColor, "#facc15") : "#facc15"}
-        monogramColor="#0f172a"
-        className="rounded-lg"
-      />
+      {isAcademyHost ? (
+        <AcademyMark
+          name={title}
+          logoUrl={logoUrl}
+          size={40}
+          monogramBg={safeHexColor(brandColor, "#facc15")}
+          monogramColor="#0f172a"
+          className="rounded-lg"
+        />
+      ) : (
+        <CourtMastrLogo size={40} />
+      )}
       <div>
         <div className={`font-display text-lg font-bold leading-6 ${text}`}>{title}</div>
         <div className={`text-[11px] uppercase ${subtext}`}>{subtitle}</div>
