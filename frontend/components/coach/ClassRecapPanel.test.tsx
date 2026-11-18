@@ -2,9 +2,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import type { ApiError } from "@/lib/api/client";
 import type { ClassRecapView } from "@/lib/api/class-recap";
+import { nextReportAttempt } from "@/lib/coach/class-recap";
 
-import { ClassRecapBody } from "./ClassRecapPanel";
+import { afterReportError, ClassRecapEditor, ClassReportForm } from "./ClassRecapPanel";
 
 const VIEW: ClassRecapView = {
   occurrence_id: "occ-1",
@@ -35,7 +37,7 @@ const VIEW: ClassRecapView = {
 function render(overrides: Partial<ClassRecapView> = {}, skillsHref?: string): string {
   return renderToStaticMarkup(
     <QueryClientProvider client={new QueryClient()}>
-      <ClassRecapBody view={{ ...VIEW, ...overrides }} skillsHref={skillsHref} />
+      <ClassRecapEditor view={{ ...VIEW, ...overrides }} skillsHref={skillsHref} />
     </QueryClientProvider>,
   );
 }
@@ -85,6 +87,19 @@ describe("ClassRecapPanel", () => {
     expect(box).not.toContain("checked");
   });
 
+  it("blocks a report while the recap has unsaved edits, so it cannot overwrite them", () => {
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <ClassReportForm view={VIEW} recapDirty />
+      </QueryClientProvider>,
+    );
+    expect(html).toContain("recap-report-blocked");
+    expect(/<button[^>]*data-testid="recap-report-submit"[^>]*>/.exec(html)?.[0]).toContain(
+      "disabled",
+    );
+    expect(render()).not.toContain("recap-report-blocked");
+  });
+
   it("without AI, the report form only sends to the owner", () => {
     const html = render({ ai_enabled: false });
     expect(html).not.toContain("recap-report-use-ai");
@@ -125,5 +140,31 @@ describe("ClassRecapPanel", () => {
     expect(html).toMatch(
       /<a[^>]*href="\/coach\/sessions\/occ-1\/skills\?date=2026-11-18"[^>]*data-testid="recap-skills-link"|<a[^>]*data-testid="recap-skills-link"[^>]*href="\/coach\/sessions\/occ-1\/skills\?date=2026-11-18"/,
     );
+  });
+});
+
+describe("report send failures", () => {
+  const conflict = (details: Record<string, unknown>) =>
+    Object.assign(new Error("conflict"), { status: 409, details }) as ApiError;
+
+  it("replays the same id on every identical retry while the report is still processing", () => {
+    let n = 0;
+    const newId = () => `id-${++n}`;
+    let attempt = nextReportAttempt(null, "Maya drilled clears", true, newId);
+    for (let i = 0; i < 3; i++) {
+      const next = afterReportError(conflict({ processing: true }), attempt);
+      expect(next.message).toContain("still being read");
+      attempt = nextReportAttempt(next.attempt, "Maya drilled clears", true, newId);
+      expect(attempt.reportId).toBe("id-1");
+    }
+  });
+
+  it("mints a new id after a 409 that spent the id on a different report", () => {
+    let n = 0;
+    const newId = () => `id-${++n}`;
+    const first = nextReportAttempt(null, "Maya drilled clears", true, newId);
+    const next = afterReportError(conflict({ report_id: "id-1" }), first);
+    expect(next.attempt).toBeNull();
+    expect(nextReportAttempt(next.attempt, "Maya drilled clears", true, newId).reportId).toBe("id-2");
   });
 });

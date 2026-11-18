@@ -21,12 +21,18 @@ from backend.v2.shared.http import require_persona
 router = APIRouter(tags=["parent-class-recap"])
 
 
+class ChildRecapSkillView(BaseModel):
+    skill_id: str
+    name: str
+    #: Passed as of today (placement credits excluded), not necessarily at this class.
+    passed: bool
+
+
 class ChildClassRecapView(BaseModel):
     occurrence_id: str
     class_starts_at: datetime
-    taught_skills: list[str]
-    practiced_skills: list[str]
-    passed_skills: list[str]
+    taught_skills: list[ChildRecapSkillView]
+    practiced_skills: list[ChildRecapSkillView]
 
 
 class ChildClassRecapList(BaseModel):
@@ -42,4 +48,6 @@ async def list_child_class_recaps(
 ) -> ChildClassRecapList:
     await _verify_child_ownership(claims.user_id, student_id, use_cases)
     rows = await request.app.state.class_recap.list_for_child.execute(student_id)
-    return ChildClassRecapList(recaps=[ChildClassRecapView(**r.model_dump()) for r in rows])
+    return ChildClassRecapList(
+        recaps=[ChildClassRecapView.model_validate(r.model_dump()) for r in rows]
+    )

@@ -78,13 +78,18 @@ export interface ClassReportHandoff {
   submitted_at: string;
 }
 
+export interface ChildRecapSkill {
+  skill_id: string;
+  name: string;
+  /** Passed as of today (the skill pipeline), not necessarily at this class. */
+  passed: boolean;
+}
+
 export interface ChildClassRecap {
   occurrence_id: string;
   class_starts_at: string;
-  taught_skills: string[];
-  practiced_skills: string[];
-  /** Passed as of today (the skill pipeline), not necessarily at this class. */
-  passed_skills: string[];
+  taught_skills: ChildRecapSkill[];
+  practiced_skills: ChildRecapSkill[];
 }
 
 const recapPath = (occurrenceId: string) =>

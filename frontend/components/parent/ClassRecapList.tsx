@@ -2,16 +2,20 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { listChildClassRecaps, type ChildClassRecap } from "@/lib/api/class-recap";
+import {
+  listChildClassRecaps,
+  type ChildClassRecap,
+  type ChildRecapSkill,
+} from "@/lib/api/class-recap";
 import { getParentAcademy } from "@/lib/api/parent";
 import { parseAcademyInstant, resolveAcademyTimeZone } from "@/lib/format/academy-time";
 import { queryKeys } from "@/lib/query/keys";
 
-function SkillLine({ skills, passed }: { skills: string[]; passed: Set<string> }) {
+function SkillLine({ skills }: { skills: ChildRecapSkill[] }) {
   return (
     <>
-      {skills.map((name, i) => (
-        <span key={name}>{`${i > 0 ? ", " : ""}${name}${passed.has(name) ? " ✓" : ""}`}</span>
+      {skills.map((s, i) => (
+        <span key={s.skill_id}>{`${i > 0 ? ", " : ""}${s.name}${s.passed ? " ✓" : ""}`}</span>
       ))}
     </>
   );
@@ -32,7 +36,6 @@ export function ClassRecapItems({
       <p className="text-sm font-bold text-rally-ink">{`What ${firstName} did in class`}</p>
       <ul className="mt-2 divide-y divide-rally-line">
         {recaps.map((r) => {
-          const passed = new Set(r.passed_skills);
           return (
             <li key={r.occurrence_id} className="py-2 text-sm">
               <p className="text-xs text-rally-muted">
@@ -44,13 +47,13 @@ export function ClassRecapItems({
                 })}
               </p>
               <p className="text-rally-ink">
-                Class worked on: <SkillLine skills={r.taught_skills} passed={passed} />
+                Class worked on: <SkillLine skills={r.taught_skills} />
               </p>
               <p className="text-rally-ink">
                 {r.practiced_skills.length > 0 ? (
                   <>
                     {`${firstName} practised: `}
-                    <SkillLine skills={r.practiced_skills} passed={passed} />
+                    <SkillLine skills={r.practiced_skills} />
                   </>
                 ) : (
                   <span className="text-rally-muted">
@@ -62,7 +65,7 @@ export function ClassRecapItems({
           );
         })}
       </ul>
-      {recaps.some((r) => r.passed_skills.length > 0) && (
+      {recaps.some((r) => [...r.taught_skills, ...r.practiced_skills].some((s) => s.passed)) && (
         <p className="mt-2 text-xs text-rally-muted" data-testid="parent-class-recaps-pass-note">
           {`✓ means ${firstName} has passed that skill as of today. It may have been passed at a later class, not the one shown.`}
         </p>

@@ -24,8 +24,9 @@ Who may do what on one occurrence:
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from datetime import UTC, datetime
+from collections.abc import Callable, Sequence
+from contextlib import suppress
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from pydantic import BaseModel, Field
@@ -68,6 +69,9 @@ from backend.v2.contexts.coaching.domain.models import Attendance
 from backend.v2.shared.ids import new_ulid
 
 REPORT_MAX_CHARS = 2000
+#: How long a submit owns the reading of its report; after that a replay
+#: settles it (applied or the owner's) without another model call.
+REPORT_PROCESSING_LEASE = timedelta(minutes=5)
 CHILD_RECAP_LIMIT = 20
 HANDOFF_LIMIT = 50
 
@@ -91,6 +95,11 @@ class ClassReportRepository(Protocol):
 
     async def insert(self, report: ClassReport) -> bool:
         """Insert-only; False when the report id already exists."""
+        ...
+
+    async def finish(self, report: ClassReport) -> bool:
+        """Store the reading's outcome and clear ``processing_until``, only
+        while it is still set (the read is finished once). False otherwise."""
         ...
 
     async def list_for_occurrence(self, occurrence_id: str) -> list[ClassReport]: ...
@@ -117,7 +126,10 @@ class StudentAttendanceReader(Protocol):
 class PassedSkills(Protocol):
     """The authoritative pass pipeline (student_progress), read only."""
 
-    async def passed(self, student_id: str, skill_ids: list[str]) -> set[str]: ...
+    async def passed(self, student_id: str, skill_ids: list[str]) -> set[str]:
+        """Ids among ``skill_ids`` this child genuinely passed (silent
+        placement credits excluded, like every parent-facing pass read)."""
+        ...
 
 
 class SkillOption(BaseModel):
@@ -142,6 +154,13 @@ class RecapSkillCatalog(Protocol):
 
 class StudentNames(Protocol):
     async def full_names(self, student_ids: list[str]) -> dict[str, str]: ...
+
+
+class OccurrenceRosterNames(Protocol):
+    async def full_names(self, *, session_id: str, occurrence_id: str) -> dict[str, str]:
+        """Everyone on this dated class's roster (enrolled, make-up, trial,
+        and anyone already marked, voided included): student id -> full name."""
+        ...
 
 
 class ClassReportInterpreter(Protocol):
@@ -281,8 +300,15 @@ class SaveClassRecap:
         if untaught:
             raise RecapInvalid("practised skills must be taught in this class", skill_ids=untaught)
         marks = _attendance_map(await self._attendance.list_for_occurrence(cmd.occurrence_id))
+        # Practice recorded before an attendance correction rides along
+        # unchanged (the coach can no longer see that child to remove it);
+        # only new credit needs a present mark now.
+        had = {row.student_id: set(row.skill_ids) for row in current.practice} if current else {}
         not_present = [
-            row.student_id for row in practice if marks.get(row.student_id) not in CONFIRMED_PRESENT
+            row.student_id
+            for row in practice
+            if marks.get(row.student_id) not in CONFIRMED_PRESENT
+            and not set(row.skill_ids) <= had.get(row.student_id, set())
         ]
         if not_present:
             raise RecapInvalid(
@@ -408,7 +434,7 @@ class SubmitClassReport:
         occurrences: OccurrenceLookup,
         attendance: OccurrenceAttendanceReader,
         skills: RecapSkillCatalog,
-        names: StudentNames,
+        roster: OccurrenceRosterNames,
         interpreter: ClassReportInterpreter,
         save: SaveClassRecap,
         academy_id: Callable[[], str],
@@ -419,7 +445,7 @@ class SubmitClassReport:
         self._occurrences = occurrences
         self._attendance = attendance
         self._skills = skills
-        self._names = names
+        self._roster = roster
         self._interpreter = interpreter
         self._save = save
         self._academy_id = academy_id
@@ -432,8 +458,12 @@ class SubmitClassReport:
         )
         existing = await self._reports.get(cmd.report_id)
         if existing is not None:
-            return self._replay(existing, cmd, actor)
+            return await self._replay(existing, cmd, actor, now)
 
+        # Stored before any model call: the unique report id makes this submit
+        # the only one that reads it, and until it finishes the report is
+        # already the owner's (``sent_to_owner``), so a crash or an error
+        # mid-read never loses the coach's words.
         report = ClassReport(
             report_id=cmd.report_id,
             academy_id=self._academy_id(),
@@ -443,28 +473,62 @@ class SubmitClassReport:
             text=cmd.text,
             submitted_at=now,
             outcome="sent_to_owner",
+            processing_until=now + REPORT_PROCESSING_LEASE if cmd.use_ai else None,
         )
-        if cmd.use_ai:
-            report = await self._read_and_apply(report, cmd, actor)
         if not await self._reports.insert(report):
-            # A concurrent submit of the same id won; its apply used the same
-            # mutation id, so the recap converged either way.
             stored = await self._reports.get(cmd.report_id)
-            if stored is not None:
-                return self._replay(stored, cmd, actor)
-        return report
+            if stored is None:
+                raise RecapConflict("this report id was already used", report_id=cmd.report_id)
+            return await self._replay(stored, cmd, actor, now)
+        if not cmd.use_ai:
+            return report
+        try:
+            # Enrollments live on the recurring template, as on the register.
+            roster_session_id = occ.template_session_id or occ.session_id
+            done = await self._read_and_apply(report, roster_session_id, cmd, actor)
+        except Exception:
+            # Best effort: settle it now instead of waiting out the lease.
+            with suppress(Exception):
+                await self._recover(report)
+            raise
+        return await self._finish(done.model_copy(update={"processing_until": None}))
+
+    async def _finish(self, done: ClassReport) -> ClassReport:
+        if await self._reports.finish(done):
+            return done
+        # Someone else settled it first (a recovery): theirs is the record.
+        return await self._reports.get(done.report_id) or done
+
+    async def _recover(self, report: ClassReport) -> ClassReport:
+        """Settle a read that never finished, without calling the model again:
+        applied when the recap's last write is this report, else the owner's."""
+        current = await self._recaps.get(report.occurrence_id)
+        update: dict[str, object] = {"processing_until": None}
+        if current is not None and current.source_report_id == report.report_id:
+            update |= {"outcome": "applied", "ai_used": True, "applied_revision": current.revision}
+        return await self._finish(report.model_copy(update=update))
 
     async def _read_and_apply(
-        self, report: ClassReport, cmd: SubmitClassReportCommand, actor: RecapActor
+        self,
+        report: ClassReport,
+        session_id: str,
+        cmd: SubmitClassReportCommand,
+        actor: RecapActor,
     ) -> ClassReport:
         current = await self._recaps.get(cmd.occurrence_id)
         marks = _attendance_map(await self._attendance.list_for_occurrence(cmd.occurrence_id))
-        marks = {sid: mark for sid, mark in marks.items() if mark != "voided"}
-        full = await self._names.full_names(list(marks))
-        roster = [RosterName(student_id=sid, full_name=full.get(sid, "")) for sid in marks]
+        # Alias everyone on the class, marked or not (voided included), so no
+        # roster child's name reaches the model.
+        full = await self._roster.full_names(session_id=session_id, occurrence_id=cmd.occurrence_id)
+        ids = list(dict.fromkeys([*full, *marks]))
+        if any(not full.get(sid, "").strip() for sid in ids):
+            # A child we cannot name cannot be swapped for a code: the report
+            # stays with the owner and never leaves the app.
+            return report
+        roster = [RosterName(student_id=sid, full_name=full[sid]) for sid in ids]
         options = await self._skills.options()
         aliased = alias_report(cmd.text, roster, [(o.skill_id, o.name) for o in options])
-        firsts = {sid: first_name(name) for sid, name in full.items()}
+        firsts = {sid: first_name(full[sid]) for sid in ids}
         if aliased.questions:
             # Settled locally: the report never leaves the app.
             return report.model_copy(
@@ -521,9 +585,12 @@ class SubmitClassReport:
             update={**update, "outcome": "applied", "applied_revision": saved.revision}
         )
 
-    @staticmethod
-    def _replay(
-        existing: ClassReport, cmd: SubmitClassReportCommand, actor: RecapActor
+    async def _replay(
+        self,
+        existing: ClassReport,
+        cmd: SubmitClassReportCommand,
+        actor: RecapActor,
+        now: datetime,
     ) -> ClassReport:
         if (
             existing.author_id != actor.user_id
@@ -531,7 +598,16 @@ class SubmitClassReport:
             or existing.text != cmd.text
         ):
             raise RecapConflict("this report id was already used", report_id=cmd.report_id)
-        return existing
+        if existing.processing_until is None:
+            return existing
+        if _utc(existing.processing_until) > _utc(now):
+            # The first submit is still reading it: never a second model call.
+            raise RecapConflict(
+                "this report is still being read; try again in a moment",
+                report_id=cmd.report_id,
+                processing=True,
+            )
+        return await self._recover(existing)
 
 
 # --- owner handoff ---------------------------------------------------------
@@ -572,14 +648,24 @@ class ResolveClassReport:
 # --- parent: own child -----------------------------------------------------
 
 
+class ChildRecapSkill(BaseModel):
+    """Keyed by id: two levels may hold skills with the same name."""
+
+    model_config = {"frozen": True}
+
+    skill_id: str
+    name: str
+    #: Passed as of today by the pass pipeline (placement credits excluded).
+    passed: bool
+
+
 class ChildClassRecap(BaseModel):
     model_config = {"frozen": True}
 
     occurrence_id: str
     class_starts_at: datetime
-    taught_skills: list[str]
-    practiced_skills: list[str]
-    passed_skills: list[str]
+    taught_skills: list[ChildRecapSkill]
+    practiced_skills: list[ChildRecapSkill]
 
 
 class ListChildClassRecaps:
@@ -607,19 +693,29 @@ class ListChildClassRecaps:
         )
         recaps = await self._recaps.list_for_occurrences(attended)
         recaps.sort(key=lambda r: _utc(r.class_starts_at), reverse=True)
-        rows: list[ChildClassRecap] = []
-        for recap in recaps[:CHILD_RECAP_LIMIT]:
-            practiced = recap.practiced_by(student_id)
-            ids = list(dict.fromkeys((*recap.taught_skill_ids, *practiced)))
-            names = await self._skills.names(ids, active_only=False)
-            passed = await self._passes.passed(student_id, ids)
-            rows.append(
-                ChildClassRecap(
-                    occurrence_id=recap.occurrence_id,
-                    class_starts_at=recap.class_starts_at,
-                    taught_skills=[names[s] for s in recap.taught_skill_ids if s in names],
-                    practiced_skills=[names[s] for s in practiced if s in names],
-                    passed_skills=[names[s] for s in ids if s in names and s in passed],
-                )
+        recaps = recaps[:CHILD_RECAP_LIMIT]
+        # One names read and one passes read for the whole list, not per recap.
+        ids = list(
+            dict.fromkeys(
+                s for r in recaps for s in (*r.taught_skill_ids, *r.practiced_by(student_id))
             )
-        return rows
+        )
+        names = await self._skills.names(ids, active_only=False) if ids else {}
+        passed = await self._passes.passed(student_id, ids) if ids else set()
+
+        def skills(skill_ids: Sequence[str]) -> list[ChildRecapSkill]:
+            return [
+                ChildRecapSkill(skill_id=s, name=names[s], passed=s in passed)
+                for s in skill_ids
+                if s in names
+            ]
+
+        return [
+            ChildClassRecap(
+                occurrence_id=r.occurrence_id,
+                class_starts_at=r.class_starts_at,
+                taught_skills=skills(r.taught_skill_ids),
+                practiced_skills=skills(r.practiced_by(student_id)),
+            )
+            for r in recaps
+        ]

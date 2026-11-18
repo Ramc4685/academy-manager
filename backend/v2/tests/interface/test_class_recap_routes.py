@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from backend.v2.contexts.coaching.application.use_cases.class_recap import (
     ChildClassRecap,
+    ChildRecapSkill,
     ClassRecapState,
     RecapRosterEntry,
     SkillOption,
@@ -61,9 +62,11 @@ REPORT = ClassReport(
 CHILD_ROW = ChildClassRecap(
     occurrence_id="occ-1",
     class_starts_at=NOW,
-    taught_skills=["Forehand grip", "Jump smash"],
-    practiced_skills=["Forehand grip"],
-    passed_skills=["Forehand grip"],
+    taught_skills=[
+        ChildRecapSkill(skill_id="s-grip", name="Forehand grip", passed=True),
+        ChildRecapSkill(skill_id="s-smash", name="Jump smash", passed=False),
+    ],
+    practiced_skills=[ChildRecapSkill(skill_id="s-grip", name="Forehand grip", passed=True)],
 )
 
 
@@ -236,9 +239,13 @@ def test_parent_sees_only_own_child_view_without_report_text() -> None:
             {
                 "occurrence_id": "occ-1",
                 "class_starts_at": WHEN,
-                "taught_skills": ["Forehand grip", "Jump smash"],
-                "practiced_skills": ["Forehand grip"],
-                "passed_skills": ["Forehand grip"],
+                "taught_skills": [
+                    {"skill_id": "s-grip", "name": "Forehand grip", "passed": True},
+                    {"skill_id": "s-smash", "name": "Jump smash", "passed": False},
+                ],
+                "practiced_skills": [
+                    {"skill_id": "s-grip", "name": "Forehand grip", "passed": True}
+                ],
             }
         ]
     }

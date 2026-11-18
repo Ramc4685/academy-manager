@@ -5,6 +5,7 @@ cases around the one guarded writer. Fakes copy the real store's refusals
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -137,6 +138,19 @@ class Names:
         return {sid: self.full[sid] for sid in student_ids if sid in self.full}
 
 
+class Roster:
+    """The register's roster: every child on the class, marked or not (Zoe is
+    enrolled but unmarked, Vic's mark is voided)."""
+
+    def __init__(self, full: dict[str, str] | None = None) -> None:
+        self.full = FULL if full is None else full
+        self.asked: list[str] = []
+
+    async def full_names(self, *, session_id: str, occurrence_id: str) -> dict[str, str]:
+        self.asked.append(session_id)
+        return dict(self.full) if occurrence_id == OCC else {}
+
+
 class Passes:
     """The pass pipeline's word, independent of anything a report said."""
 
@@ -184,12 +198,26 @@ class Reports:
         self.rows[report.report_id] = report
         return True
 
+    async def finish(self, report: ClassReport) -> bool:
+        row = self.rows.get(report.report_id)
+        if row is None or row.processing_until is None:
+            return False
+        fields = ("outcome", "ai_used", "questions", "pass_claims", "applied_revision")
+        self.rows[report.report_id] = row.model_copy(
+            update={**{k: getattr(report, k) for k in fields}, "processing_until": None}
+        )
+        return True
+
     async def list_for_occurrence(self, occurrence_id: str) -> list[ClassReport]:
         return [r for r in self.rows.values() if r.occurrence_id == occurrence_id]
 
     async def list_open_handoffs(self, *, limit: int) -> list[ClassReport]:
         return [
-            r for r in self.rows.values() if r.outcome == "sent_to_owner" and r.resolved_at is None
+            r
+            for r in self.rows.values()
+            if r.outcome == "sent_to_owner"
+            and r.resolved_at is None
+            and (r.processing_until is None or r.processing_until <= NOW)
         ][:limit]
 
     async def resolve(self, report_id: str, *, by: str, at: datetime) -> ClassReport | None:
@@ -233,18 +261,20 @@ class World:
             names=Names(),
         )
 
-    def submit(self, interpreter: Interpreter, names: Names | None = None) -> SubmitClassReport:
+    def submit(
+        self, interpreter: Interpreter, roster: Roster | None = None, *, now: datetime = NOW
+    ) -> SubmitClassReport:
         return SubmitClassReport(
             reports=self.reports,
             recaps=self.recaps,
             occurrences=self.occurrences,
             attendance=self.attendance,
             skills=Catalog(),
-            names=names or Names(),
+            roster=roster or Roster(),
             interpreter=interpreter,
             save=self.save,
             academy_id=lambda: ACADEMY,
-            clock=lambda: NOW,
+            clock=lambda: now,
         )
 
     def child(self, passes: Passes | None = None) -> ListChildClassRecaps:
@@ -608,7 +638,8 @@ async def test_split_report_applies_per_child_and_keeps_the_pass_as_follow_up() 
     # The model saw aliases only: no names, ids, attendance or roster details.
     seen = interpreter.calls[0]
     assert seen["text"] == "S3 did grip drills. S2 worked on smashes. S3 passed her grip!"
-    assert seen["student_aliases"] == ["S1", "S2", "S3", "S4"]
+    # The whole roster is aliased: unmarked Zoe and voided Vic too.
+    assert seen["student_aliases"] == ["S1", "S2", "S3", "S4", "S5", "S6"]
     assert all(s.alias.startswith("K") for s in seen["skills"])
     assert "maya" not in repr(seen) and "Lopez" not in repr(seen)
 
@@ -649,8 +680,8 @@ async def test_unclear_report_asks_and_writes_nothing() -> None:
 async def test_duplicate_names_are_settled_locally_without_calling_ai() -> None:
     w = World()
     interpreter = Interpreter(SPLIT)
-    names = Names({**FULL, "leo": "Maya Park"})
-    report = await w.submit(interpreter, names).execute(_report("Maya did grips."), LEAD_ACTOR)
+    roster = Roster({**FULL, "leo": "Maya Park"})
+    report = await w.submit(interpreter, roster).execute(_report("Maya did grips."), LEAD_ACTOR)
     assert report.outcome == "needs_clarification" and not report.ai_used
     assert interpreter.calls == [] and w.recaps.saves == 0
 
@@ -683,6 +714,151 @@ async def test_assistant_cannot_submit_a_report() -> None:
     assert interpreter.calls == []
 
 
+async def test_practice_kept_after_an_attendance_correction_but_no_new_credit() -> None:
+    w = World()
+    await w.save.execute(_cmd(practice=_practice(maya=[GRIP])), LEAD_ACTOR)
+    w.attendance.marks["maya"] = "absent"
+    # The coach's form still sends Maya's hidden row: the save goes through.
+    kept = await w.save.execute(
+        _cmd(mutation_id="m-2", expected_revision=1, practice=_practice(maya=[GRIP], leo=[GRIP])),
+        LEAD_ACTOR,
+    )
+    assert kept.practiced_by("maya") == (GRIP,) and kept.practiced_by("leo") == (GRIP,)
+    with pytest.raises(RecapInvalid):
+        await w.save.execute(
+            _cmd(
+                mutation_id="m-3",
+                expected_revision=2,
+                taught_skill_ids=[GRIP, SMASH],
+                practice=_practice(maya=[GRIP, SMASH]),
+            ),
+            LEAD_ACTOR,
+        )
+    # A report on the class still applies, carrying Maya's row along.
+    facts = ReportFacts(
+        practice=(
+            PracticeClaim(who="listed", students=("S4",), skills=("K1",), evidence="S4 did grip"),
+        )
+    )
+    report = await w.submit(Interpreter(facts)).execute(_report("Sam did grip drills."), LEAD_ACTOR)
+    assert report.outcome == "applied"
+    assert w.recaps.rows[OCC].practiced_by("maya") == (GRIP,)
+
+
+async def test_unmarked_and_voided_children_are_aliased_from_the_class_roster() -> None:
+    w = World(template_session_id="tmpl-1")
+    interpreter = Interpreter(None)
+    roster = Roster()
+    await w.submit(interpreter, roster).execute(
+        _report("Zoe Ng and Vic did grip drills with Leo."), LEAD_ACTOR
+    )
+    assert interpreter.calls[0]["text"] == "S6 and S5 did grip drills with S2."
+    assert roster.asked == ["tmpl-1"]  # enrollments live on the recurring template
+
+
+@pytest.mark.parametrize(
+    "roster",
+    [
+        Roster({**FULL, "zoe": " "}),  # a roster child with no name on file
+        Roster({k: v for k, v in FULL.items() if k != "sam"}),  # a marked child off the roster
+    ],
+)
+async def test_report_stays_with_the_owner_when_a_child_cannot_be_aliased(roster: Roster) -> None:
+    w = World()
+    interpreter = Interpreter(SPLIT)
+    report = await w.submit(interpreter, roster).execute(_report(SPLIT_TEXT), LEAD_ACTOR)
+    assert report.outcome == "sent_to_owner" and interpreter.calls == []
+    assert [
+        r.report_id for r in await ListOpenClassReportHandoffs(reports=w.reports).execute()
+    ] == ["r-1"]
+
+
+async def test_lower_case_first_name_is_asked_not_guessed() -> None:
+    w = World()
+    interpreter = Interpreter(SPLIT)
+    roster = Roster({**FULL, "zoe": "Will Ng"})
+    report = await w.submit(interpreter, roster).execute(
+        _report("Leo will drill smashes next week."), LEAD_ACTOR
+    )
+    assert report.outcome == "needs_clarification" and interpreter.calls == []
+    assert any('"will"' in q for q in report.questions)
+    capital = await w.submit(interpreter, roster).execute(
+        _report("Will did grip drills.", "r-2"), LEAD_ACTOR
+    )
+    assert capital.ai_used and interpreter.calls[0]["text"] == "S6 did grip drills."
+
+
+class BlockingInterpreter(Interpreter):
+    def __init__(self, facts: ReportFacts | None) -> None:
+        super().__init__(facts)
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def interpret(self, **kwargs: Any) -> ReportFacts | None:
+        self.calls.append(kwargs)
+        self.entered.set()
+        await self.release.wait()
+        return self.facts
+
+
+async def test_concurrent_submits_of_one_report_call_the_model_once() -> None:
+    w = World()
+    interpreter = BlockingInterpreter(SPLIT)
+    first = asyncio.create_task(w.submit(interpreter).execute(_report(SPLIT_TEXT), LEAD_ACTOR))
+    await interpreter.entered.wait()
+    with pytest.raises(RecapConflict) as busy:
+        await w.submit(interpreter).execute(_report(SPLIT_TEXT), LEAD_ACTOR)
+    assert busy.value.details.get("processing") is True
+    # Still being read: not an owner handoff yet.
+    assert await ListOpenClassReportHandoffs(reports=w.reports).execute() == []
+    interpreter.release.set()
+    done = await first
+    assert done.outcome == "applied" and len(interpreter.calls) == 1
+    assert w.reports.rows["r-1"].processing_until is None
+    assert await w.submit(interpreter).execute(_report(SPLIT_TEXT), LEAD_ACTOR) == done
+
+
+class FailingInterpreter(Interpreter):
+    async def interpret(self, **kwargs: Any) -> ReportFacts | None:
+        self.calls.append(kwargs)
+        raise RuntimeError("provider dropped the connection")
+
+
+async def test_a_failed_read_leaves_the_report_with_the_owner_and_replays_without_ai() -> None:
+    w = World()
+    interpreter = FailingInterpreter(None)
+    with pytest.raises(RuntimeError):
+        await w.submit(interpreter).execute(_report(SPLIT_TEXT), LEAD_ACTOR)
+    stored = w.reports.rows["r-1"]
+    assert stored.outcome == "sent_to_owner" and stored.processing_until is None
+    assert stored.text == SPLIT_TEXT  # the coach's words are kept
+    again = await w.submit(interpreter).execute(_report(SPLIT_TEXT), LEAD_ACTOR)
+    assert again == stored and len(interpreter.calls) == 1
+
+
+async def test_an_interrupted_read_is_settled_on_replay_without_calling_the_model() -> None:
+    w = World()
+    interpreter = Interpreter(SPLIT)
+    # A crash after the recap was saved but before the report was finished.
+    await w.submit(interpreter).execute(_report(SPLIT_TEXT), LEAD_ACTOR)
+    w.reports.rows["r-1"] = w.reports.rows["r-1"].model_copy(
+        update={"outcome": "sent_to_owner", "applied_revision": None, "processing_until": NOW}
+    )
+    later = NOW + timedelta(minutes=10)
+    applied = await w.submit(interpreter, now=later).execute(_report(SPLIT_TEXT), LEAD_ACTOR)
+    assert applied.outcome == "applied" and applied.applied_revision == 1
+    assert len(interpreter.calls) == 1
+    # A crash before anything was applied: the owner has it.
+    await w.reports.insert(
+        w.reports.rows["r-1"].model_copy(
+            update={"report_id": "r-2", "outcome": "sent_to_owner", "processing_until": NOW}
+        )
+    )
+    owned = await w.submit(interpreter, now=later).execute(_report(SPLIT_TEXT, "r-2"), LEAD_ACTOR)
+    assert owned.outcome == "sent_to_owner" and owned.processing_until is None
+    assert len(interpreter.calls) == 1
+
+
 # --- owner handoff ---------------------------------------------------------
 
 
@@ -712,21 +888,90 @@ async def test_parent_view_is_own_child_only_with_passes_from_the_pipeline() -> 
     )
     passes = Passes({"maya": {GRIP}, "leo": {SMASH}})
     maya = await w.child(passes).execute("maya")
-    assert [(r.taught_skills, r.practiced_skills, r.passed_skills) for r in maya] == [
-        (["Forehand grip", "Jump smash"], ["Forehand grip"], ["Forehand grip"])
+    assert [_skills(r.taught_skills) for r in maya] == [
+        [(GRIP, "Forehand grip", True), (SMASH, "Jump smash", False)]
     ]
+    assert _skills(maya[0].practiced_skills) == [(GRIP, "Forehand grip", True)]
     leo = await w.child(passes).execute("leo")
-    assert leo[0].practiced_skills == ["Jump smash"] and leo[0].passed_skills == ["Jump smash"]
+    assert _skills(leo[0].practiced_skills) == [(SMASH, "Jump smash", True)]
     # Present but credited with nothing: sees the class, no practice.
     sam = await w.child(passes).execute("sam")
-    assert sam[0].practiced_skills == [] and sam[0].passed_skills == []
+    assert sam[0].practiced_skills == [] and not any(s.passed for s in sam[0].taught_skills)
     assert await w.child(passes).execute("ana") == []  # absent: not their class
 
 
 async def test_a_report_pass_claim_is_never_a_parent_visible_pass() -> None:
     w = World()
     await w.submit(Interpreter(SPLIT)).execute(_report(SPLIT_TEXT), LEAD_ACTOR)
-    assert (await w.child(Passes()).execute("maya"))[0].passed_skills == []
+    row = (await w.child(Passes()).execute("maya"))[0]
+    assert not any(s.passed for s in (*row.taught_skills, *row.practiced_skills))
+
+
+def _skills(rows: Any) -> list[tuple[str, str, bool]]:
+    return [(s.skill_id, s.name, s.passed) for s in rows]
+
+
+def _store(
+    w: World, occ: str, *, taught: tuple[str, ...], practice: tuple[ChildPractice, ...] = ()
+) -> None:
+    w.recaps.rows[occ] = ClassRecap(
+        recap_id=f"rc-{occ}",
+        academy_id=ACADEMY,
+        occurrence_id=occ,
+        session_id=SESSION,
+        class_starts_at=NOW,
+        taught_skill_ids=taught,
+        practice=practice,
+        revision=1,
+        updated_by=LEAD,
+        updated_at=NOW,
+    )
+
+
+async def test_parent_pass_mark_follows_the_skill_id_not_a_shared_name() -> None:
+    """Two levels can each hold a 'Forehand grip'; passing one must not mark the other."""
+    w = World()
+    twin = "skill-l2-grip"
+    _store(w, OCC, taught=(twin,), practice=tuple(_practice(maya=[twin])))
+
+    class TwinCatalog(Catalog):
+        async def names(self, skill_ids: list[str], *, active_only: bool) -> dict[str, str]:
+            return {sid: "Forehand grip" for sid in skill_ids if sid in {GRIP, twin}}
+
+    listing = ListChildClassRecaps(
+        recaps=w.recaps,
+        attendance=w.attendance,
+        skills=TwinCatalog(),
+        passes=Passes({"maya": {GRIP}}),
+    )
+    row = (await listing.execute("maya"))[0]
+    assert _skills(row.taught_skills) == [(twin, "Forehand grip", False)]
+
+
+async def test_parent_list_reads_names_and_passes_once_for_all_recaps() -> None:
+    w = World()
+    for occ in ("occ-a", "occ-b", "occ-c"):
+        _store(w, occ, taught=(GRIP, SMASH))
+    calls: list[str] = []
+
+    class CountingCatalog(Catalog):
+        async def names(self, skill_ids: list[str], *, active_only: bool) -> dict[str, str]:
+            calls.append("names")
+            return await super().names(skill_ids, active_only=active_only)
+
+    class CountingPasses(Passes):
+        async def passed(self, student_id: str, skill_ids: list[str]) -> set[str]:
+            calls.append("passed")
+            return await super().passed(student_id, skill_ids)
+
+    class AllPresent:
+        async def confirmed_occurrence_ids(self, student_id: str, *, limit: int) -> list[str]:
+            return ["occ-a", "occ-b", "occ-c"]
+
+    rows = await ListChildClassRecaps(
+        recaps=w.recaps, attendance=AllPresent(), skills=CountingCatalog(), passes=CountingPasses()
+    ).execute("maya")
+    assert len(rows) == 3 and sorted(calls) == ["names", "passed"]
 
 
 async def test_attendance_correction_withdraws_the_class_from_the_parent() -> None:

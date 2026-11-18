@@ -12632,12 +12632,10 @@ export interface components {
             class_starts_at: string;
             /** Occurrence Id */
             occurrence_id: string;
-            /** Passed Skills */
-            passed_skills: string[];
             /** Practiced Skills */
-            practiced_skills: string[];
+            practiced_skills: components["schemas"]["ChildRecapSkillView"][];
             /** Taught Skills */
-            taught_skills: string[];
+            taught_skills: components["schemas"]["ChildRecapSkillView"][];
         };
         /** ChildPracticeView */
         ChildPracticeView: {
@@ -12684,6 +12682,15 @@ export interface components {
              * @enum {string}
              */
             skill_level: "beginner" | "intermediate" | "advanced" | "";
+        };
+        /** ChildRecapSkillView */
+        ChildRecapSkillView: {
+            /** Name */
+            name: string;
+            /** Passed */
+            passed: boolean;
+            /** Skill Id */
+            skill_id: string;
         };
         /**
          * ClassPublicFieldsRequest

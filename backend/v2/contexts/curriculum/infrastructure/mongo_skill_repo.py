@@ -78,6 +78,13 @@ class MongoSkillRepository(SequencedRepository):
         doc = await self._find_one({"skill_id": skill_id})
         return self._to_domain(doc) if doc else None
 
+    async def list_by_ids(self, skill_ids: list[str]) -> list[Skill]:
+        """Active and retired skills with these ids, in one read."""
+        if not skill_ids:
+            return []
+        cursor = self._find_many({"skill_id": {"$in": list(skill_ids)}})
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_for_level(self, level_id: str) -> list[Skill]:
         cursor = self._find_many(
             {"level_id": level_id, "is_active": True},

@@ -10,7 +10,7 @@ resolve stamp is ever set later), kept apart so no parent read touches them.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from pymongo.errors import DuplicateKeyError
@@ -99,21 +99,36 @@ class MongoClassReportRepository(TenantScopedRepository):
             applied_revision=doc.get("applied_revision"),
             resolved_by=doc.get("resolved_by"),
             resolved_at=doc.get("resolved_at"),
+            processing_until=doc.get("processing_until"),
         )
+
+    @staticmethod
+    def _body(report: ClassReport) -> dict[str, Any]:
+        body = report.model_dump(exclude={"academy_id"})
+        body["questions"] = list(report.questions)
+        body["pass_claims"] = [c.model_dump() for c in report.pass_claims]
+        return body
 
     async def get(self, report_id: str) -> ClassReport | None:
         doc = await self._find_one({"report_id": report_id})
         return self._to_domain(doc) if doc else None
 
     async def insert(self, report: ClassReport) -> bool:
-        body = report.model_dump(exclude={"academy_id"})
-        body["questions"] = list(report.questions)
-        body["pass_claims"] = [c.model_dump() for c in report.pass_claims]
         try:
-            await self._insert_one(body)
+            await self._insert_one(self._body(report))
         except DuplicateKeyError:
             return False
         return True
+
+    async def finish(self, report: ClassReport) -> bool:
+        # Only the reading's outcome; the owner's resolve stamp is left alone.
+        body = self._body(report)
+        fields = ("outcome", "ai_used", "questions", "pass_claims", "applied_revision")
+        result = await self._update_one(
+            {"report_id": report.report_id, "processing_until": {"$ne": None}},
+            {"$set": {**{k: body[k] for k in fields}, "processing_until": None}},
+        )
+        return bool(result.matched_count)
 
     async def list_for_occurrence(self, occurrence_id: str) -> list[ClassReport]:
         cursor = self._find_many({"occurrence_id": occurrence_id}, sort=[("submitted_at", 1)])
@@ -121,7 +136,13 @@ class MongoClassReportRepository(TenantScopedRepository):
 
     async def list_open_handoffs(self, *, limit: int) -> list[ClassReport]:
         cursor = self._find_many(
-            {"outcome": "sent_to_owner", "resolved_at": None},
+            {
+                "outcome": "sent_to_owner",
+                "resolved_at": None,
+                # A report still being read is not a handoff yet; an
+                # interrupted one is once its lease runs out.
+                "processing_until": {"$not": {"$gt": datetime.now(UTC)}},
+            },
             sort=[("submitted_at", -1)],
             limit=limit,
         )

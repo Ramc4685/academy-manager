@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -17,10 +17,12 @@ import {
 } from "@/lib/api/class-recap";
 import {
   creditEveryone,
+  nextReportAttempt,
   practiceEligible,
   reportOutcomeLabel,
   togglePractice,
   withoutSkill,
+  type ReportAttempt,
 } from "@/lib/coach/class-recap";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -35,6 +37,28 @@ function saveError(err: unknown): string {
     return "This recap changed since you opened it. The latest version is loaded; check it and save again.";
   }
   return e?.message || "Could not save the recap.";
+}
+
+/**
+ * A failed report send. A 409 while the first send is still reading the
+ * report keeps its id, so the retry replays it instead of starting a second
+ * read; any other 409 means the id is spent and the next send mints a new one.
+ */
+export function afterReportError(
+  err: unknown,
+  last: ReportAttempt | null,
+): { attempt: ReportAttempt | null; message: string } {
+  const e = err as ApiError;
+  if (e?.status === 409 && e.details?.processing === true) {
+    return {
+      attempt: last,
+      message: "Your report is still being read. Wait a moment, then send it again.",
+    };
+  }
+  return {
+    attempt: e?.status === 409 ? null : last,
+    message: e?.message || "Could not send the report.",
+  };
 }
 
 /**
@@ -67,17 +91,41 @@ export function ClassRecapPanel({
       </p>
     );
   }
-  // Keyed by revision: a save or a report that changed the recap resets the draft.
-  return <ClassRecapBody key={query.data.revision} view={query.data} skillsHref={skillsHref} />;
+  return <ClassRecapEditor view={query.data} skillsHref={skillsHref} />;
+}
+
+export function ClassRecapEditor({
+  view,
+  skillsHref,
+}: {
+  view: ClassRecapView;
+  skillsHref?: string;
+}) {
+  const [recapDirty, setRecapDirty] = useState(false);
+  return (
+    <div className="space-y-5">
+      {/* Keyed by revision: a save or a report that changed the recap resets the draft. */}
+      <ClassRecapBody
+        key={view.revision}
+        view={view}
+        skillsHref={skillsHref}
+        onDirtyChange={setRecapDirty}
+      />
+      {/* Outside the keyed body, so a report's result survives the revision it causes. */}
+      {view.can_edit && <ClassReportForm view={view} recapDirty={recapDirty} />}
+    </div>
+  );
 }
 
 export function ClassRecapBody({
   view,
   skillsHref,
+  onDirtyChange,
 }: {
   view: ClassRecapView;
   /** The class's skills page, where a report's pass claim is signed off. */
   skillsHref?: string;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const key = queryKeys.classRecap.occurrence(view.occurrence_id);
@@ -97,6 +145,8 @@ export function ClassRecapBody({
   const dirty =
     JSON.stringify(draft) !==
     JSON.stringify({ taught: view.taught_skills.map((s) => s.skill_id), practice: view.practice });
+
+  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
 
   const save = useMutation({
     mutationFn: () =>
@@ -312,7 +362,6 @@ export function ClassRecapBody({
         </p>
       )}
 
-      {view.can_edit && <ClassReportForm view={view} />}
       {view.reports.length > 0 && (
         <ReportList view={view} names={names} skillsHref={skillsHref} />
       )}
@@ -320,34 +369,50 @@ export function ClassRecapBody({
   );
 }
 
-export function ClassReportForm({ view }: { view: ClassRecapView }) {
+export function ClassReportForm({
+  view,
+  recapDirty = false,
+}: {
+  view: ClassRecapView;
+  /** Unsaved recap edits: an applied report would reload the recap over them. */
+  recapDirty?: boolean;
+}) {
   const queryClient = useQueryClient();
   const [text, setText] = useState("");
   const [useAi, setUseAi] = useState(false);
-  // One id per report draft, so a retried submit replays instead of duplicating.
-  const [reportId, setReportId] = useState(() => crypto.randomUUID());
+  // The last unanswered send: a retry of the same report replays its id.
+  const attempt = useRef<ReportAttempt | null>(null);
   const [result, setResult] = useState<ClassReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const id = `recap-report-${view.occurrence_id}`;
 
   const submit = useMutation({
-    mutationFn: () =>
-      submitClassReport(view.occurrence_id, {
+    mutationFn: () => {
+      const next = nextReportAttempt(attempt.current, text.trim(), view.ai_enabled && useAi, () =>
+        crypto.randomUUID(),
+      );
+      attempt.current = next;
+      return submitClassReport(view.occurrence_id, {
         class_starts_at: view.class_starts_at,
-        report_id: reportId,
-        text: text.trim(),
-        use_ai: view.ai_enabled && useAi,
-      }),
+        report_id: next.reportId,
+        text: next.text,
+        use_ai: next.useAi,
+      });
+    },
     onSuccess: (report) => {
+      attempt.current = null;
       setResult(report);
       setError(null);
       setText("");
-      setReportId(crypto.randomUUID());
       void queryClient.invalidateQueries({
         queryKey: queryKeys.classRecap.occurrence(view.occurrence_id),
       });
     },
-    onError: (err) => setError((err as ApiError)?.message || "Could not send the report."),
+    onError: (err) => {
+      const next = afterReportError(err, attempt.current);
+      attempt.current = next.attempt;
+      setError(next.message);
+    },
   });
 
   return (
@@ -402,6 +467,12 @@ export function ClassReportForm({ view }: { view: ClassRecapView }) {
           {error}
         </p>
       )}
+      {recapDirty && (
+        <p className="mt-2 text-sm text-rally-ink" data-testid="recap-report-blocked">
+          Save or undo your recap changes first. A report updates the recap and would replace
+          unsaved edits.
+        </p>
+      )}
       {result && (
         <p role="status" className="mt-2 text-sm text-rally-ink" data-testid="recap-report-result">
           {reportOutcomeLabel(result.outcome)}
@@ -411,7 +482,7 @@ export function ClassReportForm({ view }: { view: ClassRecapView }) {
       <div className="mt-2">
         <Button
           variant="secondary"
-          disabled={!text.trim() || submit.isPending}
+          disabled={!text.trim() || submit.isPending || recapDirty}
           onClick={() => submit.mutate()}
           data-testid="recap-report-submit"
         >

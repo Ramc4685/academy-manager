@@ -102,6 +102,10 @@ class ClassReport(BaseModel):
     applied_revision: int | None = None
     resolved_by: str | None = None
     resolved_at: datetime | None = None
+    #: Set while the submit that stored the report is still reading it; the
+    #: stored outcome stays ``sent_to_owner`` until that submit finishes, so an
+    #: interrupted read is already the owner's to handle.
+    processing_until: datetime | None = None
 
 
 # --- local aliasing (nothing personal leaves the app) -----------------------
@@ -192,9 +196,16 @@ def alias_report(
             firsts.setdefault(name, []).append(alias)
     for name, owners in firsts.items():
         pattern = _word(name)
-        if not pattern.search(out):
+        hits = [m.group(0) for m in pattern.finditer(out)]
+        if not hits:
             continue
-        if len(owners) > 1:
+        if any(hit[0].islower() for hit in hits):
+            # "will" may be Will or the word: ask rather than guess either way.
+            questions.append(
+                f'Is "{next(h for h in hits if h[0].islower())}" {name.title()} or an '
+                "ordinary word? Write students' names with a capital letter, or reword it."
+            )
+        elif len(owners) > 1:
             questions.append(f"More than one student is named {name.title()}. Use their full name.")
         else:
             out = pattern.sub(owners[0], out)

@@ -57,3 +57,25 @@ export function reportOutcomeLabel(outcome: ReportOutcome): string {
       return "Sent to the owner";
   }
 }
+
+export interface ReportAttempt {
+  reportId: string;
+  text: string;
+  useAi: boolean;
+}
+
+/**
+ * The id to send a report under. A retry of the same report (same text and AI
+ * choice) reuses the last id so the server replays it; a changed report gets a
+ * new id, since the server refuses an id reused for different content.
+ */
+export function nextReportAttempt(
+  last: ReportAttempt | null,
+  text: string,
+  useAi: boolean,
+  newId: () => string,
+): ReportAttempt {
+  return last && last.text === text && last.useAi === useAi
+    ? last
+    : { reportId: newId(), text, useAi };
+}

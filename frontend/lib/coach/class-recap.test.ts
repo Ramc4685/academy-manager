@@ -1,6 +1,33 @@
 import { describe, expect, it } from "vitest";
 
-import { creditEveryone, practiceEligible, togglePractice, withoutSkill } from "./class-recap";
+import {
+  creditEveryone,
+  nextReportAttempt,
+  practiceEligible,
+  togglePractice,
+  withoutSkill,
+} from "./class-recap";
+
+describe("report request id", () => {
+  const ids = () => {
+    let n = 0;
+    return () => `id-${++n}`;
+  };
+
+  it("replays the same id when the same report is retried", () => {
+    const newId = ids();
+    const first = nextReportAttempt(null, "Maya drilled clears", true, newId);
+    expect(nextReportAttempt(first, "Maya drilled clears", true, newId).reportId).toBe("id-1");
+  });
+
+  it("gets a new id when the text or the AI choice changed", () => {
+    const newId = ids();
+    const first = nextReportAttempt(null, "Maya drilled clears", true, newId);
+    const edited = nextReportAttempt(first, "Maya drilled smashes", true, newId);
+    expect(edited.reportId).toBe("id-2");
+    expect(nextReportAttempt(edited, "Maya drilled smashes", false, newId).reportId).toBe("id-3");
+  });
+});
 
 describe("class recap practice helpers", () => {
   it("keeps split drills per child: Maya only X, Leo only Y", () => {

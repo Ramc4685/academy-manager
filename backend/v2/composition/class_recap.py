@@ -52,8 +52,23 @@ from backend.v2.contexts.curriculum.application.use_cases.manage_program import 
 from backend.v2.contexts.curriculum.infrastructure.mongo_level_repo import MongoLevelRepository
 from backend.v2.contexts.curriculum.infrastructure.mongo_program_repo import MongoProgramRepository
 from backend.v2.contexts.curriculum.infrastructure.mongo_skill_repo import MongoSkillRepository
+from backend.v2.contexts.enrollment.application.use_cases.get_occurrence_roster import (
+    GetOccurrenceRoster,
+)
+from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
+    GetSessionRoster,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
+    MongoAbsenceNoticeRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_enrollment_repo import (
+    MongoEnrollmentRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
     MongoSessionOccurrenceRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_roster_repo import (
+    MongoOccurrenceRosterRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
     MongoStudentRepository,
@@ -102,12 +117,11 @@ class CurriculumRecapSkills:
         ]
 
     async def names(self, skill_ids: list[str], *, active_only: bool) -> dict[str, str]:
-        found: dict[str, str] = {}
-        for skill_id in skill_ids:
-            skill = await self._skills.get(skill_id)
-            if skill is not None and (skill.is_active or not active_only):
-                found[skill_id] = str(skill.name)
-        return found
+        return {
+            str(s.skill_id): str(s.name)
+            for s in await self._skills.list_by_ids(skill_ids)
+            if s.is_active or not active_only
+        }
 
 
 class EnrollmentStudentNames:
@@ -123,20 +137,32 @@ class EnrollmentStudentNames:
         }
 
 
+class EnrollmentOccurrenceRosterNames:
+    """``OccurrenceRosterNames`` over the register's own roster read, so the
+    report aliases every child the coach could have written about."""
+
+    def __init__(self, roster: GetOccurrenceRoster) -> None:
+        self._roster = roster
+
+    async def full_names(self, *, session_id: str, occurrence_id: str) -> dict[str, str]:
+        rows = await self._roster.execute(session_id=session_id, occurrence_id=occurrence_id)
+        return {row.student_id: row.full_name for row in rows}
+
+
 class SkillProgressPasses:
     """``PassedSkills``: a skill counts as passed only when the pass pipeline
-    has written ``PASSED`` for this child."""
+    has written a non-silent ``PASSED`` for this child (one read)."""
 
     def __init__(self, progress: Any) -> None:
         self._progress = progress
 
     async def passed(self, student_id: str, skill_ids: list[str]) -> set[str]:
-        passed: set[str] = set()
-        for skill_id in skill_ids:
-            row = await self._progress.get(student_id, skill_id)
-            if row is not None and row.status == "PASSED":
-                passed.add(skill_id)
-        return passed
+        wanted = set(skill_ids)
+        return {
+            str(row.skill_id)
+            for row in await self._progress.list_passed_for_student(student_id)
+            if str(row.skill_id) in wanted
+        }
 
 
 class AiClassReportInterpreter:
@@ -206,14 +232,28 @@ class ClassRecapComposition:
 def compose_class_recap(db: Any, ai: AiComposition) -> ClassRecapComposition:
     recaps = MongoClassRecapRepository(db)
     reports = MongoClassReportRepository(db)
-    occurrences = EnrollmentOccurrenceLookup(MongoSessionOccurrenceRepository(db))
+    occurrence_rows = MongoSessionOccurrenceRepository(db)
+    occurrences = EnrollmentOccurrenceLookup(occurrence_rows)
     attendance = MongoAttendanceRepository(db)
     skills = CurriculumRecapSkills(
         skills=MongoSkillRepository(db),
         levels=MongoLevelRepository(db),
         resolve_default_program=ResolveDefaultActiveProgram(programs=MongoProgramRepository(db)),
     )
-    names = EnrollmentStudentNames(MongoStudentRepository(db))
+    students = MongoStudentRepository(db)
+    names = EnrollmentStudentNames(students)
+    roster = EnrollmentOccurrenceRosterNames(
+        GetOccurrenceRoster(
+            get_roster=GetSessionRoster(
+                enrollments=MongoEnrollmentRepository(db), students=students
+            ),
+            absence_notices=MongoAbsenceNoticeRepository(db),
+            occurrence_roster=MongoOccurrenceRosterRepository(db),
+            students=students,
+            occurrences=occurrence_rows,
+            marks=attendance,
+        )
+    )
     ai_enabled = not isinstance(ai.llm, DisabledLlmPort)
     interpreter = AiClassReportInterpreter(
         InterpretClassReport(
@@ -245,7 +285,7 @@ def compose_class_recap(db: Any, ai: AiComposition) -> ClassRecapComposition:
             occurrences=occurrences,
             attendance=attendance,
             skills=skills,
-            names=names,
+            roster=roster,
             interpreter=interpreter,
             save=save,
             academy_id=current_academy_id,

@@ -11,16 +11,21 @@ marks. Tenancy: another academy's rows are invisible.
 from __future__ import annotations
 
 import importlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
+from backend.v2.composition.class_recap import CurriculumRecapSkills, SkillProgressPasses
 from backend.v2.contexts.coaching.domain.class_recap import ChildPractice, ClassRecap, ClassReport
 from backend.v2.contexts.coaching.infrastructure.mongo_class_recap_repo import (
     MongoClassRecapRepository,
     MongoClassReportRepository,
     StudentConfirmedAttendance,
+)
+from backend.v2.contexts.curriculum.infrastructure.mongo_skill_repo import MongoSkillRepository
+from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_repo import (
+    MongoStudentSkillProgressRepository,
 )
 from backend.v2.shared.tenancy import tenant_scope
 
@@ -96,6 +101,34 @@ async def test_reports_are_insert_only_and_handoffs_close_once(real_db: Any) -> 
         assert await repo.insert(_report("r-1"))  # unique per academy only
 
 
+async def test_a_report_being_read_is_finished_once_and_hidden_from_handoffs(real_db: Any) -> None:
+    repo = MongoClassReportRepository(real_db)
+    now = datetime.now(UTC)
+    with tenant_scope(ACADEMY):
+        live = _report("r-live").model_copy(update={"processing_until": now + timedelta(minutes=5)})
+        stale = _report("r-stale").model_copy(
+            update={"processing_until": now - timedelta(minutes=1)}
+        )
+        assert await repo.insert(live) and await repo.insert(stale)
+        assert await repo.insert(_report("r-plain"))
+        # Live reads are not handoffs; an interrupted one (lease over) is.
+        open_ids = {r.report_id for r in await repo.list_open_handoffs(limit=10)}
+        assert open_ids == {"r-stale", "r-plain"}
+        done = live.model_copy(
+            update={"outcome": "applied", "ai_used": True, "applied_revision": 3}
+        )
+        assert await repo.finish(done)
+        assert not await repo.finish(done)  # finished once
+        stored = await repo.get("r-live")
+        assert stored is not None and stored.processing_until is None
+        assert (stored.outcome, stored.applied_revision, stored.text) == (
+            "applied",
+            3,
+            "private words",
+        )
+        assert not await repo.finish(_report("r-plain"))  # never claimed
+
+
 async def test_parent_attendance_read_counts_present_and_late_only(real_db: Any) -> None:
     rows = [("occ-1", "present"), ("occ-2", "late"), ("occ-3", "absent"), ("occ-4", "voided")]
     for i, (occurrence_id, status) in enumerate(rows):
@@ -119,6 +152,64 @@ async def test_parent_attendance_read_counts_present_and_late_only(real_db: Any)
             await StudentConfirmedAttendance(real_db).confirmed_occurrence_ids("maya", limit=10)
             == []
         )
+
+
+async def test_parent_adapters_read_in_bulk_per_academy_and_skip_silent_passes(
+    real_db: Any,
+) -> None:
+    """Skill names and passes for the parent read come from one tenant-scoped
+    query each; a silent placement credit is not a pass."""
+    for sequence, (academy, skill_id, active) in enumerate(
+        ((ACADEMY, "s-live", True), (ACADEMY, "s-retired", False), (OTHER, "s-other", True)),
+        start=1,
+    ):
+        await real_db["skills"].insert_one(
+            {
+                "academy_id": academy,
+                "skill_id": skill_id,
+                "level_id": "lvl-1",
+                "program_id": "prog-1",
+                "sequence": sequence,
+                "name": f"Name {skill_id}",
+                "is_active": active,
+                "created_at": NOW,
+                "updated_at": NOW,
+            }
+        )
+    for academy, skill_id, status, silent in (
+        (ACADEMY, "s-live", "PASSED", False),
+        (ACADEMY, "s-retired", "PASSED", True),  # placement credit
+        (ACADEMY, "s-learning", "LEARNING", False),
+        (OTHER, "s-other", "PASSED", False),
+    ):
+        await real_db["student_skill_progress"].insert_one(
+            {
+                "academy_id": academy,
+                "skill_progress_id": f"p-{academy}-{skill_id}",
+                "student_id": "maya",
+                "skill_id": skill_id,
+                "level_id": "lvl-1",
+                "program_id": "prog-1",
+                "status": status,
+                "last_updated_at": NOW,
+                "last_updated_by": "coach-1",
+                "silent": silent,
+            }
+        )
+    catalog = CurriculumRecapSkills(
+        skills=MongoSkillRepository(real_db), levels=None, resolve_default_program=None
+    )
+    passes = SkillProgressPasses(MongoStudentSkillProgressRepository(real_db))
+    ids = ["s-live", "s-retired", "s-other", "s-learning"]
+    with tenant_scope(ACADEMY):
+        assert await catalog.names(ids, active_only=False) == {
+            "s-live": "Name s-live",
+            "s-retired": "Name s-retired",
+        }
+        assert await catalog.names(ids, active_only=True) == {"s-live": "Name s-live"}
+        assert await passes.passed("maya", ids) == {"s-live"}
+    with tenant_scope(OTHER):
+        assert await passes.passed("maya", ids) == {"s-other"}
 
 
 async def test_migration_0243_indexes_back_the_repository_claims(real_db: Any) -> None:

@@ -12711,23 +12711,16 @@
             "title": "Occurrence Id",
             "type": "string"
           },
-          "passed_skills": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Passed Skills",
-            "type": "array"
-          },
           "practiced_skills": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/ChildRecapSkillView"
             },
             "title": "Practiced Skills",
             "type": "array"
           },
           "taught_skills": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/ChildRecapSkillView"
             },
             "title": "Taught Skills",
             "type": "array"
@@ -12737,8 +12730,7 @@
           "occurrence_id",
           "class_starts_at",
           "taught_skills",
-          "practiced_skills",
-          "passed_skills"
+          "practiced_skills"
         ],
         "title": "ChildClassRecapView",
         "type": "object"
@@ -12811,6 +12803,29 @@
           }
         },
         "title": "ChildProfileView",
+        "type": "object"
+      },
+      "ChildRecapSkillView": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_id",
+          "name",
+          "passed"
+        ],
+        "title": "ChildRecapSkillView",
         "type": "object"
       },
       "ClassPublicFieldsRequest": {
