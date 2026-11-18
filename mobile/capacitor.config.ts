@@ -41,7 +41,8 @@ const config: CapacitorConfig = {
     // Hosts not listed here open in the system browser, which would strand
     // Stripe Checkout's success_url outside the app.
     // Exact hosts only: every allowed host gets the native bridge. Sign-in runs natively.
-    allowNavigation: ["checkout.stripe.com"],
+    // demo-academy.courtmastr.com: the login page links app reviewers to the demo academy.
+    allowNavigation: ["checkout.stripe.com", "demo-academy.courtmastr.com"],
   },
   plugins: {
     // The web Firebase SDK owns the session; the native SDKs only collect the

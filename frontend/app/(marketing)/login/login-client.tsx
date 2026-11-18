@@ -25,6 +25,9 @@ import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 import { clearPersonaHintCookie } from "@/lib/auth/persona-hint-cookie";
 import { postLoginHandOff } from "@/lib/auth/persona-route-guard";
 import { BrandLockup } from "@/components/marketing/brand-lockup";
+import { isNativeApp } from "@/lib/use-native-app";
+
+const DEMO_ACADEMY_HOST = "demo-academy.courtmastr.com";
 
 // Self-hosted: a CSS gradient, not a hotlinked third-party image, so the
 // hero never breaks when the CSP moves from Report-Only to enforced.
@@ -200,6 +203,9 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
   // After hydration only: the app shell is detected from a window global.
   const offerApple = hydrated && shouldOfferAppleSignIn();
   const offerGoogle = !hydrated || shouldOfferGoogleSignIn();
+  // The store builds open one academy's host; app reviewers need a way into the demo academy.
+  const offerDemo =
+    hydrated && isNativeApp() && window.location.hostname !== DEMO_ACADEMY_HOST;
 
   return (
     <main className="min-h-dvh bg-slate-50 font-body text-slate-950">
@@ -345,6 +351,18 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
                 Register your child →
               </Link>
             </p>
+
+            {offerDemo && (
+              <p className="mt-3 text-center text-sm text-slate-600">
+                <a
+                  href={`https://${DEMO_ACADEMY_HOST}/login`}
+                  className="font-medium text-blue-600 transition hover:underline"
+                  data-testid="link-demo-academy"
+                >
+                  Explore the demo academy
+                </a>
+              </p>
+            )}
           </div>
         </section>
       </div>
