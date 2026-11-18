@@ -2,7 +2,7 @@ import { monogram, safeHttpsUrl } from "@/lib/public-page/format";
 
 /**
  * Row 14: the shared academy mark for the admin, parent and coach shells (the
- * owner shell keeps the platform ShuttleMark — this is deliberately not used
+ * owner shell shows the platform CourtMastrLogo — this is deliberately not used
  * there).
  *
  * `logo_url` renders as an `<img>` only when it is an absolute https URL

@@ -48,6 +48,14 @@ export async function generateMetadata(): Promise<Metadata> {
     title,
     description: `${brand.productName} is a production operations platform for coaches, parents, and admins.`,
     manifest: "/manifest.webmanifest",
+    // Platform (CourtMastr) icons on every host, from docs/design/logo/export/web.
+    icons: {
+      icon: [
+        { url: "/favicon.ico", sizes: "any" },
+        { url: "/icons/favicon.svg", type: "image/svg+xml" },
+      ],
+      apple: { url: "/icons/icon-180.png", sizes: "180x180" },
+    },
     appleWebApp: {
       capable: true,
       statusBarStyle: "black-translucent",

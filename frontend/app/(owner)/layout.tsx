@@ -12,7 +12,7 @@
 import Link from "next/link";
 
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
-import { ShuttleMark } from "@/components/ds/shuttle";
+import { CourtMastrLogo } from "@/components/ds/courtmastr-logo";
 
 export default function OwnerLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -20,7 +20,7 @@ export default function OwnerLayout({ children }: { children: React.ReactNode })
       <header className="border-b border-rally-line bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2">
-            <ShuttleMark />
+            <CourtMastrLogo size={24} />
             <span className="font-mono text-[10px] font-bold tracking-overline text-rally-muted">
               FRANCHISE
             </span>

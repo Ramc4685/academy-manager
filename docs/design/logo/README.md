@@ -55,7 +55,7 @@ One-colour black and white versions are for print, embroidery and single-colour 
 | `play-store-icon-512.png` | Play Console, App icon |
 | `play-feature-graphic-1024x500.png` | Play Console, Feature graphic |
 | `splash-2732.png` | `mobile/assets/splash.png` and `splash-dark.png` |
-| `web/` | favicon.ico/svg, 16/32/48 PNGs, apple-touch-icon (180), icon-192/512, maskable-512 for the web app. Not yet wired into `frontend/public/`. |
+| `web/` | favicon.ico/svg, 16/32/48 PNGs, apple-touch-icon (180), icon-192/512, maskable-512 for the web app. Copied into `frontend/public/` (see `frontend/public/icons/README.md`). |
 
 After changing any `mobile/assets` file, run `pnpm assets` in `mobile/`, then restore
 `android/app/src/main/AndroidManifest.xml`, which the generator reformats for no reason.
@@ -73,5 +73,3 @@ After changing any `mobile/assets` file, run `pnpm assets` in `mobile/`, then re
 ## Open items
 
 - Trademark search for the name and mark has not been done.
-- Web and PWA icons (`frontend/public/icons`, `favicon.ico`) still show the house academy "B".
-  The set in `export/web/` is ready to swap in once the frontend is free to edit.

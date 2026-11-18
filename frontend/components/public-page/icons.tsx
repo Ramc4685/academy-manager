@@ -45,14 +45,18 @@ export function PlusIcon() {
 }
 
 /**
- * Row 35: the CourtMastr footer credit's mark. Deliberately sport-neutral —
- * not a shuttlecock or any one sport's equipment — a generic court/lane
- * glyph that reads the same across every academy's sport.
+ * Row 35: the CourtMastr footer credit's mark — the one-colour CourtMastr
+ * logo (docs/design/logo, "Earned Stripes"), sport-neutral and drawn in
+ * `currentColor` so it takes the footer's colour.
  */
 export function CourtMastrMark() {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M3 4h18v2H3zM3 18h18v2H3zM3 4h2v16H3zM19 4h2v16h-2zM11 8h2v8h-2z" />
+    <svg viewBox="60 40 136 170" aria-hidden="true">
+      <g fill="none" stroke="currentColor" strokeWidth="24" strokeLinejoin="miter" strokeMiterlimit="10">
+        <path d="M68 200L128 155L188 200" />
+        <path d="M68 150L128 105L188 150" />
+        <path d="M68 100L128 55L188 100" />
+      </g>
     </svg>
   );
 }
