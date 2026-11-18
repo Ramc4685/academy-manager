@@ -1,6 +1,6 @@
 # demo-academy-seed
 
-PR: #0
+PR: #1213
 
 ## What changed
 A new script, `python -m backend.scripts.seed_demo_academy`, creates the fictional Demo Academy at `demo-academy.courtmastr.com` for App Store and Play reviewers: four logins (owner, admin, coach, parent) sharing one password typed at run time, two classes, two students, attendance and four small tuition invoices, all paid, so no pay button appears. A dry run is the default; `--apply` writes. Re-running resets the demo, including a deleted demo account. Runbook: `docs/runbooks/demo-academy.md`.
