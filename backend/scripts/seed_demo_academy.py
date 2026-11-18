@@ -17,7 +17,9 @@ collections, so it also repairs a demo a reviewer has edited or deleted from.
 
 Strictly scoped: every write names ``acad_demo_academy`` (``require_demo``
 refuses anything else), plus the four logins' ``users`` rows, their Firebase
-accounts and their ``email_suppressions`` rows. The suppressions are what keep
+accounts, their ``email_suppressions`` rows, and any pending
+``account_deletion_requests`` row of theirs, which a reset cancels the way
+support does so a scheduled erasure cannot wipe the restored login. The suppressions are what keep
 the demo quiet: ``hard_bounce`` makes the send gate drop every email to those
 addresses. Nothing here can charge: there is no card, no Stripe customer, no
 autopay and no connected account.
@@ -42,6 +44,13 @@ from backend.v2.contexts.billing.domain.ledger import format_invoice_number
 from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
     BootstrapAcademy,
     BootstrapAcademyCommand,
+)
+from backend.v2.contexts.identity.application.use_cases.cancel_account_deletion import (
+    CancelAccountDeletion,
+)
+from backend.v2.contexts.identity.domain.identity_aliases import aliases_from_doc
+from backend.v2.contexts.identity.infrastructure.mongo_account_deletion_store import (
+    MongoAccountDeletionStore,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import (
     MongoTenantBootstrapStore,
@@ -125,12 +134,51 @@ async def _refuse_foreign_user(db: Any, persona: str, email: str) -> dict[str, A
         return None
     if existing.get("academy_id") is not None:
         require_demo(existing.get("academy_id"))
+    # Memberships may be keyed by any alias (auth_uid / firebase_uid), as auth reads them.
     foreign = await db["academy_memberships"].find_one(
-        {"user_id": existing.get("user_id"), "academy_id": {"$ne": DEMO_ACADEMY_ID}}
+        {
+            "user_id": {"$in": list(aliases_from_doc(existing))},
+            "academy_id": {"$ne": DEMO_ACADEMY_ID},
+        }
     )
     if foreign is not None:
         require_demo(foreign.get("academy_id"))
     return existing
+
+
+class _LoginLeftToSeed:
+    """``ensure_login`` re-enables the Firebase account right after, so the cancel need not."""
+
+    async def set_user_disabled(self, uid: str, disabled: bool) -> None:
+        return None
+
+
+async def _cancel_pending_deletion(db: Any, existing: dict[str, Any] | None) -> None:
+    """A reset must not leave a scheduled erasure behind to wipe the restored login.
+    Cancelled the way support cancels one; an erasure already under way raises."""
+    if existing is None:
+        return
+    store = MongoAccountDeletionStore(db)
+    request = await store.find_request(aliases_from_doc(existing))
+    if request is not None:
+        await CancelAccountDeletion(store=store, firebase=_LoginLeftToSeed()).execute(
+            request.request_id
+        )
+
+
+async def _reserve_invoice_numbers(db: Any, invoices: list[dict[str, Any]]) -> None:
+    """Advance the monthly counters past the seeded numbers so an invoice made
+    later in the demo cannot mint a duplicate. ``$max`` keeps any later progress."""
+    per_period: dict[str, int] = {}
+    for invoice in invoices:
+        per_period[invoice["period"]] = per_period.get(invoice["period"], 0) + 1
+    for period, seq in per_period.items():
+        scope = f"invoice:{DEMO_ACADEMY_ID}:{period.replace('-', '')}"
+        await db["billing_counters"].update_one(
+            {"academy_id": DEMO_ACADEMY_ID, "scope": scope},
+            {"$max": {"seq": seq}},
+            upsert=True,
+        )
 
 
 def _build(now: datetime, user_ids: dict[str, str]) -> dict[str, list[dict[str, Any]]]:
@@ -524,6 +572,8 @@ async def seed(
     if not password:
         raise ValueError("a password is required with --apply")
 
+    for persona in PERSONAS:
+        await _cancel_pending_deletion(db, existing[persona])
     user_ids: dict[str, str] = {}
     for persona, (email, display_name, _) in PERSONAS.items():
         uid = ensure_login(email, password, display_name)
@@ -566,8 +616,10 @@ async def seed(
             }
         },
     )
-    for name, docs in _build(now, user_ids).items():
+    built = _build(now, user_ids)
+    for name, docs in built.items():
         await _sync(db, name, docs)
+    await _reserve_invoice_numbers(db, built["invoices"])
     for email in sorted(DEMO_EMAILS):
         await _suppress(db, email, now)
     print(f"Seeded {NAME} ({DEMO_ACADEMY_ID}) at https://{DOMAIN}")

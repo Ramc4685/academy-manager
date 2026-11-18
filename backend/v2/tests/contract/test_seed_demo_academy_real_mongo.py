@@ -179,3 +179,73 @@ def test_require_demo_refuses_other_academies() -> None:
     for other in (BLNO, "acad_other", None):
         with pytest.raises(DemoScopeError):
             require_demo(other)
+
+
+async def test_refuses_a_login_whose_alias_belongs_to_another_academy(real_db: Any) -> None:
+    # The roster user_id differs from the Firebase uid the foreign membership is keyed by.
+    await real_db["users"].insert_one(
+        {
+            "user_id": "u_shared",
+            "normalized_email": "demo.parent@example.com",
+            "firebase_uid": "fb_x",
+        }
+    )
+    await real_db["academy_memberships"].insert_one(
+        {
+            "membership_id": "m_blno",
+            "academy_id": BLNO,
+            "user_id": "fb_x",
+            "roles": ["parent"],
+            "status": "active",
+        }
+    )
+
+    def _no_login(*_: str) -> str:
+        raise AssertionError("a foreign login must not be reset")
+
+    with pytest.raises(DemoScopeError):
+        await seed(real_db, apply=True, password="demo-pass-123", ensure_login=_no_login, now=NOW)
+
+
+async def test_reserves_the_seeded_invoice_numbers(real_db: Any) -> None:
+    await _apply(real_db)
+    scopes = {
+        doc["scope"]: doc["seq"]
+        async for doc in real_db["billing_counters"].find({"academy_id": DEMO_ACADEMY_ID})
+    }
+    assert scopes == {
+        f"invoice:{DEMO_ACADEMY_ID}:202610": 2,
+        f"invoice:{DEMO_ACADEMY_ID}:202611": 2,
+    }
+
+    # Numbers minted in the demo since are kept on a reset.
+    await real_db["billing_counters"].update_one(
+        {"scope": f"invoice:{DEMO_ACADEMY_ID}:202611"}, {"$set": {"seq": 5}}
+    )
+    await _apply(real_db)
+    later = await real_db["billing_counters"].find_one(
+        {"scope": f"invoice:{DEMO_ACADEMY_ID}:202611"}
+    )
+    assert later["seq"] == 5
+
+
+async def test_reset_cancels_a_pending_account_deletion(real_db: Any) -> None:
+    await _apply(real_db)
+    parent = await real_db["users"].find_one({"normalized_email": "demo.parent@example.com"})
+    await real_db["account_deletion_requests"].insert_one(
+        {
+            "request_id": "adr_demo",
+            "user_id": parent["user_id"],
+            "auth_uid": parent["firebase_uid"],
+            "email": parent["email"],
+            "aliases": [parent["user_id"], parent["firebase_uid"]],
+            "academy_ids": [DEMO_ACADEMY_ID],
+            "requested_at": NOW,
+            "execute_after": NOW,
+            "status": "scheduled",
+        }
+    )
+
+    await _apply(real_db)
+
+    assert await real_db["account_deletion_requests"].count_documents({}) == 0
