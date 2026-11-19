@@ -40,10 +40,6 @@ export default function PrivacyPage() {
         </header>
 
         <div className={styles.content}>
-          <p className={styles.notice}>
-            Draft pending legal review. Questions: {contact}.
-          </p>
-
           <section className={styles.section}>
             <h2>Who is responsible</h2>
             <p>
