@@ -3701,6 +3701,35 @@
       ]
     },
     {
+      "route": "/support",
+      "role": "public",
+      "source": "frontend/app/(marketing)/support/page.tsx",
+      "workflows": [
+        "Find Academy support"
+      ],
+      "controls": {
+        "buttons": [
+          "Support and account navigation"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "default",
+        "mobile"
+      ],
+      "risk_edges": [
+        "Broken support contact",
+        "Broken navigation"
+      ],
+      "acceptance": [
+        "Page renders the Academy support email and account links",
+        "Workflow evidence: \"Find Academy support\" completes for the public route /support with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Broken support contact\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Broken navigation\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/terms",
       "role": "public",
       "source": "frontend/app/(marketing)/terms/page.tsx",
