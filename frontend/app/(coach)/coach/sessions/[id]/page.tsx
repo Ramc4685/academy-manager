@@ -19,6 +19,7 @@ import {
   type ProgressNote,
 } from "@/lib/api/coach";
 import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
+import { ClassRecapPanel } from "@/components/coach/ClassRecapPanel";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
 import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
 import { TrialOutcomeControl } from "@/components/coach/trial-outcome-control";
@@ -259,6 +260,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
    * the composer open, which is right for the surface it is on.
    */
   const [announcementsOpen, setAnnouncementsOpen] = useState(false);
+  const [recapOpen, setRecapOpen] = useState(false);
 
   const progressNotesKey = queryKeys.coach.progressNotes(sessionId);
   const { data: notesData } = useQuery({
@@ -960,6 +962,36 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
           </div>
         ) : null}
       </section>
+
+      {/* Collapsed and fetched on open, so it reads the roster's latest marks. */}
+      {!notOpenYet && online && (
+        <section className="mt-6">
+          <h2 className="mb-2">
+            <button
+              type="button"
+              data-testid="class-recap-toggle"
+              aria-expanded={recapOpen}
+              aria-controls="coach-class-recap"
+              onClick={() => setRecapOpen((open) => !open)}
+              className="min-h-touch w-full rounded-lg border px-3 text-left text-sm font-semibold uppercase tracking-wide"
+              style={{ color: "var(--rally-muted)", borderColor: "var(--rally-line)" }}
+            >
+              Class recap
+              <span aria-hidden="true" className="float-right font-normal">
+                {recapOpen ? "−" : "+"}
+              </span>
+            </button>
+          </h2>
+          {recapOpen && (
+            <div id="coach-class-recap">
+              <ClassRecapPanel
+                occurrenceId={session.occurrence_id}
+                skillsHref={`/coach/sessions/${encodeURIComponent(session.occurrence_id)}/skills?date=${encodeURIComponent(date)}`}
+              />
+            </div>
+          )}
+        </section>
+      )}
 
       {/*
         Announcements are SESSION-scoped, but this route's id may be an

@@ -12684,6 +12684,80 @@
         "title": "CheckoutStatusResponse",
         "type": "object"
       },
+      "ChildClassRecapList": {
+        "properties": {
+          "recaps": {
+            "items": {
+              "$ref": "#/components/schemas/ChildClassRecapView"
+            },
+            "title": "Recaps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "recaps"
+        ],
+        "title": "ChildClassRecapList",
+        "type": "object"
+      },
+      "ChildClassRecapView": {
+        "properties": {
+          "class_starts_at": {
+            "format": "date-time",
+            "title": "Class Starts At",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "practiced_skills": {
+            "items": {
+              "$ref": "#/components/schemas/ChildRecapSkillView"
+            },
+            "title": "Practiced Skills",
+            "type": "array"
+          },
+          "taught_skills": {
+            "items": {
+              "$ref": "#/components/schemas/ChildRecapSkillView"
+            },
+            "title": "Taught Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "class_starts_at",
+          "taught_skills",
+          "practiced_skills"
+        ],
+        "title": "ChildClassRecapView",
+        "type": "object"
+      },
+      "ChildPracticeView": {
+        "properties": {
+          "skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 30,
+            "minItems": 1,
+            "title": "Skill Ids",
+            "type": "array"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "skill_ids"
+        ],
+        "title": "ChildPracticeView",
+        "type": "object"
+      },
       "ChildProfileView": {
         "properties": {
           "date_of_birth": {
@@ -12729,6 +12803,29 @@
           }
         },
         "title": "ChildProfileView",
+        "type": "object"
+      },
+      "ChildRecapSkillView": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_id",
+          "name",
+          "passed"
+        ],
+        "title": "ChildRecapSkillView",
         "type": "object"
       },
       "ClassPublicFieldsRequest": {
@@ -12941,6 +13038,246 @@
           "coach_display"
         ],
         "title": "ClassPublicProfileView",
+        "type": "object"
+      },
+      "ClassRecapView": {
+        "properties": {
+          "ai_enabled": {
+            "title": "Ai Enabled",
+            "type": "boolean"
+          },
+          "can_edit": {
+            "title": "Can Edit",
+            "type": "boolean"
+          },
+          "can_resolve": {
+            "title": "Can Resolve",
+            "type": "boolean"
+          },
+          "class_starts_at": {
+            "format": "date-time",
+            "title": "Class Starts At",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "practice": {
+            "items": {
+              "$ref": "#/components/schemas/ChildPracticeView"
+            },
+            "title": "Practice",
+            "type": "array"
+          },
+          "reports": {
+            "items": {
+              "$ref": "#/components/schemas/ClassReportView"
+            },
+            "title": "Reports",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "roster": {
+            "items": {
+              "$ref": "#/components/schemas/RecapRosterView"
+            },
+            "title": "Roster",
+            "type": "array"
+          },
+          "skill_options": {
+            "items": {
+              "$ref": "#/components/schemas/RecapSkillView"
+            },
+            "title": "Skill Options",
+            "type": "array"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "taught_skills": {
+            "items": {
+              "$ref": "#/components/schemas/RecapSkillView"
+            },
+            "title": "Taught Skills",
+            "type": "array"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "class_starts_at",
+          "can_edit",
+          "can_resolve",
+          "ai_enabled",
+          "revision",
+          "source",
+          "updated_at",
+          "taught_skills",
+          "practice",
+          "roster",
+          "skill_options",
+          "reports"
+        ],
+        "title": "ClassRecapView",
+        "type": "object"
+      },
+      "ClassReportHandoffList": {
+        "properties": {
+          "reports": {
+            "items": {
+              "$ref": "#/components/schemas/ClassReportHandoffView"
+            },
+            "title": "Reports",
+            "type": "array"
+          }
+        },
+        "required": [
+          "reports"
+        ],
+        "title": "ClassReportHandoffList",
+        "type": "object"
+      },
+      "ClassReportHandoffView": {
+        "properties": {
+          "author_id": {
+            "title": "Author Id",
+            "type": "string"
+          },
+          "class_starts_at": {
+            "format": "date-time",
+            "title": "Class Starts At",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "report_id": {
+            "title": "Report Id",
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "report_id",
+          "occurrence_id",
+          "class_starts_at",
+          "author_id",
+          "text",
+          "submitted_at"
+        ],
+        "title": "ClassReportHandoffView",
+        "type": "object"
+      },
+      "ClassReportView": {
+        "properties": {
+          "ai_used": {
+            "title": "Ai Used",
+            "type": "boolean"
+          },
+          "applied_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Revision"
+          },
+          "is_mine": {
+            "title": "Is Mine",
+            "type": "boolean"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pass_claims": {
+            "items": {
+              "$ref": "#/components/schemas/PassClaimView"
+            },
+            "title": "Pass Claims",
+            "type": "array"
+          },
+          "questions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Questions",
+            "type": "array"
+          },
+          "report_id": {
+            "title": "Report Id",
+            "type": "string"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "report_id",
+          "is_mine",
+          "text",
+          "submitted_at",
+          "outcome",
+          "ai_used",
+          "questions",
+          "pass_claims",
+          "applied_revision",
+          "resolved_at"
+        ],
+        "title": "ClassReportView",
         "type": "object"
       },
       "ClassRiskView": {
@@ -25754,6 +26091,24 @@
         "title": "ParentWaiverStudentView",
         "type": "object"
       },
+      "PassClaimView": {
+        "properties": {
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "skill_id"
+        ],
+        "title": "PassClaimView",
+        "type": "object"
+      },
       "PasswordResetRequest": {
         "properties": {
           "email": {
@@ -28937,6 +29292,52 @@
         "title": "ReasonCountView",
         "type": "object"
       },
+      "RecapRosterView": {
+        "properties": {
+          "attendance": {
+            "title": "Attendance",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "name",
+          "attendance"
+        ],
+        "title": "RecapRosterView",
+        "type": "object"
+      },
+      "RecapSkillView": {
+        "properties": {
+          "level_name": {
+            "default": "",
+            "title": "Level Name",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_id",
+          "name"
+        ],
+        "title": "RecapSkillView",
+        "type": "object"
+      },
       "RecommendLevelUpBody": {
         "properties": {
           "program_id": {
@@ -30517,6 +30918,49 @@
           "message"
         ],
         "title": "RowIssueView",
+        "type": "object"
+      },
+      "SaveClassRecapBody": {
+        "properties": {
+          "class_starts_at": {
+            "format": "date-time",
+            "title": "Class Starts At",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "mutation_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "practice": {
+            "items": {
+              "$ref": "#/components/schemas/ChildPracticeView"
+            },
+            "maxItems": 100,
+            "title": "Practice",
+            "type": "array"
+          },
+          "taught_skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 30,
+            "title": "Taught Skill Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "class_starts_at",
+          "mutation_id",
+          "expected_revision"
+        ],
+        "title": "SaveClassRecapBody",
         "type": "object"
       },
       "SchedulePriceChangeRequest": {
@@ -32928,6 +33372,39 @@
           "offset"
         ],
         "title": "StudentScheduleResponse",
+        "type": "object"
+      },
+      "SubmitClassReportBody": {
+        "properties": {
+          "class_starts_at": {
+            "format": "date-time",
+            "title": "Class Starts At",
+            "type": "string"
+          },
+          "report_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Report Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "use_ai": {
+            "default": false,
+            "title": "Use Ai",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "class_starts_at",
+          "report_id",
+          "text"
+        ],
+        "title": "SubmitClassReportBody",
         "type": "object"
       },
       "SubscriptionSummary": {
@@ -39687,6 +40164,27 @@
         "summary": "List Class Public Profiles",
         "tags": [
           "admin.public-page"
+        ]
+      }
+    },
+    "/api/v2/admin/class-reports/handoffs": {
+      "get": {
+        "operationId": "list_class_report_handoffs_api_v2_admin_class_reports_handoffs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassReportHandoffList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Class Report Handoffs",
+        "tags": [
+          "admin.class-reports"
         ]
       }
     },
@@ -51710,6 +52208,201 @@
         ]
       }
     },
+    "/api/v2/coach/occurrences/{occurrence_id}/class-recap": {
+      "get": {
+        "operationId": "get_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassRecapView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Class Recap",
+        "tags": [
+          "coach.class-recap"
+        ]
+      },
+      "put": {
+        "operationId": "save_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveClassRecapBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassRecapView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Class Recap",
+        "tags": [
+          "coach.class-recap"
+        ]
+      }
+    },
+    "/api/v2/coach/occurrences/{occurrence_id}/class-reports": {
+      "post": {
+        "operationId": "submit_class_report_api_v2_coach_occurrences__occurrence_id__class_reports_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitClassReportBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassReportView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Class Report",
+        "tags": [
+          "coach.class-recap"
+        ]
+      }
+    },
+    "/api/v2/coach/occurrences/{occurrence_id}/class-reports/{report_id}/resolve": {
+      "post": {
+        "operationId": "resolve_class_report_api_v2_coach_occurrences__occurrence_id__class_reports__report_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassReportView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Class Report",
+        "tags": [
+          "coach.class-recap"
+        ]
+      }
+    },
     "/api/v2/coach/profile": {
       "get": {
         "operationId": "get_profile_api_v2_coach_profile_get",
@@ -55834,6 +56527,48 @@
         "summary": "Share Certificate",
         "tags": [
           "parent-progress"
+        ]
+      }
+    },
+    "/api/v2/parent/students/{student_id}/class-recaps": {
+      "get": {
+        "operationId": "list_child_class_recaps_api_v2_parent_students__student_id__class_recaps_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChildClassRecapList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Child Class Recaps",
+        "tags": [
+          "parent-class-recap"
         ]
       }
     },

@@ -213,6 +213,9 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # ai_controls_routes.py (L13): the AI caps and the coach-review switch.
         ("GET", f"{_ADMIN}/ai/controls"),
         ("PUT", f"{_ADMIN}/ai/controls"),
+        # class_report_routes.py: coach reports handed to the owner carry raw
+        # private report text, which only the owner may read.
+        ("GET", f"{_ADMIN}/class-reports/handoffs"),
     }
 )
 

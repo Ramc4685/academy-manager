@@ -40,6 +40,12 @@ export const queryKeys = {
     billingMovePreview: (enrollmentId: string, toSessionTypeId: string) =>
       ["coach", "billing-enrollments", "preview", enrollmentId, toSessionTypeId] as const,
   },
+  // Not under "coach": coach.* is persisted to localStorage for offline use,
+  // and a recap carries private after-class report text (persistence.ts).
+  classRecap: {
+    occurrence: (occurrenceId: string) => ["class-recap", occurrenceId] as const,
+    handoffs: () => ["class-recap", "handoffs"] as const,
+  },
   admin: {
     all: ["admin"] as const,
     sessions: (date?: string) => ["admin", "sessions", date ?? "all"] as const,
@@ -240,6 +246,7 @@ export const queryKeys = {
     children: () => ["parent", "children"] as const,
     progressJourney: (studentId: string) =>
       ["parent", "progress-journey", studentId] as const,
+    classRecaps: (studentId: string) => ["parent", "class-recaps", studentId] as const,
     cancellationPreview: (enrollmentId: string) =>
       ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,
     messages: () => ["parent", "messages"] as const,

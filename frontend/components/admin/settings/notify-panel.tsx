@@ -278,6 +278,7 @@ function AiImportSharingToggle() {
 const AI_FEATURE_LABELS: Record<string, string> = {
   win_back_note: "Win-back email paragraph",
   technique_observation: "Coach technique notes",
+  class_report: "After-class report reading",
   progress_narrative: "Progress notes for parents",
   month_close_narrator: "Month-close summary",
   pipeline_reply: "Inquiry reply drafts",
