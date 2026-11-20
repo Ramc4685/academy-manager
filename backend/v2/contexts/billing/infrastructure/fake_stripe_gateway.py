@@ -41,8 +41,10 @@ class FakeStripeGateway(StripeGateway):
         # PaymentIntents the fake knows in full, by id.
         self._payment_intents_by_id: dict[str, dict[str, Any]] = {}
         # (stripe_account, idempotency_key) -> the off-session answer Stripe replays.
-        self._off_session_by_key: dict[tuple[str | None, str], tuple[str, str, str | None]] = {}
-        self._off_session_requests: dict[tuple[str | None, str], dict[str, Any]] = {}
+        # (account, key) -> (answer, request): Stripe replays an answer only for the same request.
+        self._off_session_by_key: dict[
+            tuple[str | None, str], tuple[tuple[str, str, str | None], dict[str, Any]]
+        ] = {}
         self.invoice_checkouts: list[dict[str, Any]] = []
         self.checkouts: list[dict[str, Any]] = []
         self.subscription_checkouts: list[dict[str, Any]] = []
@@ -775,12 +777,13 @@ class FakeStripeGateway(StripeGateway):
         }
         replay = self._off_session_by_key.get(key)
         if replay is not None:
-            if self._off_session_requests.get(key) != request:
+            answer, first_request = replay
+            if first_request != request:
                 raise StripeIdempotencyConflict(
                     "Stripe PaymentIntent creation failed: idempotency key reused with "
                     "different parameters"
                 )
-            return replay
+            return answer
         check_application_fee_cents(
             fee_cents=application_fee_cents,
             amount_cents=amount_cents,
@@ -836,14 +839,12 @@ class FakeStripeGateway(StripeGateway):
                 "disputed": False,
             },
         }
-        self._off_session_by_key[key] = (pi_id, "succeeded", None)
-        self._off_session_requests[key] = request
+        self._off_session_by_key[key] = ((pi_id, "succeeded", None), request)
         return pi_id, "succeeded", None
 
     def expire_idempotency_keys(self) -> None:
         """Stripe forgets an idempotency key after 24h; a later call charges again."""
         self._off_session_by_key.clear()
-        self._off_session_requests.clear()
 
     async def get_default_payment_method(
         self, *, academy_id: str, parent_id: str, stripe_account: str | None = None

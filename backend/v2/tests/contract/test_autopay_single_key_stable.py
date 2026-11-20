@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from backend.v2.contexts.billing.application.ports import StripeResourceNotFound
 from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
     ChargeInvoiceViaAutopay,
 )
@@ -178,6 +179,29 @@ async def test_a_family_lookup_failure_parks_instead_of_charging_full_price(real
 
     assert result.result is not None and result.result.decline_code == "stripe_unavailable"
     assert stripe.keys == []
+
+
+async def test_a_deleted_payment_method_still_asks_the_parent_for_a_new_one(real_db, acad) -> None:
+    """A 404 on the lookup is not an outage: the method is gone, so the charge goes
+    ahead without the discount and Stripe's answer asks the parent to add one."""
+    await _seed(real_db, "inv-a")
+
+    class _DeletedMethodStripe(_LostAnswerBankStripe):
+        async def retrieve_payment_method(self, pm_id: str, **kwargs: Any) -> dict[str, Any]:
+            raise StripeResourceNotFound(f"Stripe PaymentMethod not found: {pm_id}")
+
+        async def create_off_session_payment_intent(
+            self, **kwargs: Any
+        ) -> tuple[str, str, str | None]:
+            self.keys.append(kwargs["idempotency_key"])
+            return "", "failed", "no_saved_payment_method"
+
+    stripe = _DeletedMethodStripe()
+
+    result = await _charge(real_db, stripe, NOW).execute("inv-a")
+
+    assert result.decline_code == "no_saved_payment_method"
+    assert len(stripe.keys) == 1
 
 
 async def test_a_lookup_failure_does_not_block_a_charge_with_no_ach_discount(real_db, acad) -> None:

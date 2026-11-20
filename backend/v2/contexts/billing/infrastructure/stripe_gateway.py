@@ -1034,9 +1034,12 @@ class RealStripeGateway(StripeGateway):
             if _is_resource_missing(self._stripe, exc):
                 # The saved card/bank was removed (e.g. in the portal): parent action needed.
                 return "", "failed", "no_saved_payment_method"
-            idempotency_error = getattr(self._stripe, "IdempotencyError", None)
-            if idempotency_error is not None and isinstance(exc, idempotency_error):
+            if (
+                isinstance(exc, self._stripe.IdempotencyError)
+                and getattr(exc, "code", None) != "idempotency_key_in_use"
+            ):
                 # The key was used with other parameters: an earlier request exists.
+                # ``idempotency_key_in_use`` (one still in flight) is retriable instead.
                 raise StripeIdempotencyConflict(
                     f"Stripe PaymentIntent creation failed: {exc}"
                 ) from exc

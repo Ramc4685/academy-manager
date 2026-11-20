@@ -108,10 +108,26 @@ async def test_a_reused_key_with_other_parameters_is_its_own_error(
 ) -> None:
     """Stripe refusing a key reused with other parameters is not an outage: an
     earlier request under this key exists, so it must not read as StripeUnavailable."""
-    gw = _gateway(monkeypatch, _IdempotencyError("Keys for idempotent requests can only..."))
+    gw = _gateway(
+        monkeypatch,
+        _IdempotencyError("Keys for idempotent requests can only...", code="idempotency_error"),
+    )
     with pytest.raises(StripeIdempotencyConflict) as raised:
         await _charge(gw)
     assert not isinstance(raised.value, StripeUnavailable)
+
+
+@pytest.mark.asyncio
+async def test_a_key_still_in_use_is_retried_as_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``idempotency_key_in_use``: a concurrent request with the key is still in
+    flight. Retriable, so it is an outage-style park, not a review."""
+    gw = _gateway(
+        monkeypatch, _IdempotencyError("request in progress", code="idempotency_key_in_use")
+    )
+    with pytest.raises(StripeUnavailable):
+        await _charge(gw)
 
 
 def _cancel_gateway(monkeypatch: pytest.MonkeyPatch, raises: Exception) -> RealStripeGateway:
