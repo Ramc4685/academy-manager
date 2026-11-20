@@ -33,8 +33,13 @@ describe("rosterActionsFor (#696, #711, #714 follow-up)", () => {
     }
   });
 
-  it("keeps the pause/resume pair status-specific and delete on every row", () => {
-    expect(rosterActionsFor("active")).toEqual(["pause", "hold", "transfer", "drop", "delete"]);
+  // A0-10: Hold (keeps the seat) replaced the transitional Pause on the
+  // roster. Legacy paused rows keep Resume so their data is not stranded.
+  it("offers Hold, never Pause, on an active row; Resume only on a legacy paused row", () => {
+    expect(rosterActionsFor("active")).toEqual(["hold", "transfer", "drop", "delete"]);
+    for (const status of ["active", "held", "reclaim_pending", "withdrawn"] as const) {
+      expect(rosterActionsFor(status), `pause for ${status}`).not.toContain("pause");
+    }
     expect(rosterActionsFor("paused")).toEqual(["resume", "transfer", "drop", "delete"]);
     expect(rosterActionsFor("held")).toEqual(["return", "transfer", "drop", "delete"]);
     expect(rosterActionsFor("withdrawn")).toEqual(["re_enroll", "transfer", "delete"]);
@@ -55,7 +60,7 @@ describe("rosterActionsFor (#696, #711, #714 follow-up)", () => {
     // #714 listed held rows on the roster but left them with no way back.
     expect(rosterActionsFor("held")).toContain("return");
     expect(rosterActionsFor("active")).toContain("hold");
-    // Nothing else gained the pair — a paused row keeps Pause/Resume only.
+    // Nothing else gained the pair — a legacy paused row keeps Resume only.
     expect(rosterActionsFor("paused")).not.toContain("hold");
     expect(rosterActionsFor("paused")).not.toContain("return");
   });

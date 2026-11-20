@@ -40,6 +40,8 @@ from pydantic import BaseModel, Field
 class OccurrenceLister(Protocol):
     async def execute(self, coach_id: str, on_date: date) -> list[Any]: ...
 
+    async def execute_for_academy(self, on_date: date) -> list[Any]: ...
+
 
 class RosterGetter(Protocol):
     async def execute(self, session_id: str) -> list[Any]: ...
@@ -242,8 +244,15 @@ class GenerateDailyTeachingPlan:
         on_date: date,
         program_id: str | None,
         program_name: str = "",
+        academy_wide: bool = False,
     ) -> DailyTeachingPlan:
-        occurrences = await self._occurrences.execute(coach_id, on_date)
+        # #1044: a coach supervisor plans the same academy-wide class set
+        # Today shows them; an ordinary coach keeps assignment scope.
+        occurrences = (
+            await self._occurrences.execute_for_academy(on_date)
+            if academy_wide
+            else await self._occurrences.execute(coach_id, on_date)
+        )
         cards_by_skill, cards_by_level = await self._card_maps(program_id)
 
         sessions = await asyncio.gather(

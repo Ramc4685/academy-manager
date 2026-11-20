@@ -788,6 +788,54 @@ class TransferEnrollmentRequest(BaseModel):
     reason: str | None = None
 
 
+class CopySessionRequest(BaseModel):
+    """A0-8 Copy class. Omitted schedule fields keep the source class's."""
+
+    title: str = Field(min_length=1, max_length=200)
+    days_of_week: list[str] | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    copy_roster: bool = False
+
+
+class CopiedRosterRowView(BaseModel):
+    student_id: str
+    full_name: str
+    ok: bool
+    error_code: str | None = None
+    message: str | None = None
+
+
+class CopySessionResponse(BaseModel):
+    session: AdminSessionView
+    #: False when an admin (not the owner) copied a priced class: the copy is
+    #: unpriced until the owner sets the fee, as with Create.
+    price_copied: bool
+    roster: list[CopiedRosterRowView]
+
+
+class BulkTransferEnrollmentsRequest(BaseModel):
+    """A0-8: move several roster rows to one class in one request."""
+
+    enrollment_ids: list[str] = Field(min_length=1, max_length=100)
+    target_session_id: str
+    effective_date: date
+    reason: str | None = None
+
+
+class BulkTransferRowView(BaseModel):
+    enrollment_id: str
+    ok: bool
+    error_code: str | None = None
+    message: str | None = None
+
+
+class BulkTransferEnrollmentsResponse(BaseModel):
+    results: list[BulkTransferRowView]
+    moved_count: int
+    failed_count: int
+
+
 class OverrideEnrollmentFeeRequest(BaseModel):
     amount_cents: int | None = Field(default=None, ge=0)
     reason: str | None = Field(default=None, max_length=500)

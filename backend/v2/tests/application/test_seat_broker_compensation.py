@@ -77,7 +77,9 @@ class _Boom(RuntimeError):
 
 @dataclass
 class _RaisingOnUpdateSession(FakeEnrollmentWriter):
-    async def update_session(self, enrollment_id: str, session_id: str) -> None:
+    async def update_session(
+        self, enrollment_id: str, session_id: str, *, expected_session_id: str | None = None
+    ) -> None:
         raise _Boom("update_session failed")
 
 

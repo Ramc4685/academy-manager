@@ -165,8 +165,8 @@ export function resolveDepartureActions(
  * `active` and `held` are the only statuses that gained anything: #714 made
  * held rows visible on the roster but left Return unreachable, and holding is
  * only meaningful for a row still attending. Every other status falls through
- * to `[]`, so its menu stays exactly what it is today — `paused` keeps
- * Pause/Resume untouched.
+ * to `[]`, so its menu stays exactly what it is today — a legacy `paused`
+ * row keeps Resume (A0-10 took Pause off active rows).
  *
  * `reclaim_pending` (#697's second hold state) is deliberately absent: the
  * backend return route accepts `held`, and nothing in this slice establishes

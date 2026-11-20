@@ -327,6 +327,7 @@ class MongoFamilyBillingReadModel:
                     actor_id=_opt_str(ev.get("actor_id")),
                     reason=_opt_str(ev.get("reason")),
                     effective_at=_to_datetime(ev.get("effective_at")),
+                    metadata=_event_metadata(ev.get("metadata")),
                 )
                 for ev in events
             ),
@@ -1046,6 +1047,7 @@ class MongoFamilyBillingReadModel:
                 "actor_id": 1,
                 "reason": 1,
                 "effective_at": 1,
+                "metadata": 1,
             },
             sort=[("occurred_at", -1)],
             limit=INVOICE_CAP,
@@ -1113,3 +1115,10 @@ class MongoFamilyBillingReadModel:
             is_house_academy=bool(getattr(settings, "allow_platform_charge_fallback", False)),
             account=account,
         ).payments_possible
+
+
+def _event_metadata(raw: Any) -> dict[str, str]:
+    # A legacy event may carry non-dict metadata; never let it crash the family page.
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): str(v) for k, v in raw.items() if v}

@@ -48,9 +48,10 @@ import { HoldEnrollmentDialog, ReturnFromHoldDialog } from "@/components/admin/e
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { ClassRecapDialog } from "@/components/admin/ClassReportHandoffsCard";
 
-import { AddToRosterDialog, PauseEnrollmentDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";
+import { AddToRosterDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";
 import { formatCurrencyCents, sessionTimeRange } from "./format";
-import { RosterMetrics, RosterTable, partitionRoster, seatsHeldCount } from "./RosterPanel";
+import { CopyClassDialog } from "./copy-class-dialog";
+import { RosterMetrics, RosterTable, isBulkTransferable, partitionRoster, seatsHeldCount } from "./RosterPanel";
 import {
   CancelOccurrenceDialog,
   OccurrenceAttendanceDialog,
@@ -114,9 +115,11 @@ export default function AdminSessionDetailPage() {
   // roster. Cleared when the dialog closes so the next plain Add is blank.
   const [reEnrollTarget, setReEnrollTarget] = useState<AdminEnrollmentView | null>(null);
   const [editOpen, setEditOpen] = useState(false);
-  const [pauseTarget, setPauseTarget] = useState<AdminEnrollmentView | null>(null);
+  const [copyOpen, setCopyOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<AdminEnrollmentView | null>(null);
-  const [transferTarget, setTransferTarget] = useState<AdminEnrollmentView | null>(null);
+  const [transferTargets, setTransferTargets] = useState<AdminEnrollmentView[]>([]);
+  // A0-8: roster rows ticked for a bulk Transfer (Active tab only).
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [withdrawalTarget, setWithdrawalTarget] = useState<AdminEnrollmentView | null>(null);
   const [holdTarget, setHoldTarget] = useState<AdminEnrollmentView | null>(null);
   const [returnTarget, setReturnTarget] = useState<AdminEnrollmentView | null>(null);
@@ -244,6 +247,9 @@ export default function AdminSessionDetailPage() {
     canWindowDates && !showAllDates ? windowedOccurrences(occurrences, new Date()) : occurrences;
   const { active: activeEnrollments, past: pastEnrollments } = partitionRoster(enrollments);
   const rosterRows = rosterView === "active" ? activeEnrollments : pastEnrollments;
+  const selectedRows = activeEnrollments.filter(
+    (e) => selectedIds.has(e.enrollment_id) && isBulkTransferable(e.status),
+  );
   const userNameById = new Map(
     (usersQuery.data?.users ?? []).map((user) => [user.user_id, user.display_name || user.email])
   );
@@ -398,6 +404,11 @@ export default function AdminSessionDetailPage() {
               Edit session
             </Button>
           )}
+          {session && (
+            <Button variant="secondary" size="sm" onClick={() => setCopyOpen(true)}>
+              Copy class
+            </Button>
+          )}
           <Button
             variant="primary"
             size="sm"
@@ -522,6 +533,27 @@ export default function AdminSessionDetailPage() {
               </Button>
             </div>
           )}
+          {rosterView === "active" && selectedRows.length > 0 && (
+            <div
+              data-testid="roster-bulk-bar"
+              className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-rally-line bg-rally-paper p-2"
+            >
+              <p className="min-w-0 flex-1 text-sm font-semibold text-rally-ink">
+                {selectedRows.length} selected
+              </p>
+              <Button variant="secondary" size="sm" onClick={() => setSelectedIds(new Set())}>
+                Clear
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                data-testid="roster-bulk-transfer"
+                onClick={() => setTransferTargets(selectedRows)}
+              >
+                Transfer selected
+              </Button>
+            </div>
+          )}
           {enrollmentsQuery.isLoading ? (
             <TableSkeleton />
           ) : rosterRows.length === 0 ? (
@@ -543,10 +575,9 @@ export default function AdminSessionDetailPage() {
               onPathwayLevelChange={handlePathwayLevelChange}
               onDelete={(enrollment) => setRemoveTarget(enrollment)}
               onHold={(enrollment) => setHoldTarget(enrollment)}
-              onPause={(enrollment) => setPauseTarget(enrollment)}
               onResume={(id) => resumeMutation.mutate(id)}
               onReturn={(enrollment) => setReturnTarget(enrollment)}
-              onTransfer={(enrollment) => setTransferTarget(enrollment)}
+              onTransfer={(enrollment) => setTransferTargets([enrollment])}
               onWithdraw={(enrollment) => setWithdrawalTarget(enrollment)}
               onUndoScheduledDrop={(enrollment) =>
                 undoScheduledDropMutation.mutate(enrollment.enrollment_id)
@@ -555,6 +586,29 @@ export default function AdminSessionDetailPage() {
                 setReEnrollTarget(enrollment);
                 setAddOpen(true);
               }}
+              selection={
+                rosterView === "active"
+                  ? {
+                      selectedIds,
+                      onToggle: (id) =>
+                        setSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          if (!next.delete(id)) next.add(id);
+                          return next;
+                        }),
+                      onToggleAll: (checked) =>
+                        setSelectedIds(
+                          checked
+                            ? new Set(
+                                rosterRows
+                                  .filter((e) => isBulkTransferable(e.status))
+                                  .map((e) => e.enrollment_id),
+                              )
+                            : new Set(),
+                        ),
+                    }
+                  : undefined
+              }
             />
           )}
         </Card>
@@ -856,24 +910,18 @@ export default function AdminSessionDetailPage() {
           });
         }}
       />
+      {session && copyOpen && (
+        <CopyClassDialog session={session} open={copyOpen} onOpenChange={setCopyOpen} />
+      )}
       <TransferEnrollmentDialog
-        enrollment={transferTarget}
+        enrollments={transferTargets}
         currentSessionId={sessionId}
         currentSessionTitle={session?.title ?? ""}
-        onClose={() => setTransferTarget(null)}
-        onMoved={() => {
-          setTransferTarget(null);
+        onClose={() => setTransferTargets([])}
+        onMoved={(close) => {
+          if (close) setTransferTargets([]);
+          setSelectedIds(new Set());
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
-        }}
-      />
-      <PauseEnrollmentDialog
-        enrollment={pauseTarget}
-        onClose={() => setPauseTarget(null)}
-        onPaused={() => {
-          setPauseTarget(null);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />

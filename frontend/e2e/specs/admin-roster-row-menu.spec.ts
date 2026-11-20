@@ -181,7 +181,7 @@ test.describe("admin roster row overflow menu (#713)", () => {
     page,
   }) => {
     await page.getByRole("button", { name: "More actions for Ana Roster" }).click();
-    await page.getByRole("menuitem", { name: "Pause" }).click();
+    await page.getByRole("menuitem", { name: "Hold" }).click();
     await expect(page.getByRole("dialog")).toContainText("Ana Roster");
   });
 
@@ -206,17 +206,19 @@ test.describe("admin roster row overflow menu (#713)", () => {
   /**
    * #859: the menu used to read Pause, Hold, Drop, Delete — four bare verbs
    * with no way to tell which keeps the seat, which stops the invoice, or
-   * which reaches the family. Each item now carries its own line.
+   * which reaches the family. Each item now carries its own line. A0-10
+   * then removed Pause from an active row: Hold is the one way to step away.
    */
   test("every lifecycle item explains the seat, the billing and the family email", async ({
     page,
   }) => {
     await page.getByRole("button", { name: "More actions for Ana Roster" }).click();
 
-    const pause = page.getByRole("menuitem", { name: "Pause" });
-    await expect(pause).toContainText(/seat/i);
-    await expect(pause).toContainText(/billing/i);
-    await expect(pause).toContainText(/family is not emailed/i);
+    await expect(page.getByRole("menuitem", { name: "Pause" })).toHaveCount(0);
+    const hold = page.getByRole("menuitem", { name: "Hold" });
+    await expect(hold).toContainText(/keeps the seat/i);
+    await expect(hold).toContainText(/billing/i);
+    await expect(hold).toContainText(/family is emailed/i);
 
     // Drop reaches the family; Delete does not. The difference is the whole
     // reason the two are easy to confuse.
@@ -228,7 +230,7 @@ test.describe("admin roster row overflow menu (#713)", () => {
     );
 
     // Still one item per action: the added line must not make a label ambiguous.
-    await expect(pause).toHaveCount(1);
+    await expect(hold).toHaveCount(1);
     await expect(page.getByRole("menuitem", { name: "Transfer" })).toHaveCount(1);
   });
 
@@ -269,5 +271,124 @@ test.describe("re-enrolling a departed roster row (#827)", () => {
     await expect(dialog).toContainText("Add to roster");
     // Pre-filled with the student who left, so the admin does not retype them.
     await expect(dialog.getByRole("combobox")).toHaveValue("stu-gone");
+  });
+});
+
+test.describe("bulk roster transfer (A0-8)", () => {
+  test("moves the ticked rows in one request and names the ones that stayed", async ({ page }) => {
+    await stubAdminShell(page);
+    await stubSessionDetail(page);
+    const bulkBodies: unknown[] = [];
+    // Registered after the catch-all, so it wins for these two paths.
+    await page.route("**/api/v2/admin/sessions?*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        sessions: [
+          {
+            session_id: "sess-target",
+            title: "Thursday 5:00 PM Intermediate",
+            coach_id: "coach-2",
+            location: "Court 2",
+            start_at: OCCURRENCES[1].start_at,
+            end_at: OCCURRENCES[1].end_at,
+            capacity: 12,
+            status: "scheduled",
+            enrolled_count: 3,
+            waitlist_count: 0,
+          },
+        ],
+      });
+    });
+    await page.route("**/api/v2/admin/enrollments/bulk-transfer", (route) => {
+      bulkBodies.push(route.request().postDataJSON());
+      return fulfillJson(route, {
+        results: [
+          { enrollment_id: "enr-1", ok: true, error_code: null, message: null },
+          {
+            enrollment_id: "enr-2",
+            ok: false,
+            error_code: "Enrollment.CapacityExceeded",
+            message: "target session full",
+          },
+        ],
+        moved_count: 1,
+        failed_count: 1,
+      });
+    });
+    await page.goto(`/admin/sessions/${SESSION_ID}`);
+    await expect(page.getByTestId("enrollment-row-enr-1")).toBeVisible();
+
+    await expect(page.getByTestId("roster-bulk-bar")).toHaveCount(0);
+    await page.getByRole("checkbox", { name: "Select Ana Roster" }).check();
+    await page.getByRole("checkbox", { name: "Select Bo Roster" }).check();
+    await expect(page.getByTestId("roster-bulk-bar")).toContainText("2 selected");
+    await page.getByTestId("roster-bulk-transfer").click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("Transfer 2 students");
+    await dialog.getByRole("button", { name: "Target session" }).click();
+    await dialog.getByRole("option", { name: /Thursday 5:00 PM Intermediate/ }).click();
+    await dialog.getByRole("button", { name: "Transfer", exact: true }).click();
+
+    await expect(dialog.getByTestId("bulk-transfer-failures")).toContainText(
+      "Bo Roster could not move: target session full",
+    );
+    // Ana already moved: the form is gone, so a resubmit can't move her again.
+    await expect(dialog.getByRole("button", { name: "Transfer" })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "Done" })).toBeVisible();
+    expect(bulkBodies).toHaveLength(1);
+    expect(bulkBodies[0]).toMatchObject({
+      enrollment_ids: ["enr-1", "enr-2"],
+      target_session_id: "sess-target",
+    });
+  });
+});
+
+test.describe("copy class (A0-8)", () => {
+  test("copies the class with its students and reports who could not be added", async ({
+    page,
+  }) => {
+    await stubAdminShell(page);
+    await stubSessionDetail(page);
+    const copyBodies: unknown[] = [];
+    await page.route(`**/api/v2/admin/sessions/${SESSION_ID}/copy`, (route) => {
+      copyBodies.push(route.request().postDataJSON());
+      return fulfillJson(route, {
+        session: { session_id: "sess-copy", title: "Thursday 6:00 PM Beginner" },
+        price_copied: true,
+        roster: [
+          { student_id: "stu-1", full_name: "Ana Roster", ok: true, error_code: null, message: null },
+          {
+            student_id: "stu-2",
+            full_name: "Bo Roster",
+            ok: false,
+            error_code: "Enrollment.CapacityExceeded",
+            message: "Class is full",
+          },
+        ],
+      });
+    });
+    await page.goto(`/admin/sessions/${SESSION_ID}`);
+    await page.getByRole("button", { name: "Copy class" }).click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByLabel("Class name")).toHaveValue("Tuesday 6:00 PM Beginner (copy)");
+    await dialog.getByLabel("Class name").fill("Thursday 6:00 PM Beginner");
+    const roster = dialog.getByRole("checkbox", { name: /active students/ });
+    // Same schedule as this class: copying its students would enroll and bill them twice.
+    await expect(roster).toBeDisabled();
+    await dialog.getByRole("checkbox", { name: "Tue", exact: true }).uncheck();
+    await dialog.getByRole("checkbox", { name: "Thu", exact: true }).check();
+    await roster.check();
+    await dialog.getByRole("button", { name: "Copy class" }).click();
+
+    await expect(dialog.getByTestId("copy-class-done")).toContainText(
+      "Bo Roster was not added: Class is full",
+    );
+    expect(copyBodies[0]).toEqual({
+      title: "Thursday 6:00 PM Beginner",
+      copy_roster: true,
+      days_of_week: ["Thu"],
+    });
   });
 });

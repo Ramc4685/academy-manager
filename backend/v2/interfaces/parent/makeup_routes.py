@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
@@ -58,6 +58,22 @@ class MakeupTargetView(BaseModel):
     open_slots: int
 
 
+class MakeupCandidateView(BaseModel):
+    student_id: str
+    student_name: str
+    occurrence_id: str
+    session_id: str
+    class_title: str
+    start_at: datetime
+    end_at: datetime
+    has_notice: bool
+    expires_at: datetime
+
+
+class MakeupCandidatesResponse(BaseModel):
+    candidates: list[MakeupCandidateView]
+
+
 class MakeupTargetsResponse(BaseModel):
     targets: list[MakeupTargetView]
 
@@ -109,6 +125,21 @@ async def list_makeups(
             )
             for r in rows
         ]
+    )
+
+
+@router.get("/makeups/candidates", response_model=MakeupCandidatesResponse)
+async def list_makeup_candidates(
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> MakeupCandidatesResponse:
+    """#1037/#1041: each child's missed classes the server would accept a
+    makeup request for now, under the academy's current policy."""
+    if use_cases.list_makeup_candidates is None:
+        raise HTTPException(status_code=503, detail="Makeup candidates are not available.")
+    rows = await use_cases.list_makeup_candidates.execute(claims.user_id)
+    return MakeupCandidatesResponse(
+        candidates=[MakeupCandidateView(**r.model_dump()) for r in rows]
     )
 
 

@@ -1474,6 +1474,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/enrollments/bulk-transfer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bulk Transfer Enrollments
+         * @description A0-8: per-row results; a refused row never blocks the others.
+         */
+        post: operations["bulk_transfer_enrollments_api_v2_admin_enrollments_bulk_transfer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/enrollments/quote": {
         parameters: {
             query?: never;
@@ -4269,6 +4289,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/sessions/{session_id}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copy a class
+         * @description A0-8: new class from this one; optionally its active students too.
+         */
+        post: operations["copy_session_api_v2_admin_sessions__session_id__copy_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/sessions/{session_id}/enrollments": {
         parameters: {
             query?: never;
@@ -6551,6 +6591,27 @@ export interface paths {
         put?: never;
         /** Create Makeup Request */
         post: operations["create_makeup_request_api_v2_parent_makeups_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/parent/makeups/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Makeup Candidates
+         * @description #1037/#1041: each child's missed classes the server would accept a
+         *     makeup request for now, under the academy's current policy.
+         */
+        get: operations["list_makeup_candidates_api_v2_parent_makeups_candidates_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -12465,6 +12526,43 @@ export interface components {
             /** Student Ids */
             student_ids: string[];
         };
+        /**
+         * BulkTransferEnrollmentsRequest
+         * @description A0-8: move several roster rows to one class in one request.
+         */
+        BulkTransferEnrollmentsRequest: {
+            /**
+             * Effective Date
+             * Format: date
+             */
+            effective_date: string;
+            /** Enrollment Ids */
+            enrollment_ids: string[];
+            /** Reason */
+            reason?: string | null;
+            /** Target Session Id */
+            target_session_id: string;
+        };
+        /** BulkTransferEnrollmentsResponse */
+        BulkTransferEnrollmentsResponse: {
+            /** Failed Count */
+            failed_count: number;
+            /** Moved Count */
+            moved_count: number;
+            /** Results */
+            results: components["schemas"]["BulkTransferRowView"][];
+        };
+        /** BulkTransferRowView */
+        BulkTransferRowView: {
+            /** Enrollment Id */
+            enrollment_id: string;
+            /** Error Code */
+            error_code?: string | null;
+            /** Message */
+            message?: string | null;
+            /** Ok */
+            ok: boolean;
+        };
         /** CalendarFeedLinkView */
         CalendarFeedLinkView: {
             /** Url */
@@ -13540,6 +13638,46 @@ export interface components {
             phone?: string | null;
             /** Relationship */
             relationship?: string | null;
+        };
+        /** CopiedRosterRowView */
+        CopiedRosterRowView: {
+            /** Error Code */
+            error_code?: string | null;
+            /** Full Name */
+            full_name: string;
+            /** Message */
+            message?: string | null;
+            /** Ok */
+            ok: boolean;
+            /** Student Id */
+            student_id: string;
+        };
+        /**
+         * CopySessionRequest
+         * @description A0-8 Copy class. Omitted schedule fields keep the source class's.
+         */
+        CopySessionRequest: {
+            /**
+             * Copy Roster
+             * @default false
+             */
+            copy_roster: boolean;
+            /** Days Of Week */
+            days_of_week?: string[] | null;
+            /** End Time */
+            end_time?: string | null;
+            /** Start Time */
+            start_time?: string | null;
+            /** Title */
+            title: string;
+        };
+        /** CopySessionResponse */
+        CopySessionResponse: {
+            /** Price Copied */
+            price_copied: boolean;
+            /** Roster */
+            roster: components["schemas"]["CopiedRosterRowView"][];
+            session: components["schemas"]["AdminSessionView"];
         };
         /** CorrectAttendanceRequest */
         CorrectAttendanceRequest: {
@@ -15801,6 +15939,41 @@ export interface components {
              * Format: date-time
              */
             sent_at: string;
+        };
+        /** MakeupCandidateView */
+        MakeupCandidateView: {
+            /** Class Title */
+            class_title: string;
+            /**
+             * End At
+             * Format: date-time
+             */
+            end_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Has Notice */
+            has_notice: boolean;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Session Id */
+            session_id: string;
+            /**
+             * Start At
+             * Format: date-time
+             */
+            start_at: string;
+            /** Student Id */
+            student_id: string;
+            /** Student Name */
+            student_name: string;
+        };
+        /** MakeupCandidatesResponse */
+        MakeupCandidatesResponse: {
+            /** Candidates */
+            candidates: components["schemas"]["MakeupCandidateView"][];
         };
         /** MakeupRequestAdminRow */
         MakeupRequestAdminRow: {
@@ -23948,6 +24121,39 @@ export interface operations {
             };
         };
     };
+    bulk_transfer_enrollments_api_v2_admin_enrollments_bulk_transfer_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkTransferEnrollmentsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkTransferEnrollmentsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     quote_enrollment_api_v2_admin_enrollments_quote_post: {
         parameters: {
             query?: never;
@@ -29440,6 +29646,41 @@ export interface operations {
             };
         };
     };
+    copy_session_api_v2_admin_sessions__session_id__copy_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CopySessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopySessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_enrollments_api_v2_admin_sessions__session_id__enrollments_get: {
         parameters: {
             query?: never;
@@ -33893,6 +34134,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_makeup_candidates_api_v2_parent_makeups_candidates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MakeupCandidatesResponse"];
                 };
             };
         };

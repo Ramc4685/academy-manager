@@ -344,33 +344,96 @@ test.describe("parent self-service — all switches off", () => {
   });
 });
 
+function candidate(studentId: string, studentName: string, occurrenceId: string) {
+  return {
+    student_id: studentId,
+    student_name: studentName,
+    occurrence_id: occurrenceId,
+    session_id: "sess-1",
+    class_title: SESSION_TITLE,
+    start_at: "2026-07-14T23:00:00Z",
+    end_at: "2026-07-15T00:00:00Z",
+    has_notice: false,
+    expires_at: "2026-07-28T00:00:00Z",
+  };
+}
+
+async function stubMakeupCandidates(
+  page: import("@playwright/test").Page,
+  candidates: Record<string, unknown>[] | "error",
+): Promise<void> {
+  await page.route("**/api/v2/parent/makeups/candidates", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    if (candidates === "error") {
+      // A 4xx: the app's query client retries 5xx with backoff, which would
+      // only delay the same error state past the assertion timeout.
+      return route.fulfill({ status: 403, contentType: "application/json", body: "{}" });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ candidates }),
+    });
+  });
+}
+
 test.describe("parent self-service — makeups", () => {
+  test("siblings who missed the same class are listed and requested separately (#1037)", async ({
+    page,
+  }) => {
+    await stubParentIdentity(page);
+    await stubAcademyAndChildren(page);
+    await stubMakeupCandidates(page, [
+      candidate(STUDENT_ID, STUDENT_NAME, "occ-050"),
+      candidate("st-2", "Ben Kim", "occ-050"),
+    ]);
+    await page.route("**/api/v2/parent/makeups/eligible-targets*", (route: Route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: '{"targets":[]}' }),
+    );
+    const posted: Record<string, unknown>[] = [];
+    await page.route("**/api/v2/parent/makeups", async (route: Route) => {
+      if (route.request().method() === "POST") {
+        posted.push(JSON.parse(route.request().postData() ?? "{}"));
+        return route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
+      }
+      return route.fulfill({ status: 200, contentType: "application/json", body: '{"makeups":[]}' });
+    });
+
+    await page.goto("/parent/requests");
+    await page.getByRole("tab", { name: "Makeups" }).click();
+
+    const picker = page.getByLabel("Missed class");
+    await expect(picker.locator("option")).toHaveText([
+      "Select a missed class",
+      /^Ava Kim — Junior Beginners — /,
+      /^Ben Kim — Junior Beginners — /,
+    ]);
+    await picker.selectOption("st-2:occ-050");
+    await page.getByRole("button", { name: "Request makeup" }).click();
+    await expect.poll(() => posted.length).toBe(1);
+    expect(posted[0]).toMatchObject({ student_id: "st-2", missed_occurrence_id: "occ-050" });
+  });
+
+  test("a failed load says so instead of showing an empty list (#1041)", async ({ page }) => {
+    await stubParentIdentity(page);
+    await stubAcademyAndChildren(page);
+    await stubMakeupCandidates(page, "error");
+
+    await page.goto("/parent/requests");
+    await page.getByRole("tab", { name: "Makeups" }).click();
+
+    await expect(page.getByText("Could not load your missed classes.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
+    await expect(page.getByText("No missed classes available for a makeup request.")).toHaveCount(0);
+  });
+
   test("submitting a makeup request shows a pending status chip", async ({ page }) => {
     await stubParentIdentity(page);
     await stubAcademyAndChildren(page);
 
     const makeups: Record<string, unknown>[] = [];
 
-    await page.route("**/api/v2/parent/absences", async (route: Route) => {
-      if (route.request().method() !== "GET") return route.fallback();
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          notices: [
-            {
-              notice_id: "notice-1",
-              student_id: STUDENT_ID,
-              occurrence_id: "occ-050",
-              session_id: "sess-1",
-              submitted_by: "parent-1",
-              submitted_at: "2026-07-10T12:00:00Z",
-              notice_window_met: true,
-            },
-          ],
-        }),
-      });
-    });
+    await stubMakeupCandidates(page, [candidate(STUDENT_ID, STUDENT_NAME, "occ-050")]);
 
     await page.route("**/api/v2/parent/makeups/eligible-targets*", async (route: Route) => {
       if (route.request().method() !== "GET") return route.fallback();
@@ -428,7 +491,7 @@ test.describe("parent self-service — makeups", () => {
     await page.goto("/parent/requests");
     await page.getByRole("tab", { name: "Makeups" }).click();
 
-    await page.getByLabel("Missed class").selectOption("occ-050");
+    await page.getByLabel("Missed class").selectOption(`${STUDENT_ID}:occ-050`);
     await page.getByLabel("Preferred makeup class (optional)").selectOption("occ-200");
     await page.getByRole("button", { name: "Request makeup" }).click();
 
