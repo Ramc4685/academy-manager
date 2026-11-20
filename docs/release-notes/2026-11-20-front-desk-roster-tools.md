@@ -1,6 +1,6 @@
 # Front desk roster tools and fixes
 
-PR: TBD
+PR: #1218
 
 ## What changed
 - The class roster's row menu offers Hold instead of Pause. Hold keeps the seat and stops billing until the agreed date; the backend pause endpoint is unchanged.
