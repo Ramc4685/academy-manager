@@ -2142,6 +2142,25 @@ export function transferEnrollment(
   });
 }
 
+/** A0-8: one row per requested enrollment; a refused row never blocks the rest. */
+export interface BulkTransferEnrollmentsResponse {
+  results: { enrollment_id: string; ok: boolean; error_code: string | null; message: string | null }[];
+  moved_count: number;
+  failed_count: number;
+}
+
+export function bulkTransferEnrollments(payload: {
+  enrollment_ids: string[];
+  target_session_id: string;
+  effective_date: string;
+  reason?: string;
+}): Promise<BulkTransferEnrollmentsResponse> {
+  return apiFetch<BulkTransferEnrollmentsResponse>("/admin/enrollments/bulk-transfer", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function resumeEnrollment(enrollmentId: string): Promise<void> {
   return apiFetch<void>(`/admin/enrollments/${enrollmentId}/resume`, { method: "POST" });
 }

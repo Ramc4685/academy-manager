@@ -103,6 +103,7 @@ from backend.v2.contexts.enrollment.domain.models import (
 )
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.shared.events import Outbox
+from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.security.external_url import validate_external_url
 
@@ -1625,6 +1626,90 @@ class TransferEnrollment:
             credit_id=metadata.get("credit_id"),
             metadata=metadata,
         )
+
+
+class BulkTransferEnrollmentsCommand(BaseModel):
+    model_config = {"frozen": True}
+    enrollment_ids: list[str]
+    target_session_id: str
+    effective_at: datetime | None = None
+    effective_date: date | None = None
+    actor_id: str | None = None
+    reason: str | None = None
+
+
+class BulkTransferRowResult(BaseModel):
+    model_config = {"frozen": True}
+    enrollment_id: str
+    ok: bool
+    error_code: str | None = None
+    message: str | None = None
+
+
+class BulkTransferResult(BaseModel):
+    model_config = {"frozen": True}
+    results: list[BulkTransferRowResult]
+
+    @property
+    def moved_count(self) -> int:
+        return sum(1 for r in self.results if r.ok)
+
+    @property
+    def failed_count(self) -> int:
+        return len(self.results) - self.moved_count
+
+
+class BulkTransferEnrollments:
+    """Move several roster rows to one class (A0-8).
+
+    Loops the single-row ``TransferEnrollment`` so seat capacity, billing
+    proration, lifecycle events and roster notices are exactly the single
+    transfer's. Each row stands alone: a refusal (full class, dead row) is
+    reported for that row and the rest still move — never a half-moved row.
+    """
+
+    def __init__(self, *, transfer: TransferEnrollment) -> None:
+        self._transfer = transfer
+
+    async def execute(self, cmd: BulkTransferEnrollmentsCommand) -> BulkTransferResult:
+        results: list[BulkTransferRowResult] = []
+        for enrollment_id in dict.fromkeys(cmd.enrollment_ids):
+            try:
+                await self._transfer.execute(
+                    TransferEnrollmentCommand(
+                        enrollment_id=enrollment_id,
+                        target_session_id=cmd.target_session_id,
+                        effective_at=cmd.effective_at,
+                        effective_date=cmd.effective_date,
+                        actor_id=cmd.actor_id,
+                        reason=cmd.reason,
+                    )
+                )
+            except DomainError as exc:
+                results.append(
+                    BulkTransferRowResult(
+                        enrollment_id=enrollment_id,
+                        ok=False,
+                        error_code=exc.code,
+                        message=exc.message,
+                    )
+                )
+                continue
+            except Exception:
+                # Rows already moved stay moved; report this one instead of
+                # hiding the earlier successes behind a 500.
+                log.exception("bulk_transfer_row_failed enrollment_id=%s", enrollment_id)
+                results.append(
+                    BulkTransferRowResult(
+                        enrollment_id=enrollment_id,
+                        ok=False,
+                        error_code="Enrollment.TransferFailed",
+                        message="Could not move this student. Try again on its own.",
+                    )
+                )
+                continue
+            results.append(BulkTransferRowResult(enrollment_id=enrollment_id, ok=True))
+        return BulkTransferResult(results=results)
 
 
 class OverrideEnrollmentFeeCommand(BaseModel):

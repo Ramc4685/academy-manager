@@ -74,6 +74,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     UpdateAdminStudent,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
+    BulkTransferEnrollments,
     CancelEnrollment,
     CancelSession,
     CreateSession,
@@ -303,6 +304,9 @@ class AdminUseCases:
     # predate it keep constructing AdminUseCases; real admin composition
     # always sets it, and the routes 503 rather than 500 when it is absent.
     session_announcements: SessionAnnouncementService | None = None
+    # A0-8 bulk roster transfer. Optional for the same reason; it loops
+    # `transfer_enrollment`, and the route 503s when it is absent.
+    bulk_transfer_enrollments: BulkTransferEnrollments | None = None
     # recurring tuition discounts (#244)
     set_tuition_discount: object | None = None  # SetTuitionDiscount
     remove_tuition_discount: object | None = None  # RemoveTuitionDiscount

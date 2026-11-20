@@ -788,6 +788,28 @@ class TransferEnrollmentRequest(BaseModel):
     reason: str | None = None
 
 
+class BulkTransferEnrollmentsRequest(BaseModel):
+    """A0-8: move several roster rows to one class in one request."""
+
+    enrollment_ids: list[str] = Field(min_length=1, max_length=100)
+    target_session_id: str
+    effective_date: date
+    reason: str | None = None
+
+
+class BulkTransferRowView(BaseModel):
+    enrollment_id: str
+    ok: bool
+    error_code: str | None = None
+    message: str | None = None
+
+
+class BulkTransferEnrollmentsResponse(BaseModel):
+    results: list[BulkTransferRowView]
+    moved_count: int
+    failed_count: int
+
+
 class OverrideEnrollmentFeeRequest(BaseModel):
     amount_cents: int | None = Field(default=None, ge=0)
     reason: str | None = Field(default=None, max_length=500)

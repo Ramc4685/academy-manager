@@ -273,3 +273,70 @@ test.describe("re-enrolling a departed roster row (#827)", () => {
     await expect(dialog.getByRole("combobox")).toHaveValue("stu-gone");
   });
 });
+
+test.describe("bulk roster transfer (A0-8)", () => {
+  test("moves the ticked rows in one request and names the ones that stayed", async ({ page }) => {
+    await stubAdminShell(page);
+    await stubSessionDetail(page);
+    const bulkBodies: unknown[] = [];
+    // Registered after the catch-all, so it wins for these two paths.
+    await page.route("**/api/v2/admin/sessions?*", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        sessions: [
+          {
+            session_id: "sess-target",
+            title: "Thursday 5:00 PM Intermediate",
+            coach_id: "coach-2",
+            location: "Court 2",
+            start_at: OCCURRENCES[1].start_at,
+            end_at: OCCURRENCES[1].end_at,
+            capacity: 12,
+            status: "scheduled",
+            enrolled_count: 3,
+            waitlist_count: 0,
+          },
+        ],
+      });
+    });
+    await page.route("**/api/v2/admin/enrollments/bulk-transfer", (route) => {
+      bulkBodies.push(route.request().postDataJSON());
+      return fulfillJson(route, {
+        results: [
+          { enrollment_id: "enr-1", ok: true, error_code: null, message: null },
+          {
+            enrollment_id: "enr-2",
+            ok: false,
+            error_code: "Enrollment.CapacityExceeded",
+            message: "target session full",
+          },
+        ],
+        moved_count: 1,
+        failed_count: 1,
+      });
+    });
+    await page.goto(`/admin/sessions/${SESSION_ID}`);
+    await expect(page.getByTestId("enrollment-row-enr-1")).toBeVisible();
+
+    await expect(page.getByTestId("roster-bulk-bar")).toHaveCount(0);
+    await page.getByRole("checkbox", { name: "Select Ana Roster" }).check();
+    await page.getByRole("checkbox", { name: "Select Bo Roster" }).check();
+    await expect(page.getByTestId("roster-bulk-bar")).toContainText("2 selected");
+    await page.getByTestId("roster-bulk-transfer").click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("Transfer 2 students");
+    await dialog.getByRole("button", { name: "Target session" }).click();
+    await dialog.getByRole("option", { name: /Thursday 5:00 PM Intermediate/ }).click();
+    await dialog.getByRole("button", { name: "Transfer", exact: true }).click();
+
+    await expect(dialog.getByTestId("bulk-transfer-failures")).toContainText(
+      "Bo Roster could not move: target session full",
+    );
+    expect(bulkBodies).toHaveLength(1);
+    expect(bulkBodies[0]).toMatchObject({
+      enrollment_ids: ["enr-1", "enr-2"],
+      target_session_id: "sess-target",
+    });
+  });
+});

@@ -27,6 +27,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_period_end_drop 
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     AcademyTimezoneUnset,
+    BulkTransferEnrollmentsCommand,
     CancelEnrollmentCommand,
     CancelSessionCommand,
     CreateSessionCommand,
@@ -62,6 +63,9 @@ from backend.v2.interfaces.admin.views import (
     AdminSessionView,
     AdminStudentAttendanceList,
     AdminStudentAttendanceView,
+    BulkTransferEnrollmentsRequest,
+    BulkTransferEnrollmentsResponse,
+    BulkTransferRowView,
     CancelSessionOccurrenceRequest,
     CancelSessionOccurrenceResponse,
     CloseAcademyDatesRequest,
@@ -906,6 +910,32 @@ async def transfer_enrollment(
         parent_id="",
         status=enrollment.status,
         enrolled_at=datetime.now(UTC),
+    )
+
+
+@router.post("/enrollments/bulk-transfer", response_model=BulkTransferEnrollmentsResponse)
+async def bulk_transfer_enrollments(
+    body: BulkTransferEnrollmentsRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> BulkTransferEnrollmentsResponse:
+    """A0-8: per-row results; a refused row never blocks the others."""
+    if use_cases.bulk_transfer_enrollments is None:
+        raise HTTPException(status_code=503, detail="Bulk transfer is not available.")
+    result = await use_cases.bulk_transfer_enrollments.execute(
+        BulkTransferEnrollmentsCommand(
+            enrollment_ids=body.enrollment_ids,
+            target_session_id=body.target_session_id,
+            effective_at=_start_of_day_utc(body.effective_date),
+            effective_date=body.effective_date,
+            actor_id=claims.user_id,
+            reason=body.reason,
+        )
+    )
+    return BulkTransferEnrollmentsResponse(
+        results=[BulkTransferRowView(**row.model_dump()) for row in result.results],
+        moved_count=result.moved_count,
+        failed_count=result.failed_count,
     )
 
 

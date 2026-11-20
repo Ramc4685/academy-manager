@@ -2184,6 +2184,61 @@ def test_transfer_enrollment_reserves_target_and_releases_source(admin_client):
     assert admin_client.seed["sessions"].reserved["sess-1"] == 0
 
 
+def test_bulk_transfer_moves_rows_and_reports_each_refusal(admin_client):
+    """A0-8: the bulk route loops the single transfer and reports per row."""
+    target = admin_client.post(
+        "/api/v2/admin/sessions",
+        json={
+            "coach_id": "coach-2",
+            "title": "Adult B",
+            "location": "Court 2",
+            "start_at": "2026-05-17T09:00:00Z",
+            "end_at": "2026-05-17T10:30:00Z",
+            "capacity": 6,
+        },
+    ).json()["session_id"]
+    enrollment_id = admin_client.post(
+        "/api/v2/admin/enrollments",
+        json={
+            "session_id": "sess-1",
+            "student_id": "st-1",
+            "parent_id": "p-1",
+            "full_name": "Alice",
+        },
+    ).json()["enrollment_id"]
+
+    r = admin_client.post(
+        "/api/v2/admin/enrollments/bulk-transfer",
+        json={
+            "enrollment_ids": [enrollment_id, "enr-missing"],
+            "target_session_id": target,
+            "effective_date": "2026-05-20",
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["moved_count"] == 1 and body["failed_count"] == 1
+    assert body["results"][0] == {
+        "enrollment_id": enrollment_id,
+        "ok": True,
+        "error_code": None,
+        "message": None,
+    }
+    assert body["results"][1]["error_code"] == "Enrollment.NotFound"
+    assert admin_client.seed["enrollments"].rows[enrollment_id].session_id == target
+    assert admin_client.seed["sessions"].reserved[target] == 1
+    assert admin_client.seed["sessions"].reserved["sess-1"] == 0
+
+
+def test_bulk_transfer_rejects_an_empty_selection(admin_client):
+    r = admin_client.post(
+        "/api/v2/admin/enrollments/bulk-transfer",
+        json={"enrollment_ids": [], "target_session_id": "sess-1", "effective_date": "2026-05-20"},
+    )
+    assert r.status_code == 422
+
+
 def test_override_enrollment_fee_updates_regular_enrollment(admin_client):
     add = admin_client.post(
         "/api/v2/admin/enrollments",

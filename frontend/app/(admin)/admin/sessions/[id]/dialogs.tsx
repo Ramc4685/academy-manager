@@ -9,10 +9,12 @@ import {
   listAdminSessions,
   previewWithdrawalCredit,
   quoteAdminEnrollment,
+  bulkTransferEnrollments,
   transferEnrollment,
   withdrawEnrollment,
   type AdminEnrollmentQuote,
   type AdminEnrollmentView,
+  type BulkTransferEnrollmentsResponse,
   type AdminSessionView,
   type AdminStudentView,
   type AdminUserView,
@@ -150,19 +152,39 @@ export function AddToRosterDialog({
   );
 }
 
+/** A0-8: "Ana could not move: Target session full" lines for a bulk result. */
+export function bulkTransferFailures(
+  result: BulkTransferEnrollmentsResponse,
+  enrollments: Pick<AdminEnrollmentView, "enrollment_id" | "full_name">[],
+): string[] {
+  const names = new Map(enrollments.map((e) => [e.enrollment_id, e.full_name]));
+  return result.results
+    .filter((row) => !row.ok)
+    .map(
+      (row) =>
+        `${names.get(row.enrollment_id) ?? "A student"} could not move: ${row.message ?? "refused"}`,
+    );
+}
+
+/** Transfer one roster row, or several at once (A0-8) to the same class. */
 export function TransferEnrollmentDialog({
-  enrollment,
+  enrollments,
   currentSessionId,
   currentSessionTitle,
   onClose,
   onMoved,
 }: {
-  enrollment: AdminEnrollmentView | null;
+  enrollments: AdminEnrollmentView[];
   currentSessionId: string;
   currentSessionTitle: string;
   onClose: () => void;
-  onMoved: () => void;
+  /** `close` is false when some rows of a bulk move were refused: the roster
+   * refreshes but the dialog stays open to say which ones and why. */
+  onMoved: (close: boolean) => void;
 }) {
+  const open = enrollments.length > 0;
+  const bulk = enrollments.length > 1;
+  const [failures, setFailures] = useState<string[]>([]);
   const [targetSessionId, setTargetSessionId] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(todayDateInput());
   const [reason, setReason] = useState("");
@@ -173,7 +195,7 @@ export function TransferEnrollmentDialog({
   const sessionsQuery = useQuery({
     queryKey: ["admin", "sessions", "upcoming"] as const,
     queryFn: () => listAdminSessions(undefined, { window: "upcoming" }),
-    enabled: enrollment !== null,
+    enabled: open,
   });
   // Dedupe by title: each weekly class shows up many times across the
   // window (one per dated instance); show one row per distinct class
@@ -200,31 +222,70 @@ export function TransferEnrollmentDialog({
     );
   })();
   const mutation = useMutation({
-    mutationFn: () =>
-      transferEnrollment(enrollment!.enrollment_id, {
+    mutationFn: async (): Promise<string[]> => {
+      const payload = {
         target_session_id: targetSessionId,
         effective_date: effectiveDate,
         reason: reason || undefined,
-      }),
-    onSuccess: () => {
+      };
+      if (!bulk) {
+        await transferEnrollment(enrollments[0].enrollment_id, payload);
+        return [];
+      }
+      const result = await bulkTransferEnrollments({
+        ...payload,
+        enrollment_ids: enrollments.map((e) => e.enrollment_id),
+      });
+      return bulkTransferFailures(result, enrollments);
+    },
+    onSuccess: (refused) => {
+      setError(null);
+      setFailures(refused);
+      if (refused.length > 0) {
+        onMoved(false);
+        return;
+      }
       setTargetSessionId("");
       setEffectiveDate(todayDateInput());
       setReason("");
-      setError(null);
-      onMoved();
+      onMoved(true);
     },
     onError: (err: Error) => setError(err.message ?? "Failed to move enrollment."),
   });
 
   return (
     <RallyDialog
-      open={enrollment !== null}
-      onOpenChange={(open) => !open && onClose()}
-      title="Transfer enrollment"
-      description={enrollment ? `Transfer ${enrollment.full_name} to another session.` : ""}
+      open={open}
+      onOpenChange={(next) => {
+        if (next) return;
+        setFailures([]);
+        onClose();
+      }}
+      title={bulk ? `Transfer ${enrollments.length} students` : "Transfer enrollment"}
+      description={
+        bulk
+          ? `Transfer ${enrollments.map((e) => e.full_name).join(", ")} to another session.`
+          : open
+            ? `Transfer ${enrollments[0].full_name} to another session.`
+            : ""
+      }
       overline="Transfer"
     >
       {error && <DialogError message={error} />}
+      {failures.length > 0 && (
+        <div
+          role="alert"
+          data-testid="bulk-transfer-failures"
+          className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+        >
+          <p className="font-semibold">The others moved. These stayed in this class:</p>
+          <ul className="mt-1 list-disc pl-5">
+            {failures.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       <form
         className="space-y-3"
         onSubmit={(event) => {
@@ -264,8 +325,16 @@ export function TransferEnrollmentDialog({
         </p>
         <p className="text-xs text-rally-subtle">{DEPARTURE_ACTION_DESCRIPTION.transfer}</p>
         <DialogActions>
-          <Button variant="secondary" size="sm" type="button" onClick={onClose}>
-            Cancel
+          <Button
+            variant="secondary"
+            size="sm"
+            type="button"
+            onClick={() => {
+              setFailures([]);
+              onClose();
+            }}
+          >
+            {failures.length > 0 ? "Done" : "Cancel"}
           </Button>
           <Button
             variant="primary"

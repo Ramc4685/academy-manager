@@ -1066,6 +1066,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     full_name_key,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
+    BulkTransferEnrollments,
     CancelEnrollment,
     CancelSession,
     CreateSession,
@@ -2816,6 +2817,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         edit_roster_add=edit_roster_add,
         cancel_enrollment=cancel_enrollment,
         transfer_enrollment=transfer_enrollment,
+        bulk_transfer_enrollments=BulkTransferEnrollments(transfer=transfer_enrollment),
         override_enrollment_fee=override_enrollment_fee,
         pause_enrollment=pause_enrollment,
         resume_enrollment=resume_enrollment,
