@@ -22,12 +22,6 @@ def _app(proxy_shared_secret: str | None = None) -> FastAPI:
     )
     app.include_router(registration_router, prefix="/api/v2")
 
-    # Same path as the real route: magic-link router (prefix /magic-link)
-    # mounted under /api/v2 in main.py.
-    @app.post("/api/v2/magic-link/consume")
-    async def _consume_magic_link() -> dict[str, str]:
-        return {"status": "ok"}
-
     @app.post("/api/v2/parent/onboarding/start")
     async def _start_onboarding() -> dict[str, str]:
         return {"status": "ok"}
@@ -224,16 +218,6 @@ def test_stripe_webhook_has_high_ceiling_and_parent_paths_keep_low_limit() -> No
     assert over_limit.status_code == 429
     assert over_limit.headers.get("Retry-After") is not None
     assert parent_statuses == [200, 200, 429]
-
-
-def test_magic_link_consume_is_rate_limited() -> None:
-    app = _app()
-
-    with TestClient(app) as client:
-        responses = [client.post("/api/v2/magic-link/consume") for _ in range(3)]
-
-    assert [response.status_code for response in responses] == [200, 200, 429]
-    assert responses[-1].json()["error"]["code"] == "rate_limit_exceeded"
 
 
 class _StampClaimsMiddleware(BaseHTTPMiddleware):

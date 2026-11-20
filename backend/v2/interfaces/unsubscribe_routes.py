@@ -1,6 +1,6 @@
 """Public token-authenticated unsubscribe routes (#555).
 
-POST-only, for the reason ``magic_link_routes`` already documents: e-mail
+POST-only: e-mail
 security scanners and link-preview bots issue GET prefetches, so a GET that
 mutated preferences would let a corporate mail scanner unsubscribe families
 automatically. The emailed link points at a frontend page carrying the token in
@@ -93,7 +93,7 @@ def _resolver(request: Request) -> ResolveUnsubscribeToken:
 
 
 def _resolve(request: Request, token: str) -> tuple[str, str]:
-    # Same contract as ``magic_link_routes``: in SaaS mode an unresolved tenant
+    # In SaaS mode an unresolved tenant
     # is a client error, never a pass. The middleware computes this from the
     # request host, and the emailed link is built on the academy's own
     # subdomain (``UnsubscribeLinkBuilder``), so a request that cannot be

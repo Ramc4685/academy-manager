@@ -202,34 +202,6 @@ class PlatformRole(BaseModel):
         return self.status == "active"
 
 
-class MagicLinkRecord(BaseModel):
-    """A single-use, short-lived auto-login token for a provisioned parent.
-
-    Only the SHA-256 hash of the emitted token is stored (``token_hash``); the
-    raw token never touches the database, so a leaked collection cannot be
-    replayed. ``academy_id`` binds the token to the tenant it was issued for —
-    the consume use case rejects a token whose ``academy_id`` differs from the
-    resolved tenant. ``used_at`` is ``None`` until the token is redeemed; the
-    single-use guarantee is enforced by an atomic ``used_at=None`` conditional
-    update in the repository, not by reading this field.
-    """
-
-    model_config = {"frozen": True}
-
-    magic_link_id: str
-    token_hash: str
-    user_id: str
-    academy_id: str
-    next_path: str
-    created_at: datetime
-    expires_at: datetime
-    purge_at: datetime
-    used_at: datetime | None = None
-
-    def is_expired(self, *, now: datetime) -> bool:
-        return now >= self.expires_at
-
-
 #: `academy_memberships.status` spellings that mean the membership grants
 #: nothing. Anything else (including a legacy row with no status at all) is
 #: treated as live, so a shared Firebase account is never disabled on a guess.

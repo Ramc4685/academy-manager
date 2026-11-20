@@ -40,7 +40,7 @@ let sdk: Promise<Sentry | null> | null = null;
 
 /**
  * Drop the query string (and fragment) from a URL. The app carries live
- * credentials and PII in query strings — `/auth/magic?t=<login token>`,
+ * credentials and PII in query strings —
  * `/auth/action?oobCode=<password-reset code>`, `/unsubscribe?t=<token>`,
  * `/login?email=<address>` — and the SDK's default integrations would ship
  * them on every event: `httpContextIntegration` stamps `event.request.url`
@@ -132,8 +132,8 @@ export function initSentry(): Promise<Sentry | null> {
           httpBodies: [],
           urlQueryParams: false,
         },
-        // Query strings carry magic-link tokens, Firebase oobCodes and parent
-        // emails; strip them before anything leaves the browser.
+        // Query strings carry unsubscribe tokens, Firebase oobCodes and
+        // parent emails; strip them before anything leaves the browser.
         beforeSend: scrubEventUrls,
         beforeBreadcrumb: scrubBreadcrumbUrls,
       });

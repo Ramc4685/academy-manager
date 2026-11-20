@@ -10,7 +10,7 @@ export interface EmailPreferenceState {
 /**
  * Read the preferences an emailed unsubscribe token points at.
  *
- * POST (never GET) for the same reason the magic-link consume route is a POST:
+ * POST (never GET) because
  * e-mail security scanners and link-preview bots issue GET prefetches, and a
  * GET that could mutate preferences would let a corporate mail scanner
  * unsubscribe families automatically. The token is the entire authority — the

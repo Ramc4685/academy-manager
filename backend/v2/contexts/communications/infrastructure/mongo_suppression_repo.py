@@ -1,8 +1,7 @@
 """Mongo-backed email suppression list, plus the send-time gate over it.
 
-**Deliberately NOT tenant-scoped** — this is not a ``TenantScopedRepository``,
-following the documented precedent of ``MongoMagicLinkRepository``. Two
-reasons, both load-bearing:
+**Deliberately NOT tenant-scoped** — this is not a ``TenantScopedRepository``.
+Two reasons, both load-bearing:
 
 * the Resend sender domain is shared by every academy, so a hard bounce
   observed while academy A was mailing must stop academy B from mailing the

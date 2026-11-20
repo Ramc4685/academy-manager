@@ -165,9 +165,6 @@ from backend.v2.contexts.identity.application.use_cases.list_account_deletions i
 from backend.v2.contexts.identity.application.use_cases.load_auth_claims import (
     LoadAuthClaims,
 )
-from backend.v2.contexts.identity.application.use_cases.magic_link import (
-    ConsumeMagicLink,
-)
 from backend.v2.contexts.identity.application.use_cases.register_public_parent import (
     RegisterPublicParent,
 )
@@ -207,9 +204,6 @@ from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import (
 from backend.v2.contexts.identity.infrastructure.mongo_login_audit_recorder import (
     MongoLoginAuditRecorder,
 )
-from backend.v2.contexts.identity.infrastructure.mongo_magic_link_repo import (
-    MongoMagicLinkRepository,
-)
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
@@ -246,7 +240,6 @@ from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.calendar_feed_routes import router as calendar_feed_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.email_webhook_routes import router as email_webhook_router
-from backend.v2.interfaces.magic_link_routes import router as magic_link_router
 from backend.v2.interfaces.me_routes import router as me_router
 from backend.v2.interfaces.owner.router import router as owner_router
 from backend.v2.interfaces.parent.router import router as parent_router
@@ -799,14 +792,6 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.bootstrap_academy = BootstrapAcademy(
         store=MongoTenantBootstrapStore(db),
         invoice_prefix_assigner=compose_invoice_prefix_assigner(db),
-    )
-    # Public parent magic-link consume. Tenant is resolved per-request from the
-    # host; the use case itself checks the token's academy binding against it.
-    app.state.consume_magic_link = ConsumeMagicLink(
-        links=MongoMagicLinkRepository(db),
-        tokens=get_firebase_admin_adapter(),
-        users=users_repo,
-        memberships=membership_repo,
     )
 
     # Recipient email preferences (#555). Both the public token-authenticated
@@ -3161,7 +3146,6 @@ def create_app() -> FastAPI:
     # Persona route packages.
     app.include_router(me_router, prefix="/api/v2")
     app.include_router(registration_router, prefix="/api/v2")
-    app.include_router(magic_link_router, prefix="/api/v2")
     app.include_router(password_reset_router, prefix="/api/v2")
     app.include_router(unsubscribe_router, prefix="/api/v2")
     app.include_router(calendar_feed_router, prefix="/api/v2")

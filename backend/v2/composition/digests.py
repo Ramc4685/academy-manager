@@ -961,7 +961,7 @@ class _ParentDigestProvider:
         # "On the portal" = the parent has an active login: a verified email
         # (Firebase sets it when the parent completes the set-password invite or
         # signs in with Google) or `last_login_at`, which the login recorder
-        # stamps once per non-magic-link session (migration 0229 backfilled it).
+        # stamps once per session (migration 0229 backfilled it).
         # Admin-provisioned parents who never activated have neither, so they
         # fall to Variant B (the activation CTA).
         if not user_doc:
