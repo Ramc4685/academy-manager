@@ -204,4 +204,25 @@ test.describe("Coach teaching plan", () => {
     await expect(page.getByTestId("lesson-card-card-3")).toBeVisible();
     await expect(page.getByTestId("student-focus-st1")).toContainText("Alice");
   });
+
+  test("a past date with no classes names that date, not today (#1044)", async ({ page, mock }) => {
+    void mock;
+    await page.route("**/api/v2/coach/today/plan*", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          date: "2026-10-01",
+          program_id: "prog-1",
+          program_name: "Shuttle Time",
+          pathway_configured: true,
+          sessions: [],
+        }),
+      }),
+    );
+    await page.goto("/coach/today/plan?date=2026-10-01");
+
+    await expect(page.getByTestId("plan-date")).toHaveText("Thu, Oct 1");
+    await expect(page.getByTestId("plan-empty-state")).toHaveText("No sessions on Thu, Oct 1.");
+  });
 });
