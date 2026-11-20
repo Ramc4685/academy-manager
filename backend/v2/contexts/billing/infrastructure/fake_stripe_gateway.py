@@ -24,7 +24,7 @@ from backend.v2.contexts.billing.application.ports import (
     StripeGateway,
     StripeResourceNotFound,
 )
-from backend.v2.contexts.billing.domain.errors import StripeUnavailable
+from backend.v2.contexts.billing.domain.errors import StripeIdempotencyConflict
 from backend.v2.contexts.billing.domain.fees import check_application_fee_cents
 from backend.v2.shared.ids import new_ulid
 
@@ -41,7 +41,10 @@ class FakeStripeGateway(StripeGateway):
         # PaymentIntents the fake knows in full, by id.
         self._payment_intents_by_id: dict[str, dict[str, Any]] = {}
         # (stripe_account, idempotency_key) -> the off-session answer Stripe replays.
-        self._off_session_by_key: dict[tuple[str | None, str], tuple[str, str, str | None]] = {}
+        # (account, key) -> (answer, request): Stripe replays an answer only for the same request.
+        self._off_session_by_key: dict[
+            tuple[str | None, str], tuple[tuple[str, str, str | None], dict[str, Any]]
+        ] = {}
         self.invoice_checkouts: list[dict[str, Any]] = []
         self.checkouts: list[dict[str, Any]] = []
         self.subscription_checkouts: list[dict[str, Any]] = []
@@ -759,17 +762,28 @@ class FakeStripeGateway(StripeGateway):
         stripe_account: str | None = None,
     ) -> tuple[str, str, str | None]:
         _check_single_route(connected_account_id, stripe_account)
-        # Stripe replays the first answer for a key it still remembers (24h).
-        replay = self._off_session_by_key.get((stripe_account, idempotency_key))
+        # Stripe replays the first answer for a key it still remembers (24h), and
+        # compares the WHOLE request, not just the amount: any other parameter is an
+        # IdempotencyError, which RealStripeGateway raises as StripeIdempotencyConflict.
+        key = (stripe_account, idempotency_key)
+        request = {
+            "amount": amount_cents,
+            "currency": currency,
+            "customer": customer_id,
+            "payment_method": payment_method_id,
+            "metadata": dict(metadata),
+            "connected_account_id": connected_account_id,
+            "application_fee_amount": application_fee_cents,
+        }
+        replay = self._off_session_by_key.get(key)
         if replay is not None:
-            first = self._payment_intents_by_id.get(replay[0]) or {}
-            if first.get("amount") != amount_cents:
-                # Stripe: IdempotencyError, which RealStripeGateway raises as StripeUnavailable.
-                raise StripeUnavailable(
+            answer, first_request = replay
+            if first_request != request:
+                raise StripeIdempotencyConflict(
                     "Stripe PaymentIntent creation failed: idempotency key reused with "
                     "different parameters"
                 )
-            return replay
+            return answer
         check_application_fee_cents(
             fee_cents=application_fee_cents,
             amount_cents=amount_cents,
@@ -825,7 +839,7 @@ class FakeStripeGateway(StripeGateway):
                 "disputed": False,
             },
         }
-        self._off_session_by_key[(stripe_account, idempotency_key)] = (pi_id, "succeeded", None)
+        self._off_session_by_key[key] = ((pi_id, "succeeded", None), request)
         return pi_id, "succeeded", None
 
     def expire_idempotency_keys(self) -> None:

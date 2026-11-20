@@ -32,6 +32,15 @@ class StripeUnavailable(DomainError):
     status_code = 503
 
 
+class StripeIdempotencyConflict(DomainError):
+    """Stripe refused an idempotency key reused with other parameters. Not an
+    outage: an earlier request under this key exists and may have charged, so
+    the caller must not retry it blindly; a person reviews it."""
+
+    code = "Billing.StripeIdempotencyConflict"
+    status_code = 409
+
+
 class PaymentNotFound(DomainError):
     code = "Billing.PaymentNotFound"
     status_code = 404

@@ -18,7 +18,7 @@ from backend.v2.contexts.billing.application.ports import (
     StripeResourceNotFound,
     StripeTransientFailure,
 )
-from backend.v2.contexts.billing.domain.errors import StripeUnavailable
+from backend.v2.contexts.billing.domain.errors import StripeIdempotencyConflict, StripeUnavailable
 from backend.v2.contexts.billing.domain.fees import check_application_fee_cents
 
 log = logging.getLogger(__name__)
@@ -1034,6 +1034,15 @@ class RealStripeGateway(StripeGateway):
             if _is_resource_missing(self._stripe, exc):
                 # The saved card/bank was removed (e.g. in the portal): parent action needed.
                 return "", "failed", "no_saved_payment_method"
+            if (
+                isinstance(exc, self._stripe.IdempotencyError)
+                and getattr(exc, "code", None) != "idempotency_key_in_use"
+            ):
+                # The key was used with other parameters: an earlier request exists.
+                # ``idempotency_key_in_use`` (one still in flight) is retriable instead.
+                raise StripeIdempotencyConflict(
+                    f"Stripe PaymentIntent creation failed: {exc}"
+                ) from exc
             raise StripeUnavailable(f"Stripe PaymentIntent creation failed: {exc}") from exc
 
 
