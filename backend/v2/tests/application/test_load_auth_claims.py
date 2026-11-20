@@ -63,12 +63,6 @@ class FakeUserRepo:
                 return u
         return None
 
-    async def get_by_firebase_uid(self, firebase_uid: str) -> User | None:
-        for u in self._by_email.values():
-            if firebase_uid in (u.firebase_uid, u.auth_uid):
-                return u
-        return None
-
 
 class FakeMembershipRepo:
     def __init__(self, memberships: list[AcademyMembership]) -> None:

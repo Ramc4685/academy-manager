@@ -213,12 +213,6 @@ class MongoUserRepository:
                 extra={"user_doc_id": str(doc["_id"])},
             )
 
-    async def get_by_firebase_uid(self, firebase_uid: str) -> User | None:
-        doc = await self.collection.find_one(
-            {"$or": [{"firebase_uid": firebase_uid}, {"auth_uid": firebase_uid}]}
-        )
-        return self._to_domain(doc) if doc else None
-
     async def get_by_id(self, user_id: str) -> User | None:
         doc = await self.collection.find_one(
             {"$or": [{"user_id": user_id}, {"auth_uid": user_id}, {"_id": user_id}]}
