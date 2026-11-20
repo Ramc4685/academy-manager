@@ -92,6 +92,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
 from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
     CancelSessionOccurrence,
 )
+from backend.v2.contexts.enrollment.application.use_cases.copy_session import CopySession
 from backend.v2.contexts.enrollment.application.use_cases.departure_policies import (
     GetEnrollmentDeparturePolicy,
     UpdateEnrollmentDeparturePolicy,
@@ -307,6 +308,8 @@ class AdminUseCases:
     # A0-8 bulk roster transfer. Optional for the same reason; it loops
     # `transfer_enrollment`, and the route 503s when it is absent.
     bulk_transfer_enrollments: BulkTransferEnrollments | None = None
+    # A0-8 Copy class; optional like the two above (route 503s when absent).
+    copy_session: CopySession | None = None
     # recurring tuition discounts (#244)
     set_tuition_discount: object | None = None  # SetTuitionDiscount
     remove_tuition_discount: object | None = None  # RemoveTuitionDiscount

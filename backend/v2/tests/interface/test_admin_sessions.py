@@ -2231,6 +2231,92 @@ def test_bulk_transfer_moves_rows_and_reports_each_refusal(admin_client):
     assert admin_client.seed["sessions"].reserved["sess-1"] == 0
 
 
+def _recurring_class(admin_client, **overrides):
+    body = {
+        "coach_id": "coach-2",
+        "title": "Tuesday Beginners",
+        "location": "Court 2",
+        "capacity": 6,
+        "days_of_week": ["Tue"],
+        "start_time": "18:00",
+        "end_time": "19:00",
+        **overrides,
+    }
+    r = admin_client.post("/api/v2/admin/sessions", json=body)
+    assert r.status_code == 200, r.text
+    return r.json()["session_id"]
+
+
+def test_copy_class_with_roster_creates_a_new_class_and_enrollments(admin_client):
+    source = _recurring_class(admin_client, amount_cents=9000)
+    admin_client.post(
+        "/api/v2/admin/enrollments",
+        json={"session_id": source, "student_id": "st-1", "parent_id": "p-1", "full_name": "Alice"},
+    )
+
+    r = admin_client.post(
+        f"/api/v2/admin/sessions/{source}/copy",
+        json={"title": "Thursday Beginners", "days_of_week": ["Thu"], "copy_roster": True},
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    copy_id = body["session"]["session_id"]
+    assert copy_id != source
+    assert body["session"]["title"] == "Thursday Beginners"
+    assert body["session"]["days_of_week"] == ["Thu"]
+    assert body["session"]["capacity"] == 6
+    # The test admin is an owner, so the price comes along.
+    assert body["price_copied"] is True and body["session"]["amount_cents"] == 9000
+    assert body["roster"] == [
+        {
+            "student_id": "st-1",
+            "full_name": "Alice",
+            "ok": True,
+            "error_code": None,
+            "message": None,
+        }
+    ]
+    rows = admin_client.seed["enrollments"].rows.values()
+    assert {r.session_id for r in rows if r.student_id == "st-1"} == {source, copy_id}
+
+
+def test_non_owner_admin_copies_a_priced_class_unpriced(admin_only_client):
+    """Money is owner-only: an admin's copy waits for the owner's price."""
+    created = admin_only_client.post(
+        "/api/v2/admin/sessions",
+        json={
+            "coach_id": "coach-2",
+            "title": "Tuesday Beginners",
+            "location": "Court 2",
+            "capacity": 6,
+            "days_of_week": ["Tue"],
+            "start_time": "18:00",
+            "end_time": "19:00",
+        },
+    )
+    source = created.json()["session_id"]
+    store = admin_only_client.seed["sessions"].sessions
+    store[source] = store[source].model_copy(update={"amount_cents": 9000})
+
+    r = admin_only_client.post(
+        f"/api/v2/admin/sessions/{source}/copy",
+        json={"title": "Thursday Beginners", "days_of_week": ["Thu"]},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["price_copied"] is False
+    assert r.json()["session"]["amount_cents"] is None
+
+
+def test_copy_class_refuses_an_identical_series(admin_client):
+    source = _recurring_class(admin_client)
+    r = admin_client.post(
+        f"/api/v2/admin/sessions/{source}/copy", json={"title": "Tuesday Beginners"}
+    )
+    assert r.status_code == 409
+
+
 def test_bulk_transfer_rejects_an_empty_selection(admin_client):
     r = admin_client.post(
         "/api/v2/admin/enrollments/bulk-transfer",

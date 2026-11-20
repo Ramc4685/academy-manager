@@ -45,6 +45,9 @@ from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurre
 from backend.v2.contexts.enrollment.application.use_cases.close_academy_dates import (
     CloseAcademyDatesCommand,
 )
+from backend.v2.contexts.enrollment.application.use_cases.copy_session import (
+    CopySessionCommand,
+)
 from backend.v2.interfaces.admin.academy_clock import academy_zone
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.owner_gate import (
@@ -71,6 +74,9 @@ from backend.v2.interfaces.admin.views import (
     CloseAcademyDatesRequest,
     CloseAcademyDatesResponse,
     ClosureDateView,
+    CopiedRosterRowView,
+    CopySessionRequest,
+    CopySessionResponse,
     CorrectStudentAttendanceRequest,
     CreateSessionRequest,
     CreditMissedClassRequest,
@@ -197,6 +203,55 @@ async def create_session(
     if use_cases.maintain_session_occurrences is not None:
         await use_cases.maintain_session_occurrences(session)
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))
+
+
+@router.post(
+    "/sessions/{session_id}/copy", response_model=CopySessionResponse, summary="Copy a class"
+)
+async def copy_session(
+    session_id: str,
+    body: CopySessionRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> CopySessionResponse:
+    """A0-8: new class from this one; optionally its active students too."""
+    if use_cases.copy_session is None:
+        raise HTTPException(status_code=503, detail="Copy class is not available.")
+    # Money is owner-only, as on Create: an admin's copy is unpriced.
+    include_price = "owner" in claims.roles
+    if use_cases.get_admin_session is not None:
+        source = await use_cases.get_admin_session(session_id)  # type: ignore[operator]
+        if source is not None:
+            amount = _row_field(source, "amount_cents") if include_price else None
+            await _reject_percent_pay_missing_price(
+                use_cases=use_cases,
+                coach_id=str(_row_field(source, "coach_id") or ""),
+                amount_cents=amount,  # type: ignore[arg-type]
+            )
+    try:
+        result = await use_cases.copy_session.execute(
+            CopySessionCommand(
+                source_session_id=session_id,
+                title=body.title,
+                days_of_week=body.days_of_week,
+                start_time=body.start_time,
+                end_time=body.end_time,
+                include_price=include_price,
+                copy_roster=body.copy_roster,
+                actor_id=claims.user_id,
+            )
+        )
+    except DuplicateSessionSeries as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AcademyTimezoneUnset as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if use_cases.maintain_session_occurrences is not None:
+        await use_cases.maintain_session_occurrences(result.session)
+    return CopySessionResponse(
+        session=AdminSessionView(**result.session.model_dump(exclude={"academy_id"})),
+        price_copied=include_price,
+        roster=[CopiedRosterRowView(**row.model_dump()) for row in result.roster],
+    )
 
 
 @router.patch("/sessions/{session_id}", response_model=AdminSessionView, summary="Edit session")

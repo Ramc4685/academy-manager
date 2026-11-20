@@ -333,6 +333,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     TransferEnrollment,
     WithdrawEnrollment,
 )
+from backend.v2.contexts.enrollment.application.use_cases.copy_session import CopySession
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
 )
@@ -4349,6 +4350,13 @@ def compose_admin(
         list_enrollment_events=make_list_enrollment_events(db),
         comms=comms,
         bulk_transfer_enrollments=BulkTransferEnrollments(transfer=transfer_enrollment),
+        copy_session=CopySession(
+            sessions=sessions_w,
+            create_session=create_session,
+            enrollments=enrollments_r,
+            students=students_r,
+            roster_add=edit_roster_add,
+        ),
         session_announcements=compose_announcements(db, settings, comms=comms, users=users_r),
         send_campaign=send_campaign,
         list_admin_waivers=list_admin_waivers,

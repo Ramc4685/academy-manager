@@ -340,3 +340,50 @@ test.describe("bulk roster transfer (A0-8)", () => {
     });
   });
 });
+
+test.describe("copy class (A0-8)", () => {
+  test("copies the class with its students and reports who could not be added", async ({
+    page,
+  }) => {
+    await stubAdminShell(page);
+    await stubSessionDetail(page);
+    const copyBodies: unknown[] = [];
+    await page.route(`**/api/v2/admin/sessions/${SESSION_ID}/copy`, (route) => {
+      copyBodies.push(route.request().postDataJSON());
+      return fulfillJson(route, {
+        session: { session_id: "sess-copy", title: "Thursday 6:00 PM Beginner" },
+        price_copied: true,
+        roster: [
+          { student_id: "stu-1", full_name: "Ana Roster", ok: true, error_code: null, message: null },
+          {
+            student_id: "stu-2",
+            full_name: "Bo Roster",
+            ok: false,
+            error_code: "Enrollment.CapacityExceeded",
+            message: "Class is full",
+          },
+        ],
+      });
+    });
+    await page.goto(`/admin/sessions/${SESSION_ID}`);
+    await page.getByRole("button", { name: "Copy class" }).click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByLabel("Class name")).toHaveValue("Tuesday 6:00 PM Beginner (copy)");
+    await dialog.getByLabel("Class name").fill("Thursday 6:00 PM Beginner");
+    await dialog.getByLabel("Day").selectOption("Thu");
+    await dialog.getByRole("checkbox", { name: /active students/ }).check();
+    await dialog.getByRole("button", { name: "Copy class" }).click();
+
+    await expect(dialog.getByTestId("copy-class-done")).toContainText(
+      "Bo Roster was not added: Class is full",
+    );
+    expect(copyBodies[0]).toEqual({
+      title: "Thursday 6:00 PM Beginner",
+      copy_roster: true,
+      days_of_week: ["Thu"],
+      start_time: "18:00",
+      end_time: "18:45",
+    });
+  });
+});

@@ -50,6 +50,7 @@ import { ClassRecapDialog } from "@/components/admin/ClassReportHandoffsCard";
 
 import { AddToRosterDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";
 import { formatCurrencyCents, sessionTimeRange } from "./format";
+import { CopyClassDialog } from "./copy-class-dialog";
 import { RosterMetrics, RosterTable, isBulkTransferable, partitionRoster, seatsHeldCount } from "./RosterPanel";
 import {
   CancelOccurrenceDialog,
@@ -114,6 +115,7 @@ export default function AdminSessionDetailPage() {
   // roster. Cleared when the dialog closes so the next plain Add is blank.
   const [reEnrollTarget, setReEnrollTarget] = useState<AdminEnrollmentView | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [copyOpen, setCopyOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<AdminEnrollmentView | null>(null);
   const [transferTargets, setTransferTargets] = useState<AdminEnrollmentView[]>([]);
   // A0-8: roster rows ticked for a bulk Transfer (Active tab only).
@@ -400,6 +402,11 @@ export default function AdminSessionDetailPage() {
           {session && (
             <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>
               Edit session
+            </Button>
+          )}
+          {session && (
+            <Button variant="secondary" size="sm" onClick={() => setCopyOpen(true)}>
+              Copy class
             </Button>
           )}
           <Button
@@ -903,6 +910,9 @@ export default function AdminSessionDetailPage() {
           });
         }}
       />
+      {session && copyOpen && (
+        <CopyClassDialog session={session} open={copyOpen} onOpenChange={setCopyOpen} />
+      )}
       <TransferEnrollmentDialog
         enrollments={transferTargets}
         currentSessionId={sessionId}

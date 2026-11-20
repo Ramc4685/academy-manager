@@ -1084,6 +1084,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
 from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
     CancelSessionOccurrence,
 )
+from backend.v2.contexts.enrollment.application.use_cases.copy_session import CopySession
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ApprovePauseRequest,
     DeclinePauseRequest,
@@ -2818,6 +2819,13 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         cancel_enrollment=cancel_enrollment,
         transfer_enrollment=transfer_enrollment,
         bulk_transfer_enrollments=BulkTransferEnrollments(transfer=transfer_enrollment),
+        copy_session=CopySession(
+            sessions=sessions,
+            create_session=create_session,
+            enrollments=enrollments_q,
+            students=students,
+            roster_add=edit_roster_add,
+        ),
         override_enrollment_fee=override_enrollment_fee,
         pause_enrollment=pause_enrollment,
         resume_enrollment=resume_enrollment,
