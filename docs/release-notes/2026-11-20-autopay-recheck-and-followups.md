@@ -1,6 +1,6 @@
 # autopay-recheck-and-followups
 
-PR: TBD
+PR: #1220
 
 ## What changed
 An autopay charge no longer bills full price when Stripe can't tell us the saved payment method's type while an ACH cash discount is switched on: the rung parks as `stripe_unavailable` and the next tick charges the discounted amount, on the first attempt and on retries, for single and family charges (it used to drop the discount, and on a retry delete the discount line). When Stripe refuses a reused idempotency key because the request changed, the charge first looks for the earlier PaymentIntent and records it if it cleanly matches; otherwise the rung parks as `existing_charge_needs_review` for a person instead of retrying hourly as if Stripe were down (a key still in use by an in-flight request is retried as before). A deleted payment method still asks the parent for a new one. The test Stripe double now compares the whole request on a reused key, the way Stripe does, not just the amount.
