@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Protocol
+from datetime import datetime
+from typing import Any, Protocol
 
 from fastapi import Request
 
@@ -284,9 +285,10 @@ class AdminUseCases:
     list_dues_followup: object  # callable
     send_dues_reminders: SendDuesReminders
     export_report_csv: object  # callable
-    list_enrollment_events: (
-        object  # async (enrollment_id, *, limit, cursor) -> (list[dict], cursor | None)
-    )
+    # async (enrollment_id, *, limit, cursor) -> (events, next cursor | None)
+    list_enrollment_events: Callable[
+        ..., Awaitable[tuple[list[dict[str, Any]], tuple[datetime, str] | None]]
+    ]
     list_billing_deferral_warnings: object  # async (*, today: date, limit: int)
     # comms
     comms: CommsService
