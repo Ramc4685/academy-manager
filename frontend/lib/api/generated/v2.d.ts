@@ -6020,23 +6020,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v2/magic-link/consume": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Consume Magic Link */
-        post: operations["consume_magic_link_api_v2_magic_link_consume_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v2/me": {
         parameters: {
             query?: never;
@@ -13611,18 +13594,6 @@ export interface components {
             ready_for_charges: boolean;
             /** Status */
             status?: string | null;
-        };
-        /** ConsumeMagicLinkRequest */
-        ConsumeMagicLinkRequest: {
-            /** Token */
-            token: string;
-        };
-        /** ConsumeMagicLinkResponse */
-        ConsumeMagicLinkResponse: {
-            /** Custom Token */
-            custom_token: string;
-            /** Next Path */
-            next_path: string;
         };
         /** ContactPatch */
         ContactPatch: {
@@ -33120,39 +33091,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
-                };
-            };
-        };
-    };
-    consume_magic_link_api_v2_magic_link_consume_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ConsumeMagicLinkRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConsumeMagicLinkResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

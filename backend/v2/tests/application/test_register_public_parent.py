@@ -519,8 +519,8 @@ async def test_register_public_parent_does_not_emit_duplicate_welcome_for_existi
 
 @pytest.mark.asyncio
 async def test_register_public_parent_rejects_server_minted_custom_token() -> None:
-    """Custom tokens skip the verified-email gate, so they must not be able to
-    claim a users row by email here (identity_auth:6)."""
+    """A leftover magic-link custom token must never claim a users row by email
+    here (identity_auth:6); the shared verified-email rule refuses it."""
     use_case = RegisterPublicParent(
         verifier=FakeVerifier(
             {

@@ -11,12 +11,12 @@ README-vs-code divergences found by EGM drift reports. Details with file:line ar
 - [wording] README:173 lists importers under `scripts/`; none exist there.
 - [wording] README:121-123 says email sends only with APP_ENV=production; `resend_send_port.py:14` also allows staging.
 - [wording] README:51 says multi-region; the API runs one machine in one region (`backend/fly.toml:2`).
-- [wording] Auth methods: README:31,142 name only Google and email/password; code also has Apple and magic links, and self-registration is email/password only.
+- [wording] Auth methods: README:31,142 name only Google and email/password; code also has Apple, and self-registration is email/password only.
 - [wording] README:101-102 says the release record publishes only when every changed component deployed; `publish-release` gates only on smoke succeeding on `main` (`production.yml:1126-1129`).
 - [wording] README:116-117 says email verification is checked on every authenticated request; only the per-provider rule in `token_claims.py:19-36` was confirmed.
 - [wording] README:139 gives a `SECURITY DISCLOSURE` subject line; `SECURITY.md` has no matching contact.
 - [wording] README:164-165 calls `backend/` the FastAPI service; the app code is in `backend/v2/`.
-- [wording] Email verification is required for every provider except magic-link custom tokens (`token_claims.py:25-48`).
+- [wording] Email verification is required for every provider, and Firebase custom-token sessions are refused outright (`token_claims.py`).
 
 ## `backend/v2/README.md`: 33 items, from `drift/backend__v2.md`
 - [missing] README:64 requires a wrong-persona 404 test for every route; only per-area gate tests exist (e.g. `tests/structural/test_owner_gate_policy.py`).

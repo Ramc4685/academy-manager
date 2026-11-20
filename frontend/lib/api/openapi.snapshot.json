@@ -15175,39 +15175,6 @@
         "title": "ConnectedAccountReadinessDto",
         "type": "object"
       },
-      "ConsumeMagicLinkRequest": {
-        "properties": {
-          "token": {
-            "maxLength": 512,
-            "minLength": 1,
-            "title": "Token",
-            "type": "string"
-          }
-        },
-        "required": [
-          "token"
-        ],
-        "title": "ConsumeMagicLinkRequest",
-        "type": "object"
-      },
-      "ConsumeMagicLinkResponse": {
-        "properties": {
-          "custom_token": {
-            "title": "Custom Token",
-            "type": "string"
-          },
-          "next_path": {
-            "title": "Next Path",
-            "type": "string"
-          }
-        },
-        "required": [
-          "custom_token",
-          "next_path"
-        ],
-        "title": "ConsumeMagicLinkResponse",
-        "type": "object"
-      },
       "ContactPatch": {
         "additionalProperties": false,
         "properties": {
@@ -54816,47 +54783,6 @@
           }
         },
         "summary": "Healthz"
-      }
-    },
-    "/api/v2/magic-link/consume": {
-      "post": {
-        "operationId": "consume_magic_link_api_v2_magic_link_consume_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConsumeMagicLinkRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsumeMagicLinkResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Consume Magic Link",
-        "tags": [
-          "magic-link"
-        ]
       }
     },
     "/api/v2/me": {

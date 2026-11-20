@@ -69,11 +69,8 @@ class MongoLoginAuditRecorder:
         )
         # After the audit insert, so a users-write failure cannot lose the
         # audit row. Once per session: the parent digest reads this to tell a
-        # parent who has signed in from one who never activated. A magic-link
-        # session ("custom" token) is the digest's own link being clicked, so
-        # it does not count as activating.
-        if provider != "custom":
-            await _stamp_last_login(self._db["users"], user_id, now)
+        # parent who has signed in from one who never activated.
+        await _stamp_last_login(self._db["users"], user_id, now)
 
 
 async def _stamp_last_login(users: Any, user_id: str, now: datetime) -> None:

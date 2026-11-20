@@ -133,18 +133,6 @@ class ParentHasLiveChildren(DomainError):
     status_code = 409
 
 
-class MagicLinkInvalid(DomainError):
-    """The one-time magic-link token is unknown, already used, or tenant-mismatched.
-
-    Deliberately generic (no distinction between "never existed", "already
-    consumed", and "belongs to another tenant") so a caller cannot probe which
-    tokens exist. The consume surface maps this to 401.
-    """
-
-    code = "Identity.MagicLinkInvalid"
-    status_code = 401
-
-
 class StudentNotFound(DomainError):
     """No student roster record for the given id in the resolved academy."""
 
@@ -187,18 +175,6 @@ class UserOutsideAcademy(DomainError):
 
     code = "Identity.UserOutsideAcademy"
     status_code = 409
-
-
-class MagicLinkExpired(DomainError):
-    """The magic-link token was valid but has passed its TTL.
-
-    Distinct from ``MagicLinkInvalid`` so the frontend can steer the parent to
-    "sign in and use Forgot password" instead of showing a generic error. The
-    consume surface maps this to 410 Gone.
-    """
-
-    code = "Identity.MagicLinkExpired"
-    status_code = 410
 
 
 class InvalidPublicPageSettings(DomainError):
