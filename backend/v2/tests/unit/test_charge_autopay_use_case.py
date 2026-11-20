@@ -752,7 +752,7 @@ async def test_unknown_payment_method_type_fails_safe_to_no_discount() -> None:
     assert stripe.create_calls[0]["amount_cents"] == 10_000
 
 
-async def test_retrieve_payment_method_failure_fails_safe_to_no_discount() -> None:
+async def test_retrieve_payment_method_failure_parks_instead_of_charging_full_price() -> None:
     class StripeRetrieveFails(FakeStripeSucceeds):
         async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict:
             self.retrieve_payment_method_calls.append(stripe_payment_method_id)
@@ -768,11 +768,12 @@ async def test_retrieve_payment_method_failure_fails_safe_to_no_discount() -> No
         )
     )
 
-    await _uc(repo, stripe, settings=settings).execute("inv-1")
+    result = await _uc(repo, stripe, settings=settings).execute("inv-1")
 
     assert stripe.retrieve_payment_method_calls == ["pm_1"]
     assert repo.lines_by_invoice.get("inv-1", []) == []
-    assert stripe.create_calls[0]["amount_cents"] == 10_000
+    assert stripe.create_calls == []  # no full-price charge while the discount is unknown
+    assert result.decline_code == "stripe_unavailable"
 
 
 async def test_existing_ach_discount_is_removed_when_current_payment_method_is_card() -> None:
@@ -795,7 +796,7 @@ async def test_existing_ach_discount_is_removed_when_current_payment_method_is_c
     assert stripe.create_calls[0]["idempotency_key"] == autopay_idempotency_key("inv-1", None)
 
 
-async def test_existing_ach_discount_is_removed_when_payment_method_retrieve_fails() -> None:
+async def test_existing_ach_discount_is_kept_when_payment_method_retrieve_fails() -> None:
     class StripeRetrieveFails(FakeStripeSucceeds):
         async def retrieve_payment_method(self, stripe_payment_method_id: str) -> dict:
             self.retrieve_payment_method_calls.append(stripe_payment_method_id)
@@ -812,11 +813,11 @@ async def test_existing_ach_discount_is_removed_when_payment_method_retrieve_fai
         )
     )
 
-    await _uc(repo, stripe, settings=settings).execute("inv-1")
+    result = await _uc(repo, stripe, settings=settings).execute("inv-1")
 
-    assert [line.line_type for line in repo.lines_by_invoice["inv-1"]] == []
-    assert stripe.create_calls[0]["amount_cents"] == 10_000
-    assert stripe.create_calls[0]["idempotency_key"] == autopay_idempotency_key("inv-1", None)
+    assert [line.line_type for line in repo.lines_by_invoice["inv-1"]] == ["ach_discount"]
+    assert stripe.create_calls == []
+    assert result.decline_code == "stripe_unavailable"
 
 
 async def test_existing_ach_discount_is_removed_when_settings_are_disabled() -> None:
