@@ -181,7 +181,7 @@ test.describe("admin roster row overflow menu (#713)", () => {
     page,
   }) => {
     await page.getByRole("button", { name: "More actions for Ana Roster" }).click();
-    await page.getByRole("menuitem", { name: "Pause" }).click();
+    await page.getByRole("menuitem", { name: "Hold" }).click();
     await expect(page.getByRole("dialog")).toContainText("Ana Roster");
   });
 
@@ -206,17 +206,19 @@ test.describe("admin roster row overflow menu (#713)", () => {
   /**
    * #859: the menu used to read Pause, Hold, Drop, Delete — four bare verbs
    * with no way to tell which keeps the seat, which stops the invoice, or
-   * which reaches the family. Each item now carries its own line.
+   * which reaches the family. Each item now carries its own line. A0-10
+   * then removed Pause from an active row: Hold is the one way to step away.
    */
   test("every lifecycle item explains the seat, the billing and the family email", async ({
     page,
   }) => {
     await page.getByRole("button", { name: "More actions for Ana Roster" }).click();
 
-    const pause = page.getByRole("menuitem", { name: "Pause" });
-    await expect(pause).toContainText(/seat/i);
-    await expect(pause).toContainText(/billing/i);
-    await expect(pause).toContainText(/family is not emailed/i);
+    await expect(page.getByRole("menuitem", { name: "Pause" })).toHaveCount(0);
+    const hold = page.getByRole("menuitem", { name: "Hold" });
+    await expect(hold).toContainText(/keeps the seat/i);
+    await expect(hold).toContainText(/billing/i);
+    await expect(hold).toContainText(/family is emailed/i);
 
     // Drop reaches the family; Delete does not. The difference is the whole
     // reason the two are easy to confuse.
@@ -228,7 +230,7 @@ test.describe("admin roster row overflow menu (#713)", () => {
     );
 
     // Still one item per action: the added line must not make a label ambiguous.
-    await expect(pause).toHaveCount(1);
+    await expect(hold).toHaveCount(1);
     await expect(page.getByRole("menuitem", { name: "Transfer" })).toHaveCount(1);
   });
 

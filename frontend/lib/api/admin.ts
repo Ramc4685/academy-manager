@@ -253,13 +253,6 @@ export interface TransferEnrollmentRequest {
   reason?: string;
 }
 
-export interface PauseEnrollmentRequest {
-  effective_date: string;
-  resume_on?: string | null;
-  review_on?: string | null;
-  reason?: string;
-}
-
 /** Issue #697: a hold keeps the seat; `return_on` is required by the backend. */
 export interface HoldEnrollmentRequest {
   return_on: string;
@@ -2144,16 +2137,6 @@ export function transferEnrollment(
   payload: TransferEnrollmentRequest
 ): Promise<AdminEnrollmentView> {
   return apiFetch<AdminEnrollmentView>(`/admin/enrollments/${enrollmentId}/transfer`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function pauseEnrollment(
-  enrollmentId: string,
-  payload: PauseEnrollmentRequest
-): Promise<void> {
-  return apiFetch<void>(`/admin/enrollments/${enrollmentId}/pause`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

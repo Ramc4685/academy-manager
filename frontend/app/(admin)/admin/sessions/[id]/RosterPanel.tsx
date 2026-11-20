@@ -31,14 +31,13 @@ import { actionCellClass, actionHeaderClass, formatDateOnly, formatEnrollmentDat
 // Issue #699: "cancelled"/"withdrawn" are the legacy spellings of
 // "deleted"/"dropped" — both map to the same chip so a roster row from
 // either era of backend code renders identically. "held"/"reclaim_pending"
-// are issue #697's hold states; the roster does not yet have dedicated hold
-// chip copy (frontend hold UI is #697's own follow-up), so they fall back to
-// the same treatment as "paused" (seat-safe but not attending right now).
+// are #697's hold states (seat kept, not attending); they get their own
+// ON HOLD chip so they never read as a legacy pause (A0-10).
 const ENROLL_CHIP: Record<EnrollmentStatus, { variant: ChipVariant; label: string }> = {
   active: { variant: "enrolled", label: "ACTIVE" },
   paused: { variant: "paused", label: "PAUSED" },
-  held: { variant: "paused", label: "ON HOLD" },
-  reclaim_pending: { variant: "paused", label: "ON HOLD" },
+  held: { variant: "pending", label: "ON HOLD" },
+  reclaim_pending: { variant: "pending", label: "ON HOLD" },
   cancelled: { variant: "expired", label: "CANCELLED" },
   deleted: { variant: "expired", label: "CANCELLED" },
   withdrawn: { variant: "expired", label: "WITHDRAWN" },
@@ -191,7 +190,6 @@ export function RosterTable({
   onPathwayLevelChange,
   onDelete,
   onHold,
-  onPause,
   onResume,
   onReturn,
   onTransfer,
@@ -216,7 +214,6 @@ export function RosterTable({
   onPathwayLevelChange: (enrollment: AdminEnrollmentView, levelId: string) => void;
   onDelete: (enrollment: AdminEnrollmentView) => void;
   onHold: (enrollment: AdminEnrollmentView) => void;
-  onPause: (enrollment: AdminEnrollmentView) => void;
   onResume: (id: string) => void;
   onReturn: (enrollment: AdminEnrollmentView) => void;
   onTransfer: (enrollment: AdminEnrollmentView) => void;
@@ -271,7 +268,6 @@ export function RosterTable({
           dispatchRosterAction(action, enrollmentId, e, {
             onDelete,
             onHold,
-            onPause,
             onResume,
             onReturn,
             onTransfer,
@@ -472,7 +468,9 @@ export function RosterTable({
  * mirrors the status-based conditions the inline button row used to apply.
  * #711 widened Drop to paused/held rows: `WithdrawEnrollment` accepts exactly
  * {active, paused, held} (a paused row already released its seat, which the
- * backend handles). #697's seat-safe Hold/Return pair is not decided here:
+ * backend handles). A0-10: Hold replaced Pause on this menu — an active row
+ * is never offered Pause, and a legacy paused row keeps Resume (and Drop) so
+ * its data is not stranded. #697's seat-safe Hold/Return pair is not decided here:
  * it comes from the shared `holdActionsFor`, so the roster and the student
  * profile Sessions panel offer it on exactly the same statuses.
  */
@@ -485,9 +483,7 @@ export function rosterActionsFor(
   // Offered alongside Drop, not instead of it — an admin may still want the
   // student gone today, and the immediate Drop retires the queued action.
   if (dropScheduled) actions.push("undo_scheduled_drop");
-  if (status === "active") actions.push("pause");
   if (status === "paused") actions.push("resume");
-  // #697's seat-safe pair, beside the transitional pause/resume group.
   actions.push(...holdActionsFor(status));
   // Issue #827: a row that already ended has no seat to hold, pause or drop —
   // the only thing left to offer is putting the student back. Additive: the
@@ -506,7 +502,6 @@ function dispatchRosterAction(
   handlers: {
     onDelete: (enrollment: AdminEnrollmentView) => void;
     onHold: (enrollment: AdminEnrollmentView) => void;
-    onPause: (enrollment: AdminEnrollmentView) => void;
     onResume: (id: string) => void;
     onReturn: (enrollment: AdminEnrollmentView) => void;
     onTransfer: (enrollment: AdminEnrollmentView) => void;
@@ -516,9 +511,6 @@ function dispatchRosterAction(
   },
 ): void {
   switch (action) {
-    case "pause":
-      handlers.onPause(enrollment);
-      break;
     case "resume":
       handlers.onResume(enrollment.enrollment_id);
       break;

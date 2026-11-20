@@ -48,7 +48,7 @@ import { HoldEnrollmentDialog, ReturnFromHoldDialog } from "@/components/admin/e
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { ClassRecapDialog } from "@/components/admin/ClassReportHandoffsCard";
 
-import { AddToRosterDialog, PauseEnrollmentDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";
+import { AddToRosterDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";
 import { formatCurrencyCents, sessionTimeRange } from "./format";
 import { RosterMetrics, RosterTable, partitionRoster, seatsHeldCount } from "./RosterPanel";
 import {
@@ -114,7 +114,6 @@ export default function AdminSessionDetailPage() {
   // roster. Cleared when the dialog closes so the next plain Add is blank.
   const [reEnrollTarget, setReEnrollTarget] = useState<AdminEnrollmentView | null>(null);
   const [editOpen, setEditOpen] = useState(false);
-  const [pauseTarget, setPauseTarget] = useState<AdminEnrollmentView | null>(null);
   const [removeTarget, setRemoveTarget] = useState<AdminEnrollmentView | null>(null);
   const [transferTarget, setTransferTarget] = useState<AdminEnrollmentView | null>(null);
   const [withdrawalTarget, setWithdrawalTarget] = useState<AdminEnrollmentView | null>(null);
@@ -543,7 +542,6 @@ export default function AdminSessionDetailPage() {
               onPathwayLevelChange={handlePathwayLevelChange}
               onDelete={(enrollment) => setRemoveTarget(enrollment)}
               onHold={(enrollment) => setHoldTarget(enrollment)}
-              onPause={(enrollment) => setPauseTarget(enrollment)}
               onResume={(id) => resumeMutation.mutate(id)}
               onReturn={(enrollment) => setReturnTarget(enrollment)}
               onTransfer={(enrollment) => setTransferTarget(enrollment)}
@@ -864,16 +862,6 @@ export default function AdminSessionDetailPage() {
         onMoved={() => {
           setTransferTarget(null);
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
-        }}
-      />
-      <PauseEnrollmentDialog
-        enrollment={pauseTarget}
-        onClose={() => setPauseTarget(null)}
-        onPaused={() => {
-          setPauseTarget(null);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />

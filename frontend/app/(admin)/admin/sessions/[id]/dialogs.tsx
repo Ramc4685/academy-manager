@@ -7,7 +7,6 @@ import {
   createEnrollment,
   deleteEnrollment,
   listAdminSessions,
-  pauseEnrollment,
   previewWithdrawalCredit,
   quoteAdminEnrollment,
   transferEnrollment,
@@ -41,7 +40,7 @@ import { DEPARTURE_ACTION_DESCRIPTION } from "@/components/admin/enrollment/depa
 import { Button } from "@/components/ds/button";
 import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/components/ds/dialog-chrome";
 
-import { dateInputValueFromOffset, formatCents, formatShortDateTime, inputClass, todayDateInput } from "./format";
+import { formatCents, formatShortDateTime, inputClass, todayDateInput } from "./format";
 
 export function AddToRosterDialog({
   open,
@@ -144,148 +143,6 @@ export function AddToRosterDialog({
           </Button>
           <Button variant="primary" size="sm" type="submit" disabled={mutation.isPending}>
             {mutation.isPending ? "Enrolling…" : "Enroll"}
-          </Button>
-        </DialogActions>
-      </form>
-    </RallyDialog>
-  );
-}
-
-export function PauseEnrollmentDialog({
-  enrollment,
-  onClose,
-  onPaused,
-}: {
-  enrollment: AdminEnrollmentView | null;
-  onClose: () => void;
-  onPaused: () => void;
-}) {
-  const [effectiveDate, setEffectiveDate] = useState(todayDateInput());
-  const [billingAction, setBillingAction] = useState<"resume" | "review">("review");
-  const [resumeOn, setResumeOn] = useState(dateInputValueFromOffset(30));
-  const [reviewOn, setReviewOn] = useState(dateInputValueFromOffset(14));
-  const [reason, setReason] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const mutation = useMutation({
-    mutationFn: () =>
-      pauseEnrollment(enrollment!.enrollment_id, {
-        effective_date: effectiveDate,
-        resume_on: billingAction === "resume" ? resumeOn : null,
-        review_on: billingAction === "review" ? reviewOn : null,
-        reason: reason || undefined,
-      }),
-    onSuccess: () => {
-      setEffectiveDate(todayDateInput());
-      setBillingAction("review");
-      setResumeOn(dateInputValueFromOffset(30));
-      setReviewOn(dateInputValueFromOffset(14));
-      setReason("");
-      setError(null);
-      onPaused();
-    },
-    onError: (err: Error) => setError(err.message ?? "Could not pause enrollment."),
-  });
-
-  return (
-    <RallyDialog
-      open={enrollment !== null}
-      onOpenChange={(open) => !open && onClose()}
-      title="Pause enrollment"
-      description={
-        enrollment
-          ? `Pause ${enrollment.full_name}, release the seat, and move them to the waitlist.`
-          : ""
-      }
-      overline="Lifecycle"
-    >
-      {error && <DialogError message={error} />}
-      <form
-        className="space-y-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          mutation.mutate();
-        }}
-      >
-        <Field label="Effective date" required>
-          <input
-            type="date"
-            required
-            value={effectiveDate}
-            onChange={(event) => setEffectiveDate(event.target.value)}
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Billing follow-up" required>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <label className="flex items-center gap-2 rounded border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800">
-              <input
-                type="radio"
-                name="pause-billing-action"
-                checked={billingAction === "review"}
-                onChange={() => setBillingAction("review")}
-              />
-              Review before billing resumes
-            </label>
-            <label className="flex items-center gap-2 rounded border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800">
-              <input
-                type="radio"
-                name="pause-billing-action"
-                checked={billingAction === "resume"}
-                onChange={() => setBillingAction("resume")}
-              />
-              Resume automatically
-            </label>
-          </div>
-        </Field>
-        {billingAction === "review" ? (
-          <Field label="Review date" required>
-            <input
-              type="date"
-              required
-              value={reviewOn}
-              onChange={(event) => setReviewOn(event.target.value)}
-              className={inputClass}
-            />
-          </Field>
-        ) : (
-          <Field label="Resume date" required>
-            <input
-              type="date"
-              required
-              value={resumeOn}
-              onChange={(event) => setResumeOn(event.target.value)}
-              className={inputClass}
-            />
-          </Field>
-        )}
-        <p className="text-xs text-rally-subtle">
-          Pausing releases the seat and creates a billing deferral that stays visible until the
-          review or resume rule is handled.
-        </p>
-        <p className="text-xs text-rally-subtle">{DEPARTURE_ACTION_DESCRIPTION.pause}</p>
-        <Field label="Reason">
-          <textarea
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            rows={3}
-            className={inputClass}
-          />
-        </Field>
-        <DialogActions>
-          <Button variant="secondary" size="sm" type="button" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            type="submit"
-            disabled={
-              !effectiveDate ||
-              (billingAction === "review" ? !reviewOn : !resumeOn) ||
-              mutation.isPending
-            }
-          >
-            {mutation.isPending ? "Pausing..." : "Pause"}
           </Button>
         </DialogActions>
       </form>
