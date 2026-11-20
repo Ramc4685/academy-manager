@@ -46,6 +46,7 @@ from backend.v2.contexts.enrollment.application.use_cases.close_academy_dates im
     CloseAcademyDatesCommand,
 )
 from backend.v2.contexts.enrollment.application.use_cases.copy_session import (
+    CopyRosterRefused,
     CopySessionCommand,
 )
 from backend.v2.interfaces.admin.academy_clock import academy_zone
@@ -245,6 +246,8 @@ async def copy_session(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AcademyTimezoneUnset as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except CopyRosterRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if use_cases.maintain_session_occurrences is not None:
         await use_cases.maintain_session_occurrences(result.session)
     return CopySessionResponse(

@@ -21,6 +21,7 @@ from backend.v2.contexts.enrollment.application.use_cases.copy_session import (
     CopySessionCommand,
 )
 from backend.v2.contexts.enrollment.domain.errors import (
+    CopyRosterRefused,
     DuplicateSessionSeries,
     SessionNotFound,
 )
@@ -146,7 +147,10 @@ async def test_copy_class_carries_schedule_coach_capacity_price_and_pack() -> No
     sessions = FakeSessions()
     result = await _use_case(sessions, FakeEnrollments(), FakeStudents(rows={})).execute(
         CopySessionCommand(
-            source_session_id="src", title="Thursday Beginners", days_of_week=["Thu"]
+            source_session_id="src",
+            title="Thursday Beginners",
+            days_of_week=["Thu"],
+            include_price=True,
         )
     )
 
@@ -203,7 +207,11 @@ async def test_roster_copy_adds_active_students_through_the_seat_check() -> None
 
     result = await _use_case(sessions, enrollments, students).execute(
         CopySessionCommand(
-            source_session_id="src", title="Copy", copy_roster=True, actor_id="admin"
+            source_session_id="src",
+            title="Copy",
+            days_of_week=["Thu"],
+            copy_roster=True,
+            actor_id="admin",
         )
     )
 
@@ -222,3 +230,48 @@ async def test_roster_copy_adds_active_students_through_the_seat_check() -> None
     assert sessions.reserved[new_id] == 2
     # The source roster is untouched.
     assert len([e for e in enrollments.rows if e.session_id == "src"]) == 4
+
+
+@pytest.mark.asyncio
+async def test_copy_defaults_to_no_price() -> None:
+    result = await _use_case(FakeSessions(), FakeEnrollments(), FakeStudents(rows={})).execute(
+        CopySessionCommand(source_session_id="src", title="Copy", days_of_week=["Thu"])
+    )
+    assert result.session.amount_cents is None
+
+
+@pytest.mark.asyncio
+async def test_roster_copy_on_the_source_schedule_is_refused_whatever_the_title() -> None:
+    sessions = FakeSessions()
+    enrollments = FakeEnrollments(rows=[_enrolled("s1")])
+    with pytest.raises(CopyRosterRefused):
+        await _use_case(sessions, enrollments, FakeStudents(rows={})).execute(
+            CopySessionCommand(
+                source_session_id="src",
+                title="A different title",
+                days_of_week=["Tue"],
+                start_time="18:00",
+                copy_roster=True,
+            )
+        )
+    assert list(sessions.rows) == ["src"]  # refused before any class is created
+
+
+@pytest.mark.asyncio
+async def test_roster_copy_of_a_one_off_class_is_refused() -> None:
+    one_off = SOURCE.model_copy(update={"days_of_week": [], "start_time": None, "end_time": None})
+    sessions = FakeSessions(rows={"src": one_off})
+    with pytest.raises(CopyRosterRefused):
+        await _use_case(sessions, FakeEnrollments(), FakeStudents(rows={})).execute(
+            CopySessionCommand(source_session_id="src", title="Copy", copy_roster=True)
+        )
+    assert list(sessions.rows) == ["src"]
+
+
+@pytest.mark.asyncio
+async def test_copy_keeps_every_source_day_when_days_are_not_sent() -> None:
+    multi = SOURCE.model_copy(update={"days_of_week": ["Mon", "Wed"]})
+    result = await _use_case(
+        FakeSessions(rows={"src": multi}), FakeEnrollments(), FakeStudents(rows={})
+    ).execute(CopySessionCommand(source_session_id="src", title="Copy", start_time="17:00"))
+    assert result.session.days_of_week == ["Mon", "Wed"]

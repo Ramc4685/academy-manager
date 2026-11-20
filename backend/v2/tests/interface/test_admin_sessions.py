@@ -2317,6 +2317,16 @@ def test_copy_class_refuses_an_identical_series(admin_client):
     assert r.status_code == 409
 
 
+def test_copy_class_with_roster_on_the_same_schedule_is_a_409(admin_client):
+    source = _recurring_class(admin_client)
+    r = admin_client.post(
+        f"/api/v2/admin/sessions/{source}/copy",
+        json={"title": "Second Tuesday group", "copy_roster": True},
+    )
+    assert r.status_code == 409
+    assert "enrolled and billed twice" in r.json()["detail"]
+
+
 def test_bulk_transfer_rejects_an_empty_selection(admin_client):
     r = admin_client.post(
         "/api/v2/admin/enrollments/bulk-transfer",

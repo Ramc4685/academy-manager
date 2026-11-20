@@ -25,11 +25,13 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     EditRosterAdd,
     EditRosterAddCommand,
 )
-from backend.v2.contexts.enrollment.domain.errors import SessionNotFound
+from backend.v2.contexts.enrollment.domain.errors import CopyRosterRefused, SessionNotFound
 from backend.v2.contexts.enrollment.domain.models import Session
 from backend.v2.shared.http.errors import DomainError
 
 log = logging.getLogger(__name__)
+
+__all__ = ["CopyRosterRefused", "CopySession", "CopySessionCommand"]
 
 
 class CopySessionCommand(BaseModel):
@@ -41,7 +43,7 @@ class CopySessionCommand(BaseModel):
     days_of_week: list[str] | None = None
     start_time: str | None = None
     end_time: str | None = None
-    include_price: bool = True
+    include_price: bool = False
     copy_roster: bool = False
     actor_id: str | None = None
 
@@ -81,6 +83,23 @@ class CopySession:
         source = await self._sessions.get(cmd.source_session_id)
         if source is None:
             raise SessionNotFound("class not found", session_id=cmd.source_session_id)
+        days = cmd.days_of_week if cmd.days_of_week is not None else source.days_of_week
+        start_time = cmd.start_time or source.start_time
+        end_time = cmd.end_time or source.end_time
+        if cmd.copy_roster:
+            if not source.days_of_week:
+                raise CopyRosterRefused(
+                    "A one-off class's students can't be copied. Copy the class on its own."
+                )
+            if (sorted(days or []), start_time, end_time) == (
+                sorted(source.days_of_week),
+                source.start_time,
+                source.end_time,
+            ):
+                raise CopyRosterRefused(
+                    "Change the days or times to copy the students: the copy meets when "
+                    "this class does, so they'd be enrolled and billed twice."
+                )
         session = await self._create_session.execute(
             CreateSessionCommand(
                 coach_id=source.coach_id,
@@ -92,11 +111,9 @@ class CopySession:
                 end_at=None if source.days_of_week else source.end_at,
                 capacity=source.capacity,
                 amount_cents=source.amount_cents if cmd.include_price else None,
-                days_of_week=cmd.days_of_week
-                if cmd.days_of_week is not None
-                else source.days_of_week,
-                start_time=cmd.start_time or source.start_time,
-                end_time=cmd.end_time or source.end_time,
+                days_of_week=days,
+                start_time=start_time,
+                end_time=end_time,
                 timezone=source.timezone,
                 assistant_coach_ids=list(source.assistant_coach_ids),
                 **{f: getattr(source, f) for f in COMMUNICATION_PACK_FIELDS},

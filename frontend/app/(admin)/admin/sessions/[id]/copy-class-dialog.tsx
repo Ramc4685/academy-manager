@@ -22,6 +22,26 @@ export function copyClassNotes(result: CopySessionResponse, sourcePriced: boolea
   return notes;
 }
 
+type CopySchedule = { days: string[]; startTime: string; endTime: string };
+
+const sameDays = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && [...a].sort().join() === [...b].sort().join();
+
+/**
+ * Only the schedule fields the admin changed are sent: the server keeps the
+ * source's value for anything left out, so a multi-day class stays multi-day.
+ */
+export function copySchedulePatch(
+  session: Pick<AdminSessionView, "days_of_week" | "start_time" | "end_time">,
+  next: CopySchedule,
+): { days_of_week?: string[]; start_time?: string; end_time?: string } {
+  const patch: { days_of_week?: string[]; start_time?: string; end_time?: string } = {};
+  if (!sameDays(next.days, session.days_of_week ?? [])) patch.days_of_week = next.days;
+  if (next.startTime !== (session.start_time ?? "")) patch.start_time = next.startTime;
+  if (next.endTime !== (session.end_time ?? "")) patch.end_time = next.endTime;
+  return patch;
+}
+
 /** Copy class (A0-8): a new class from this one, optionally with its active students. */
 export function CopyClassDialog({
   session,
@@ -35,10 +55,14 @@ export function CopyClassDialog({
   const router = useRouter();
   const recurring = Boolean(session.days_of_week?.length);
   const [title, setTitle] = useState(`${session.title} (copy)`);
-  const [day, setDay] = useState(session.days_of_week?.[0] ?? "");
+  const [days, setDays] = useState<string[]>(session.days_of_week ?? []);
   const [startTime, setStartTime] = useState(session.start_time ?? "");
   const [endTime, setEndTime] = useState(session.end_time ?? "");
-  const [copyRoster, setCopyRoster] = useState(false);
+  const [copyRosterTicked, setCopyRoster] = useState(false);
+  const schedulePatch = recurring ? copySchedulePatch(session, { days, startTime, endTime }) : {};
+  // The same students in a class meeting at the same time would be enrolled and billed twice.
+  const canCopyRoster = recurring && Object.keys(schedulePatch).length > 0;
+  const copyRoster = canCopyRoster && copyRosterTicked;
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ sessionId: string; notes: string[] } | null>(null);
 
@@ -47,7 +71,7 @@ export function CopyClassDialog({
       copySession(session.session_id, {
         title: title.trim(),
         copy_roster: copyRoster,
-        ...(recurring ? { days_of_week: [day], start_time: startTime, end_time: endTime } : {}),
+        ...schedulePatch,
       }),
     onSuccess: (result) => {
       setError(null);
@@ -108,21 +132,29 @@ export function CopyClassDialog({
             />
           </Field>
           {recurring && (
-            <div className="grid gap-3 sm:grid-cols-3">
-              <Field label="Day" required>
-                <select
-                  required
-                  value={day}
-                  onChange={(event) => setDay(event.target.value)}
-                  className={inputClass}
-                >
+            <div className="grid gap-3 sm:grid-cols-2">
+              <fieldset className="sm:col-span-3">
+                <legend className="mb-1 text-xs font-semibold text-rally-ink">Days</legend>
+                <div className="flex flex-wrap gap-3">
                   {DAYS_OF_WEEK.map((d) => (
-                    <option key={d.value} value={d.value}>
-                      {d.label}
-                    </option>
+                    <label key={d.value} className="flex items-center gap-1.5 text-sm text-rally-ink">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-rally-cobalt-600"
+                        checked={days.includes(d.value)}
+                        onChange={(event) =>
+                          setDays((current) =>
+                            event.target.checked
+                              ? [...current, d.value]
+                              : current.filter((v) => v !== d.value),
+                          )
+                        }
+                      />
+                      {d.label.slice(0, 3)}
+                    </label>
                   ))}
-                </select>
-              </Field>
+                </div>
+              </fieldset>
               <Field label="Starts" required>
                 <input
                   type="time"
@@ -143,21 +175,25 @@ export function CopyClassDialog({
               </Field>
             </div>
           )}
-          <label className="flex items-start gap-2 text-sm text-rally-ink">
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4 accent-rally-cobalt-600"
-              checked={copyRoster}
-              onChange={(event) => setCopyRoster(event.target.checked)}
-            />
-            <span>
-              Also enroll this class&apos;s active students
-              <span className="block text-xs text-rally-subtle">
-                Each is added as on Add to roster: a seat is checked, the family gets the welcome
-                email, and they are billed for the new class. They stay in this class too.
+          {recurring && (
+            <label className="flex items-start gap-2 text-sm text-rally-ink">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-rally-cobalt-600"
+                checked={copyRoster}
+                disabled={!canCopyRoster}
+                onChange={(event) => setCopyRoster(event.target.checked)}
+              />
+              <span>
+                Also enroll this class&apos;s active students
+                <span className="block text-xs text-rally-subtle">
+                  {canCopyRoster
+                    ? "Each is added as on Add to roster: a seat is checked, the family gets the welcome email, and they are billed the new class's full price. A fee override or discount on their current enrollment is not carried over. They stay in this class too."
+                    : "Change the days or times first: students can't be in two classes that meet at the same time."}
+                </span>
               </span>
-            </span>
-          </label>
+            </label>
+          )}
           <DialogActions>
             <Button variant="secondary" size="sm" type="button" onClick={() => onOpenChange(false)}>
               Cancel
@@ -166,7 +202,7 @@ export function CopyClassDialog({
               variant="primary"
               size="sm"
               type="submit"
-              disabled={mutation.isPending || !title.trim()}
+              disabled={mutation.isPending || !title.trim() || (recurring && days.length === 0)}
             >
               {mutation.isPending ? "Copying…" : "Copy class"}
             </Button>

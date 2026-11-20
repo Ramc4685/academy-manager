@@ -33,6 +33,17 @@ class DuplicateSessionSeries(DomainError):
     status_code = 409
 
 
+class CopyRosterRefused(DomainError):
+    """A roster copy would enroll the same students twice at the same time.
+
+    Copying students into a class that meets when the source meets (or into a
+    one-off class) double-books them and bills them twice for one slot.
+    """
+
+    code = "Enrollment.CopyRosterRefused"
+    status_code = 409
+
+
 class AcademyTimezoneUnset(DomainError):
     """No timezone could be resolved for the tenant, so we refuse to guess.
 
@@ -161,6 +172,13 @@ class EnrollmentNotWithdrawable(DomainError):
     """
 
     code = "Enrollment.NotWithdrawable"
+    status_code = 409
+
+
+class EnrollmentMovedConcurrently(DomainError):
+    """The row left its class between the read and the move (another request moved it)."""
+
+    code = "Enrollment.MovedConcurrently"
     status_code = 409
 
 
