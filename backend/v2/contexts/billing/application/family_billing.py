@@ -13,7 +13,7 @@ the predicates the dunning worker runs.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, tzinfo
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -253,6 +253,8 @@ class EventFacts:
     actor_id: str | None
     reason: str | None
     effective_at: datetime | None
+    #: The event's recorded intent, e.g. a pause's ``resume_on``/``review_on``.
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -786,14 +788,34 @@ def _audit_entries(facts: FamilyFacts) -> list[dict[str, Any]]:
     return entries
 
 
+def _pause_tail(ev: EventFacts, zone: tzinfo) -> str:
+    """#1052: "resumes" only for a scheduled return; a review pause names its review.
+
+    The dates are calendar dates as the admin picked them, never the event's
+    own timestamp; the year is shown when it differs from the event's
+    academy-local year.
+    """
+    event_year = _as_utc(ev.occurred_at).astimezone(zone).year
+    for key, verb in (("resume_on", "resumes"), ("review_on", "review")):
+        raw = ev.metadata.get(key)
+        try:
+            day = date.fromisoformat(raw) if raw else None
+        except ValueError:
+            day = None
+        if day is not None:
+            year = f", {day.year}" if day.year != event_year else ""
+            return f"{verb} {_MONTHS[day.month - 1]} {day.day}{year}"
+    return "review required"
+
+
 def _event_entries(facts: FamilyFacts, zone: tzinfo) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for ev in facts.events:
         verb = _EVENT_SUMMARIES.get(ev.event_type, ev.event_type)
         who = ev.student_name or "Student"
         tail = ""
-        if ev.event_type == "paused" and ev.effective_at is not None:
-            tail = f" · resumes {_day_label(ev.effective_at, zone)}"
+        if ev.event_type == "paused":
+            tail = f" · {_pause_tail(ev, zone)}"
         elif ev.reason:
             tail = f" · {ev.reason}"
         entries.append(

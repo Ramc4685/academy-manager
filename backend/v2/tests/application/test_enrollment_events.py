@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -356,3 +356,27 @@ async def test_waitlist_and_promotion_record_lifecycle_events() -> None:
     assert [event.event_type for event in events.rows] == ["waitlisted", "promoted"]
     assert events.rows[1].waitlist_id == entry.waitlist_id
     assert events.rows[1].actor_id == "admin-1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kw", "expected"),
+    [
+        ({"review_on": date(2027, 6, 3)}, {"review_on": "2027-06-03"}),
+        ({"resume_on": date(2026, 11, 1)}, {"resume_on": "2026-11-01"}),
+    ],
+)
+async def test_pause_event_records_the_review_or_resume_date(
+    kw: dict[str, date], expected: dict[str, str]
+) -> None:
+    # #1052: the timeline reads the pause's intent from the event, not its timestamp.
+    events = FakeEnrollmentEvents()
+    pause = PauseEnrollment(
+        enrollments=FakeEnrollments(rows={"enr-1": _enrollment()}),
+        enrollment_events=events,
+        clock=_clock,
+    )
+    await pause.execute(PauseEnrollmentCommand(enrollment_id="enr-1", actor_id="admin-1", **kw))
+
+    (event,) = events.rows
+    assert event.metadata == {"seat_policy": "released_to_waitlist", **expected}

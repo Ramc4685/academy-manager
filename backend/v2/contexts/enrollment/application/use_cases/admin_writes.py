@@ -1879,7 +1879,12 @@ class PauseEnrollment:
             occurred_at=now,
             billing_policy="release_seat_waitlist_stop_billing",
             billing_result="future_billing_stopped",
-            metadata={"seat_policy": "released_to_waitlist"},
+            # #1052: the pause's intent, so history can say "resumes" or "review".
+            metadata={
+                "seat_policy": "released_to_waitlist",
+                **({"resume_on": cmd.resume_on.isoformat()} if cmd.resume_on else {}),
+                **({"review_on": cmd.review_on.isoformat()} if cmd.review_on else {}),
+            },
         )
         if self._billing_deferrals is not None and cmd.create_billing_deferral:
             # Issue #651: one deferral per PAUSED month. The old single row

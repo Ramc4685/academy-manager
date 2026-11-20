@@ -327,6 +327,7 @@ class MongoFamilyBillingReadModel:
                     actor_id=_opt_str(ev.get("actor_id")),
                     reason=_opt_str(ev.get("reason")),
                     effective_at=_to_datetime(ev.get("effective_at")),
+                    metadata={str(k): str(v) for k, v in (ev.get("metadata") or {}).items() if v},
                 )
                 for ev in events
             ),
