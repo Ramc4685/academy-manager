@@ -237,6 +237,7 @@ export const queryKeys = {
     all: ["parent"] as const,
     absences: () => ["parent", "absences"] as const,
     makeups: () => ["parent", "makeups"] as const,
+    makeupCandidates: () => ["parent", "makeups", "candidates"] as const,
     makeupTargets: (studentId: string, missedOccurrenceId: string) =>
       ["parent", "makeups", "targets", studentId, missedOccurrenceId] as const,
     trials: () => ["parent", "trials"] as const,

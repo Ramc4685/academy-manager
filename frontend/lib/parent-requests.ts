@@ -1,5 +1,5 @@
 import type { ChipVariant } from "@/components/ds/chip";
-import type { AssignedClassView } from "@/lib/api/parent";
+import type { AssignedClassView, MakeupCandidateView } from "@/lib/api/parent";
 import { formatAcademyTimeRange } from "@/lib/format/academy-time";
 
 /**
@@ -55,4 +55,14 @@ export function assignedClassCopy(
     where: assigned.location ?? "Venue to be confirmed",
     cancelled: assigned.status === "cancelled",
   };
+}
+
+/** #1037: siblings in one class share an occurrence, so the key needs both ids. */
+export function makeupCandidateKey(c: Pick<MakeupCandidateView, "student_id" | "occurrence_id">): string {
+  return `${c.student_id}:${c.occurrence_id}`;
+}
+
+/** "Child — Class — date and time" in the academy timezone (#1037). */
+export function makeupCandidateLabel(c: MakeupCandidateView, academyTimezone: string | null): string {
+  return `${c.student_name} — ${c.class_title} — ${formatAcademyTimeRange(c.start_at, c.end_at, academyTimezone)}`;
 }
