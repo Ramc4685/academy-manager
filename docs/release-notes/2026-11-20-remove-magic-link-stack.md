@@ -1,6 +1,6 @@
 # remove-magic-link-stack
 
-PR: TBD
+PR: #1219
 
 ## What changed
 The parent magic-link sign-in is gone: the `POST /api/v2/magic-link/consume` route, its use case and repository, and the `/auth/magic` page are deleted. The last links were minted before #1202 deployed on 2026-11-17 and their 72h window has closed. The backend also stops accepting Firebase sessions with the `custom` sign-in provider, which only magic links ever produced: a parent still holding one of those sessions gets the normal "please sign in again" 401, whether or not their email is verified, because the session may belong to whoever a link was forwarded to.
