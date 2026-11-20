@@ -61,7 +61,7 @@ from backend.v2.contexts.billing.domain.dunning import (
     NO_SAVED_PAYMENT_METHOD,
     STRIPE_UNAVAILABLE,
 )
-from backend.v2.contexts.billing.domain.errors import StripeUnavailable
+from backend.v2.contexts.billing.domain.errors import StripeIdempotencyConflict, StripeUnavailable
 from backend.v2.contexts.billing.domain.fees import compute_ach_discount
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
@@ -341,7 +341,11 @@ class ChargeInvoiceViaAutopay:
             found = await self._settle_existing_payment_intent([invoice], route, now=now)
             if found is not None:
                 return found
-        settings, funding_type = await self._resolve_discount_inputs(pm_id, on_account)
+        try:
+            settings, funding_type = await self._resolve_discount_inputs(pm_id, on_account)
+        except StripeUnavailable as exc:
+            log.warning("charge_autopay: discount indeterminate invoice=%s err=%s", invoice_id, exc)
+            return _refused(invoice, STRIPE_UNAVAILABLE)
         invoice, discount_metadata = await self._apply_ach_discount_if_needed(
             invoice=invoice,
             settings=settings,
@@ -376,6 +380,11 @@ class ChargeInvoiceViaAutopay:
                 **on_account,
                 **application_fee_kwargs(fee_cents),
             )
+        except StripeIdempotencyConflict as exc:
+            # Stripe holds an earlier request under this key with other parameters,
+            # which may have charged: a person decides, it is never retried blindly.
+            log.error("charge_autopay: idempotency conflict invoice=%s err=%s", invoice_id, exc)
+            return _refused(invoice, EXISTING_CHARGE_NEEDS_REVIEW)
         except StripeUnavailable as exc:
             # Stripe could not be asked. Not a decline: no failed attempt row, no
             # outcome projection; the worker parks and retries (L1 A4-3). Any other
@@ -482,7 +491,18 @@ class ChargeInvoiceViaAutopay:
             found = await self._settle_existing_payment_intent(members, route, now=now)
             if found is not None:
                 return FamilyChargeResult(charged_invoice_ids=charged, result=found)
-        settings, funding_type = await self._resolve_discount_inputs(pm_id, on_account)
+        try:
+            settings, funding_type = await self._resolve_discount_inputs(pm_id, on_account)
+        except StripeUnavailable as exc:
+            log.warning(
+                "charge_autopay: discount indeterminate group=%s err=%s", charge_group_id, exc
+            )
+            undiscounted = lead.model_copy(
+                update={"balance_due_cents": sum(m.balance_due_cents for m in members)}
+            )
+            return FamilyChargeResult(
+                charged_invoice_ids=charged, result=_refused(undiscounted, STRIPE_UNAVAILABLE)
+            )
         discounted: list[LedgerInvoice] = []
         member_metadata: list[dict[str, str]] = []
         for invoice in members:
@@ -524,6 +544,13 @@ class ChargeInvoiceViaAutopay:
                 metadata=pi_metadata,
                 **on_account,
                 **application_fee_kwargs(fee_cents),
+            )
+        except StripeIdempotencyConflict as exc:
+            log.error("charge_autopay: idempotency conflict group=%s err=%s", charge_group_id, exc)
+            return FamilyChargeResult(
+                charged_invoice_ids=charged,
+                dropped_invoice_ids=tuple(dropped),
+                result=_refused(family, EXISTING_CHARGE_NEEDS_REVIEW),
             )
         except StripeUnavailable as exc:
             log.warning("charge_autopay: stripe unavailable group=%s err=%s", charge_group_id, exc)
@@ -902,20 +929,27 @@ class ChargeInvoiceViaAutopay:
         payment_method_id: str,
         on_account: dict[str, Any],
     ) -> tuple[BillingSettings | None, str | None]:
+        """The settings and funding type the ACH discount is decided from.
+
+        Raises StripeUnavailable when the discount could apply but the payment
+        method cannot be read: charging then would drop the discount and bill
+        full price, so the caller parks and retries. A settings read failure
+        propagates for the same reason (the worker's technical park)."""
         if self._settings is None or self._stripe is None:
             return None, None
-        try:
-            settings = await self._settings.get()
-        except Exception as exc:
-            log.warning("charge_autopay: billing settings lookup failed; no discount err=%s", exc)
-            return None, None
+        settings = await self._settings.get()
         try:
             payment_method = await self._stripe.retrieve_payment_method(
                 payment_method_id, **on_account
             )
         except Exception as exc:
+            if settings is not None and settings.ach_discount_enabled:
+                raise StripeUnavailable(
+                    f"payment method lookup failed pm={payment_method_id}: {exc}"
+                ) from exc
             log.warning(
-                "charge_autopay: payment method lookup failed pm=%s; no discount err=%s",
+                "charge_autopay: payment method lookup failed pm=%s; no ACH discount configured "
+                "err=%s",
                 payment_method_id,
                 exc,
             )

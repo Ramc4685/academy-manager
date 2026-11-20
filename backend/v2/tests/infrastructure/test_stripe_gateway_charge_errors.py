@@ -7,7 +7,10 @@ import types
 from typing import Any
 
 import pytest
-from backend.v2.contexts.billing.domain.errors import StripeUnavailable
+from backend.v2.contexts.billing.domain.errors import (
+    StripeIdempotencyConflict,
+    StripeUnavailable,
+)
 from backend.v2.contexts.billing.infrastructure.stripe_gateway import RealStripeGateway
 
 
@@ -30,6 +33,10 @@ class _APIConnectionError(_StripeError):
     pass
 
 
+class _IdempotencyError(_StripeError):
+    pass
+
+
 def _gateway(monkeypatch: pytest.MonkeyPatch, raises: Exception) -> RealStripeGateway:
     mod = types.ModuleType("stripe")
 
@@ -39,6 +46,7 @@ def _gateway(monkeypatch: pytest.MonkeyPatch, raises: Exception) -> RealStripeGa
     mod.StripeError = _StripeError  # type: ignore[attr-defined]
     mod.CardError = _CardError  # type: ignore[attr-defined]
     mod.InvalidRequestError = _InvalidRequestError  # type: ignore[attr-defined]
+    mod.IdempotencyError = _IdempotencyError  # type: ignore[attr-defined]
     mod.PaymentIntent = types.SimpleNamespace(create=_create)  # type: ignore[attr-defined]
     mod.StripeClient = lambda api_key: types.SimpleNamespace()  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "stripe", mod)
@@ -92,6 +100,18 @@ async def test_network_and_api_errors_raise_stripe_unavailable(
     gw = _gateway(monkeypatch, _APIConnectionError("connection reset"))
     with pytest.raises(StripeUnavailable):
         await _charge(gw)
+
+
+@pytest.mark.asyncio
+async def test_a_reused_key_with_other_parameters_is_its_own_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stripe refusing a key reused with other parameters is not an outage: an
+    earlier request under this key exists, so it must not read as StripeUnavailable."""
+    gw = _gateway(monkeypatch, _IdempotencyError("Keys for idempotent requests can only..."))
+    with pytest.raises(StripeIdempotencyConflict) as raised:
+        await _charge(gw)
+    assert not isinstance(raised.value, StripeUnavailable)
 
 
 def _cancel_gateway(monkeypatch: pytest.MonkeyPatch, raises: Exception) -> RealStripeGateway:
