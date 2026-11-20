@@ -278,7 +278,7 @@ export function TransferEnrollmentDialog({
           data-testid="bulk-transfer-failures"
           className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
         >
-          <p className="font-semibold">The others moved. These stayed in this class:</p>
+          <p className="font-semibold">The others moved. Check these students:</p>
           <ul className="mt-1 list-disc pl-5">
             {failures.map((line) => (
               <li key={line}>{line}</li>
@@ -286,6 +286,22 @@ export function TransferEnrollmentDialog({
           </ul>
         </div>
       )}
+      {failures.length > 0 ? (
+        // The moved rows are gone from this class: resubmitting would move them again.
+        <DialogActions>
+          <Button
+            variant="primary"
+            size="sm"
+            type="button"
+            onClick={() => {
+              setFailures([]);
+              onClose();
+            }}
+          >
+            Done
+          </Button>
+        </DialogActions>
+      ) : (
       <form
         className="space-y-3"
         onSubmit={(event) => {
@@ -334,7 +350,7 @@ export function TransferEnrollmentDialog({
               onClose();
             }}
           >
-            {failures.length > 0 ? "Done" : "Cancel"}
+            Cancel
           </Button>
           <Button
             variant="primary"
@@ -351,6 +367,7 @@ export function TransferEnrollmentDialog({
           </Button>
         </DialogActions>
       </form>
+      )}
     </RallyDialog>
   );
 }

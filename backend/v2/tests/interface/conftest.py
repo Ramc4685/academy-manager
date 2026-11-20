@@ -416,7 +416,9 @@ class _EnrollmentWriterAdapter:
     async def update_status(self, enrollment_id: str, status: str) -> None:
         await self._store.update_enrollment_status(enrollment_id, status)
 
-    async def update_session(self, enrollment_id: str, session_id: str) -> None:
+    async def update_session(
+        self, enrollment_id: str, session_id: str, *, expected_session_id: str | None = None
+    ) -> None:
         pass
 
     async def update_amount_cents(self, enrollment_id: str, amount_cents: int | None) -> None:
@@ -1319,7 +1321,7 @@ class FakeEnrollmentWriter:
         self.rows[enrollment_id] = before.model_copy(update={"status": "withdrawn"})
         return before
 
-    async def update_session(self, enrollment_id, session_id):
+    async def update_session(self, enrollment_id, session_id, *, expected_session_id=None):
         e = self.rows.get(enrollment_id)
         if e is not None:
             self.move_history.append(

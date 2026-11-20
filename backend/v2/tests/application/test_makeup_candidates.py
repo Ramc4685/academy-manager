@@ -87,7 +87,19 @@ class _Sessions:
         ]
 
 
-def _use_case(*, students, enrollments, occurrences, notices=None, makeups=None, policy=None):
+class _Presence:
+    """Who coaching marked present or late, keyed by (occurrence, student)."""
+
+    def __init__(self, present=()):
+        self._present = set(present)
+
+    async def was_present(self, occurrence_id, student_id):
+        return (occurrence_id, student_id) in self._present
+
+
+def _use_case(
+    *, students, enrollments, occurrences, notices=None, makeups=None, policy=None, present=()
+):
     return ListMakeupCandidates(
         students=_Students(students),
         enrollments=_Enrollments(enrollments),
@@ -96,6 +108,7 @@ def _use_case(*, students, enrollments, occurrences, notices=None, makeups=None,
         notices=notices or _FakeNotices(),
         makeups=makeups or _FakeMakeups(),
         policies=_FakePolicies(policy),
+        attendance=_Presence(present),
         clock=_now,
     )
 
@@ -183,6 +196,20 @@ async def test_notice_policy_decides_whether_a_no_notice_class_is_listed() -> No
         ("occ-late", True),
         ("occ-none", False),
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_class_the_student_attended_is_not_listed_when_notice_is_optional() -> None:
+    rows = await _use_case(
+        students=SIBLINGS,
+        enrollments=[_enrollment(student_id="kid-a"), _enrollment(student_id="kid-b")],
+        occurrences=[_missed("occ-1", 2)],
+        policy=_policy(requires_notice=False),
+        present=[("occ-1", "kid-a")],
+    ).execute("parent-1")
+
+    # kid-a was marked present; only kid-b actually missed it.
+    assert [(r.student_id, r.occurrence_id) for r in rows] == [("kid-b", "occ-1")]
 
 
 @pytest.mark.asyncio

@@ -333,6 +333,9 @@ test.describe("bulk roster transfer (A0-8)", () => {
     await expect(dialog.getByTestId("bulk-transfer-failures")).toContainText(
       "Bo Roster could not move: target session full",
     );
+    // Ana already moved: the form is gone, so a resubmit can't move her again.
+    await expect(dialog.getByRole("button", { name: "Transfer" })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "Done" })).toBeVisible();
     expect(bulkBodies).toHaveLength(1);
     expect(bulkBodies[0]).toMatchObject({
       enrollment_ids: ["enr-1", "enr-2"],
@@ -371,8 +374,12 @@ test.describe("copy class (A0-8)", () => {
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByLabel("Class name")).toHaveValue("Tuesday 6:00 PM Beginner (copy)");
     await dialog.getByLabel("Class name").fill("Thursday 6:00 PM Beginner");
-    await dialog.getByLabel("Day").selectOption("Thu");
-    await dialog.getByRole("checkbox", { name: /active students/ }).check();
+    const roster = dialog.getByRole("checkbox", { name: /active students/ });
+    // Same schedule as this class: copying its students would enroll and bill them twice.
+    await expect(roster).toBeDisabled();
+    await dialog.getByRole("checkbox", { name: "Tue", exact: true }).uncheck();
+    await dialog.getByRole("checkbox", { name: "Thu", exact: true }).check();
+    await roster.check();
     await dialog.getByRole("button", { name: "Copy class" }).click();
 
     await expect(dialog.getByTestId("copy-class-done")).toContainText(
@@ -382,8 +389,6 @@ test.describe("copy class (A0-8)", () => {
       title: "Thursday 6:00 PM Beginner",
       copy_roster: true,
       days_of_week: ["Thu"],
-      start_time: "18:00",
-      end_time: "18:45",
     });
   });
 });

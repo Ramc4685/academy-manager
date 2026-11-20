@@ -124,3 +124,53 @@ async def test_bulk_transfer_moves_a_repeated_id_once() -> None:
 
     assert [r.enrollment_id for r in result.results] == ["a"]
     assert len(billing.calls) == 1
+
+
+class StaleReadEnrollments(FakeEnrollments):
+    """The row was moved by a concurrent request after this one read it."""
+
+    async def get(self, enrollment_id: str) -> Enrollment | None:
+        row = self.rows.get(enrollment_id)
+        return row.model_copy(update={"session_id": "sess-1"}) if row else None
+
+
+@pytest.mark.asyncio
+async def test_a_row_moved_by_a_concurrent_request_is_refused_and_its_seat_released() -> None:
+    enrollments = StaleReadEnrollments(
+        rows={"a": _row("a").model_copy(update={"session_id": "sess-3"})}
+    )
+    sessions = CappedSessions(reserved={"sess-1": 1, "sess-2": 0})
+    events = FakeEnrollmentEvents()
+
+    result = await _bulk(enrollments, sessions, events, RecordingMoveBillingSync()).execute(
+        BulkTransferEnrollmentsCommand(enrollment_ids=["a"], target_session_id="sess-2")
+    )
+
+    assert result.results[0].error_code == "Enrollment.MovedConcurrently"
+    assert enrollments.rows["a"].session_id == "sess-3"
+    # The target seat reserved for the losing move went back; no event recorded.
+    assert sessions.reserved == {"sess-1": 1, "sess-2": 0}
+    assert events.rows == []
+
+
+class ExplodingEvents(FakeEnrollmentEvents):
+    async def record(self, event) -> None:
+        raise RuntimeError("event store down")
+
+
+@pytest.mark.asyncio
+async def test_an_unexpected_failure_after_the_move_does_not_claim_the_row_stayed() -> None:
+    enrollments = FakeEnrollments(rows={"a": _row("a")})
+
+    result = await _bulk(
+        enrollments,
+        CappedSessions(reserved={"sess-1": 1}),
+        ExplodingEvents(),
+        RecordingMoveBillingSync(),
+    ).execute(BulkTransferEnrollmentsCommand(enrollment_ids=["a"], target_session_id="sess-2"))
+
+    row = result.results[0]
+    assert row.error_code == "Enrollment.TransferFailed"
+    assert enrollments.rows["a"].session_id == "sess-2"  # it did move
+    assert "check where they are" in (row.message or "")
+    assert "stay" not in (row.message or "").lower()

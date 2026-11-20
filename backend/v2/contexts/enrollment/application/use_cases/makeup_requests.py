@@ -101,6 +101,12 @@ class MakeupRequestRepository(Protocol):
     async def list_for_parent(self, parent_id: str) -> list[MakeupRequest]: ...
 
 
+class StudentPresenceQuery(Protocol):
+    """Coaching-owned: was this student marked present or late on this dated class."""
+
+    async def was_present(self, occurrence_id: str, student_id: str) -> bool: ...
+
+
 class MakeupEligibility:
     """The one statement of "may this child request a makeup for this class".
 
@@ -116,10 +122,12 @@ class MakeupEligibility:
         enrollments: SubmitterEnrollmentQuery,
         notices: AbsenceNoticeQuery,
         makeups: MakeupRequestRepository,
+        attendance: StudentPresenceQuery,
     ) -> None:
         self._enrollments = enrollments
         self._notices = notices
         self._makeups = makeups
+        self._attendance = attendance
 
     async def check(
         self,
@@ -134,6 +142,13 @@ class MakeupEligibility:
             raise MakeupWindowExpired(
                 "cannot request a makeup for an occurrence that hasn't happened yet",
                 occurrence_id=missed.occurrence_id,
+            )
+        if missed.status == "cancelled":
+            # A class the academy cancelled is credited, not made up.
+            raise MakeupNotEligible(
+                "the academy cancelled this class; it is credited, not made up",
+                occurrence_id=missed.occurrence_id,
+                student_id=student_id,
             )
         if not await self._enrollments.is_active_or_paused(missed.session_id, student_id):
             raise StudentNotEnrolledInSession(
@@ -151,6 +166,12 @@ class MakeupEligibility:
                     occurrence_id=missed.occurrence_id,
                     student_id=student_id,
                 )
+        if await self._attendance.was_present(missed.occurrence_id, student_id):
+            raise MakeupNotEligible(
+                "the student was marked present for this class",
+                occurrence_id=missed.occurrence_id,
+                student_id=student_id,
+            )
         expires_at = missed.start_at + timedelta(days=policy.makeup_expiry_days)
         if now > expires_at:
             raise MakeupWindowExpired(
@@ -179,6 +200,7 @@ class SubmitMakeupRequest:
         notices: AbsenceNoticeQuery,
         makeups: MakeupRequestRepository,
         policies: SelfServicePolicyRepository,
+        attendance: StudentPresenceQuery,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._students = students
@@ -189,7 +211,7 @@ class SubmitMakeupRequest:
         self._policies = policies
         self._now = clock
         self._eligibility = MakeupEligibility(
-            enrollments=enrollments, notices=notices, makeups=makeups
+            enrollments=enrollments, notices=notices, makeups=makeups, attendance=attendance
         )
 
     async def execute(self, cmd: SubmitMakeupRequestCommand) -> MakeupRequest:
@@ -276,6 +298,7 @@ class ListMakeupCandidates:
         notices: AbsenceNoticeQuery,
         makeups: MakeupRequestRepository,
         policies: SelfServicePolicyRepository,
+        attendance: StudentPresenceQuery,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._students = students
@@ -286,7 +309,7 @@ class ListMakeupCandidates:
         self._policies = policies
         self._now = clock
         self._eligibility = MakeupEligibility(
-            enrollments=enrollments, notices=notices, makeups=makeups
+            enrollments=enrollments, notices=notices, makeups=makeups, attendance=attendance
         )
 
     async def execute(self, parent_id: str) -> list[MakeupCandidateView]:
@@ -304,9 +327,6 @@ class ListMakeupCandidates:
                     session_id=enrollment.session_id, start_at=window_start, end_at=now
                 )
                 for missed in sorted(past, key=lambda o: o.start_at, reverse=True):
-                    # A class the academy cancelled is credited, not made up.
-                    if missed.status == "cancelled":
-                        continue
                     try:
                         expires_at = await self._eligibility.check(
                             policy=policy, student_id=student.student_id, missed=missed, now=now

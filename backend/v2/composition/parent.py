@@ -23,6 +23,7 @@ from backend.v2.composition.lifecycle_billing import (
     build_autopay_status_gateway,
     compose_enrollment_billing_sync,
 )
+from backend.v2.composition.occurrence_cancellation import StudentPresenceAdapter
 from backend.v2.composition.pathway import (
     CurriculumComposition,
     StudentProgressComposition,
@@ -156,6 +157,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
 )
 from backend.v2.contexts.billing.infrastructure.mongo_unretired_checkout_repo import (
     MongoUnretiredCheckoutSessionRepository,
+)
+from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
+    MongoAttendanceRepository,
 )
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
     ListParentAbsences,
@@ -952,6 +956,7 @@ def compose_parent(
     )
     list_parent_absences = ListParentAbsences(notices=absence_notices_repo)
 
+    student_presence = StudentPresenceAdapter(MongoAttendanceRepository(db))
     submit_makeup_request = SubmitMakeupRequest(
         students=students_query,
         occurrences=occurrences_query,
@@ -959,6 +964,7 @@ def compose_parent(
         notices=absence_notices_repo,
         makeups=makeup_requests_repo,
         policies=self_service_policies_repo,
+        attendance=student_presence,
     )
     list_parent_makeups = ListParentMakeups(makeups=makeup_requests_repo)
     list_makeup_candidates = ListMakeupCandidates(
@@ -969,6 +975,7 @@ def compose_parent(
         notices=absence_notices_repo,
         makeups=makeup_requests_repo,
         policies=self_service_policies_repo,
+        attendance=student_presence,
     )
     list_eligible_makeup_targets = ListEligibleMakeupTargets(
         students=students_query,

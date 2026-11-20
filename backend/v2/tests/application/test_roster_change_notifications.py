@@ -126,7 +126,9 @@ class FakeEnrollments:
         self.rows[enrollment_id] = before.model_copy(update={"status": "dropped"})
         return before
 
-    async def update_session(self, enrollment_id: str, session_id: str) -> None:
+    async def update_session(
+        self, enrollment_id: str, session_id: str, *, expected_session_id: str | None = None
+    ) -> None:
         row = self.rows[enrollment_id]
         self.rows[enrollment_id] = row.model_copy(update={"session_id": session_id})
 

@@ -181,9 +181,15 @@ def _make_use_case(
         notices=notices or _FakeNotices([_absence_notice()]),
         makeups=makeups,
         policies=_FakePolicies(policy),
+        attendance=_NobodyPresent(),
         clock=clock,
     )
     return use_case, makeups
+
+
+class _NobodyPresent:
+    async def was_present(self, occurrence_id: str, student_id: str) -> bool:
+        return False
 
 
 @pytest.mark.asyncio
@@ -270,6 +276,7 @@ async def test_submit_makeup_request_rejects_other_parents_student() -> None:
         notices=_FakeNotices([_absence_notice()]),
         makeups=_FakeMakeups(),
         policies=_FakePolicies(),
+        attendance=_NobodyPresent(),
         clock=_now,
     )
 
@@ -780,3 +787,30 @@ async def test_list_eligible_makeup_targets_counts_website_guests() -> None:
     )
     assert open_count == 1
     assert targets == []
+
+
+class _Present:
+    async def was_present(self, occurrence_id: str, student_id: str) -> bool:
+        return True
+
+
+@pytest.mark.asyncio
+async def test_submit_refuses_a_class_the_student_was_marked_present_for() -> None:
+    from backend.v2.contexts.enrollment.domain.self_service import MakeupNotEligible
+
+    use_case = SubmitMakeupRequest(
+        students=_FakeStudents(),
+        occurrences=_FakeOccurrences(),
+        enrollments=_FakeEnrollments([_enrollment()]),
+        notices=_FakeNotices([_absence_notice()]),
+        makeups=_FakeMakeups(),
+        policies=_FakePolicies(),
+        attendance=_Present(),
+        clock=_now,
+    )
+    with pytest.raises(MakeupNotEligible):
+        await use_case.execute(
+            SubmitMakeupRequestCommand(
+                parent_id="parent-1", student_id="student-1", missed_occurrence_id="occ-missed"
+            )
+        )

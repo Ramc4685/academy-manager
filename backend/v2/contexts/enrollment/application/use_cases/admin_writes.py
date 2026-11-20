@@ -1449,7 +1449,11 @@ class TransferEnrollment:
         # records that as a `hold_reclaim_orphaned` audit event instead of
         # silently pretending the target seat was never touched.
         try:
-            await self._enrollments.update_session(enrollment.enrollment_id, cmd.target_session_id)
+            await self._enrollments.update_session(
+                enrollment.enrollment_id,
+                cmd.target_session_id,
+                expected_session_id=enrollment.session_id,
+            )
         except BaseException:
             await self._release_quietly(cmd.target_session_id, acquisition)
             raise
@@ -1697,14 +1701,18 @@ class BulkTransferEnrollments:
                 continue
             except Exception:
                 # Rows already moved stay moved; report this one instead of
-                # hiding the earlier successes behind a 500.
+                # hiding the earlier successes behind a 500. The failure may have
+                # come after the row was re-pointed, so never claim it stayed.
                 log.exception("bulk_transfer_row_failed enrollment_id=%s", enrollment_id)
                 results.append(
                     BulkTransferRowResult(
                         enrollment_id=enrollment_id,
                         ok=False,
                         error_code="Enrollment.TransferFailed",
-                        message="Could not move this student. Try again on its own.",
+                        message=(
+                            "Something went wrong while moving this student. The roster "
+                            "has refreshed: check where they are before trying again."
+                        ),
                     )
                 )
                 continue
