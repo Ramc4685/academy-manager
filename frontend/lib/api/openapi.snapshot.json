@@ -12325,6 +12325,113 @@
         "title": "BulkStatusBody",
         "type": "object"
       },
+      "BulkTransferEnrollmentsRequest": {
+        "description": "A0-8: move several roster rows to one class in one request.",
+        "properties": {
+          "effective_date": {
+            "format": "date",
+            "title": "Effective Date",
+            "type": "string"
+          },
+          "enrollment_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Enrollment Ids",
+            "type": "array"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "target_session_id": {
+            "title": "Target Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_ids",
+          "target_session_id",
+          "effective_date"
+        ],
+        "title": "BulkTransferEnrollmentsRequest",
+        "type": "object"
+      },
+      "BulkTransferEnrollmentsResponse": {
+        "properties": {
+          "failed_count": {
+            "title": "Failed Count",
+            "type": "integer"
+          },
+          "moved_count": {
+            "title": "Moved Count",
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/BulkTransferRowView"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results",
+          "moved_count",
+          "failed_count"
+        ],
+        "title": "BulkTransferEnrollmentsResponse",
+        "type": "object"
+      },
+      "BulkTransferRowView": {
+        "properties": {
+          "enrollment_id": {
+            "title": "Enrollment Id",
+            "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "ok"
+        ],
+        "title": "BulkTransferRowView",
+        "type": "object"
+      },
       "CalendarFeedLinkView": {
         "properties": {
           "url": {
@@ -15176,6 +15283,133 @@
           }
         },
         "title": "ContactPatch",
+        "type": "object"
+      },
+      "CopiedRosterRowView": {
+        "properties": {
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "full_name",
+          "ok"
+        ],
+        "title": "CopiedRosterRowView",
+        "type": "object"
+      },
+      "CopySessionRequest": {
+        "description": "A0-8 Copy class. Omitted schedule fields keep the source class's.",
+        "properties": {
+          "copy_roster": {
+            "default": false,
+            "title": "Copy Roster",
+            "type": "boolean"
+          },
+          "days_of_week": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Of Week"
+          },
+          "end_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Time"
+          },
+          "start_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Time"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "CopySessionRequest",
+        "type": "object"
+      },
+      "CopySessionResponse": {
+        "properties": {
+          "price_copied": {
+            "title": "Price Copied",
+            "type": "boolean"
+          },
+          "roster": {
+            "items": {
+              "$ref": "#/components/schemas/CopiedRosterRowView"
+            },
+            "title": "Roster",
+            "type": "array"
+          },
+          "session": {
+            "$ref": "#/components/schemas/AdminSessionView"
+          }
+        },
+        "required": [
+          "session",
+          "price_copied",
+          "roster"
+        ],
+        "title": "CopySessionResponse",
         "type": "object"
       },
       "CorrectAttendanceRequest": {
@@ -21813,6 +22047,78 @@
           "sent_at"
         ],
         "title": "LoginInviteResponse",
+        "type": "object"
+      },
+      "MakeupCandidateView": {
+        "properties": {
+          "class_title": {
+            "title": "Class Title",
+            "type": "string"
+          },
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "has_notice": {
+            "title": "Has Notice",
+            "type": "boolean"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "student_name",
+          "occurrence_id",
+          "session_id",
+          "class_title",
+          "start_at",
+          "end_at",
+          "has_notice",
+          "expires_at"
+        ],
+        "title": "MakeupCandidateView",
+        "type": "object"
+      },
+      "MakeupCandidatesResponse": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/MakeupCandidateView"
+            },
+            "title": "Candidates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidates"
+        ],
+        "title": "MakeupCandidatesResponse",
         "type": "object"
       },
       "MakeupRequestAdminRow": {
@@ -41039,6 +41345,48 @@
         ]
       }
     },
+    "/api/v2/admin/enrollments/bulk-transfer": {
+      "post": {
+        "description": "A0-8: per-row results; a refused row never blocks the others.",
+        "operationId": "bulk_transfer_enrollments_api_v2_admin_enrollments_bulk_transfer_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkTransferEnrollmentsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkTransferEnrollmentsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bulk Transfer Enrollments",
+        "tags": [
+          "admin.sessions"
+        ]
+      }
+    },
     "/api/v2/admin/enrollments/quote": {
       "post": {
         "operationId": "quote_enrollment_api_v2_admin_enrollments_quote_post",
@@ -49159,6 +49507,59 @@
         ]
       }
     },
+    "/api/v2/admin/sessions/{session_id}/copy": {
+      "post": {
+        "description": "A0-8: new class from this one; optionally its active students too.",
+        "operationId": "copy_session_api_v2_admin_sessions__session_id__copy_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopySessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopySessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Copy a class",
+        "tags": [
+          "admin.sessions"
+        ]
+      }
+    },
     "/api/v2/admin/sessions/{session_id}/enrollments": {
       "get": {
         "operationId": "list_enrollments_api_v2_admin_sessions__session_id__enrollments_get",
@@ -55742,6 +56143,28 @@
           }
         },
         "summary": "Create Makeup Request",
+        "tags": [
+          "parent.makeup_requests"
+        ]
+      }
+    },
+    "/api/v2/parent/makeups/candidates": {
+      "get": {
+        "description": "#1037/#1041: each child's missed classes the server would accept a\nmakeup request for now, under the academy's current policy.",
+        "operationId": "list_makeup_candidates_api_v2_parent_makeups_candidates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MakeupCandidatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Makeup Candidates",
         "tags": [
           "parent.makeup_requests"
         ]
