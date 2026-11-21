@@ -110,7 +110,7 @@ export function BiometricLock() {
       <p className="max-w-xs text-sm text-rally-muted">
         Use your face, fingerprint or phone passcode to continue.
       </p>
-      <Button variant="primary" size="lg" onClick={() => void unlock()} disabled={busy}>
+      <Button variant="primary" size="lg" autoFocus onClick={() => void unlock()} disabled={busy}>
         {busy ? "Waiting…" : "Unlock"}
       </Button>
       <button
