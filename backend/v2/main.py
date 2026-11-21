@@ -1717,7 +1717,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         await _run_isolated_per_academy(
             "process_stripe_webhook_events",
-            await _scheduler_academy_ids(MongoAcademyRepository(db), scheduler_fallback_academy_id),
+            await _scheduler_academy_ids(
+                MongoAcademyRepository(db), scheduler_fallback_academy_id, include_suspended=True
+            ),
             _drain,
         )
         if totals["processed"] or totals["failed"] or totals["quarantined"]:
@@ -1758,7 +1760,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         await _run_isolated_per_academy(
             "reconcile_stripe_payment_intents",
-            await _scheduler_academy_ids(MongoAcademyRepository(db), scheduler_fallback_academy_id),
+            await _scheduler_academy_ids(
+                MongoAcademyRepository(db), scheduler_fallback_academy_id, include_suspended=True
+            ),
             _reconcile,
         )
         if totals["repaired"] or totals["quarantined"] or totals["failed"]:
@@ -3097,16 +3101,39 @@ async def _due_periods(
     return due
 
 
+#: Tenant lifecycle states whose scheduled work stops. A DENYLIST on purpose:
+#: a missing or unknown status keeps running, so a legacy academy row never
+#: silently loses its billing loops.
+SCHEDULER_SKIPPED_TENANT_STATUSES = frozenset({"suspended", "cancelled"})
+
+
 async def _scheduler_academy_ids(
     academies: MongoAcademyRepository,
     default_academy_id: str,
+    *,
+    include_suspended: bool = False,
 ) -> list[str]:
+    """Academies a scheduled job runs for.
+
+    Suspended and cancelled tenants are skipped unless ``include_suspended``:
+    only the inbound-truth jobs (webhook drain, PaymentIntent reconcile) keep
+    them, so money Stripe already moved still lands in the ledger. The
+    fallback academy is added only when it has no ``academies`` row at all,
+    so a suspended one is not re-added through the back door.
+    """
     academy_ids: list[str] = []
     seen: set[str] = set()
-    for academy_id in await academies.list_ids():
-        if academy_id and academy_id not in seen:
-            academy_ids.append(academy_id)
-            seen.add(academy_id)
+    skipped: list[str] = []
+    for academy_id, status in await academies.list_ids_with_status():
+        if not academy_id or academy_id in seen:
+            continue
+        seen.add(academy_id)
+        if not include_suspended and status in SCHEDULER_SKIPPED_TENANT_STATUSES:
+            skipped.append(academy_id)
+            continue
+        academy_ids.append(academy_id)
+    if skipped:
+        log.info("scheduler_skipped_inactive_tenants", extra={"academy_ids": skipped})
     if default_academy_id and default_academy_id not in seen:
         academy_ids.append(default_academy_id)
     return academy_ids

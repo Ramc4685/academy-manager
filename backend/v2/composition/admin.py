@@ -112,6 +112,7 @@ from backend.v2.contexts.billing.application.charge_admin_invoice import (
     attempt_regex,
     charge_invoice_as_admin,
 )
+from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
 from backend.v2.contexts.billing.application.checkout_paid_period import (
     CheckoutPaidPeriodResolver,
 )
@@ -3513,7 +3514,18 @@ def compose_admin(
         reason = reason.strip()
         if not reason:
             raise ValueError("reason is required")
-        checkout = await stripe.retrieve_checkout_session(stripe_checkout_session_id)
+        academy_id = request_academy_id()  # the request's academy, as the route below
+        # A direct charge's session lives on the academy's connected account
+        # (#983); the house academy reads the platform. The account comes from
+        # this academy's own route, never from the request; every row written
+        # below records that account (None = platform) so refunds route right.
+        route = await resolve_charge_route(
+            connected_accounts=connected_accounts_repo,
+            settings=billing_settings_repo,
+            context="admin_reconcile_stripe_billing",
+        )
+        on_account, account = route.on_account_kwargs(), route.connected_account_id
+        checkout = await stripe.retrieve_checkout_session(stripe_checkout_session_id, **on_account)
         metadata = checkout.get("metadata") if isinstance(checkout.get("metadata"), dict) else {}
         metadata = metadata or {}
         checkout_academy_id = metadata.get("academy_id")
@@ -3546,12 +3558,11 @@ def compose_admin(
         payment_status = str(checkout.get("payment_status") or "")
         checkout_status = str(checkout.get("status") or "")
         if not stripe_payment_intent_id and stripe_invoice_id:
-            invoice = await stripe.retrieve_invoice(stripe_invoice_id)
+            invoice = await stripe.retrieve_invoice(stripe_invoice_id, **on_account)
             stripe_payment_intent_id = str(invoice.get("payment_intent") or "")
         if customer_id:
             await parent_customers_repo.set_stripe_customer_id(
-                parent_id=parent_id,
-                stripe_customer_id=customer_id,
+                parent_id=parent_id, stripe_customer_id=customer_id, stripe_account_id=account
             )
 
         app_subscription_id = str(
@@ -3572,6 +3583,7 @@ def compose_admin(
                         "enrollment_id": enrollment_id,
                         "session_id": str(enrollment.get("session_id") or ""),
                         "stripe_subscription_id": stripe_subscription_id,
+                        "stripe_account_id": account,
                         "status": "active" if payment_status == "paid" else "incomplete",
                         "payment_mode": "monthly",
                         "updated_at": now,
@@ -3647,6 +3659,7 @@ def compose_admin(
                                 "stripe_subscription_id": stripe_subscription_id or None,
                                 "stripe_invoice_id": stripe_invoice_id or None,
                                 "stripe_payment_intent_id": stripe_payment_intent_id or None,
+                                "stripe_account_id": account,
                                 "amount_received_cents": amount_total or final_amount,
                                 "paid_amount_cents": amount_total or final_amount,
                                 "balance_due_cents": 0,

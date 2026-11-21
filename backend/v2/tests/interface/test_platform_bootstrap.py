@@ -87,7 +87,7 @@ def test_platform_bootstrap_route_creates_membership_and_settings_records(
     body = response.json()
     assert body["created"] is True
     assert body["academy_id"] == "acad_test"
-    assert body["owner_role"] == "admin"
+    assert body["owner_role"] == "owner"
     assert body["default_records"] == [
         "academy",
         "owner_user",
@@ -96,7 +96,7 @@ def test_platform_bootstrap_route_creates_membership_and_settings_records(
     ]
 
     owner = store.users["owner@example.com"]
-    assert store.memberships[(body["academy_id"], owner["user_id"])]["roles"] == ["admin"]
+    assert store.memberships[(body["academy_id"], owner["user_id"])]["roles"] == ["admin", "owner"]
     assert body["academy_id"] in store.waivers
     # Settings overhaul Phase 2: the four setup-only collections nothing read
     # (academy_settings, billing_policies, academy_roles, academy_feature_flags)

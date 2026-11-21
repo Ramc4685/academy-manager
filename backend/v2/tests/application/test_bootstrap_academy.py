@@ -103,7 +103,7 @@ async def test_bootstrap_creates_tenant_owner_membership_and_defaults() -> None:
     assert "roles" not in owner
 
     membership = store.memberships[(result.academy_id, owner["user_id"])]
-    assert membership["roles"] == ["admin"]
+    assert membership["roles"] == ["admin", "owner"]
     assert membership["status"] == "active"
 
     waiver = store.waivers[result.academy_id]

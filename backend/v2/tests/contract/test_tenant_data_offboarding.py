@@ -8,6 +8,7 @@ deleting, and leave both tenants' data exactly as it was. Synthetic data only.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import zipfile
@@ -124,11 +125,12 @@ async def _snapshot(db: Any) -> dict[str, int]:
 async def test_export_of_a_contains_every_tenant_collection_and_no_b_rows(real_db) -> None:
     await _seed(real_db)
 
-    archive = await _service(real_db).export_tenant(
+    export = await _service(real_db).export_tenant(
         A, actor_user_id="platform-admin", reason="academy asked for its data"
     )
+    content = b"".join([chunk async for chunk in export.chunks])
 
-    with zipfile.ZipFile(io.BytesIO(archive.content)) as zf:
+    with zipfile.ZipFile(io.BytesIO(content)) as zf:
         names = set(zf.namelist())
         manifest = json.loads(zf.read("manifest.json"))
         bodies = {name: zf.read(name).decode() for name in names}
@@ -145,10 +147,16 @@ async def test_export_of_a_contains_every_tenant_collection_and_no_b_rows(real_d
     assert manifest["total_documents"] == len(TENANT_OWNED_COLLECTIONS) + 1
     assert set(manifest["files"]) == names - {"manifest.json"}
 
+    started = await real_db["platform_audit_events"].find_one(
+        {"action": "tenant.data_export_started"}
+    )
+    assert started is not None and started["academy_id"] == A
     audit = await real_db["platform_audit_events"].find_one({"action": "tenant.data_exported"})
     assert audit is not None
     assert audit["academy_id"] == A
-    assert audit["after_snapshot"]["archive_sha256"] == archive.sha256
+    assert audit["after_snapshot"]["archive_sha256"] == hashlib.sha256(content).hexdigest()
+    assert audit["after_snapshot"]["archive_bytes"] == len(content)
+    assert audit["after_snapshot"]["total_documents"] == manifest["total_documents"]
 
 
 @pytest.mark.asyncio
@@ -158,6 +166,7 @@ async def test_export_is_refused_when_the_audit_row_cannot_be_written(real_db) -
     async def _broken(command: RecordPlatformAuditEventCommand) -> object:
         raise RuntimeError("audit store down")
 
+    # Refused before a stream exists, so no byte can leave.
     with pytest.raises(RuntimeError, match="audit store down"):
         await _service(real_db, recorder=_broken).export_tenant(
             A, actor_user_id="platform-admin", reason="academy asked for its data"

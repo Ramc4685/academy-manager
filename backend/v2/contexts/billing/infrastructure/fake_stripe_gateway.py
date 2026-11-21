@@ -91,6 +91,9 @@ class FakeStripeGateway(StripeGateway):
         self.unexpirable_checkouts: set[str] = set()
         # Stripe Invoicing invoices voided alongside a ledger void (#784).
         self.voided_invoices: list[str] = []
+        # (id, stripe_account) of every invoice / subscription read (#983).
+        self.retrieved_invoices: list[tuple[str, str | None]] = []
+        self.retrieved_subscriptions: list[tuple[str, str | None]] = []
 
     # -- account dimension -------------------------------------------------
 
@@ -436,7 +439,11 @@ class FakeStripeGateway(StripeGateway):
             )
         self.expired_checkouts.append(checkout_session_id)
 
-    async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
+    async def retrieve_invoice(
+        self, stripe_invoice_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
+        self._require_on_account(stripe_invoice_id, stripe_account, "invoice")
+        self.retrieved_invoices.append((stripe_invoice_id, stripe_account))
         return {
             "id": stripe_invoice_id,
             "object": "invoice",
@@ -449,7 +456,11 @@ class FakeStripeGateway(StripeGateway):
     async def void_stripe_invoice(self, stripe_invoice_id: str) -> None:
         self.voided_invoices.append(stripe_invoice_id)
 
-    async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
+    async def retrieve_subscription(
+        self, stripe_subscription_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
+        self._require_on_account(stripe_subscription_id, stripe_account, "subscription")
+        self.retrieved_subscriptions.append((stripe_subscription_id, stripe_account))
         return {
             "id": stripe_subscription_id,
             "object": "subscription",

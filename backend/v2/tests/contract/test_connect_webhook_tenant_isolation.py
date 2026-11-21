@@ -19,6 +19,7 @@ platform-scoped ``MongoConnectedAccountDirectory`` and the composition
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -38,6 +39,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_connected_account_director
 )
 from backend.v2.contexts.billing.infrastructure.mongo_connected_account_repo import (
     MongoConnectedAccountRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_payment_intent_directory import (
+    MongoPaymentIntentDirectory,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_stripe_dedup import MongoStripeEventDedup
 from backend.v2.shared.tenancy import tenant_scope
@@ -80,6 +84,7 @@ def _handler(
     *,
     payments: FakePaymentRepo | None = None,
     tenancy_mode: str = "multi_academy",
+    payment_intent_owners: Any = None,
 ) -> HandleWebhookEvent:
     return HandleWebhookEvent(
         stripe=FakeStripeGateway(),
@@ -92,6 +97,11 @@ def _handler(
             repo, academy_id, directory=MongoConnectedAccountDirectory(real_db)
         ),
         tenancy_mode=tenancy_mode,
+        payment_intent_owners=(
+            MongoPaymentIntentDirectory(real_db)
+            if payment_intent_owners is None
+            else payment_intent_owners
+        ),
     )
 
 
@@ -306,3 +316,144 @@ async def test_house_platform_events_attribute_exactly_as_before(real_db) -> Non
             "received",
             None,
         )
+
+
+# --- unknown accounts never reach a ledger (pins the Connect quarantine) -------
+
+
+async def test_payment_event_on_an_unknown_account_touches_no_academy(real_db) -> None:
+    """Before tenant payment events are subscribed on the Connect endpoint: a
+    payment for an account no academy owns is quarantined, and nothing in any
+    academy records it."""
+    repo = await _seed(real_db)
+    payments = FakePaymentRepo()
+    handler_a = _handler(real_db, repo, ACAD_A, payments=payments)
+    body = json.dumps(
+        {
+            "id": "evt_pi_unknown",
+            "type": "payment_intent.succeeded",
+            "account": "acct_nobody",
+            "data": {
+                "object": {
+                    "id": "pi_unknown",
+                    "object": "payment_intent",
+                    "amount": 5000,
+                    "metadata": {"academy_id": ACAD_A},
+                }
+            },
+        }
+    ).encode()
+
+    await handler_a.accept(body, "test_signature")
+    result = await handler_a.process_next(processor_id="worker-a")
+
+    assert result["status"] == "quarantined"
+    assert "unknown connected account" in result["error"]
+    assert payments.by_id == payments.by_pi == {}
+    assert await real_db["ledger_payments"].count_documents({}) == 0
+
+
+# --- #982: platform disputes attribute by the disputed PaymentIntent -----------
+
+
+def _platform_dispute(event_id: str, payment_intent: str | None) -> bytes:
+    obj: dict[str, Any] = {"id": f"dp_{event_id}", "object": "dispute", "amount": 5000}
+    if payment_intent is not None:
+        obj["payment_intent"] = payment_intent
+    return json.dumps(
+        {"id": event_id, "type": "charge.dispute.created", "data": {"object": obj}}
+    ).encode()
+
+
+async def _ledger_payment(real_db: Any, academy_id: str, pi: str, account: str | None = None):
+    doc: dict[str, Any] = {
+        "academy_id": academy_id,
+        "payment_id": f"lp_{academy_id}_{pi}",
+        "stripe_payment_intent_id": pi,
+        "status": "succeeded",
+        "amount_cents": 5000,
+        "unapplied_amount_cents": 0,
+        "currency": "usd",
+        "parent_id": "parent_1",
+        "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC),
+    }
+    if account is not None:
+        doc["stripe_account_id"] = account
+    await real_db["ledger_payments"].insert_one(doc)
+
+
+async def test_platform_dispute_is_stored_under_and_drained_by_the_owning_academy(
+    real_db,
+) -> None:
+    repo = await _seed(real_db)
+    await _ledger_payment(real_db, ACAD_B, "pi_house_b")
+    handler_a = _handler(real_db, repo, ACAD_A)
+
+    result = await handler_a.accept(_platform_dispute("evt_dp_b", "pi_house_b"), "test_signature")
+
+    assert result == {"received": True, "stored": True, "type": "charge.dispute.created"}
+    row = await _stored(real_db, "evt_dp_b")
+    assert (row["academy_id"], row["status"]) == (ACAD_B, "received")
+    dedup = MongoStripeEventDedup(real_db)
+    assert await dedup.claim_next(academy_id=ACAD_A, processor_id="w") is None
+    claimed = await dedup.claim_next(academy_id=ACAD_B, processor_id="w")
+    assert claimed is not None and claimed["event_id"] == "evt_dp_b"
+
+
+@pytest.mark.parametrize(
+    ("event_id", "seed", "reason"),
+    [
+        ("evt_dp_none", [], "no ledger payment records"),
+        ("evt_dp_two", [(ACAD_A, None), (ACAD_B, None)], "several ledger payments"),
+        ("evt_dp_connect", [(ACAD_B, ACCT_B)], "is on connected account"),
+    ],
+)
+async def test_unmatched_or_ambiguous_platform_disputes_stay_quarantined(
+    real_db, event_id, seed, reason
+) -> None:
+    repo = await _seed(real_db)
+    for academy_id, account in seed:
+        await _ledger_payment(real_db, academy_id, "pi_disputed", account)
+    handler_a = _handler(real_db, repo, ACAD_A)
+
+    result = await handler_a.accept(_platform_dispute(event_id, "pi_disputed"), "test_signature")
+
+    assert result["status"] == "quarantined"
+    row = await _stored(real_db, event_id)
+    assert row["academy_id"] == handle_webhook_event_module.UNATTRIBUTED_QUARANTINE_ACADEMY
+    assert row["status"] == "quarantined"
+    assert reason in row["error_message"]
+
+
+async def test_a_dispute_without_a_payment_intent_stays_quarantined(real_db) -> None:
+    repo = await _seed(real_db)
+    handler_a = _handler(real_db, repo, ACAD_A)
+
+    result = await handler_a.accept(_platform_dispute("evt_dp_nopi", None), "test_signature")
+
+    assert result["status"] == "quarantined"
+
+
+async def test_a_failed_dispute_owner_lookup_stores_nothing(real_db) -> None:
+    class _Down:
+        async def owners_of_payment_intent(self, _pi: str):
+            raise RuntimeError("mongo unavailable")
+
+    repo = await _seed(real_db)
+    handler_a = _handler(real_db, repo, ACAD_A, payment_intent_owners=_Down())
+
+    with pytest.raises(handle_webhook_event_module.WebhookAccountLookupUnavailable):
+        await handler_a.accept(_platform_dispute("evt_dp_down", "pi_x"), "test_signature")
+
+    assert await real_db["stripe_webhook_events"].count_documents({"event_id": "evt_dp_down"}) == 0
+
+
+async def test_single_academy_disputes_attribute_to_the_handler_as_before(real_db) -> None:
+    repo = await _seed(real_db)
+    await _ledger_payment(real_db, ACAD_B, "pi_elsewhere")
+    single = _handler(real_db, repo, HOUSE, tenancy_mode="single_academy")
+
+    await single.accept(_platform_dispute("evt_dp_single", "pi_elsewhere"), "test_signature")
+
+    assert (await _stored(real_db, "evt_dp_single"))["academy_id"] == HOUSE

@@ -181,7 +181,16 @@ account. Stripe only delivers them to an endpoint registered for
 own secret (`STRIPE_CONNECT_WEBHOOK_SECRET`). The gateway already tries both
 secrets. Before the first non-house academy takes a payment, confirm in the
 Stripe Dashboard that a Connect endpoint exists for `/webhooks/stripe` and
-subscribes to the same payment event types as the platform endpoint.
+subscribes to the same payment event types as the platform endpoint:
+`checkout.session.completed`, `checkout.session.expired`,
+`checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`,
+`payment_intent.succeeded`, `payment_intent.payment_failed`,
+`payment_intent.processing`, `setup_intent.succeeded`, `invoice.paid`,
+`invoice.payment_failed`, `customer.subscription.*`, `charge.refunded`,
+`charge.dispute.created` and `charge.dispute.closed`, plus `account.updated`
+and `capability.updated`. Subscribing them is safe: an event for an account no
+academy owns is quarantined before any read or write, and invoice and
+subscription hydration reads the event's account (#983).
 
 How an event is attributed (`HandleWebhookEvent._ingest_academy_id`):
 
@@ -264,6 +273,13 @@ whose `account` contradicts the payment's recorded account is quarantined.
   endpoint must subscribe to the two dispute events for the house academy.
   Check in the Stripe Dashboard (read-only).
 - In `multi_academy` mode a platform dispute event has no
-  `metadata.academy_id` and no `account`, so it is quarantined as
-  unattributed. House disputes are only recorded automatically in
-  `single_academy` mode.
+  `metadata.academy_id` and no `account`. Ingest attributes it by the disputed
+  PaymentIntent (#982): `MongoPaymentIntentDirectory` (read-only,
+  platform-scoped, index from migration 0245) finds the `ledger_payments` rows
+  recording it. Exactly one row, on the platform (no `stripe_account_id`):
+  stored under that academy and processed. No row, rows in several academies,
+  or a row on a connected account: quarantined as unattributed with the reason
+  in `error_message`. A lookup error answers 503 and stores nothing. Only
+  `ledger_payments.stripe_payment_intent_id` is searched: a dispute on an
+  older `payments`-only charge, or one recorded under the legacy
+  `stripe_payment_intent` field, is still quarantined for manual handling.
