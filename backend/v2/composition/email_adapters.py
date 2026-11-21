@@ -251,6 +251,35 @@ class LastCharge(BaseModel):
     charged_on: date
 
 
+class InvoiceAdjustment(BaseModel):
+    """One discount, waiver or credit line, in the invoice's own public wording
+    (#1035). ``category`` is the recurring discount's category, when it has one.
+    Never an admin's private note or audit reason."""
+
+    model_config = {"frozen": True}
+
+    description: str
+    amount_cents: int
+    category: str | None = None
+
+
+def adjustments_html(
+    adjustments: Sequence[InvoiceAdjustment], *, currency: str, academy_name: str
+) -> str:
+    """The parent-facing explanation of every amount taken off the bill. A
+    coach-child benefit names who pays for it ("fees covered by <academy>")."""
+    rows = []
+    for adj in adjustments:
+        label = (
+            f"Coach benefit: fees covered by {academy_name}"
+            if adj.category == "coach_child"
+            else adj.description
+        )
+        amount = format_money(adj.amount_cents, currency)
+        rows.append(f"<li>{html.escape(label)}: {html.escape(amount)}</li>")
+    return f"<ul style='padding-left: 18px;'>{''.join(rows)}</ul>" if rows else ""
+
+
 class InvoiceNaming(BaseModel):
     """What a parent needs to recognise a charge (issue #659).
 
@@ -270,6 +299,8 @@ class InvoiceNaming(BaseModel):
     #: The previous successful charge on this enrollment, when one landed in
     #: the last 45 days. ``None`` means "say nothing" — never "no charge".
     last_charge: LastCharge | None = None
+    #: Discount / waiver / credit lines (#1035); empty means "say nothing".
+    adjustments: tuple[InvoiceAdjustment, ...] = ()
 
 
 def tuition_for(period: str, naming: InvoiceNaming) -> str:
@@ -502,6 +533,13 @@ class InvoiceEmailAdapter:
             )
         else:
             pay_line = f"<p style='color: {_BRAND_MUTED};'>Please contact the academy to arrange payment.</p>"
+        # A fully waived month (#1035): nothing to pay, so no pay copy at all.
+        no_payment_html = "<p><strong>No payment required.</strong></p>"
+        if balance_due_cents <= 0:
+            pay_line = no_payment_html
+        adjustments_block = adjustments_html(
+            naming.adjustments, currency=currency, academy_name=academy_name
+        )
         subject = self._tuition_for(period, naming)
         if naming.session_label:
             subject = f"{subject} — {naming.session_label}"
@@ -510,10 +548,11 @@ class InvoiceEmailAdapter:
             f"<h2 style='color: {_BRAND_HEADING}; font-size: 20px; margin: 0 0 12px;'>"
             f"{html.escape(month)} tuition</h2>"
             f"<p>{self._tuition_html(period, naming)} is ready.</p>"
+            f"{adjustments_block}"
             f"<p>Balance due: <strong>{safe_amount}</strong> "
             f"(invoice total {safe_total}).</p>"
             f"{pay_line}"
-            f"{payment_instructions_html}"
+            f"{payment_instructions_html if balance_due_cents > 0 else ''}"
             f"{self._invoice_number_html(naming)}"
         )
         brand = await _academy_brand(self._academies, academy_name)
@@ -541,10 +580,13 @@ class InvoiceEmailAdapter:
                 f"<h2 style='color: {_BRAND_HEADING}; font-size: 20px; margin: 0 0 12px;'>"
                 f"{html.escape(month)} tuition</h2>"
                 f"<p>{self._tuition_html(period, naming)} is ready.</p>"
+                f"{adjustments_block}"
                 f"<p>Balance due: <strong>{safe_amount}</strong> "
                 f"(invoice total {safe_total}).</p>"
                 + (
-                    f"<p style='color: {_BRAND_MUTED};'>The payment link was sent to the "
+                    no_payment_html
+                    if balance_due_cents <= 0
+                    else f"<p style='color: {_BRAND_MUTED};'>The payment link was sent to the "
                     "family's primary email.</p>"
                     if checkout_url
                     else f"<p style='color: {_BRAND_MUTED};'>Please contact the academy to "

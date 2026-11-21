@@ -29,7 +29,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from backend.v2.composition.email_adapters import InvoiceNaming, LastCharge
+from backend.v2.composition.email_adapters import InvoiceAdjustment, InvoiceNaming, LastCharge
 from backend.v2.contexts.billing.application.use_cases.invoice_numbering import (
     mint_invoice_number,
 )
@@ -98,9 +98,27 @@ def build_invoice_naming_resolver(
             session_label=session_label,
             invoice_number=number,
             last_charge=last_charge,
+            adjustments=await _adjustments(ledger, invoice_id),
         )
 
     return resolve
+
+
+async def _adjustments(ledger: Any, invoice_id: str) -> tuple[InvoiceAdjustment, ...]:
+    """Every negative line, in its stored public wording (#1035). Lines carry no
+    private note (the discount policy keeps that), so nothing private leaks."""
+    try:
+        lines = await ledger.get_lines_for_invoice(invoice_id)
+    except Exception:
+        log.warning("invoice_naming_adjustments_unresolved", exc_info=True)
+        return ()
+    return tuple(
+        InvoiceAdjustment(
+            description=line.description, amount_cents=line.amount_cents, category=line.category
+        )
+        for line in lines
+        if line.amount_cents < 0
+    )
 
 
 async def _student_name(db: Any, academy_id: str, student_id: str | None) -> str | None:

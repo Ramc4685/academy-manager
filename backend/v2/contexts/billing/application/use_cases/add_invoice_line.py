@@ -26,9 +26,13 @@ from backend.v2.contexts.billing.application.ports import (
     BillingSettingsRepository,
     LedgerRepository,
 )
+from backend.v2.contexts.billing.application.use_cases.application_fee import (
+    BillingAuditAppender,
+)
 from backend.v2.contexts.billing.application.use_cases.invoice_numbering import (
     mint_invoice_number,
 )
+from backend.v2.contexts.billing.domain.billing_audit import BillingAuditEntry
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     InvoiceLineAdded,
@@ -59,6 +63,10 @@ class AddInvoiceLineCommand(BaseModel):
     source_type: str | None = None
     source_id: str | None = None
     product_id: str | None = None  # informational only — prefills description/type at call site
+    # An owner's correction: why, and who. Audited, never shown to the parent
+    # (the public wording is ``description``) — #1035.
+    reason: str | None = None
+    actor_id: str | None = None
 
     # Required in Mode B so the created invoice has the right parent/academy
     academy_id: str | None = None
@@ -94,8 +102,10 @@ class AddInvoiceLine:
         counters: BillingCounterRepository | None = None,
         settings: BillingSettingsRepository | None = None,
         clock=lambda: datetime.now(UTC),
+        audit: BillingAuditAppender | None = None,
     ) -> None:
         self._ledger = ledger
+        self._audit = audit
         self._counters = counters
         self._settings = settings
         self._clock = clock
@@ -136,6 +146,29 @@ class AddInvoiceLine:
             academy_id=saved_invoice.academy_id,
         )
         logger.info("InvoiceLineAdded: %s", event)
+        if self._audit is not None and cmd.reason:
+            # After the write, like the refund/void paths: the line is real
+            # whether or not the trail append succeeds.
+            await self._audit.append(
+                BillingAuditEntry(
+                    audit_id=f"baud-{new_ulid()}",
+                    academy_id=saved_invoice.academy_id,
+                    action="invoice_line_added",
+                    actor_id=cmd.actor_id or "system",
+                    at=now,
+                    invoice_id=saved_invoice.invoice_id,
+                    parent_id=saved_invoice.parent_id,
+                    reason=cmd.reason,
+                    after={
+                        "line_id": new_line.line_id,
+                        "line_type": new_line.line_type,
+                        "description": new_line.description,
+                        "amount_cents": new_line.amount_cents,
+                        "invoice_total_cents": saved_invoice.total_cents,
+                        "invoice_balance_due_cents": saved_invoice.balance_due_cents,
+                    },
+                )
+            )
 
         return AddInvoiceLineResult(invoice=saved_invoice, line=new_line)
 

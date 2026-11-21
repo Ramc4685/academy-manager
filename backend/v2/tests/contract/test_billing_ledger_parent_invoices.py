@@ -234,3 +234,36 @@ async def test_undelivered_query_does_not_cross_academies(db, acad) -> None:
     rows = await repo.list_undelivered_invoices_for_period("2026-05")
 
     assert [inv.invoice_id for inv in rows] == ["inv-mine"]
+
+
+@pytest.mark.asyncio
+async def test_undelivered_query_includes_zero_net_waiver_invoices(db, acad) -> None:
+    """#1035: a fully waived month (gross tuition, net $0) still owes the parent
+    an invoice that says "no payment required"; a truly empty $0 row does not."""
+    repo = MongoBillingLedgerRepository(db)
+    await _seed(
+        repo,
+        acad,
+        "inv-waived",
+        subtotal_cents=10_000,
+        discount_cents=10_000,
+        total_cents=0,
+        balance_due_cents=0,
+    )
+    await _seed(repo, acad, "inv-empty", subtotal_cents=0, total_cents=0, balance_due_cents=0)
+    # Partly paid down to zero but not yet flipped to paid: nothing to say.
+    await _seed(repo, acad, "inv-paid-down", balance_due_cents=0)
+    await _seed(
+        repo,
+        acad,
+        "inv-waived-sent",
+        delivery_status="sent",
+        subtotal_cents=10_000,
+        discount_cents=10_000,
+        total_cents=0,
+        balance_due_cents=0,
+    )
+
+    rows = await repo.list_undelivered_invoices_for_period("2026-05")
+
+    assert [inv.invoice_id for inv in rows] == ["inv-waived"]

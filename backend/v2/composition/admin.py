@@ -1592,29 +1592,13 @@ def compose_admin(
             raise ValueError("invoice not found")
         return await billing_ledger_repo.list_payment_attempts(invoice_id)
 
-    async def add_invoice_line(
-        *,
-        invoice_id: str,
-        description: str,
-        line_type: str,
-        quantity: int,
-        unit_amount_cents: int,
-        product_id: str | None,
-    ) -> dict[str, Any]:
+    async def add_invoice_line(**fields: Any) -> dict[str, Any]:
         result = await AddInvoiceLine(
             ledger=billing_ledger_repo,
             counters=billing_counters_repo,
             settings=billing_settings_repo,
-        ).execute(
-            AddInvoiceLineCommand(
-                invoice_id=invoice_id,
-                description=description,
-                line_type=line_type,
-                quantity=quantity,
-                unit_amount_cents=unit_amount_cents,
-                product_id=product_id,
-            )
-        )
+            audit=billing_audit_log,
+        ).execute(AddInvoiceLineCommand(**fields))
         return {
             "line": result.line.model_dump(mode="python"),
             "invoice": result.invoice.model_dump(mode="python"),

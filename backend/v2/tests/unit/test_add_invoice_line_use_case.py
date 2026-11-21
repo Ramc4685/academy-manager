@@ -448,3 +448,66 @@ def test_command_raises_mode_b_missing_parent_id() -> None:
             academy_id="acad-1",
             **_line_cmd(),
         )
+
+
+# ---------------------------------------------------------------------------
+# #1035: an owner's adjustment keeps its reason and actor in the audit trail
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_adjustment_reason_and_actor_are_audited() -> None:
+    from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
+        AddInvoiceLine,
+        AddInvoiceLineCommand,
+    )
+
+    class _Audit:
+        def __init__(self) -> None:
+            self.entries: list = []
+
+        async def append(self, entry) -> None:
+            self.entries.append(entry)
+
+    repo, invoice_id = await _audit_fixture()
+    audit = _Audit()
+
+    await AddInvoiceLine(ledger=repo, audit=audit).execute(
+        AddInvoiceLineCommand(
+            invoice_id=invoice_id,
+            description="Coach benefit",
+            line_type="adjustment",
+            unit_amount_cents=-2_000,
+            reason="Coach started mid-month",
+            actor_id="owner-1",
+        )
+    )
+
+    [entry] = audit.entries
+    assert entry.action == "invoice_line_added"
+    assert entry.invoice_id == invoice_id
+    assert entry.reason == "Coach started mid-month"
+    assert entry.actor_id == "owner-1"
+    assert entry.after["amount_cents"] == -2_000
+    assert entry.after["description"] == "Coach benefit"
+
+
+async def _audit_fixture() -> tuple[FakeLedgerRepository, str]:
+    invoice = _open_invoice().model_copy(
+        update={"subtotal_cents": 10_000, "total_cents": 10_000, "balance_due_cents": 10_000}
+    )
+    repo = FakeLedgerRepository(invoices=[invoice])
+    await repo.save_line(
+        InvoiceLine(
+            line_id="line-tuition",
+            academy_id="acad-1",
+            invoice_id=invoice.invoice_id,
+            line_type="tuition",
+            description="Monthly tuition",
+            quantity=1,
+            unit_amount_cents=10_000,
+            amount_cents=10_000,
+            created_at=NOW,
+        )
+    )
+    return repo, invoice.invoice_id
