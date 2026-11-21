@@ -320,8 +320,10 @@ class TenantDataOffboardingService:
                 files=files,
             )
             archive.writestr("manifest.json", manifest.model_dump_json(indent=2))
-        # Closing the archive wrote the central directory into the sink.
-        yield drain()
+        # Closing the archive wrote the central directory into the sink. Audit
+        # BEFORE yielding it: without the directory the zip cannot be opened,
+        # so a failed completion audit leaves the client nothing usable.
+        final = drain()
         await self._emit_audit(
             actor_user_id=actor_user_id,
             academy_id=academy_id,
@@ -337,6 +339,7 @@ class TenantDataOffboardingService:
             request_id=request_id,
             ip_address=ip_address,
         )
+        yield final
 
     async def purge_dry_run(
         self,

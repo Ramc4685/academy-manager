@@ -163,12 +163,16 @@ class _CountingStore(FakeTenantDataStore):
             yield row
 
 
-def _offboarding(store: FakeTenantDataStore) -> tuple[TenantDataOffboardingService, list[Any]]:
+def _offboarding(
+    store: FakeTenantDataStore, *, fail_action: str | None = None
+) -> tuple[TenantDataOffboardingService, list[Any]]:
     repo = FakeTenantRepository()
     repo.tenants["acad_live"] = _tenant("acad_live", "active")
     audits: list[RecordPlatformAuditEventCommand] = []
 
     async def _record(command: RecordPlatformAuditEventCommand) -> object:
+        if command.action == fail_action:
+            raise RuntimeError("audit store down")
         audits.append(command)
         return None
 
@@ -272,3 +276,19 @@ def test_route_without_a_composed_service_is_503() -> None:
     app.dependency_overrides[get_auth_claims] = _override
     response = TestClient(app).post("/api/v2/platform/tenants/acad_gone/purge-dry-run")
     assert response.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_a_failed_completion_audit_withholds_the_central_directory() -> None:
+    service, audits = _offboarding(
+        FakeTenantDataStore({"students": [{"academy_id": "acad_live", "student_id": "s1"}]}),
+        fail_action="tenant.data_exported",
+    )
+    export = await service.export_tenant("acad_live", actor_user_id="platform-admin", reason="r")
+    received = bytearray()
+    with pytest.raises(RuntimeError, match="audit store down"):
+        async for chunk in export.chunks:
+            received += chunk
+    with pytest.raises(zipfile.BadZipFile):
+        zipfile.ZipFile(io.BytesIO(bytes(received)))
+    assert [a.action for a in audits] == ["tenant.data_export_started"]
