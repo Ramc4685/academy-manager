@@ -53,7 +53,7 @@ async def test_mongo_bootstrap_store_creates_idempotent_tenant_defaults(db) -> N
         {"academy_id": first.academy_id, "user_id": owner["user_id"]}
     )
     assert membership is not None
-    assert membership["roles"] == ["admin"]
+    assert membership["roles"] == ["admin", "owner"]
 
     # Settings overhaul Phase 2: setup-only collections are no longer written.
     for unread in (
@@ -72,3 +72,23 @@ async def test_mongo_bootstrap_store_creates_idempotent_tenant_defaults(db) -> N
     assert waiver["body"]
     assert waiver["content_hash"]
     assert waiver["effective_from"] is not None
+
+
+@pytest.mark.asyncio
+async def test_rerun_on_an_admin_only_academy_does_not_regrant_and_reports_admin(db) -> None:
+    """Academies bootstrapped before the owner grant keep their roles on a re-run."""
+    use_case = BootstrapAcademy(
+        store=MongoTenantBootstrapStore(db),
+        id_factory=lambda prefix: f"{prefix}test",
+    )
+    first = await use_case.execute(_command())
+    assert first.owner_role == "owner"
+    await db["academy_memberships"].update_one(
+        {"membership_id": first.membership_id}, {"$set": {"roles": ["admin"]}}
+    )
+
+    second = await use_case.execute(_command())
+
+    membership = await db["academy_memberships"].find_one({"membership_id": first.membership_id})
+    assert membership["roles"] == ["admin"]
+    assert second.owner_role == "admin"
