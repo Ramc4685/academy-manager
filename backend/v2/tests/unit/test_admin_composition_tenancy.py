@@ -1576,3 +1576,64 @@ async def test_admin_reconcile_reads_the_checkout_session_on_the_academys_accoun
         )
 
     assert stripe.reads == [("cs_1", "acct_request")]
+
+
+@pytest.mark.asyncio
+async def test_admin_reconcile_records_the_connected_account_on_every_row_it_writes(
+    mongo_db,
+) -> None:
+    """#983 made the connected-account read succeed; the rows it then writes
+    must carry that account, or a later refund goes to the platform."""
+    await mongo_db["academy_connected_accounts"].insert_one(
+        _ready_connected_account("request-acad", "acct_request")
+    )
+    await mongo_db["enrollments"].insert_one(
+        {"academy_id": "request-acad", "enrollment_id": "enroll-1", "parent_id": "parent-1"}
+    )
+    await mongo_db["ledger_payments"].insert_one(
+        {
+            "academy_id": "request-acad",
+            "payment_id": "pay-1",
+            "payment_origin": "legacy_payment",
+            "enrollment_id": "enroll-1",
+            "status": "pending",
+            "final_amount_cents": 5000,
+            "created_at": datetime(2026, 11, 1, tzinfo=UTC),
+        }
+    )
+
+    class _Stripe:
+        async def retrieve_checkout_session(
+            self, checkout_session_id: str, *, stripe_account: str | None = None
+        ) -> dict[str, Any]:
+            assert stripe_account == "acct_request"
+            return {
+                "id": checkout_session_id,
+                "metadata": {"academy_id": "request-acad", "parent_id": "parent-1"},
+                "customer": "cus_connected",
+                "subscription": "sub_connected",
+                "payment_intent": "pi_connected",
+                "payment_status": "paid",
+                "status": "complete",
+                "amount_total": 5000,
+            }
+
+    admin = _admin_use_cases_with_stripe(mongo_db, _Stripe())
+    with tenant_scope("request-acad"):
+        await admin.reconcile_stripe_billing(
+            parent_id="parent-1",
+            enrollment_id="enroll-1",
+            stripe_customer_id=None,
+            stripe_checkout_session_id="cs_1",
+            reason="manual check",
+            actor_id="admin-1",
+        )
+
+    payment = await mongo_db["ledger_payments"].find_one({"payment_id": "pay-1"})
+    assert payment["status"] == "succeeded"
+    assert payment["stripe_account_id"] == "acct_request"
+    customer = await mongo_db["parent_billing_customers"].find_one({"parent_id": "parent-1"})
+    assert customer["stripe_customer_id"] == "cus_connected"
+    assert customer["stripe_account_id"] == "acct_request"
+    subscription = await mongo_db["subscriptions"].find_one({"academy_id": "request-acad"})
+    assert subscription["stripe_account_id"] == "acct_request"
