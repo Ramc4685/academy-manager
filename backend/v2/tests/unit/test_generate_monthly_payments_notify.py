@@ -99,7 +99,11 @@ async def test_the_mint_send_outcome_rides_on_the_result() -> None:
         payments=_FakePayments(created=8), notify_minted=notify
     ).execute(GenerateMonthlyPaymentsCommand(period="2026-09"))
 
-    assert (result.mint_emailed, result.mint_email_failed, result.mint_autopay_notified) == (5, 1, 2)
+    assert (result.mint_emailed, result.mint_email_failed, result.mint_autopay_notified) == (
+        5,
+        1,
+        2,
+    )
     assert result.mint_send_failed is False
 
 

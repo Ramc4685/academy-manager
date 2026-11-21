@@ -164,7 +164,7 @@ async def test_a_mint_pass_that_raises_is_flagged_and_the_sweep_still_delivers()
 
 
 async def test_a_retry_only_tick_whose_sweep_raises_is_an_explicit_failure() -> None:
-    db, ledger, send, generate = _wire(["a"])
+    db, _ledger, send, generate = _wire(["a"])
     _seed_history(db, "a", "2026-09")  # already generated: retry-only tick
     send.raise_next["a"] = 1
 
