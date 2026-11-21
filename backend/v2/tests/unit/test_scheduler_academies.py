@@ -20,10 +20,13 @@ from backend.v2.shared.tenancy.context import current_academy_id
 
 class _FakeAcademyRepo:
     def __init__(self, docs: list[dict[str, object]]) -> None:
-        self._ids = [str(doc.get("academy_id") or "") for doc in docs]
+        self._rows = [
+            (str(doc.get("academy_id") or ""), doc.get("status") or None)  # type: ignore[misc]
+            for doc in docs
+        ]
 
-    async def list_ids(self) -> list[str]:
-        return self._ids
+    async def list_ids_with_status(self) -> list[tuple[str, str | None]]:
+        return self._rows  # type: ignore[return-value]
 
 
 @pytest.mark.asyncio
@@ -41,6 +44,81 @@ async def test_scheduler_academy_ids_are_unique_and_include_default() -> None:
         "academy-a",
         "academy-b",
         "default-academy",
+    ]
+
+
+_LIFECYCLE = [
+    {"academy_id": "active", "status": "active"},
+    {"academy_id": "legacy-no-status"},
+    {"academy_id": "provisioning", "status": "provisioning"},
+    {"academy_id": "suspended", "status": "suspended"},
+    {"academy_id": "cancelled", "status": "cancelled"},
+    {"academy_id": "unknown", "status": "archived-someday"},
+]
+
+
+@pytest.mark.asyncio
+async def test_suspended_and_cancelled_tenants_are_skipped_everything_else_runs() -> None:
+    """L13: a denylist, so a missing or unknown status never stops billing."""
+    ids = await _scheduler_academy_ids(_FakeAcademyRepo(_LIFECYCLE), "")
+
+    assert ids == ["active", "legacy-no-status", "provisioning", "unknown"]
+
+
+@pytest.mark.asyncio
+async def test_include_suspended_keeps_every_tenant_for_inbound_truth_jobs() -> None:
+    ids = await _scheduler_academy_ids(_FakeAcademyRepo(_LIFECYCLE), "", include_suspended=True)
+
+    assert ids == [doc["academy_id"] for doc in _LIFECYCLE]
+
+
+@pytest.mark.asyncio
+async def test_a_suspended_fallback_academy_is_not_re_added() -> None:
+    academies = _FakeAcademyRepo([{"academy_id": "primary", "status": "suspended"}])
+
+    assert await _scheduler_academy_ids(academies, "primary") == []
+
+
+@pytest.mark.asyncio
+async def test_an_absent_fallback_academy_is_still_added() -> None:
+    academies = _FakeAcademyRepo([{"academy_id": "other", "status": "active"}])
+
+    assert await _scheduler_academy_ids(academies, "primary") == ["other", "primary"]
+
+
+def test_only_the_inbound_truth_jobs_include_suspended_tenants() -> None:
+    """The webhook drain and PaymentIntent reconcile keep suspended tenants so
+    money Stripe already moved lands in the ledger; nothing else may."""
+    import backend.v2.main as main_module
+
+    source = inspect.getsource(main_module)
+    assert source.count("include_suspended=True") == 2
+    for job in ("process_stripe_webhook_events", "reconcile_stripe_payment_intents"):
+        call = re.search(
+            rf'_run_isolated_per_academy\(\s*"{job}",\s*await _scheduler_academy_ids\((.*?)\),\s*_',
+            source,
+            re.S,
+        )
+        assert call is not None and "include_suspended=True" in call.group(1)
+
+
+@pytest.mark.asyncio
+async def test_academy_repo_reports_status_per_academy() -> None:
+    import mongomock_motor
+
+    from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
+        MongoAcademyRepository,
+    )
+
+    db = mongomock_motor.AsyncMongoMockClient()["test"]
+
+    await db["academies"].insert_many(
+        [{"academy_id": "a", "status": "suspended"}, {"academy_id": "b"}, {"academy_id": ""}]
+    )
+
+    assert await MongoAcademyRepository(db).list_ids_with_status() == [
+        ("a", "suspended"),
+        ("b", None),
     ]
 
 
