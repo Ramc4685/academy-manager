@@ -61,6 +61,7 @@ from backend.v2.contexts.communications.domain.models import (
     PaymentRiskAudience,
     SelectedRecipientsAudience,
     SessionAudience,
+    SessionsAudience,
     audience_descriptor,
 )
 from backend.v2.shared.comms.email_theme import EmailBrand
@@ -468,6 +469,8 @@ class SendCampaign:
             return await self.resolver.resolve_academy_audience(audience)
         if isinstance(audience, SessionAudience):
             return await self.resolver.resolve_session_audience(audience)
+        if isinstance(audience, SessionsAudience):
+            return await self.resolver.resolve_sessions_audience(audience)
         if isinstance(audience, CoachAudience):
             return await self.resolver.resolve_coach_audience(audience)
         if isinstance(audience, SelectedRecipientsAudience):

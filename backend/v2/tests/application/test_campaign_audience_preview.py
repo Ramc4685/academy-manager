@@ -30,6 +30,11 @@ async def _seed_session(
     db: Any, session_id: str, families: dict[str, list[str]], *, academy_id: str = A
 ) -> None:
     """``families`` maps a parent suffix to the student suffixes it owns."""
+    await db["sessions"].update_one(
+        {"academy_id": academy_id, "session_id": session_id},
+        {"$set": {"title": session_id}},
+        upsert=True,
+    )
     for parent, students in families.items():
         await db["users"].insert_one(
             {
@@ -262,3 +267,106 @@ def test_composed_campaign_preview_consults_the_senders_own_gates() -> None:
     db = AsyncMongoMockClient()["preview-compose"]
     use_case = compose_send_campaign(db, sender, SimpleNamespace())
     assert tuple(use_case.gates) == (suppressions, preferences)
+
+
+# --- #1030: one campaign, several sessions ------------------------------------
+
+
+async def _seed_two_overlapping_sessions(db: Any) -> None:
+    # p0 has a child in each session; p1 only in sess-1; p2 only in sess-2;
+    # p3's contact shares p2's contact address.
+    await _seed_session(db, "sess-1", {"p0": ["a0"], "p1": ["a1"]})
+    await _seed_session(db, "sess-2", {"p2": ["b2"]})
+    await db["students"].insert_one({"academy_id": A, "student_id": "b0", "parent_id": "par-p0"})
+    await db["enrollments"].insert_one(
+        {
+            "academy_id": A,
+            "enrollment_id": "enr-sess-2-b0",
+            "session_id": "sess-2",
+            "student_id": "b0",
+            "status": "active",
+        }
+    )
+    await db["family_contacts"].insert_many(
+        [
+            {
+                "academy_id": A,
+                "contact_id": "c1",
+                "parent_id": "par-p1",
+                "name": "Grandparent",
+                "email": "gran@example.test",
+                "gets_notices": True,
+                "created_at": "1",
+            },
+            {
+                "academy_id": A,
+                "contact_id": "c2",
+                "parent_id": "par-p2",
+                "name": "Same Gran",
+                "email": "GRAN@example.test",
+                "gets_notices": True,
+                "created_at": "2",
+            },
+        ]
+    )
+    # Another academy reuses the same session id; never part of this audience.
+    await _seed_session(db, "sess-2", {"x9": ["x9"]}, academy_id="acad-2")
+
+
+async def test_two_sessions_send_one_copy_per_address_within_the_academy() -> None:
+    from backend.v2.contexts.communications.application.use_cases.send_campaign import (
+        SendCampaignCommand,
+    )
+    from backend.v2.contexts.communications.domain.models import SessionsAudience
+
+    db = AsyncMongoMockClient()["preview-two-sessions"]
+    await _seed_two_overlapping_sessions(db)
+    sender = StubEmailSendPort()
+    use_case = _use_case(db)
+    use_case.sender = sender
+    audience = SessionsAudience(session_ids=("sess-1", "sess-2"))
+
+    with tenant_scope(A):
+        preview = await use_case.preview(audience)
+        result = await use_case.execute(
+            SendCampaignCommand(
+                academy_id=A, sender_id="admin-1", audience=audience, subject="S", body="B"
+            )
+        )
+
+    expected = {"p0@example.test", "p1@example.test", "p2@example.test", "gran@example.test"}
+    assert {r.email for r in preview.recipients} == expected
+    assert (preview.recipient_count, preview.family_count, preview.contact_count) == (4, 3, 1)
+    sent = [s["email"].lower() for s in sender.sent]
+    assert sorted(sent) == sorted(expected)
+    assert result.sent_count == 4
+
+
+async def test_unknown_or_other_academy_session_is_rejected() -> None:
+    import pytest
+
+    from backend.v2.contexts.communications.domain.errors import InvalidAudienceError
+    from backend.v2.contexts.communications.domain.models import SessionsAudience
+
+    db = AsyncMongoMockClient()["preview-foreign-session"]
+    await _seed_session(db, "sess-1", {"p0": ["s0"]})
+    await db["sessions"].insert_one({"academy_id": "acad-2", "session_id": "sess-foreign"})
+
+    with tenant_scope(A), pytest.raises(InvalidAudienceError):
+        await _use_case(db).preview(SessionsAudience(session_ids=("sess-1", "sess-foreign")))
+
+
+def test_sessions_audience_round_trips_and_refuses_empty() -> None:
+    import pytest
+
+    from backend.v2.contexts.communications.domain.errors import InvalidAudienceError
+    from backend.v2.contexts.communications.domain.models import (
+        SessionsAudience,
+        audience_descriptor,
+        parse_audience,
+    )
+
+    audience = SessionsAudience(session_ids=("sess-1", "sess-2"))
+    assert parse_audience(audience_descriptor(audience)) == audience
+    with pytest.raises(InvalidAudienceError):
+        SessionsAudience(session_ids=())

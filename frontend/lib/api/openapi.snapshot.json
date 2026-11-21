@@ -12445,6 +12445,130 @@
         "title": "CalendarFeedLinkView",
         "type": "object"
       },
+      "CampaignPreviewExclusion": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "is_family_contact": {
+            "default": false,
+            "title": "Is Family Contact",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "CampaignPreviewExclusion",
+        "type": "object"
+      },
+      "CampaignPreviewRecipient": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "is_family_contact": {
+            "default": false,
+            "title": "Is Family Contact",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "CampaignPreviewRecipient",
+        "type": "object"
+      },
+      "CampaignPreviewRequest": {
+        "properties": {
+          "audience": {
+            "$ref": "#/components/schemas/SendCampaignAudience"
+          }
+        },
+        "required": [
+          "audience"
+        ],
+        "title": "CampaignPreviewRequest",
+        "type": "object"
+      },
+      "CampaignPreviewResponse": {
+        "description": "Resolved audience before a send (#1029): unique addresses, and the\nfamilies and opted-in contacts they belong to. Never an enrollment count.",
+        "properties": {
+          "audience_fingerprint": {
+            "default": "",
+            "title": "Audience Fingerprint",
+            "type": "string"
+          },
+          "contact_count": {
+            "title": "Contact Count",
+            "type": "integer"
+          },
+          "exclusions": {
+            "items": {
+              "$ref": "#/components/schemas/CampaignPreviewExclusion"
+            },
+            "title": "Exclusions",
+            "type": "array"
+          },
+          "family_count": {
+            "title": "Family Count",
+            "type": "integer"
+          },
+          "recipient_count": {
+            "title": "Recipient Count",
+            "type": "integer"
+          },
+          "recipients": {
+            "items": {
+              "$ref": "#/components/schemas/CampaignPreviewRecipient"
+            },
+            "title": "Recipients",
+            "type": "array"
+          }
+        },
+        "required": [
+          "recipient_count",
+          "family_count",
+          "contact_count"
+        ],
+        "title": "CampaignPreviewResponse",
+        "type": "object"
+      },
       "CancelAccountDeletionPayload": {
         "properties": {
           "reason": {
@@ -31597,6 +31721,21 @@
             ],
             "title": "Session Id"
           },
+          "session_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Ids"
+          },
           "type": {
             "enum": [
               "academy",
@@ -31622,6 +31761,18 @@
             "minLength": 1,
             "title": "Body",
             "type": "string"
+          },
+          "expected_audience_fingerprint": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Audience Fingerprint"
           },
           "idempotency_key": {
             "anyOf": [
@@ -40414,6 +40565,48 @@
           }
         },
         "summary": "Send Email Campaign",
+        "tags": [
+          "admin.comms"
+        ]
+      }
+    },
+    "/api/v2/admin/campaigns/preview": {
+      "post": {
+        "description": "Read-only: resolves the audience the send would reach; emails nobody.",
+        "operationId": "preview_email_campaign_api_v2_admin_campaigns_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CampaignPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Email Campaign",
         "tags": [
           "admin.comms"
         ]

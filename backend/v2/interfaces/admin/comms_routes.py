@@ -13,7 +13,9 @@ from backend.v2.contexts.communications.application.errors import (
     AudienceChangedError,
     DuplicateCampaignError,
     EmptyAudienceError,
+    InvalidAudienceError,
     SessionAudience,
+    SessionsAudience,
 )
 from backend.v2.contexts.communications.application.use_cases.send_campaign import (
     SendCampaignCommand,
@@ -111,11 +113,18 @@ async def dm(
     return _message_view(m, claims.user_id)
 
 
-def _campaign_audience(raw: SendCampaignAudience) -> AcademyAudience | SessionAudience:
+def _campaign_audience(
+    raw: SendCampaignAudience,
+) -> AcademyAudience | SessionAudience | SessionsAudience:
     if raw.type == "session":
-        if not raw.session_id:
+        ids = list(dict.fromkeys(s for s in (raw.session_ids or []) if s))
+        if not ids and raw.session_id:
+            ids = [raw.session_id]
+        if not ids:
             raise HTTPException(status_code=400, detail="session_id required for session audience")
-        return SessionAudience(session_id=raw.session_id)
+        if len(ids) == 1:
+            return SessionAudience(session_id=ids[0])
+        return SessionsAudience(session_ids=tuple(ids))
     return AcademyAudience(role=raw.role)
 
 
@@ -128,7 +137,10 @@ async def preview_email_campaign(
     """Read-only: resolves the audience the send would reach; emails nobody."""
     if use_cases.send_campaign is None:
         raise HTTPException(status_code=503, detail="Email campaign sending is not configured")
-    preview = await use_cases.send_campaign.preview(_campaign_audience(payload.audience))
+    try:
+        preview = await use_cases.send_campaign.preview(_campaign_audience(payload.audience))
+    except InvalidAudienceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return CampaignPreviewResponse(
         recipient_count=preview.recipient_count,
         family_count=preview.family_count,
@@ -181,7 +193,7 @@ async def send_email_campaign(
         raise HTTPException(
             status_code=409, detail={"code": "audience_changed", "message": str(exc)}
         ) from exc
-    except EmptyAudienceError as exc:
+    except (EmptyAudienceError, InvalidAudienceError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except DuplicateCampaignError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

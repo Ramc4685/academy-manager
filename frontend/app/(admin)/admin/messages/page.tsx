@@ -788,7 +788,9 @@ function buildEmailHtml(body: string, academy: AdminAcademyView | undefined): st
 
 function EmailCampaignComposer() {
   const [audienceType, setAudienceType] = useState<"academy" | "session">("academy");
-  const [sessionId, setSessionId] = useState("");
+  // #1030: one campaign can reach several sessions; the server sends one copy
+  // per address across all of them.
+  const [sessionIds, setSessionIds] = useState<string[]>([]);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [result, setResult] = useState<{
@@ -816,9 +818,9 @@ function EmailCampaignComposer() {
 
   const audience: CampaignAudiencePayload =
     audienceType === "session"
-      ? { type: "session", session_id: sessionId }
+      ? { type: "session", session_ids: sessionIds }
       : { type: "academy", role: "parent" };
-  const audienceChosen = audienceType === "academy" || sessionId.length > 0;
+  const audienceChosen = audienceType === "academy" || sessionIds.length > 0;
 
   // #1029: the count comes from the server's resolution of this audience (the
   // same one the send uses), never from the session's enrolled-student count.
@@ -874,13 +876,20 @@ function EmailCampaignComposer() {
     previewState.counts.recipient_count > 0;
 
   // #838: say who this reaches before it goes, in resolved addresses (#1029).
-  const selectedSession = sessions.find((s) => s.session_id === sessionId);
+  const selectedSessions = sessions.filter((s) => sessionIds.includes(s.session_id));
   const audienceLabel =
     audienceType === "session"
-      ? selectedSession
-        ? campaignAudienceLabel(previewState, `on ${selectedSession.title}`)
-        : "the selected session"
+      ? selectedSessions.length === 0
+        ? "the selected sessions"
+        : campaignAudienceLabel(
+            previewState,
+            selectedSessions.length === 1
+              ? `on ${selectedSessions[0].title}`
+              : `across ${selectedSessions.length} sessions`,
+          )
       : campaignAudienceLabel(previewState, "in the academy");
+  const toggleSession = (id: string) =>
+    setSessionIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
 
   if (result) {
     return (
@@ -954,19 +963,38 @@ function EmailCampaignComposer() {
         </div>
 
         {audienceType === "session" && (
-          <select
-            value={sessionId}
-            onChange={(e) => setSessionId(e.target.value)}
-            className="w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30"
-            aria-label="Select session"
-          >
-            <option value="">— Select a session —</option>
-            {sessions.map((s) => (
-              <option key={s.session_id} value={s.session_id}>
-                {s.title} {s.start_time ? `· ${s.start_time}` : ""}
-              </option>
-            ))}
-          </select>
+          <div className="space-y-2">
+            <ul
+              aria-label="Select sessions"
+              className="max-h-56 divide-y divide-rally-line overflow-y-auto rounded-md border border-rally-line bg-white"
+            >
+              {sessions.length === 0 && (
+                <li className="px-3 py-2 text-sm text-rally-subtle">No upcoming sessions.</li>
+              )}
+              {sessions.map((s) => (
+                <li key={s.session_id}>
+                  <label className="flex min-h-11 cursor-pointer items-center gap-3 px-3 py-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={sessionIds.includes(s.session_id)}
+                      onChange={() => toggleSession(s.session_id)}
+                      className="accent-rally-cobalt"
+                      aria-label={s.title}
+                    />
+                    <span className="text-rally-ink">{s.title}</span>
+                    {s.start_time && (
+                      <span className="ml-auto font-mono text-[11px] text-rally-subtle">{s.start_time}</span>
+                    )}
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <p className="text-[12px] text-rally-subtle" data-testid="campaign-selected-sessions">
+              {selectedSessions.length === 0
+                ? "Select one or more sessions."
+                : `Selected: ${selectedSessions.map((s) => s.title).join(", ")}`}
+            </p>
+          </div>
         )}
       </fieldset>
 
@@ -1040,6 +1068,12 @@ function EmailCampaignComposer() {
               A real email leaves the academy&apos;s address for every recipient. It cannot be
               recalled, edited or unsent, and bounces do not roll back the send.
             </p>
+            {selectedSessions.length > 1 && (
+              <p>
+                <span className="font-semibold text-rally-ink">Sessions: </span>
+                {selectedSessions.map((s) => s.title).join(", ")}
+              </p>
+            )}
             {preview.data && <CampaignRecipientReview preview={preview.data} />}
             <p className="font-semibold text-rally-ink">Preview</p>
             <p className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border border-rally-line bg-rally-paper px-3 py-2 text-rally-ink">

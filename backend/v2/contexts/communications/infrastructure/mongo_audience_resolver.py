@@ -15,12 +15,14 @@ from backend.v2.contexts.communications.application.ports import (
     AudienceResolver,
     ResolvedRecipient,
 )
+from backend.v2.contexts.communications.domain.errors import InvalidAudienceError
 from backend.v2.contexts.communications.domain.models import (
     AcademyAudience,
     CoachAudience,
     PaymentRiskAudience,
     SelectedRecipientsAudience,
     SessionAudience,
+    SessionsAudience,
 )
 from backend.v2.shared.tenancy.context import current_academy_id
 
@@ -109,11 +111,29 @@ class MongoAudienceResolver(AudienceResolver):
         return [self._user_to_recipient(doc) async for doc in legacy_cursor]
 
     async def resolve_session_audience(self, audience: SessionAudience) -> list[ResolvedRecipient]:
+        return await self._resolve_sessions([audience.session_id])
+
+    async def resolve_sessions_audience(
+        self, audience: SessionsAudience
+    ) -> list[ResolvedRecipient]:
+        session_ids = sorted(set(audience.session_ids))
+        cursor = self.db["sessions"].find(
+            {"academy_id": current_academy_id(), "session_id": {"$in": session_ids}},
+            {"session_id": 1},
+        )
+        known = {str(doc["session_id"]) async for doc in cursor}
+        if unknown := [s for s in session_ids if s not in known]:
+            raise InvalidAudienceError(f"unknown session(s): {', '.join(unknown)}")
+        # One resolution over the union: a shared parent, alias or contact
+        # address comes out once, exactly as within a single session.
+        return await self._resolve_sessions(session_ids)
+
+    async def _resolve_sessions(self, session_ids: list[str]) -> list[ResolvedRecipient]:
         academy_id = current_academy_id()
         enrollment_cursor = self.db["enrollments"].find(
             {
                 "academy_id": academy_id,
-                "session_id": audience.session_id,
+                "session_id": {"$in": session_ids},
                 "status": {"$in": sorted(SESSION_AUDIENCE_ENROLLMENT_STATUSES)},
             },
             {"student_id": 1},

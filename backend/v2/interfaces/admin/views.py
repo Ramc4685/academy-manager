@@ -2563,6 +2563,8 @@ class SendCampaignAudience(BaseModel):
     type: Literal["academy", "session"]
     role: Literal["parent", "coach"] = "parent"
     session_id: str | None = None
+    # #1030: several sessions in one campaign; one copy per address across them.
+    session_ids: list[str] | None = Field(default=None, max_length=50)
 
 
 class SendCampaignRequest(BaseModel):

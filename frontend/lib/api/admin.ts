@@ -3392,6 +3392,8 @@ export interface CampaignAudiencePayload {
   type: "academy" | "session";
   role?: "parent" | "coach";
   session_id?: string;
+  /** #1030: several sessions in one campaign, deduplicated server-side. */
+  session_ids?: string[];
 }
 
 export interface SendEmailCampaignRequest {
