@@ -828,3 +828,33 @@ async def test_undisputed_rows_carry_no_dispute_fields(mongo_db) -> None:
     with tenant_scope(ACADEMY):
         [row] = await admin.list_payments_recent()
     assert "dispute_id" not in row
+
+
+@pytest.mark.asyncio
+async def test_dispute_on_a_multi_invoice_payment_shows_on_one_row_only(mongo_db) -> None:
+    """One chargeback must not read as three when its payment settled three invoices."""
+    paid_at = datetime(2026, 9, 3, 17, 14, tzinfo=UTC)
+    for invoice_id in ("inv-c", "inv-a", "inv-b"):
+        await mongo_db["invoices"].insert_one(
+            _invoice(invoice_id, parent_id="parent-1", total_cents=4000, created_at=paid_at)
+        )
+        await mongo_db["payment_allocations"].insert_one(
+            {"academy_id": ACADEMY, "payment_id": "pay-balance", "invoice_id": invoice_id}
+        )
+    await mongo_db["ledger_payments"].insert_one(
+        _ledger_payment(
+            "pay-balance",
+            parent_id="parent-1",
+            amount_cents=12000,
+            paid_at=paid_at,
+            stripe_payment_intent_id="pi_balance",
+        )
+    )
+    await _stamp_dispute(mongo_db, pi="pi_balance")
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = {r["payment_id"]: r for r in await admin.list_payments_recent()}
+
+    assert [pid for pid, r in sorted(rows.items()) if r.get("dispute_id")] == ["inv-a"]
+    assert all(rows[pid]["stripe_linked"] for pid in ("inv-a", "inv-b", "inv-c"))

@@ -9,4 +9,4 @@ The admin Payments list (All invoices) now shows a Stripe dispute on the row it 
 None. No migration and no env change. The dispute fields are read from what the dispute webhook already stamps on payment rows.
 
 ## Risk / rollback
-Display only: no charge, ledger or webhook path changed. If it is wrong, a disputed row shows no note, or a parent sees "no card" for a card autopay would refuse anyway. If the route lookup fails, the card shows as it did before this change. Roll back by reverting the PR.
+Display only: no charge, ledger or webhook path changed. If it is wrong, a disputed row shows no note, or a parent sees "no card" for a card autopay would refuse anyway (the parent portal now also hides a card Stripe has blocked, since it goes through the same `card_counts` check). If the route lookup fails, the card shows as it did before this change. Roll back by reverting the PR.

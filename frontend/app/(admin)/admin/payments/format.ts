@@ -232,9 +232,13 @@ export function disputeLabel(payment: AdminPaymentView): string | null {
   if (!payment.dispute_id) return null;
   const words = (code: string | null | undefined) => (code ?? "").replaceAll("_", " ").trim();
   const amount = formatCents(payment.dispute_amount_cents ?? payment.amount_cents);
-  const head = payment.dispute_outcome
-    ? `Dispute ${words(payment.dispute_outcome)} ${amount}`
-    : `Disputed ${amount}`;
+  // warning_closed: an inquiry that closed without becoming a chargeback.
+  const outcome = payment.dispute_outcome === "warning_closed" ? "Inquiry closed" : null;
+  const head = outcome
+    ? `${outcome} ${amount}`
+    : payment.dispute_outcome
+      ? `Dispute ${words(payment.dispute_outcome)} ${amount}`
+      : `Disputed ${amount}`;
   const status = payment.dispute_outcome ? "" : words(payment.dispute_status);
   return [head, words(payment.dispute_reason), status].filter(Boolean).join(" · ");
 }

@@ -158,4 +158,17 @@ describe("disputeLabel (#980)", () => {
       }),
     ).toBe("Dispute lost $50.00 · product not received");
   });
+
+  it("calls a closed inquiry an inquiry, not a lost or won dispute", () => {
+    expect(
+      disputeLabel({
+        ...base,
+        dispute_id: "dp_2",
+        dispute_status: "warning_closed",
+        dispute_reason: "general",
+        dispute_amount_cents: 13000,
+        dispute_outcome: "warning_closed",
+      }),
+    ).toBe("Inquiry closed $130.00 · general");
+  });
 });
