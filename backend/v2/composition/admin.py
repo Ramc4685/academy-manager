@@ -103,6 +103,7 @@ from backend.v2.contexts.billing.application.admin_money import (
 )
 from backend.v2.contexts.billing.application.admin_payment_settlement import (
     SETTLED_STATUSES,
+    payment_trail_fields,
     settle_matching_rows,
     settlement_method,
 )
@@ -3297,9 +3298,7 @@ def compose_admin(
                         stripe_payment_intent_id or stripe_invoice_id or stripe_checkout_session_id
                     ),
                     "payment_method": settlement_method(doc),
-                    "void_reason": doc.get("void_reason"),
-                    "voided_at": doc.get("voided_at"),
-                    "voided_by": doc.get("voided_by"),
+                    **payment_trail_fields(doc),
                     "created_at": doc["created_at"],
                     "paid_at": doc.get("paid_at"),
                 }

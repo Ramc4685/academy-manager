@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AdminPaymentView } from "@/lib/api/admin";
 
 import {
+  disputeLabel,
   formatPeriodLabel,
   paymentDisplayLabel,
   paymentRowTitle,
@@ -123,5 +124,38 @@ describe("paymentRowTitle (UI-5)", () => {
   it("falls back to the payment kind when there is no period", () => {
     expect(paymentRowTitle({ period: null, stripe_linked: true } as AdminPaymentView)).toBe("Stripe payment");
     expect(paymentRowTitle({ period: null, stripe_linked: false } as AdminPaymentView)).toBe("Manual payment");
+  });
+});
+
+describe("disputeLabel (#980)", () => {
+  const base = { amount_cents: 13000 } as AdminPaymentView;
+
+  it("is null for a payment that was never disputed", () => {
+    expect(disputeLabel(base)).toBeNull();
+  });
+
+  it("names the amount, reason and Stripe status of an open dispute", () => {
+    expect(
+      disputeLabel({
+        ...base,
+        dispute_id: "dp_1",
+        dispute_status: "needs_response",
+        dispute_reason: "fraudulent",
+        dispute_amount_cents: 13000,
+      }),
+    ).toBe("Disputed $130.00 · fraudulent · needs response");
+  });
+
+  it("states the outcome once the dispute closes", () => {
+    expect(
+      disputeLabel({
+        ...base,
+        dispute_id: "dp_1",
+        dispute_status: "lost",
+        dispute_reason: "product_not_received",
+        dispute_amount_cents: 5000,
+        dispute_outcome: "lost",
+      }),
+    ).toBe("Dispute lost $50.00 · product not received");
   });
 });

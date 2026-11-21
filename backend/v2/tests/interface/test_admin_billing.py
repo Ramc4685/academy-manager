@@ -583,6 +583,37 @@ def test_list_payments_uses_filtered_use_case_when_wired(admin_client):
     assert captured["offset"] == 2
 
 
+def test_list_payments_exposes_the_dispute_on_a_disputed_row(admin_client):
+    async def list_payments_filtered(**kwargs):
+        row = {
+            "payment_id": "lp-1",
+            "parent_id": "parent-1",
+            "session_id": None,
+            "amount_cents": 5000,
+            "currency": "usd",
+            "status": "succeeded",
+            "refunded_cents": 0,
+            "created_at": NOW,
+            "dispute_id": "dp_1",
+            "dispute_status": "needs_response",
+            "dispute_reason": "fraudulent",
+            "dispute_amount_cents": 5000,
+            "dispute_outcome": None,
+            "disputed_at": NOW,
+        }
+        return {"payments": [row], "total": 1, "limit": 200, "offset": 0}
+
+    admin_client.use_cases.list_payments_filtered = list_payments_filtered
+    r = admin_client.get("/api/v2/admin/payments")
+    assert r.status_code == 200, r.text
+    row = r.json()["payments"][0]
+    assert row["dispute_id"] == "dp_1"
+    assert row["dispute_status"] == "needs_response"
+    assert row["dispute_reason"] == "fraudulent"
+    assert row["dispute_amount_cents"] == 5000
+    assert row["disputed_at"] is not None
+
+
 def test_payment_feed_returns_rows(admin_client):
     async def list_payment_feed(limit: int = 20):
         assert limit == 5

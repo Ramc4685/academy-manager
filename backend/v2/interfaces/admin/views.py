@@ -988,6 +988,13 @@ class AdminPaymentView(BaseModel):
     void_reason: str | None = None
     voided_at: datetime | None = None
     voided_by: str | None = None
+    # Stripe dispute (chargeback) on this payment (#980); absent when never disputed.
+    dispute_id: str | None = None
+    dispute_status: str | None = None
+    dispute_reason: str | None = None
+    dispute_amount_cents: int | None = None
+    dispute_outcome: str | None = None
+    disputed_at: datetime | None = None
     created_at: datetime
     paid_at: datetime | None = None
 

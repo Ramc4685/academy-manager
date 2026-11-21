@@ -382,6 +382,13 @@ export interface AdminPaymentView {
   void_reason?: string | null;
   voided_at?: string | null;
   voided_by?: string | null;
+  /** Stripe dispute (chargeback) on this payment (#980); absent when never disputed. */
+  dispute_id?: string | null;
+  dispute_status?: string | null;
+  dispute_reason?: string | null;
+  dispute_amount_cents?: number | null;
+  dispute_outcome?: string | null;
+  disputed_at?: string | null;
   created_at: string;
   paid_at?: string | null;
 }

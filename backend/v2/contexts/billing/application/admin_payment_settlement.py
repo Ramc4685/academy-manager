@@ -22,6 +22,35 @@ STRIPE_ID_KEYS: tuple[str, ...] = (
     "stripe_subscription_id",
 )
 
+#: Dispute state ``MongoPaymentDisputeRepository.stamp_payment`` writes onto a
+#: disputed payment row (#980); carried to the admin list unchanged.
+DISPUTE_KEYS: tuple[str, ...] = (
+    "dispute_id",
+    "dispute_status",
+    "dispute_reason",
+    "dispute_amount_cents",
+    "dispute_outcome",
+    "disputed_at",
+)
+
+
+def dispute_fields(doc: dict[str, Any]) -> dict[str, Any]:
+    """``doc``'s dispute stamp, or ``{}`` when it was never disputed."""
+    if not doc.get("dispute_id"):
+        return {}
+    return {key: doc.get(key) for key in DISPUTE_KEYS}
+
+
+def payment_trail_fields(doc: dict[str, Any]) -> dict[str, Any]:
+    """The soft-void trail (#619) and any dispute stamp of a payment row."""
+    return {
+        "void_reason": doc.get("void_reason"),
+        "voided_at": doc.get("voided_at"),
+        "voided_by": doc.get("voided_by"),
+        **dispute_fields(doc),
+    }
+
+
 # Only money actually received settles an invoice. A pending, failed or expired
 # attempt that references an invoice must NOT stamp paid_at / method / Stripe
 # ids onto it, otherwise an unpaid invoice renders as "Stripe linked".
@@ -85,6 +114,7 @@ def apply_settlement(row: dict[str, Any], doc: dict[str, Any]) -> bool:
             row[key] = doc[key]
     if has_stripe_ids(doc):
         row["stripe_linked"] = True
+    row.update(dispute_fields(doc))
 
     method = settlement_method(doc)
     if method is not None:
