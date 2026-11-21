@@ -20942,6 +20942,45 @@
         "title": "ImportSummaryView",
         "type": "object"
       },
+      "IneligibleMakeupView": {
+        "properties": {
+          "class_title": {
+            "title": "Class Title",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "student_name",
+          "occurrence_id",
+          "class_title",
+          "start_at",
+          "reason"
+        ],
+        "title": "IneligibleMakeupView",
+        "type": "object"
+      },
       "InquiryConversionView": {
         "properties": {
           "date_from": {
@@ -22271,6 +22310,24 @@
             },
             "title": "Candidates",
             "type": "array"
+          },
+          "ineligible": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/IneligibleMakeupView"
+            },
+            "title": "Ineligible",
+            "type": "array"
+          },
+          "makeups_enabled": {
+            "default": true,
+            "title": "Makeups Enabled",
+            "type": "boolean"
+          },
+          "requires_notice": {
+            "default": false,
+            "title": "Requires Notice",
+            "type": "boolean"
           }
         },
         "required": [

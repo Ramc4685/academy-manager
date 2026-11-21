@@ -14,6 +14,7 @@ import { queryKeys } from "@/lib/query/keys";
 import {
   makeupCandidateKey,
   makeupCandidateLabel,
+  makeupEmptyMessage,
   requestStatusChipVariant,
 } from "@/lib/parent-requests";
 import {
@@ -326,6 +327,7 @@ function MakeupsPanel() {
   });
 
   const candidates = candidatesQuery.data?.candidates ?? [];
+  const ineligible = candidatesQuery.data?.ineligible ?? [];
   const selected = candidates.find((c) => makeupCandidateKey(c) === selectedKey) ?? null;
 
   const targetsQuery = useQuery({
@@ -379,7 +381,11 @@ function MakeupsPanel() {
         ) : candidatesQuery.isLoading ? (
           <ListSkeleton />
         ) : candidates.length === 0 ? (
-          <PanelEmptyState message="No missed classes available for a makeup request." />
+          <PanelEmptyState
+            message={makeupEmptyMessage(
+              candidatesQuery.data ?? { makeups_enabled: true, requires_notice: false },
+            )}
+          />
         ) : (
           <form
             className="space-y-3"
@@ -441,6 +447,25 @@ function MakeupsPanel() {
               {submitMutation.isPending ? "Submitting…" : "Request makeup"}
             </Button>
           </form>
+        )}
+        {ineligible.length > 0 && (
+          <div className="mt-4" data-testid="makeup-ineligible">
+            <h3 className="text-xs font-semibold text-rally-muted">Can&apos;t be made up</h3>
+            <ul className="mt-2 space-y-2">
+              {ineligible.map((row) => (
+                <li
+                  key={makeupCandidateKey(row)}
+                  className="rounded-lg border border-rally-line p-3 text-sm"
+                >
+                  <p className="font-semibold text-rally-ink">
+                    {row.student_name} — {row.class_title} —{" "}
+                    {formatAcademyDateTime(row.start_at, academyTimezone)}
+                  </p>
+                  <p className="mt-1 text-xs text-rally-muted">{row.reason}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </Card>
 

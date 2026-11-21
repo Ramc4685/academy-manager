@@ -4,6 +4,7 @@ import {
   assignedClassCopy,
   makeupCandidateKey,
   makeupCandidateLabel,
+  makeupEmptyMessage,
   requestStatusChipVariant,
 } from "./parent-requests";
 
@@ -82,5 +83,18 @@ describe("makeup candidate picker (#1037)", () => {
     expect(makeupCandidateLabel(ana, "America/Chicago")).toBe(
       "Ana Fake — Tuesday Beginners — Tue, Nov 17 · 6:30 PM – 7:30 PM CST",
     );
+  });
+});
+
+describe("makeupEmptyMessage (#1041)", () => {
+  it("says makeups are off rather than that nothing was missed", () => {
+    expect(makeupEmptyMessage({ makeups_enabled: false, requires_notice: false })).toMatch(/turned off/);
+  });
+
+  it("explains the on-time notice rule when the academy requires it", () => {
+    expect(makeupEmptyMessage({ makeups_enabled: true, requires_notice: true })).toMatch(
+      /on-time absence notice/,
+    );
+    expect(makeupEmptyMessage({ makeups_enabled: true, requires_notice: false })).not.toMatch(/notice/);
   });
 });

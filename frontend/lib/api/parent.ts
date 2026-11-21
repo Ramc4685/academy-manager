@@ -812,7 +812,24 @@ export interface MakeupCandidateView {
   expires_at: string;
 }
 
-export function listMakeupCandidates(): Promise<{ candidates: MakeupCandidateView[] }> {
+/** #1041: a class the parent flagged that can't be made up, and why. */
+export interface IneligibleMakeupView {
+  student_id: string;
+  student_name: string;
+  occurrence_id: string;
+  class_title: string;
+  start_at: string;
+  reason: string;
+}
+
+export interface MakeupCandidatesResponse {
+  candidates: MakeupCandidateView[];
+  makeups_enabled: boolean;
+  requires_notice: boolean;
+  ineligible: IneligibleMakeupView[];
+}
+
+export function listMakeupCandidates(): Promise<MakeupCandidatesResponse> {
   return apiFetch("/parent/makeups/candidates", { method: "GET" });
 }
 
