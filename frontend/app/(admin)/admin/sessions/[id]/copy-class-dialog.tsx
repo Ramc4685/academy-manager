@@ -22,6 +22,17 @@ export function copyClassNotes(result: CopySessionResponse, sourcePriced: boolea
   return notes;
 }
 
+/**
+ * A retry whose first attempt already made the copy comes back as a duplicate
+ * series with the existing class's id; offer that class instead of a dead end.
+ */
+export function existingCopyId(err: unknown): string | null {
+  const { code, details } = (err ?? {}) as { code?: unknown; details?: Record<string, unknown> };
+  if (code !== "Enrollment.DuplicateSessionSeries") return null;
+  const id = details?.session_id;
+  return typeof id === "string" && id ? id : null;
+}
+
 type CopySchedule = { days: string[]; startTime: string; endTime: string };
 
 const sameDays = (a: readonly string[], b: readonly string[]) =>
@@ -64,6 +75,7 @@ export function CopyClassDialog({
   const canCopyRoster = recurring && Object.keys(schedulePatch).length > 0;
   const copyRoster = canCopyRoster && copyRosterTicked;
   const [error, setError] = useState<string | null>(null);
+  const [existingId, setExistingId] = useState<string | null>(null);
   const [done, setDone] = useState<{ sessionId: string; notes: string[] } | null>(null);
 
   const mutation = useMutation({
@@ -75,6 +87,7 @@ export function CopyClassDialog({
       }),
     onSuccess: (result) => {
       setError(null);
+      setExistingId(null);
       const notes = copyClassNotes(result, session.amount_cents != null);
       if (notes.length === 0) {
         router.push(`/admin/sessions/${encodeURIComponent(result.session.session_id)}`);
@@ -82,7 +95,10 @@ export function CopyClassDialog({
       }
       setDone({ sessionId: result.session.session_id, notes });
     },
-    onError: (err: Error) => setError(err.message ?? "Could not copy this class."),
+    onError: (err: Error) => {
+      setError(err.message ?? "Could not copy this class.");
+      setExistingId(existingCopyId(err));
+    },
   });
 
   return (
@@ -97,6 +113,16 @@ export function CopyClassDialog({
       overline="Class"
     >
       {error && <DialogError message={error} />}
+      {existingId && !done && (
+        <Button
+          variant="secondary"
+          size="sm"
+          data-testid="copy-class-open-existing"
+          onClick={() => router.push(`/admin/sessions/${encodeURIComponent(existingId)}`)}
+        >
+          Open the existing class
+        </Button>
+      )}
       {done ? (
         <div className="space-y-3" data-testid="copy-class-done">
           <p className="text-sm font-semibold text-rally-ink">The new class was created.</p>

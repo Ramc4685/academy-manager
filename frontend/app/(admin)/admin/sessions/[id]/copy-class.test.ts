@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { CopySessionResponse } from "@/lib/api/admin";
 
-import { copyClassNotes, copySchedulePatch } from "./copy-class-dialog";
+import { copyClassNotes, copySchedulePatch, existingCopyId } from "./copy-class-dialog";
 
 const result = (over: Partial<CopySessionResponse>): CopySessionResponse => ({
   session: {} as CopySessionResponse["session"],
@@ -53,3 +53,20 @@ describe("copySchedulePatch", () => {
     });
   });
 });
+
+describe("existingCopyId", () => {
+  it("returns the class a duplicate-series retry points at", () => {
+    const err = Object.assign(new Error("exists"), {
+      code: "Enrollment.DuplicateSessionSeries",
+      details: { session_id: "sess-copy" },
+    });
+    expect(existingCopyId(err)).toBe("sess-copy");
+  });
+
+  it("ignores other errors", () => {
+    const refused = Object.assign(new Error("x"), { code: "Enrollment.CopyRosterRefused" });
+    expect(existingCopyId(refused)).toBeNull();
+    expect(existingCopyId(new Error("network"))).toBeNull();
+  });
+});
+
