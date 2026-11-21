@@ -96,3 +96,65 @@ def test_holds_card_rule() -> None:
     assert not ChargeRoute.connected(ACCT).holds_card(None)
     assert not ChargeRoute.connected(ACCT).holds_card("acct_other")
     assert ChargeRoute(kind="account_not_ready").holds_card(None)
+
+
+class _Users:
+    async def get_by_id(self, user_id: str):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_ach_notice_recipients_hide_a_card_on_another_account(db, acad) -> None:
+    from backend.v2.composition.ach_schedule_notice import _autopay_recipients
+
+    await _connect_ready(db, acad)
+    await _card(db, acad, "p-platform", None)
+    await _card(db, acad, "p-direct", ACCT)
+    for parent_id in ("p-platform", "p-direct"):
+        await db["student_billing_enrollments"].insert_one(
+            {
+                "academy_id": acad,
+                "enrollment_id": f"enr-{parent_id}",
+                "parent_id": parent_id,
+                "autopay_enrollment_status": "active",
+            }
+        )
+
+    rows = {r["parent_id"]: r for r in await _autopay_recipients(db, acad, _Users())}
+
+    assert rows["p-platform"]["payment_method"] is None
+    assert rows["p-direct"]["payment_method"] == "Visa ending 4242"
+
+
+@pytest.mark.asyncio
+async def test_parent_enrollments_hide_a_card_on_another_account(db, acad) -> None:
+    from backend.v2.composition.parent import compose_parent
+
+    await _connect_ready(db, acad)
+    await _card(db, acad, "parent-1", None)
+    await db["students"].insert_one(
+        {"academy_id": acad, "student_id": "s-1", "parent_id": "parent-1", "full_name": "Ada Fake"}
+    )
+    await db["sessions"].insert_one({"academy_id": acad, "session_id": "sess-1", "title": "Squad"})
+    await db["enrollments"].insert_one(
+        {
+            "academy_id": acad,
+            "enrollment_id": "enr-1",
+            "student_id": "s-1",
+            "session_id": "sess-1",
+            "status": "active",
+            "created_at": NOW,
+        }
+    )
+    parent = compose_parent(
+        db,
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=object(),  # type: ignore[arg-type]
+        academy_id=acad,
+    )
+
+    [row] = await parent.list_enrollments_for_parent("parent-1")
+
+    assert row["autopay_payment_method_label"] is None
+    assert row["autopay_payment_method_last4"] is None

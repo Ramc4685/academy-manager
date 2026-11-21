@@ -1554,9 +1554,8 @@ def compose_parent(
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
         if not by_id:
             return []
-        billing_customer = await db["parent_billing_customers"].find_one(
-            {"academy_id": academy_id, "parent_id": parent_id}
-        )
+        # #981: a card on another Stripe account than autopay charges is no card.
+        billing_customer = await parent_customers_repo.get_display_customer(parent_id=parent_id)
         autopay_payment_method_type = None
         autopay_payment_method_label = None
         autopay_payment_method_last4 = None

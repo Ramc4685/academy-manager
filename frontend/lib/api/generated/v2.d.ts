@@ -9684,6 +9684,18 @@ export interface components {
              * @default 0
              */
             discount_cents: number;
+            /** Dispute Amount Cents */
+            dispute_amount_cents?: number | null;
+            /** Dispute Id */
+            dispute_id?: string | null;
+            /** Dispute Outcome */
+            dispute_outcome?: string | null;
+            /** Dispute Reason */
+            dispute_reason?: string | null;
+            /** Dispute Status */
+            dispute_status?: string | null;
+            /** Disputed At */
+            disputed_at?: string | null;
             /** Enrollment Id */
             enrollment_id?: string | null;
             /** Final Amount Cents */
