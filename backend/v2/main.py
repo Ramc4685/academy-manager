@@ -1920,6 +1920,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             or totals["invoices_emailed"]
             or totals["invoice_autopay_notices_sent"]
             or totals["invoice_emails_failed"]
+            # #1033: a failed pass is a signal, not an idle tick, even on a
+            # retry-only tick that generated nothing and emailed nothing.
+            or totals["invoice_email_pass_failed"]
+            or totals["invoice_mint_send_failed"]
+            or totals["generation_failed"]
         ):
             return
         counts = {key: value for key, value in totals.items() if key != "created"}
@@ -2862,6 +2867,9 @@ async def _run_monthly_invoice_generation(
         # send_invoices itself raised (per-invoice failures are
         # invoice_emails_failed).
         "invoice_email_pass_failed": 0,
+        # #1033: the notify-on-mint pass inside generation raised. Not a retry
+        # reason: the sweep right after it re-selects every undelivered invoice.
+        "invoice_mint_send_failed": 0,
     }
     log = logging.getLogger("backend.v2.scheduler")
     for academy_id in academy_ids:
@@ -2904,6 +2912,13 @@ async def _run_monthly_invoice_generation(
                 ran_any = True
                 generated_periods.append(run_period)
                 totals["period_run_count"] += 1
+                # #1033: the notify-on-mint pass already sent these; the sweep
+                # below only finds what it left undelivered, so each invoice's
+                # email outcome is counted exactly once across the two.
+                for total_key, result_key in _MINT_SEND_COUNTS:
+                    totals[total_key] += int(getattr(result, result_key, 0) or 0)
+                if getattr(result, "mint_send_failed", False):
+                    totals["invoice_mint_send_failed"] += 1
                 created = int(getattr(result, "created", 0) or 0)
                 failed_repair = int(getattr(result, "failed_repair", 0) or 0)
                 if failed_repair:
@@ -2985,6 +3000,14 @@ async def _run_monthly_invoice_generation(
         summary["created_count"] = totals["created"]
         log.info("monthly_invoices_generated", extra={**summary, "period": period})
     return totals
+
+
+_MINT_SEND_COUNTS = (
+    ("invoices_emailed", "mint_emailed"),
+    ("invoice_emails_failed", "mint_email_failed"),
+    ("invoice_emails_skipped_autopay", "mint_skipped_autopay"),
+    ("invoice_autopay_notices_sent", "mint_autopay_notified"),
+)
 
 
 async def _email_generated_invoices(

@@ -53,6 +53,14 @@ class GenerateMonthlyPaymentsResult(BaseModel):
     # Keys an operator reviewed and accepted, which this run left alone (#599).
     skipped_reviewed: int = 0
     skipped_details: list[MonthlyGenerationSkippedDetail] = Field(default_factory=list)
+    # #1033: what the notify-on-mint pass did, so the scheduler can report it.
+    # The later sweep selects only undelivered invoices, so these are never
+    # counted twice. ``mint_send_failed``: the whole pass raised.
+    mint_emailed: int = 0
+    mint_email_failed: int = 0
+    mint_skipped_autopay: int = 0
+    mint_autopay_notified: int = 0
+    mint_send_failed: bool = False
 
 
 class MarkPaymentPaidCommand(BaseModel):
@@ -141,7 +149,7 @@ class GenerateMonthlyPayments:
         result = await self._payments.generate_monthly_payments(cmd.period)
         if self._notify_minted is not None and result.created > 0:
             try:
-                await self._notify_minted(cmd.period)
+                outcome = await self._notify_minted(cmd.period)
             except Exception:
                 # Generation is the money-critical half and has already
                 # committed. A failed send leaves every invoice
@@ -152,7 +160,21 @@ class GenerateMonthlyPayments:
                     # NB: not "created" — that is a reserved LogRecord field.
                     extra={"period": cmd.period, "invoices_created": result.created},
                 )
+                return result.model_copy(update={"mint_send_failed": True})
+            return result.model_copy(
+                update={
+                    "mint_emailed": _count(outcome, "emailed"),
+                    "mint_email_failed": _count(outcome, "email_failed"),
+                    "mint_skipped_autopay": _count(outcome, "skipped_autopay"),
+                    "mint_autopay_notified": _count(outcome, "autopay_notified"),
+                }
+            )
         return result
+
+
+def _count(outcome: object, key: str) -> int:
+    value = outcome.get(key, 0) if isinstance(outcome, dict) else getattr(outcome, key, 0)
+    return int(value or 0)
 
 
 class MarkPaymentPaid:

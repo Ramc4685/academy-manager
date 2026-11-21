@@ -1048,16 +1048,16 @@ def compose_admin(
         idempotency_store=idempotency_store,
     )
 
-    async def _notify_minted_invoices(period: str) -> None:
+    async def _notify_minted_invoices(period: str) -> object:
         """Deliver what the run just minted, in the same run (issue #659).
 
         ``send_generated_invoices`` is bound later in this same function; this
         body only runs at request time, long after it exists. It owns the
         autopay split — non-autopay families get the invoice and a pay link,
-        autopay families get the pre-charge notice — so nothing here needs to
-        know the difference.
+        autopay families get the pre-charge notice. Returns the outcome so the
+        ops digest counts these sends (#1033).
         """
-        await send_generated_invoices(period)
+        return await send_generated_invoices(period)
 
     generate_monthly_payments = GenerateMonthlyPayments(
         payments=payments_repo,

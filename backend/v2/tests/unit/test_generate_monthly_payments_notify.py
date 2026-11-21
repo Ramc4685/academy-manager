@@ -83,3 +83,34 @@ async def test_unwired_notifier_leaves_generation_unchanged() -> None:
 
     assert result.created == 1
     assert payments.periods == ["2026-09"]
+
+
+async def test_the_mint_send_outcome_rides_on_the_result() -> None:
+    """#1033: the scheduler reports these; discarding them made a fully
+    delivered run read "0 emailed"."""
+    from backend.v2.contexts.billing.application.use_cases.send_generated_invoices import (
+        SendGeneratedInvoicesResult,
+    )
+
+    async def notify(period: str) -> SendGeneratedInvoicesResult:
+        return SendGeneratedInvoicesResult(emailed=5, email_failed=1, autopay_notified=2)
+
+    result = await GenerateMonthlyPayments(
+        payments=_FakePayments(created=8), notify_minted=notify
+    ).execute(GenerateMonthlyPaymentsCommand(period="2026-09"))
+
+    assert (result.mint_emailed, result.mint_email_failed, result.mint_autopay_notified) == (5, 1, 2)
+    assert result.mint_send_failed is False
+
+
+async def test_a_raising_mint_pass_is_flagged_on_the_result() -> None:
+    async def notify(period: str) -> None:
+        raise RuntimeError("resend is down")
+
+    result = await GenerateMonthlyPayments(
+        payments=_FakePayments(created=2), notify_minted=notify
+    ).execute(GenerateMonthlyPaymentsCommand(period="2026-09"))
+
+    assert result.created == 2
+    assert result.mint_send_failed is True
+    assert result.mint_emailed == 0
