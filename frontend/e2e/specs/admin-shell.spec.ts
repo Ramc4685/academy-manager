@@ -8,6 +8,7 @@ import {
   rowActionControl,
 } from "../helpers/row-actions";
 import {
+  stubCampaignPreview,
   stubCoachAcademy,
   stubCoachMessages,
   stubFamilyOffers,
@@ -404,6 +405,7 @@ async function stubAdminBff(
   await stubFamilyOffers(page);
   await stubFamilySiblingDiscount(page);
   await stubProgressSettings(page);
+  await stubCampaignPreview(page);
   await page.route("**/api/v2/admin/sessions*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { sessions: [] });

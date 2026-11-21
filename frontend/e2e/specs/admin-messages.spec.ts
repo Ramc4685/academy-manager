@@ -5,6 +5,7 @@ import {
   ADMIN_USER_A,
   fulfillJson,
   stubAcademy,
+  stubCampaignPreview,
   stubMe,
   stubMemberships,
 } from "../fixtures/saas-stubs";
@@ -88,6 +89,7 @@ async function stubMessagesPage(page: Page): Promise<{ readCalls: string[] }> {
   const readCalls: string[] = [];
 
   await stubMe(page, ADMIN_USER_A);
+  await stubCampaignPreview(page);
   await stubMemberships(page, [
     { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
   ]);

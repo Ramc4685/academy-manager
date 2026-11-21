@@ -292,14 +292,17 @@ class SendCampaign:
     new_id: Callable[[], str] = field(default=new_ulid)
 
     async def execute(self, command: SendCampaignCommand) -> SendCampaignResult:
+        # One resolution for both the check and the send: resolving twice could
+        # send to a roster nobody reviewed if it changed in between.
+        resolved = await self._resolve(command.audience)
         if command.expected_audience_fingerprint is not None:
-            current = await self.preview(command.audience)
+            current = await self._preview_of(resolved)
             if current.audience_fingerprint != command.expected_audience_fingerprint:
                 raise AudienceChangedError(
                     "the audience changed since it was reviewed; review it again"
                 )
 
-        recipients = _partition_duplicates(await self._resolve(command.audience))[0]
+        recipients = _partition_duplicates(resolved)[0]
         if not recipients:
             raise EmptyAudienceError(
                 "audience resolved to zero recipients; refusing to record a send"
@@ -415,7 +418,10 @@ class SendCampaign:
 
     async def preview(self, audience: Audience) -> CampaignAudiencePreview:
         """Resolve the audience without sending or recording anything."""
-        unique, dropped = _partition_duplicates(await self._resolve(audience))
+        return await self._preview_of(await self._resolve(audience))
+
+    async def _preview_of(self, resolved: list[ResolvedRecipient]) -> CampaignAudiencePreview:
+        unique, dropped = _partition_duplicates(resolved)
         exclusions = [
             CampaignExclusion(
                 r.display_name, r.email, EXCLUSION_DUPLICATE_ADDRESS, r.is_family_contact

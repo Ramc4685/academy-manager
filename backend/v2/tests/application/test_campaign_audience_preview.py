@@ -252,6 +252,59 @@ async def test_send_refuses_when_the_audience_changed_since_preview() -> None:
     assert result.sent_count == 2
 
 
+async def test_send_uses_the_same_resolution_it_checked() -> None:
+    """Codex P2 on #1222: checking the fingerprint against one resolution and
+    building deliveries from a second could email a roster nobody reviewed."""
+    from backend.v2.contexts.communications.application.ports import ResolvedRecipient
+    from backend.v2.contexts.communications.application.use_cases.send_campaign import (
+        SendCampaignCommand,
+    )
+
+    db = AsyncMongoMockClient()["preview-one-resolution"]
+    await _seed_session(db, "sess-1", {"p0": ["s0"]})
+    audience = SessionAudience(session_id="sess-1")
+    use_case = _use_case(db)
+    sender = StubEmailSendPort()
+    use_case.sender = sender
+
+    with tenant_scope(A):
+        seen = await use_case.preview(audience)
+
+    real = use_case.resolver
+    calls = 0
+
+    class _ChangesOnSecondResolve:
+        async def resolve_session_audience(self, aud):  # type: ignore[no-untyped-def]
+            nonlocal calls
+            calls += 1
+            rows = await real.resolve_session_audience(aud)
+            if calls > 1:  # the roster changes right after the check
+                rows = [
+                    *rows,
+                    ResolvedRecipient(
+                        user_id="late", email="late@example.test", display_name="Late"
+                    ),
+                ]
+            return rows
+
+    use_case.resolver = _ChangesOnSecondResolve()  # type: ignore[assignment]
+    with tenant_scope(A):
+        result = await use_case.execute(
+            SendCampaignCommand(
+                academy_id=A,
+                sender_id="admin-1",
+                audience=audience,
+                subject="Hi",
+                body="Hello",
+                expected_audience_fingerprint=seen.audience_fingerprint,
+            )
+        )
+
+    assert calls == 1
+    assert result.sent_count == 1
+    assert [sent["email"] for sent in sender.sent] == ["p0@example.test"]
+
+
 def test_composed_campaign_preview_consults_the_senders_own_gates() -> None:
     from types import SimpleNamespace
 
