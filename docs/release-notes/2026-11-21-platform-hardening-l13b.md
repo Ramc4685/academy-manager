@@ -33,7 +33,7 @@ PR: TBD
   out.academyStatus = db.academies.aggregate([{ $group: { _id: "$status", n: { $sum: 1 } } }]).toArray();
   printjson(out);
   ```
-  `noAcademy` rows are not blocked by the new index, but they mean a send was written without a tenant; report them rather than fix them by hand. `academyStatus` shows how many tenants will stop getting scheduled jobs.
+  One `noAcademy` row passes, but two with the same `digest_id` count as a duplicate pair (the `dupes` count includes them) and abort 0244. Either way they mean a send was written without a tenant; report them rather than fix them by hand. `academyStatus` shows how many tenants will stop getting scheduled jobs.
 - Stripe: the Connect webhook endpoint must be subscribed to `invoice.*`, `customer.subscription.*`, `charge.dispute.*` and the payment events listed in the runbook. No new secret.
 
 ## Risk / rollback

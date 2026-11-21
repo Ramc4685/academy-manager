@@ -85,11 +85,8 @@ async def export_tenant_data(
     claims: AuthClaims = Depends(require_platform_admin),
     service: TenantDataOffboardingService = Depends(get_tenant_data_offboarding),
 ) -> Response:
-    """Stream a zip of every tenant-scoped collection for one academy.
-
-    The archive SHA-256 is in the ``tenant.data_exported`` audit row written
-    after the last byte; a header cannot follow a streamed body.
-    """
+    """Download a zip of every tenant-scoped collection for one academy."""
+    # Streamed, so no SHA-256 header: it is in the tenant.data_exported audit row.
     request_id, ip_address = _request_meta(request)
     export = await service.export_tenant(
         academy_id,
