@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import date
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -53,13 +53,11 @@ class GenerateMonthlyPaymentsResult(BaseModel):
     # Keys an operator reviewed and accepted, which this run left alone (#599).
     skipped_reviewed: int = 0
     skipped_details: list[MonthlyGenerationSkippedDetail] = Field(default_factory=list)
-    # #1033: what the notify-on-mint pass did, so the scheduler can report it.
-    # The later sweep selects only undelivered invoices, so these are never
-    # counted twice. ``mint_send_failed``: the whole pass raised.
-    mint_emailed: int = 0
-    mint_email_failed: int = 0
-    mint_skipped_autopay: int = 0
-    mint_autopay_notified: int = 0
+    # #1033: the notify-on-mint pass's own result, so the scheduler counts it
+    # the same way it counts the sweep (which selects only undelivered
+    # invoices, so nothing is counted twice). ``mint_send_failed``: the whole
+    # pass raised. Kept out of serialisation: it is scheduler bookkeeping.
+    mint_send: Any = Field(default=None, exclude=True)
     mint_send_failed: bool = False
 
 
@@ -161,20 +159,8 @@ class GenerateMonthlyPayments:
                     extra={"period": cmd.period, "invoices_created": result.created},
                 )
                 return result.model_copy(update={"mint_send_failed": True})
-            return result.model_copy(
-                update={
-                    "mint_emailed": _count(outcome, "emailed"),
-                    "mint_email_failed": _count(outcome, "email_failed"),
-                    "mint_skipped_autopay": _count(outcome, "skipped_autopay"),
-                    "mint_autopay_notified": _count(outcome, "autopay_notified"),
-                }
-            )
+            return result.model_copy(update={"mint_send": outcome})
         return result
-
-
-def _count(outcome: object, key: str) -> int:
-    value = outcome.get(key, 0) if isinstance(outcome, dict) else getattr(outcome, key, 0)
-    return int(value or 0)
 
 
 class MarkPaymentPaid:

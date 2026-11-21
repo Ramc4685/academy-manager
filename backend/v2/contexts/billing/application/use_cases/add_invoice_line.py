@@ -147,30 +147,43 @@ class AddInvoiceLine:
         )
         logger.info("InvoiceLineAdded: %s", event)
         if self._audit is not None and cmd.reason:
-            # After the write, like the refund/void paths: the line is real
-            # whether or not the trail append succeeds.
+            await self._append_audit(cmd, saved_invoice, new_line, now)
+
+        return AddInvoiceLineResult(invoice=saved_invoice, line=new_line)
+
+    async def _append_audit(
+        self, cmd: AddInvoiceLineCommand, invoice: LedgerInvoice, line: InvoiceLine, now: datetime
+    ) -> None:
+        """After the write, and never raising: the line is already saved, so a
+        failed append that surfaced as an error would make the owner retry and
+        add the line twice."""
+        assert self._audit is not None
+        try:
             await self._audit.append(
                 BillingAuditEntry(
                     audit_id=f"baud-{new_ulid()}",
-                    academy_id=saved_invoice.academy_id,
+                    academy_id=invoice.academy_id,
                     action="invoice_line_added",
                     actor_id=cmd.actor_id or "system",
                     at=now,
-                    invoice_id=saved_invoice.invoice_id,
-                    parent_id=saved_invoice.parent_id,
+                    invoice_id=invoice.invoice_id,
+                    parent_id=invoice.parent_id,
                     reason=cmd.reason,
                     after={
-                        "line_id": new_line.line_id,
-                        "line_type": new_line.line_type,
-                        "description": new_line.description,
-                        "amount_cents": new_line.amount_cents,
-                        "invoice_total_cents": saved_invoice.total_cents,
-                        "invoice_balance_due_cents": saved_invoice.balance_due_cents,
+                        "line_id": line.line_id,
+                        "line_type": line.line_type,
+                        "description": line.description,
+                        "amount_cents": line.amount_cents,
+                        "invoice_total_cents": invoice.total_cents,
+                        "invoice_balance_due_cents": invoice.balance_due_cents,
                     },
                 )
             )
-
-        return AddInvoiceLineResult(invoice=saved_invoice, line=new_line)
+        except Exception:
+            logger.exception(
+                "add_invoice_line_audit_failed",
+                extra={"invoice_id": invoice.invoice_id, "line_id": line.line_id},
+            )
 
     # ------------------------------------------------------------------
     # Private helpers

@@ -453,6 +453,7 @@ class MongoMonthlyBillingGenerator:
             ledger_repo=ledger_repo, invoice_id=invoice_id, academy_id=academy_id, period=period
         )
 
+        net_cents = total_cents if total_cents is not None else max(gross_cents - discount_cents, 0)
         invoice = LedgerInvoice(
             invoice_id=invoice_id,
             invoice_number=invoice_number,
@@ -464,12 +465,9 @@ class MongoMonthlyBillingGenerator:
             status="open",
             subtotal_cents=gross_cents,
             discount_cents=discount_cents,
-            total_cents=total_cents
-            if total_cents is not None
-            else max(gross_cents - discount_cents, 0),
-            balance_due_cents=total_cents
-            if total_cents is not None
-            else max(gross_cents - discount_cents, 0),
+            total_cents=net_cents,
+            balance_due_cents=net_cents,
+            zero_net_notice=net_cents == 0 and gross_cents > 0,
             currency="usd",
             due_date=due_date,
             autopay_charge_date=autopay_charge_date,

@@ -65,6 +65,7 @@ from backend.v2.composition.invoice_naming import (
     find_invoice_by_id_or_number,
 )
 from backend.v2.composition.lifecycle_billing import (
+    build_add_invoice_line,
     build_autopay_status_gateway,
     build_void_billing_invoice,
     compose_enrollment_billing_sync,
@@ -130,7 +131,6 @@ from backend.v2.contexts.billing.application.refund_idempotency import (
 )
 from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
-    AddInvoiceLineCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
@@ -1592,17 +1592,12 @@ def compose_admin(
             raise ValueError("invoice not found")
         return await billing_ledger_repo.list_payment_attempts(invoice_id)
 
-    async def add_invoice_line(**fields: Any) -> dict[str, Any]:
-        result = await AddInvoiceLine(
-            ledger=billing_ledger_repo,
-            counters=billing_counters_repo,
-            settings=billing_settings_repo,
-            audit=billing_audit_log,
-        ).execute(AddInvoiceLineCommand(**fields))
-        return {
-            "line": result.line.model_dump(mode="python"),
-            "invoice": result.invoice.model_dump(mode="python"),
-        }
+    add_invoice_line = build_add_invoice_line(
+        ledger=billing_ledger_repo,
+        counters=billing_counters_repo,
+        settings=billing_settings_repo,
+        audit=billing_audit_log,
+    )
 
     async def remove_invoice_line(*, invoice_id: str, line_id: str) -> None:
         await RemoveInvoiceLine(ledger=billing_ledger_repo).execute(

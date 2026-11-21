@@ -68,6 +68,46 @@ async def test_partial_discount_is_named_with_its_amount() -> None:
     assert "No payment required" not in body
 
 
+async def test_partial_coach_discount_keeps_its_own_description() -> None:
+    naming = InvoiceNaming(
+        adjustments=(
+            InvoiceAdjustment(
+                description="Coach child discount", amount_cents=-5_000, category="coach_child"
+            ),
+        )
+    )
+
+    body = await _send(naming, total=5_000, balance=5_000)
+
+    assert "Coach child discount" in body
+    assert "fees covered by" not in body
+
+
+async def test_autopay_notice_names_the_discount() -> None:
+    naming = InvoiceNaming(
+        adjustments=(
+            InvoiceAdjustment(
+                description="Sibling discount", amount_cents=-1_000, category="sibling"
+            ),
+        )
+    )
+    sender = _FakeSender()
+    with tenant_scope("acad"):
+        await _adapter(sender, naming=naming).send_autopay_notice(
+            parent_id="parent-1",
+            invoice_id="inv-1",
+            period="2026-09",
+            amount_cents=9_000,
+            currency="usd",
+            charge_on=date(2026, 9, 10),
+            portal_url=None,
+        )
+
+    body = sender.calls[0]["body"]
+    assert "Sibling discount" in body
+    assert "-$10.00" in body
+
+
 async def test_adjustment_description_is_escaped() -> None:
     naming = InvoiceNaming(
         adjustments=(InvoiceAdjustment(description="<b>x</b>", amount_cents=-100),)

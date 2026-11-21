@@ -238,30 +238,24 @@ async def test_undelivered_query_does_not_cross_academies(db, acad) -> None:
 
 @pytest.mark.asyncio
 async def test_undelivered_query_includes_zero_net_waiver_invoices(db, acad) -> None:
-    """#1035: a fully waived month (gross tuition, net $0) still owes the parent
-    an invoice that says "no payment required"; a truly empty $0 row does not."""
+    """#1035: a month minted at net $0 over real tuition still owes the parent
+    a "no payment required" invoice. $0 invoices from before the change (no
+    mint stamp) are never swept up: no surprise emails at deploy."""
     repo = MongoBillingLedgerRepository(db)
-    await _seed(
-        repo,
-        acad,
-        "inv-waived",
-        subtotal_cents=10_000,
-        discount_cents=10_000,
-        total_cents=0,
-        balance_due_cents=0,
-    )
+    zero = {"subtotal_cents": 10_000, "discount_cents": 10_000, "total_cents": 0}
+    await _seed(repo, acad, "inv-waived", balance_due_cents=0, zero_net_notice=True, **zero)
+    await _seed(repo, acad, "inv-old-waived", balance_due_cents=0, **zero)
     await _seed(repo, acad, "inv-empty", subtotal_cents=0, total_cents=0, balance_due_cents=0)
-    # Partly paid down to zero but not yet flipped to paid: nothing to say.
+    # Paid down to zero but not yet flipped to paid: nothing to say.
     await _seed(repo, acad, "inv-paid-down", balance_due_cents=0)
     await _seed(
         repo,
         acad,
         "inv-waived-sent",
-        delivery_status="sent",
-        subtotal_cents=10_000,
-        discount_cents=10_000,
-        total_cents=0,
         balance_due_cents=0,
+        zero_net_notice=True,
+        delivery_status="sent",
+        **zero,
     )
 
     rows = await repo.list_undelivered_invoices_for_period("2026-05")

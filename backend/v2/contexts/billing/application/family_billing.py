@@ -770,6 +770,8 @@ def _audit_entries(facts: FamilyFacts) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for a in facts.audit:
         base = _AUDIT_SUMMARIES.get(a.action, a.action.replace("_", " ").capitalize())
+        if a.action == "invoice_line_added" and int((a.after or {}).get("amount_cents") or 0) < 0:
+            base = "Discount added to invoice"  # a negative adjustment is not a charge (#1035)
         amount = _refund_amount(a)
         how_much = f" · {_money(amount)}" if amount is not None else ""
         why = f" · {a.reason}" if a.reason else ""

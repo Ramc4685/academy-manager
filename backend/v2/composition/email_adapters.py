@@ -264,15 +264,20 @@ class InvoiceAdjustment(BaseModel):
 
 
 def adjustments_html(
-    adjustments: Sequence[InvoiceAdjustment], *, currency: str, academy_name: str
+    adjustments: Sequence[InvoiceAdjustment],
+    *,
+    currency: str,
+    academy_name: str,
+    fully_covered: bool = False,
 ) -> str:
     """The parent-facing explanation of every amount taken off the bill. A
-    coach-child benefit names who pays for it ("fees covered by <academy>")."""
+    coach-child benefit that covers the whole bill names who pays for it
+    ("fees covered by <academy>"); a partial one keeps its own description."""
     rows = []
     for adj in adjustments:
         label = (
             f"Coach benefit: fees covered by {academy_name}"
-            if adj.category == "coach_child"
+            if fully_covered and adj.category == "coach_child"
             else adj.description
         )
         amount = format_money(adj.amount_cents, currency)
@@ -463,6 +468,7 @@ class InvoiceEmailAdapter:
         return InvoiceNaming(
             student_name=joined or None,
             invoice_number=", ".join(numbers) if numbers else None,
+            adjustments=tuple(adj for n in namings for adj in n.adjustments),
         )
 
     _tuition_for = staticmethod(tuition_for)
@@ -538,7 +544,10 @@ class InvoiceEmailAdapter:
         if balance_due_cents <= 0:
             pay_line = no_payment_html
         adjustments_block = adjustments_html(
-            naming.adjustments, currency=currency, academy_name=academy_name
+            naming.adjustments,
+            currency=currency,
+            academy_name=academy_name,
+            fully_covered=total_cents <= 0,
         )
         subject = self._tuition_for(period, naming)
         if naming.session_label:
@@ -780,6 +789,7 @@ class InvoiceEmailAdapter:
             f"Upcoming autopay charge</h2>"
             f"<p>{self._tuition_html(period, naming)} is "
             f"<strong>{safe_amount}</strong>.</p>"
+            f"{adjustments_html(naming.adjustments, currency=currency, academy_name=academy_name)}"
             f"<p>Your saved payment method will be charged on <strong>{safe_date}</strong>. "
             "Nothing to do if that works for you. Pay early or update your payment "
             "method before then if not.</p>"

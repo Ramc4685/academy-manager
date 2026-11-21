@@ -117,7 +117,8 @@ def _campaign_audience(
     raw: SendCampaignAudience,
 ) -> AcademyAudience | SessionAudience | SessionsAudience:
     if raw.type == "session":
-        ids = list(dict.fromkeys(s for s in (raw.session_ids or []) if s))
+        # Sorted, so the derived idempotency key never depends on click order.
+        ids = sorted({s for s in (raw.session_ids or []) if s})
         if not ids and raw.session_id:
             ids = [raw.session_id]
         if not ids:

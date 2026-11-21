@@ -272,11 +272,13 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 "academy_id": academy_id,
                 "period": period,
                 "status": {"$in": ["open", "partially_paid"]},
-                # Money owed, or a fully waived month (gross tuition, net $0)
-                # whose parent still gets a "no payment required" invoice (#1035).
+                # Money owed, or a month minted at net $0 over real tuition
+                # whose parent still gets a "no payment required" invoice
+                # (#1035). The flag is stamped at mint only, so older $0
+                # invoices are never swept up and emailed by surprise.
                 "$or": [
                     {"balance_due_cents": {"$gt": 0}},
-                    {"total_cents": 0, "subtotal_cents": {"$gt": 0}},
+                    {"total_cents": 0, "zero_net_notice": True},
                 ],
                 "delivery_status": {"$in": ["not_sent", "delivery_failed", None]},
             },

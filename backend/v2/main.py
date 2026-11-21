@@ -2915,8 +2915,9 @@ async def _run_monthly_invoice_generation(
                 # #1033: the notify-on-mint pass already sent these; the sweep
                 # below only finds what it left undelivered, so each invoice's
                 # email outcome is counted exactly once across the two.
-                for total_key, result_key in _MINT_SEND_COUNTS:
-                    totals[total_key] += int(getattr(result, result_key, 0) or 0)
+                mint_send = getattr(result, "mint_send", None)
+                if mint_send is not None:
+                    _fold_send_counts(totals, mint_send)
                 if getattr(result, "mint_send_failed", False):
                     totals["invoice_mint_send_failed"] += 1
                 created = int(getattr(result, "created", 0) or 0)
@@ -3002,12 +3003,17 @@ async def _run_monthly_invoice_generation(
     return totals
 
 
-_MINT_SEND_COUNTS = (
-    ("invoices_emailed", "mint_emailed"),
-    ("invoice_emails_failed", "mint_email_failed"),
-    ("invoice_emails_skipped_autopay", "mint_skipped_autopay"),
-    ("invoice_autopay_notices_sent", "mint_autopay_notified"),
-)
+def _fold_send_counts(totals: dict[str, int], outcome: Any) -> None:
+    """Add one send pass's outcome (mint-time or sweep) to the run totals."""
+    for total_key, outcome_key in (
+        ("invoices_emailed", "emailed"),
+        ("invoice_emails_failed", "email_failed"),
+        ("invoice_emails_skipped_autopay", "skipped_autopay"),
+        # Autopay parents get a pre-charge notice, not an invoice email; without
+        # this the digest showed "0 emailed" for a fully notified run.
+        ("invoice_autopay_notices_sent", "autopay_notified"),
+    ):
+        totals[total_key] += int(_outcome_count(outcome, outcome_key))
 
 
 async def _email_generated_invoices(
@@ -3034,15 +3040,7 @@ async def _email_generated_invoices(
             run_period,
         )
         return
-    for total_key, outcome_key in (
-        ("invoices_emailed", "emailed"),
-        ("invoice_emails_failed", "email_failed"),
-        ("invoice_emails_skipped_autopay", "skipped_autopay"),
-        # Autopay parents get a pre-charge notice, not an invoice email; without
-        # this the digest showed "0 emailed" for a fully notified run.
-        ("invoice_autopay_notices_sent", "autopay_notified"),
-    ):
-        totals[total_key] += int(_outcome_count(outcome, outcome_key))
+    _fold_send_counts(totals, outcome)
 
 
 def _monthly_generation_retry_reason(totals: dict[str, int]) -> str | None:

@@ -99,11 +99,11 @@ async def test_the_mint_send_outcome_rides_on_the_result() -> None:
         payments=_FakePayments(created=8), notify_minted=notify
     ).execute(GenerateMonthlyPaymentsCommand(period="2026-09"))
 
-    assert (result.mint_emailed, result.mint_email_failed, result.mint_autopay_notified) == (
-        5,
-        1,
-        2,
-    )
+    assert (
+        result.mint_send.emailed,
+        result.mint_send.email_failed,
+        result.mint_send.autopay_notified,
+    ) == (5, 1, 2)
     assert result.mint_send_failed is False
 
 
@@ -117,4 +117,4 @@ async def test_a_raising_mint_pass_is_flagged_on_the_result() -> None:
 
     assert result.created == 2
     assert result.mint_send_failed is True
-    assert result.mint_emailed == 0
+    assert result.mint_send is None

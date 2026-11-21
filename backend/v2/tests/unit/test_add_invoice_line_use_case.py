@@ -511,3 +511,30 @@ async def _audit_fixture() -> tuple[FakeLedgerRepository, str]:
         )
     )
     return repo, invoice.invoice_id
+
+
+@pytest.mark.asyncio
+async def test_failed_audit_append_keeps_the_line_and_does_not_raise() -> None:
+    """A raised append after the save would make the owner retry and add the
+    discount twice; the line stands and the request succeeds."""
+
+    class _BrokenAudit:
+        async def append(self, entry) -> None:
+            raise RuntimeError("mongo is down")
+
+    repo, invoice_id = await _audit_fixture()
+
+    result = await AddInvoiceLine(ledger=repo, audit=_BrokenAudit()).execute(
+        AddInvoiceLineCommand(
+            invoice_id=invoice_id,
+            description="Coach benefit",
+            line_type="adjustment",
+            unit_amount_cents=-2_000,
+            reason="Coach child",
+            actor_id="owner-1",
+        )
+    )
+
+    assert result.invoice.total_cents == 8_000
+    lines = await repo.get_lines_for_invoice(invoice_id)
+    assert [line.amount_cents for line in lines] == [10_000, -2_000]

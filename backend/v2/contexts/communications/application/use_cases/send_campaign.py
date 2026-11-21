@@ -165,10 +165,6 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def _dedupe_recipients(recipients: list[ResolvedRecipient]) -> list[ResolvedRecipient]:
-    return _partition_duplicates(recipients)[0]
-
-
 def _partition_duplicates(
     recipients: list[ResolvedRecipient],
 ) -> tuple[list[ResolvedRecipient], list[ResolvedRecipient]]:
@@ -303,7 +299,7 @@ class SendCampaign:
                     "the audience changed since it was reviewed; review it again"
                 )
 
-        recipients = _dedupe_recipients(await self._resolve(command.audience))
+        recipients = _partition_duplicates(await self._resolve(command.audience))[0]
         if not recipients:
             raise EmptyAudienceError(
                 "audience resolved to zero recipients; refusing to record a send"

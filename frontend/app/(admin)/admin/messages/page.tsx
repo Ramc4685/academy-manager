@@ -828,11 +828,15 @@ function EmailCampaignComposer() {
     queryKey: queryKeys.admin.campaignPreview(audience),
     queryFn: () => previewEmailCampaign(audience),
     enabled: audienceChosen,
+    // Send refetches before the dialog opens, so a focus refetch only flickers.
+    refetchOnWindowFocus: false,
+    staleTime: 30_000,
   });
-  const previewState: CampaignAudienceState = preview.data
-    ? { status: "ready", counts: preview.data }
-    : preview.isError
-      ? { status: "error" }
+  // A failed refetch must not leave a stale count on screen next to Send.
+  const previewState: CampaignAudienceState = preview.isError
+    ? { status: "error" }
+    : preview.data
+      ? { status: "ready", counts: preview.data }
       : { status: "loading" };
 
   const mutation = useMutation({
