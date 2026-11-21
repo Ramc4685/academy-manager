@@ -737,13 +737,13 @@ class HandleWebhookEvent:
         ):
             current = await self._stripe.retrieve_checkout_session(object_id, **on_account)
         elif event_type in ("invoice.paid", "invoice.payment_failed"):
-            current = await self._stripe.retrieve_invoice(object_id)
+            current = await self._stripe.retrieve_invoice(object_id, **on_account)
         elif event_type in (
             "customer.subscription.created",
             "customer.subscription.updated",
             "customer.subscription.deleted",
         ):
-            current = await self._stripe.retrieve_subscription(object_id)
+            current = await self._stripe.retrieve_subscription(object_id, **on_account)
         elif event_type in (
             "payment_intent.succeeded",
             "payment_intent.payment_failed",

@@ -516,9 +516,11 @@ class RealStripeGateway(StripeGateway):
         message = str(getattr(exc, "user_message", None) or exc).replace("`", "").lower()
         return any(marker in message for marker in _TERMINAL_EXPIRY_MARKERS)
 
-    async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
+    async def retrieve_invoice(
+        self, stripe_invoice_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         def _retrieve() -> Any:
-            return self._stripe.Invoice.retrieve(stripe_invoice_id)
+            return self._stripe.Invoice.retrieve(stripe_invoice_id, **_on_account(stripe_account))
 
         result = await self._run_stripe_retrieve(_retrieve, label="Stripe Invoice")
         return _stripe_object_to_dict(result)
@@ -531,9 +533,13 @@ class RealStripeGateway(StripeGateway):
 
         await asyncio.to_thread(_void)
 
-    async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
+    async def retrieve_subscription(
+        self, stripe_subscription_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         def _retrieve() -> Any:
-            return self._stripe.Subscription.retrieve(stripe_subscription_id)
+            return self._stripe.Subscription.retrieve(
+                stripe_subscription_id, **_on_account(stripe_account)
+            )
 
         result = await self._run_stripe_retrieve(_retrieve, label="Stripe Subscription")
         return _stripe_object_to_dict(result)
