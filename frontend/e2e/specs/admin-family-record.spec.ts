@@ -6,6 +6,7 @@ import {
   ADMIN_USER_A,
   fulfillJson,
   stubAcademy,
+  stubFamilySiblingDiscount,
   stubMe,
   stubMemberships,
 } from "../fixtures/saas-stubs";
@@ -220,6 +221,7 @@ async function setup(page: Page) {
   await page.route("**/api/v2/admin/families/parent-1/billing", (route) =>
     fulfillJson(route, BILLING),
   );
+  await stubFamilySiblingDiscount(page);
   await page.route("**/api/v2/admin/families/parent-1/timeline**", (route) =>
     fulfillJson(
       route,
@@ -446,7 +448,7 @@ test.describe("Family record (People CRM §4)", () => {
     const failed = page.getByTestId("family-message-campaign");
     await expect(failed).toHaveAttribute("data-status", "failed");
     await expect(failed).toContainText("Email: Term dates");
-    await expect(failed).toContainText("Not delivered: mailbox full");
+    await expect(failed).toContainText("Not delivered: Mailbox full");
 
     // Handoffs open the staff member's own app; the app never sends SMS or WhatsApp.
     // Row 11: a bare US number gets the +1 calling code (it was a dead link).

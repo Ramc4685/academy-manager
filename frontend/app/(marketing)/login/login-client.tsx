@@ -7,7 +7,6 @@ import { Suspense, useEffect, useState } from "react";
 import {
   completeGoogleRedirectSignIn,
   onAuthChange,
-  sendPasswordReset,
   signInWithApple,
   signInWithEmail,
   signInWithGoogle,
@@ -16,6 +15,7 @@ import {
 import { toAuthErrorMessage } from "@/lib/auth/auth-error";
 import { loginErrorMessage } from "@/lib/auth/login-error";
 import { shouldOfferAppleSignIn, shouldOfferGoogleSignIn } from "@/lib/auth/native-sign-in";
+import { requestPasswordReset } from "@/lib/api/password-reset";
 import { registerPublicParent } from "@/lib/api/registration";
 import {
   clearPendingParentRegistration,
@@ -23,8 +23,11 @@ import {
 } from "@/lib/auth/parent-registration-continuation";
 import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 import { clearPersonaHintCookie } from "@/lib/auth/persona-hint-cookie";
-import { sanitizeReturnPath } from "@/lib/auth/persona-route-guard";
+import { postLoginHandOff } from "@/lib/auth/persona-route-guard";
 import { BrandLockup } from "@/components/marketing/brand-lockup";
+import { isNativeApp } from "@/lib/use-native-app";
+
+const DEMO_ACADEMY_HOST = "demo-academy.courtmastr.com";
 
 // Self-hosted: a CSS gradient, not a hotlinked third-party image, so the
 // hero never breaks when the CSP moves from Report-Only to enforced.
@@ -49,6 +52,10 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
   const [hydrated, setHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Every sign-in route hands the deep link on, not only the still-signed-in bounce.
+  const handOff = postLoginHandOff(searchParams.get("returnTo")) as Parameters<
+    typeof router.push
+  >[0];
 
   useEffect(() => {
     setHydrated(true);
@@ -62,16 +69,11 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
     // /post-login is outside the gate's matcher, so this cannot loop. The deep
     // link rides along so post-login can land them on the page they asked for
     // instead of their persona home.
-    const bouncedFrom = searchParams.get("returnTo");
     let unsubscribeBounce: (() => void) | undefined;
-    if (bouncedFrom) {
-      const safeReturn = sanitizeReturnPath(bouncedFrom);
-      const handOff = safeReturn
-        ? `/post-login?returnTo=${encodeURIComponent(safeReturn)}`
-        : "/post-login";
+    if (searchParams.get("returnTo")) {
       unsubscribeBounce = onAuthChange((user) => {
         if (!cancelled && user) {
-          router.replace(handOff as Parameters<typeof router.replace>[0]);
+          router.replace(handOff);
         }
       });
     }
@@ -83,7 +85,13 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
     const prefillEmail = searchParams.get("email");
     if (prefillEmail) {
       setEmail(prefillEmail);
-      setNotice("An account already exists for this email. Sign in to continue.");
+      // `activate=1` is the digest's link for a parent who has never set a
+      // password; "an account already exists, sign in" would strand them.
+      setNotice(
+        searchParams.get("activate") === "1"
+          ? "First time signing in? Press \u201cForgot password?\u201d and we\u2019ll email you a link to set your password."
+          : "An account already exists for this email. Sign in to continue.",
+      );
     }
 
     // A bounce back from post-login / a persona guard carries the backend's
@@ -95,7 +103,7 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
     completeGoogleRedirectSignIn()
       .then((user) => {
         if (!cancelled && user) {
-          router.push("/post-login");
+          router.push(handOff);
         }
       })
       .catch((err) => {
@@ -130,7 +138,7 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
         router.push("/parent/onboarding");
         return;
       }
-      router.push("/post-login");
+      router.push(handOff);
     } catch (err) {
       setError(toAuthErrorMessage(err, "Sign-in failed. Please try again."));
     } finally {
@@ -146,7 +154,7 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
       clearBffIdentityCookie();
       clearPersonaHintCookie();
       const user = await signInWithGoogle();
-      if (user) router.push("/post-login");
+      if (user) router.push(handOff);
     } catch (err) {
       setError(toAuthErrorMessage(err, "Google sign-in failed. Please try again."));
     } finally {
@@ -162,7 +170,7 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
       clearBffIdentityCookie();
       clearPersonaHintCookie();
       await signInWithApple();
-      router.push("/post-login");
+      router.push(handOff);
     } catch (err) {
       setError(toAuthErrorMessage(err, "Apple sign-in failed. Please try again."));
     } finally {
@@ -182,7 +190,7 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
 
     setResetLoading(true);
     try {
-      await sendPasswordReset(trimmedEmail);
+      await requestPasswordReset(trimmedEmail);
       setNotice("If that email exists, we have sent a reset link.");
     } catch (err) {
       setError(toAuthErrorMessage(err, "Password reset failed. Please try again."));
@@ -195,6 +203,9 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
   // After hydration only: the app shell is detected from a window global.
   const offerApple = hydrated && shouldOfferAppleSignIn();
   const offerGoogle = !hydrated || shouldOfferGoogleSignIn();
+  // The store builds open one academy's host; app reviewers need a way into the demo academy.
+  const offerDemo =
+    hydrated && isNativeApp() && window.location.hostname !== DEMO_ACADEMY_HOST;
 
   return (
     <main className="min-h-dvh bg-slate-50 font-body text-slate-950">
@@ -340,6 +351,18 @@ function LoginPageContent({ academyName, logoUrl, brandColor }: AcademyBrandProp
                 Register your child →
               </Link>
             </p>
+
+            {offerDemo && (
+              <p className="mt-3 text-center text-sm text-slate-600">
+                <a
+                  href={`https://${DEMO_ACADEMY_HOST}/login`}
+                  className="font-medium text-blue-600 transition hover:underline"
+                  data-testid="link-demo-academy"
+                >
+                  Explore the demo academy
+                </a>
+              </p>
+            )}
           </div>
         </section>
       </div>

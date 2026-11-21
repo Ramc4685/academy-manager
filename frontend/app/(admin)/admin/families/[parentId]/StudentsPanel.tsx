@@ -3,13 +3,15 @@
 import { useState } from "react";
 import type { Route } from "next";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Card, Chip, Overline, PhoneList, PhoneListRow, type ChipVariant } from "@/components/ds";
 import { useIsPhone } from "@/lib/use-is-phone";
 import type { FamilyStudent } from "@/lib/api/admin-families";
 import { formatCents } from "@/lib/money";
 import { getDeparturePolicy } from "@/lib/api/v2/departure-policy";
+import { NotBilledChip, NotBilledDialog } from "@/components/admin/not-billed";
+import { queryKeys } from "@/lib/query/keys";
 import { StopAllClassesDialog } from "@/components/admin/enrollment/stop-all-classes-dialog";
 import type { StudentTab } from "@/lib/admin/student-tabs";
 
@@ -37,6 +39,10 @@ export function StudentsPanel({
   onBillPeriod: (enrollmentId: string) => void;
 }) {
   const isPhone = useIsPhone();
+  const queryClient = useQueryClient();
+  const [billingChange, setBillingChange] = useState<
+    FamilyStudent["enrollments"][number] | null
+  >(null);
   const [stopAllClassesFor, setStopAllClassesFor] = useState<{
     studentId: string;
     studentName: string;
@@ -82,6 +88,16 @@ export function StudentsPanel({
             Recurring discount
           </Link>
         )}
+        {isOwner && e.status !== "cancelled" && (
+          <button
+            type="button"
+            onClick={() => setBillingChange(e)}
+            className={`${linkClass} text-rally-cobalt-700 hover:underline`}
+            data-testid={`enrollment-not-billed-${e.enrollment_id}`}
+          >
+            {e.not_billed ? "Start billing" : "Not billed"}
+          </button>
+        )}
         {idx === 0 && (
           <button
             type="button"
@@ -97,12 +113,29 @@ export function StudentsPanel({
   }
 
   function autopayChip(e: FamilyStudent["enrollments"][number]) {
+    if (e.not_billed) {
+      return <NotBilledChip reason={e.not_billed_reason} note={e.not_billed_note} />;
+    }
     return e.autopay_status === "active" ? (
       <Chip variant="autopayOn" label="Autopay" />
     ) : (
       <Chip variant="manual" label={e.autopay_status === "paused" ? "Autopay off" : "Manual"} />
     );
   }
+
+  const notBilledDialog = (
+    <NotBilledDialog
+      enrollmentId={billingChange?.enrollment_id ?? null}
+      className={billingChange?.session_title}
+      notBilled={Boolean(billingChange?.not_billed)}
+      onClose={() => setBillingChange(null)}
+      onSaved={() => {
+        setBillingChange(null);
+        // Billing, the sibling preview and the Families tiles all sit under families().
+        void queryClient.invalidateQueries({ queryKey: queryKeys.admin.families() });
+      }}
+    />
+  );
 
   if (isPhone) {
     return (
@@ -174,7 +207,8 @@ export function StudentsPanel({
             )}
           </PhoneList>
         )}
-        {stopAllClassesFor && (
+        {notBilledDialog}
+      {stopAllClassesFor && (
           <StopAllClassesDialog
             studentId={stopAllClassesFor.studentId}
             studentName={stopAllClassesFor.studentName}
@@ -261,6 +295,7 @@ export function StudentsPanel({
           )}
         </ul>
       )}
+      {notBilledDialog}
       {stopAllClassesFor && (
         <StopAllClassesDialog
           studentId={stopAllClassesFor.studentId}

@@ -82,7 +82,13 @@ describe("lib/observability/sentry", () => {
       integrations: [sentryMock.browserTracingIntegration()],
       sampleRate: 1,
       tracesSampleRate: 0.2,
-      sendDefaultPii: false,
+      dataCollection: {
+        userInfo: false,
+        cookies: false,
+        httpHeaders: false,
+        httpBodies: [],
+        urlQueryParams: false,
+      },
       beforeSend: scrubEventUrls,
       beforeBreadcrumb: scrubBreadcrumbUrls,
     });
@@ -98,13 +104,13 @@ describe("lib/observability/sentry", () => {
     const event = options.beforeSend(
       {
         request: {
-          url: "https://x/auth/magic?t=abc#frag",
+          url: "https://x/unsubscribe?t=abc#frag",
           headers: { Referer: "https://x/login?email=p%40example.com", "User-Agent": "ua" },
         },
       },
       {}
     );
-    expect(event.request.url).toBe("https://x/auth/magic");
+    expect(event.request.url).toBe("https://x/unsubscribe");
     expect(event.request.headers.Referer).toBe("https://x/login");
     expect(event.request.headers["User-Agent"]).toBe("ua");
 
@@ -122,7 +128,7 @@ describe("lib/observability/sentry", () => {
   });
 
   it("scrubbers leave events and breadcrumbs without URLs untouched", () => {
-    expect(stripQuery("https://x/auth/magic?t=abc")).toBe("https://x/auth/magic");
+    expect(stripQuery("https://x/unsubscribe?t=abc")).toBe("https://x/unsubscribe");
     expect(stripQuery("/coach/today")).toBe("/coach/today");
     expect(scrubEventUrls({ message: "m" })).toEqual({ message: "m" });
     expect(scrubBreadcrumbUrls({ category: "console", message: "hi" })).toEqual({

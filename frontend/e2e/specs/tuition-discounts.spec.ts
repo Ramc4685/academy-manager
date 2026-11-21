@@ -4,7 +4,7 @@ import {
   collectConsoleErrors,
   installTenantGuard,
 } from "../fixtures/tenant-isolation";
-import { familyIndexRow } from "../fixtures/family-index";
+import { familyIndexRow, stubFamilyRecord } from "../fixtures/family-index";
 import { openMonthCloseSection } from "../helpers/month-close-sections";
 import { rowActionControl } from "../helpers/row-actions";
 import {
@@ -13,6 +13,7 @@ import {
   PARENT_USER,
   fulfillJson,
   stubAcademy,
+  stubFamilySiblingDiscount,
   stubMe,
   stubMemberships,
   stubParentAcademy,
@@ -290,6 +291,8 @@ async function stubAdminStudentDiscounts(page: Page, student: StudentDetail) {
   // this spec asserts an empty console, so the failure surfaces as two opaque
   // "Failed to load resource" lines rather than a missing mock.
   // `admin-students.spec.ts` already stubs the same pair for the same reason.
+  await stubFamilySiblingDiscount(page);
+  await stubFamilyRecord(page);
   await page.route("**/api/v2/admin/billing-enrollments*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { enrollments: [] });
@@ -542,6 +545,73 @@ test.describe("tuition discounts", () => {
     await expect(lines).toContainText("-$100");
     await expect(lines).toContainText("-$24");
 
+    guard.assertNoLegacyApiCalls();
+    expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("owner marks a class not billed and the row says why", async ({ page }) => {
+    const guard = installTenantGuard(page);
+    const errors = collectConsoleErrors(page);
+    const student = baseStudentFixture();
+    const requests: Array<Record<string, unknown>> = [];
+
+    await stubMe(page, ADMIN_USER_A);
+    await stubMemberships(page, [
+      { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
+    ]);
+    await stubAcademy(page, ACADEMY_A);
+    await page.route("**/api/v2/admin/inbox/counts", (route) =>
+      fulfillJson(route, { counts: {}, total: 0 }),
+    );
+    await stubAdminStudentDiscounts(page, student);
+    await page.route("**/api/v2/admin/enrollments/*/billing", (route) => {
+      if (route.request().method() !== "PUT") return route.fallback();
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      requests.push(body);
+      const row = student.enrolled_sessions.find((s) => s.enrollment_id === "enr-scholarship");
+      Object.assign(row!, { not_billed: true, not_billed_reason: body.reason, not_billed_note: null });
+      return fulfillJson(route, {
+        enrollment_id: "enr-scholarship",
+        not_billed: true,
+        billing_type: "NoCharge",
+        not_billed_reason: body.reason,
+        not_billed_note: null,
+        voided_invoice_ids: [],
+        kept_invoice_ids: [],
+        skipped_period: null,
+      });
+    });
+
+    await page.goto("/admin/students/student-discounts");
+    await page.getByRole("tab", { name: "Sessions" }).click();
+    await expect(page.getByTestId("admin-student-enrolled-sessions")).toBeVisible();
+    const openNotBilled = async () =>
+      (
+        await rowActionControl(page, {
+          rowTestId: "admin-student-enrollment-enr-scholarship",
+          actionsTestId: "admin-student-enrollment-actions-enr-scholarship",
+          label: "Not billed",
+        })
+      ).click();
+    const dialog = page.getByRole("dialog", { name: "Not billed" });
+    // A cancelled choice (above all the void box) never carries into the next open.
+    await openNotBilled();
+    await dialog.getByRole("checkbox").check();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toHaveCount(0);
+    await openNotBilled();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("checkbox")).not.toBeChecked();
+    await dialog.locator("select").selectOption("owner_child");
+    await dialog.getByRole("button", { name: "Mark not billed" }).click();
+    await expect(dialog).toHaveCount(0);
+
+    expect(requests).toEqual([
+      { not_billed: true, reason: "owner_child", note: null, void_open_invoices: false },
+    ]);
+    await expect(page.getByTestId("admin-student-enrollment-enr-scholarship")).toContainText(
+      "Not billed · Owner's child",
+    );
     guard.assertNoLegacyApiCalls();
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
   });

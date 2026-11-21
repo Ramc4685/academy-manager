@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { loginErrorMessage, loginPathForError } from "./login-error";
+import { loginErrorMessage, loginPathForError, shouldSelfRegister } from "./login-error";
 
 function apiError(
   status: number,
@@ -50,5 +50,37 @@ describe("loginErrorMessage", () => {
 
   it("renders nothing when there is no error param", () => {
     expect(loginErrorMessage(null)).toBeNull();
+  });
+});
+
+describe("shouldSelfRegister", () => {
+  const notFound = apiError(401, "Auth.NotAuthenticated", { reason: "Identity.UserNotFound" });
+  const passwordUser = (emailVerified: boolean) => ({
+    emailVerified,
+    providerData: [{ providerId: "password" }],
+  });
+
+  it("registers a verified parent whose sign-up began in another browser", () => {
+    expect(shouldSelfRegister(notFound, passwordUser(true))).toBe(true);
+  });
+
+  it("never registers an unverified email", () => {
+    expect(shouldSelfRegister(notFound, passwordUser(false))).toBe(false);
+  });
+
+  it("never registers a Google or Apple sign-in with an unknown email", () => {
+    for (const providerId of ["google.com", "apple.com"]) {
+      expect(shouldSelfRegister(notFound, { emailVerified: true, providerData: [{ providerId }] })).toBe(
+        false,
+      );
+    }
+  });
+
+  it("leaves other failures (e.g. no membership here) to the login page", () => {
+    const noMembership = apiError(401, "Auth.NotAuthenticated", {
+      reason: "Identity.MembershipNotFound",
+    });
+    expect(shouldSelfRegister(noMembership, passwordUser(true))).toBe(false);
+    expect(shouldSelfRegister(new Error("Failed to fetch"), passwordUser(true))).toBe(false);
   });
 });

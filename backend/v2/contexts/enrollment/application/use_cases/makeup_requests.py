@@ -45,6 +45,7 @@ from backend.v2.contexts.enrollment.domain.self_service import (
     StudentNotEnrolledInSession,
     open_slots,
 )
+from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
 
 
@@ -100,6 +101,98 @@ class MakeupRequestRepository(Protocol):
     async def list_for_parent(self, parent_id: str) -> list[MakeupRequest]: ...
 
 
+class StudentPresenceQuery(Protocol):
+    """Coaching-owned: was this student marked present or late on this dated class."""
+
+    async def was_present(self, occurrence_id: str, student_id: str) -> bool: ...
+
+
+class MakeupEligibility:
+    """The one statement of "may this child request a makeup for this class".
+
+    Shared by ``SubmitMakeupRequest`` (which raises) and
+    ``ListMakeupCandidates`` (which lists what would pass), so the parent
+    picker can never offer a class the server would refuse, or hide one it
+    would accept (#1037, #1041).
+    """
+
+    def __init__(
+        self,
+        *,
+        enrollments: SubmitterEnrollmentQuery,
+        notices: AbsenceNoticeQuery,
+        makeups: MakeupRequestRepository,
+        attendance: StudentPresenceQuery,
+    ) -> None:
+        self._enrollments = enrollments
+        self._notices = notices
+        self._makeups = makeups
+        self._attendance = attendance
+
+    async def check(
+        self,
+        *,
+        policy: ParentSelfServicePolicy,
+        student_id: str,
+        missed: SessionOccurrence,
+        now: datetime,
+    ) -> datetime:
+        """Return the request's expiry, or raise why it is not allowed."""
+        if missed.start_at >= now:
+            raise MakeupWindowExpired(
+                "cannot request a makeup for an occurrence that hasn't happened yet",
+                occurrence_id=missed.occurrence_id,
+            )
+        if missed.status == "cancelled":
+            # A class the academy cancelled is credited, not made up.
+            raise MakeupNotEligible(
+                "the academy cancelled this class; it is credited, not made up",
+                occurrence_id=missed.occurrence_id,
+                student_id=student_id,
+                reason="cancelled",
+            )
+        if not await self._enrollments.is_active_or_paused(missed.session_id, student_id):
+            raise StudentNotEnrolledInSession(
+                "student has no active or paused enrollment in the missed occurrence's session",
+                session_id=missed.session_id,
+                student_id=student_id,
+            )
+        if policy.makeup_requires_notice:
+            notice = await self._notices.get_for_occurrence_and_student(
+                missed.occurrence_id, student_id
+            )
+            if notice is None or not getattr(notice, "notice_window_met", False):
+                raise MakeupNotEligible(
+                    "a window-met absence notice is required before requesting a makeup",
+                    occurrence_id=missed.occurrence_id,
+                    student_id=student_id,
+                    reason="notice_required",
+                )
+        if await self._attendance.was_present(missed.occurrence_id, student_id):
+            raise MakeupNotEligible(
+                "the student was marked present for this class",
+                occurrence_id=missed.occurrence_id,
+                student_id=student_id,
+                reason="present",
+            )
+        expires_at = missed.start_at + timedelta(days=policy.makeup_expiry_days)
+        if now > expires_at:
+            raise MakeupWindowExpired(
+                "makeup request window has expired",
+                occurrence_id=missed.occurrence_id,
+            )
+        existing = await self._makeups.find_active_for_missed_occurrence(
+            missed.occurrence_id, student_id
+        )
+        if existing is not None:
+            raise DuplicateMakeupRequest(
+                "a non-denied makeup request already exists for this occurrence",
+                occurrence_id=missed.occurrence_id,
+                student_id=student_id,
+            )
+        return expires_at
+
+
 class SubmitMakeupRequest:
     def __init__(
         self,
@@ -110,6 +203,7 @@ class SubmitMakeupRequest:
         notices: AbsenceNoticeQuery,
         makeups: MakeupRequestRepository,
         policies: SelfServicePolicyRepository,
+        attendance: StudentPresenceQuery,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._students = students
@@ -119,6 +213,9 @@ class SubmitMakeupRequest:
         self._makeups = makeups
         self._policies = policies
         self._now = clock
+        self._eligibility = MakeupEligibility(
+            enrollments=enrollments, notices=notices, makeups=makeups, attendance=attendance
+        )
 
     async def execute(self, cmd: SubmitMakeupRequestCommand) -> MakeupRequest:
         policy = await self._policies.get_or_default()
@@ -131,46 +228,14 @@ class SubmitMakeupRequest:
 
         missed = await self._occurrences.get(cmd.missed_occurrence_id)
         now = self._now()
-        if missed is None or missed.start_at >= now:
+        if missed is None:
             raise MakeupWindowExpired(
                 "cannot request a makeup for an occurrence that hasn't happened yet",
                 occurrence_id=cmd.missed_occurrence_id,
             )
-
-        if not await self._enrollments.is_active_or_paused(missed.session_id, cmd.student_id):
-            raise StudentNotEnrolledInSession(
-                "student has no active or paused enrollment in the missed occurrence's session",
-                session_id=missed.session_id,
-                student_id=cmd.student_id,
-            )
-
-        if policy.makeup_requires_notice:
-            notice = await self._notices.get_for_occurrence_and_student(
-                cmd.missed_occurrence_id, cmd.student_id
-            )
-            if notice is None or not getattr(notice, "notice_window_met", False):
-                raise MakeupNotEligible(
-                    "a window-met absence notice is required before requesting a makeup",
-                    occurrence_id=cmd.missed_occurrence_id,
-                    student_id=cmd.student_id,
-                )
-
-        expires_at = missed.start_at + timedelta(days=policy.makeup_expiry_days)
-        if now > expires_at:
-            raise MakeupWindowExpired(
-                "makeup request window has expired",
-                occurrence_id=cmd.missed_occurrence_id,
-            )
-
-        existing = await self._makeups.find_active_for_missed_occurrence(
-            cmd.missed_occurrence_id, cmd.student_id
+        expires_at = await self._eligibility.check(
+            policy=policy, student_id=cmd.student_id, missed=missed, now=now
         )
-        if existing is not None:
-            raise DuplicateMakeupRequest(
-                "a non-denied makeup request already exists for this occurrence",
-                occurrence_id=cmd.missed_occurrence_id,
-                student_id=cmd.student_id,
-            )
 
         request = MakeupRequest(
             request_id=str(new_ulid()),
@@ -185,6 +250,195 @@ class SubmitMakeupRequest:
         )
         await self._makeups.add(request)
         return request
+
+
+class MakeupCandidateView(BaseModel):
+    """One child's missed class that a makeup request would be accepted for."""
+
+    model_config = {"frozen": True}
+
+    student_id: str
+    student_name: str
+    occurrence_id: str
+    session_id: str
+    class_title: str
+    start_at: datetime
+    end_at: datetime
+    has_notice: bool
+    expires_at: datetime
+
+
+class IneligibleMakeupView(BaseModel):
+    """A class the parent flagged (absence notice or open request) that a
+    makeup request would be refused for now, with the reason in plain words."""
+
+    model_config = {"frozen": True}
+
+    student_id: str
+    student_name: str
+    occurrence_id: str
+    class_title: str
+    start_at: datetime
+    reason: str
+
+
+class MakeupCandidatesResult(BaseModel):
+    model_config = {"frozen": True}
+
+    makeups_enabled: bool
+    requires_notice: bool
+    candidates: list[MakeupCandidateView]
+    ineligible: list[IneligibleMakeupView]
+
+
+#: Why a flagged class can't be made up. Only refusals a parent can act on or
+#: would otherwise wonder about; a class the child attended without a notice
+#: is not listed at all.
+_INELIGIBLE_REASONS: dict[str, str] = {
+    "open_request": "A makeup request for this class is already open.",
+    "late_notice": (
+        "The absence notice came in after the notice window, and this academy "
+        "needs an on-time notice for a makeup."
+    ),
+    "present": "Marked present for this class.",
+    "cancelled": "The academy cancelled this class, so it is credited instead of made up.",
+}
+
+
+class CandidateStudentQuery(Protocol):
+    async def list_for_parent(self, parent_id: str) -> list[Student]: ...
+
+
+class CandidateEnrollmentQuery(SubmitterEnrollmentQuery, Protocol):
+    async def active_or_paused_for_student(self, student_id: str) -> list[Enrollment]: ...
+
+
+class CandidateOccurrenceQuery(Protocol):
+    async def list_for_session_between(
+        self, *, session_id: str, start_at: datetime, end_at: datetime
+    ) -> list[SessionOccurrence]: ...
+
+
+class CandidateSessionQuery(Protocol):
+    async def get_many(self, session_ids: list[str]) -> list[Session]: ...
+
+
+class ListMakeupCandidates:
+    """Every missed class of a parent's children that ``SubmitMakeupRequest``
+    would accept now (#1037, #1041). Keyed by child + class date, never by
+    class date alone, and decided by the same ``MakeupEligibility`` check."""
+
+    def __init__(
+        self,
+        *,
+        students: CandidateStudentQuery,
+        enrollments: CandidateEnrollmentQuery,
+        occurrences: CandidateOccurrenceQuery,
+        sessions: CandidateSessionQuery,
+        notices: AbsenceNoticeQuery,
+        makeups: MakeupRequestRepository,
+        policies: SelfServicePolicyRepository,
+        attendance: StudentPresenceQuery,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._students = students
+        self._enrollments = enrollments
+        self._occurrences = occurrences
+        self._sessions = sessions
+        self._notices = notices
+        self._policies = policies
+        self._now = clock
+        self._eligibility = MakeupEligibility(
+            enrollments=enrollments, notices=notices, makeups=makeups, attendance=attendance
+        )
+
+    async def execute(self, parent_id: str) -> list[MakeupCandidateView]:
+        return (await self.scan(parent_id)).candidates
+
+    async def scan(self, parent_id: str) -> MakeupCandidatesResult:
+        """Candidates plus the flagged classes that fail, and why (#1041)."""
+        policy = await self._policies.get_or_default()
+        if not policy.can_request_makeup:
+            return MakeupCandidatesResult(
+                makeups_enabled=False,
+                requires_notice=policy.makeup_requires_notice,
+                candidates=[],
+                ineligible=[],
+            )
+        now = self._now()
+        window_start = now - timedelta(days=policy.makeup_expiry_days)
+        found: list[tuple[Student, SessionOccurrence, datetime]] = []
+        refused: list[tuple[Student, SessionOccurrence, str]] = []
+        for student in await self._students.list_for_parent(parent_id):
+            for enrollment in await self._enrollments.active_or_paused_for_student(
+                student.student_id
+            ):
+                past = await self._occurrences.list_for_session_between(
+                    session_id=enrollment.session_id, start_at=window_start, end_at=now
+                )
+                for missed in sorted(past, key=lambda o: o.start_at, reverse=True):
+                    try:
+                        expires_at = await self._eligibility.check(
+                            policy=policy, student_id=student.student_id, missed=missed, now=now
+                        )
+                    except DomainError as exc:
+                        reason = await self._flagged_reason(exc, student.student_id, missed)
+                        if reason is not None:
+                            refused.append((student, missed, reason))
+                        continue
+                    found.append((student, missed, expires_at))
+        session_ids = {m.session_id for _, m, _ in found} | {m.session_id for _, m, _ in refused}
+        titles = {s.session_id: s.title for s in await self._sessions.get_many(sorted(session_ids))}
+        rows: list[MakeupCandidateView] = []
+        for student, missed, expires_at in found:
+            notice = await self._notices.get_for_occurrence_and_student(
+                missed.occurrence_id, student.student_id
+            )
+            rows.append(
+                MakeupCandidateView(
+                    student_id=student.student_id,
+                    student_name=student.full_name,
+                    occurrence_id=missed.occurrence_id,
+                    session_id=missed.session_id,
+                    class_title=titles.get(missed.session_id, "Class"),
+                    start_at=missed.start_at,
+                    end_at=missed.end_at,
+                    has_notice=notice is not None,
+                    expires_at=expires_at,
+                )
+            )
+        return MakeupCandidatesResult(
+            makeups_enabled=True,
+            requires_notice=policy.makeup_requires_notice,
+            candidates=rows,
+            ineligible=[
+                IneligibleMakeupView(
+                    student_id=student.student_id,
+                    student_name=student.full_name,
+                    occurrence_id=missed.occurrence_id,
+                    class_title=titles.get(missed.session_id, "Class"),
+                    start_at=missed.start_at,
+                    reason=_INELIGIBLE_REASONS[reason],
+                )
+                for student, missed, reason in refused
+            ],
+        )
+
+    async def _flagged_reason(
+        self, exc: DomainError, student_id: str, missed: SessionOccurrence
+    ) -> str | None:
+        """The reason key for a refused class the parent flagged, else None."""
+        if isinstance(exc, DuplicateMakeupRequest):
+            return "open_request"
+        reason = exc.details.get("reason")
+        if reason not in ("notice_required", "present", "cancelled"):
+            return None
+        notice = await self._notices.get_for_occurrence_and_student(
+            missed.occurrence_id, student_id
+        )
+        if notice is None:
+            return None
+        return "late_notice" if reason == "notice_required" else str(reason)
 
 
 class ListParentMakeups:
@@ -213,6 +467,13 @@ class OccurrenceRosterRepository(Protocol):
     async def list_for_occurrence(self, occurrence_id: str) -> list[OccurrenceRosterEntry]: ...
 
 
+class GuestSeatCounts(Protocol):
+    """Website guests booked per class date (L9): they hold a seat with no
+    roster entry, so make-up capacity must count them too."""
+
+    async def guest_counts_for_occurrences(self, occurrence_ids: list[str]) -> dict[str, int]: ...
+
+
 class UpcomingOccurrenceRepository(SessionOccurrenceRepository, Protocol):
     async def list_upcoming_scheduled_between(
         self, *, start_at: datetime, end_at: datetime
@@ -229,8 +490,10 @@ class ListEligibleMakeupTargets:
         enrollments: EnrollmentRepository,
         occurrence_roster: OccurrenceRosterRepository,
         policies: SelfServicePolicyRepository,
+        guests: GuestSeatCounts,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
+        self._guests = guests
         self._students = students
         self._occurrences = occurrences
         self._sessions = sessions
@@ -263,6 +526,9 @@ class ListEligibleMakeupTargets:
 
         session_ids = list({c.session_id for c in candidates})
         sessions_by_id = {s.session_id: s for s in await self._sessions.get_many(session_ids)}
+        guests = await self._guests.guest_counts_for_occurrences(
+            [c.occurrence_id for c in candidates]
+        )
 
         views: list[MakeupTargetView] = []
         for occurrence in candidates:
@@ -277,7 +543,9 @@ class ListEligibleMakeupTargets:
                 await self._occurrence_roster.list_for_occurrence(occurrence.occurrence_id)
             )
             remaining = open_slots(
-                capacity=session.capacity, active_count=active_count, roster_count=roster_count
+                capacity=session.capacity,
+                active_count=active_count,
+                roster_count=roster_count + guests.get(occurrence.occurrence_id, 0),
             )
             if remaining <= 0:
                 continue
@@ -569,8 +837,10 @@ class ApproveMakeupRequest:
         enrollments: EnrollmentRepository,
         sessions: SessionRepository,
         occurrence_roster: AdminOccurrenceRosterRepository,
+        guests: GuestSeatCounts,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
+        self._guests = guests
         self._makeups = makeups
         self._occurrences = occurrences
         self._enrollments = enrollments
@@ -626,8 +896,14 @@ class ApproveMakeupRequest:
         roster_count = len(
             await self._occurrence_roster.list_for_occurrence(cmd.target_occurrence_id)
         )
+        # Website guests hold a seat on their date with no roster entry (L9).
+        guests = (await self._guests.guest_counts_for_occurrences([cmd.target_occurrence_id])).get(
+            cmd.target_occurrence_id, 0
+        )
         remaining = open_slots(
-            capacity=session.capacity, active_count=active_count, roster_count=roster_count
+            capacity=session.capacity,
+            active_count=active_count,
+            roster_count=roster_count + guests,
         )
         if remaining <= 0:
             raise OccurrenceFull(

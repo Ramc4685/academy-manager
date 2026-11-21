@@ -229,3 +229,22 @@ describe("apiFetch FormData bodies", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("apiFetch empty bodies (#1067)", () => {
+  beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("returns null for an empty JSON 200 with no content-length (the proxy drops it)", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response("", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    await expect(apiFetch("/admin/thing", { method: "POST" })).resolves.toBeNull();
+  });
+
+  it("still parses a JSON body", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response('{"ok":true}', { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    await expect(apiFetch("/admin/thing")).resolves.toEqual({ ok: true });
+  });
+});

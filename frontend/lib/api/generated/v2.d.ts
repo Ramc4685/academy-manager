@@ -193,6 +193,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/ai/controls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Ai Controls */
+        get: operations["get_ai_controls_api_v2_admin_ai_controls_get"];
+        /** Put Ai Controls */
+        put: operations["put_ai_controls_api_v2_admin_ai_controls_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/ai/import-sharing": {
         parameters: {
             query?: never;
@@ -331,6 +349,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/billing/ach-notice/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Render the autopay date-change notice (never sent) */
+        get: operations["preview_ach_notice_api_v2_admin_billing_ach_notice_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/billing/connect-readiness": {
         parameters: {
             query?: never;
@@ -382,6 +417,24 @@ export interface paths {
         /** List Failed Payment Attempts */
         get: operations["list_failed_payment_attempts_api_v2_admin_billing_failed_payment_attempts_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/billing/family-offers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The referral programme and sibling discount settings */
+        get: operations["get_family_offers_api_v2_admin_billing_family_offers_get"];
+        /** Set the family offers (owner only, audited) */
+        put: operations["set_family_offers_api_v2_admin_billing_family_offers_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -839,6 +892,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/billing/referrals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The academy's referrals and their state */
+        get: operations["list_referrals_api_v2_admin_billing_referrals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/billing/referrals/email-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview the referral emails (never sent) */
+        get: operations["preview_referral_emails_api_v2_admin_billing_referrals_email_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/billing/referrals/{referral_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve a referral that came only from the website inquiry (owner only) */
+        post: operations["approve_referral_api_v2_admin_billing_referrals__referral_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/billing/rules": {
         parameters: {
             query?: never;
@@ -1015,6 +1119,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/campaigns/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Email Campaign
+         * @description Read-only: resolves the audience the send would reach; emails nobody.
+         */
+        post: operations["preview_email_campaign_api_v2_admin_campaigns_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/class-public-profiles": {
         parameters: {
             query?: never;
@@ -1026,6 +1150,40 @@ export interface paths {
         get: operations["list_class_public_profiles_api_v2_admin_class_public_profiles_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/class-reports/handoffs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Class Report Handoffs */
+        get: operations["list_class_report_handoffs_api_v2_admin_class_reports_handoffs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/closures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Close the academy for a date range: cancel every class date in it */
+        post: operations["close_academy_dates_api_v2_admin_closures_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1061,6 +1219,27 @@ export interface paths {
         put?: never;
         /** Repair Coach Pay Rate Window */
         post: operations["repair_coach_pay_rate_window_api_v2_admin_coaches__coach_id__pay_rates_repair_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/comms/delivery-problems": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Delivery Problems
+         * @description Suppressed addresses and failed campaign sends for this academy's own
+         *     people only. Read-only: clearing an address stays a platform action (L11).
+         */
+        get: operations["get_delivery_problems_api_v2_admin_comms_delivery_problems_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1222,6 +1401,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/curriculum/progress-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Progress Settings */
+        get: operations["get_progress_settings_api_v2_admin_curriculum_progress_settings_get"];
+        /** Update Progress Settings */
+        put: operations["update_progress_settings_api_v2_admin_curriculum_progress_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/dashboard/attention": {
         parameters: {
             query?: never;
@@ -1232,6 +1429,9 @@ export interface paths {
         /**
          * Dashboard Attention
          * @description Aggregate dashboard attention signals from existing admin BFF sources.
+         *
+         *     A source that fails is named in ``unavailable`` (owner rule: a count that
+         *     fails to load is "unavailable", never a silent 0).
          */
         get: operations["dashboard_attention_api_v2_admin_dashboard_attention_get"];
         put?: never;
@@ -1294,6 +1494,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/enrollments/bulk-transfer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bulk Transfer Enrollments
+         * @description A0-8: per-row results; a refused row never blocks the others.
+         */
+        post: operations["bulk_transfer_enrollments_api_v2_admin_enrollments_bulk_transfer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/enrollments/quote": {
         parameters: {
             query?: never;
@@ -1323,6 +1543,23 @@ export interface paths {
         post?: never;
         /** Cancel Enrollment */
         delete: operations["cancel_enrollment_api_v2_admin_enrollments__enrollment_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/enrollments/{enrollment_id}/billing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Mark an enrollment not billed, or start billing it (owner only, audited) */
+        put: operations["set_enrollment_billing_api_v2_admin_enrollments__enrollment_id__billing_put"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1831,6 +2068,26 @@ export interface paths {
         patch: operations["edit_family_note_api_v2_admin_families__parent_id__notes__note_id__patch"];
         trace?: never;
     };
+    "/api/v2/admin/families/{parent_id}/sibling-discount": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Who gets the sibling discount on this family's month (read-only)
+         * @description The same decision the monthly invoice run makes, computed without writing.
+         */
+        get: operations["get_family_sibling_discount_api_v2_admin_families__parent_id__sibling_discount_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/families/{parent_id}/timeline": {
         parameters: {
             query?: never;
@@ -1885,23 +2142,6 @@ export interface paths {
         head?: never;
         /** Edit Expense */
         patch: operations["edit_expense_api_v2_admin_finance_expenses__expense_id__patch"];
-        trace?: never;
-    };
-    "/api/v2/admin/finance/payouts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Payouts */
-        get: operations["list_payouts_api_v2_admin_finance_payouts_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/api/v2/admin/finance/revenue": {
@@ -2118,6 +2358,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/levels/{level_id}/skills/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Reorder Skills */
+        put: operations["reorder_skills_api_v2_admin_levels__level_id__skills_order_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/messages": {
         parameters: {
             query?: never;
@@ -2207,6 +2464,29 @@ export interface paths {
         get: operations["get_pathway_dashboard_api_v2_admin_pathway_dashboard_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/pathway/placements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Place Students In Bulk
+         * @description Place up to 50 students on one level, crediting skills they already have.
+         *
+         *     Each student is placed (and audited) on its own: one refusal, such as a
+         *     level-up already being approved, does not stop the rest.
+         */
+        post: operations["place_students_in_bulk_api_v2_admin_pathway_placements_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2364,6 +2644,26 @@ export interface paths {
         };
         /** Last Payment By Family */
         get: operations["last_payment_by_family_api_v2_admin_payments_last_by_family_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/payments/overdue-families": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Payments Overdue Families
+         * @description Families past due (no autopay cover) and needing action, in ANY period.
+         */
+        get: operations["payments_overdue_families_api_v2_admin_payments_overdue_families_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2644,6 +2944,24 @@ export interface paths {
         put?: never;
         /** Reopen Payout Period */
         post: operations["reopen_payout_period_api_v2_admin_payout_periods__period_id__reopen_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/payroll-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Payroll Settings */
+        get: operations["get_payroll_settings_api_v2_admin_payroll_settings_get"];
+        /** Update Payroll Settings */
+        put: operations["update_payroll_settings_api_v2_admin_payroll_settings_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3014,6 +3332,23 @@ export interface paths {
         put?: never;
         /** Create Level */
         post: operations["create_level_api_v2_admin_programs__program_id__levels_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/programs/{program_id}/levels/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Reorder Levels */
+        put: operations["reorder_levels_api_v2_admin_programs__program_id__levels_order_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3467,6 +3802,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/schedule/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Schedule Publish */
+        get: operations["get_schedule_publish_api_v2_admin_schedule_publish_get"];
+        /** Set Schedule Publish */
+        put: operations["set_schedule_publish_api_v2_admin_schedule_publish_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/schedule/suggest-no-class-dates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Suggest No Class Dates */
+        post: operations["suggest_no_class_dates_api_v2_admin_schedule_suggest_no_class_dates_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/seed-lesson-cards": {
         parameters: {
             query?: never;
@@ -3622,6 +3992,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/self-service/trials/{request_id}/cancel-booking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Guest Trial Booking
+         * @description L9: staff cancel one approved website guest booking. It goes back to
+         *     the pending queue and the family gets the date-cancelled email.
+         */
+        post: operations["cancel_guest_trial_booking_api_v2_admin_self_service_trials__request_id__cancel_booking_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/self-service/trials/{request_id}/deny": {
         parameters: {
             query?: never;
@@ -3762,6 +4153,28 @@ export interface paths {
         head?: never;
         /** Mark coach payroll attendance for a dated occurrence */
         patch: operations["update_occurrence_coach_attendance_api_v2_admin_session_occurrences__occurrence_id__coach_attendance_patch"];
+        trace?: never;
+    };
+    "/api/v2/admin/session-occurrences/{occurrence_id}/credit-missed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Credit a missed class: record a past date as no class (#1207)
+         * @description Same path and rule as calling the date off before class: ``dry_run``
+         *     prices every family, the confirm cancels the date and credits them. No
+         *     email goes out; families see the credit on Payments.
+         */
+        post: operations["credit_missed_class_api_v2_admin_session_occurrences__occurrence_id__credit_missed_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v2/admin/session-occurrences/{occurrence_id}/replacement": {
@@ -3917,6 +4330,26 @@ export interface paths {
         /** Replace the session's assistant coaches (re-syncs future occurrences) */
         put: operations["set_session_assistants_api_v2_admin_sessions__session_id__assistants_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/sessions/{session_id}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copy a class
+         * @description A0-8: new class from this one; optionally its active students too.
+         */
+        post: operations["copy_session_api_v2_admin_sessions__session_id__copy_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4207,6 +4640,26 @@ export interface paths {
         get: operations["get_certificate_detail_api_v2_admin_students__student_id__certificates__cert_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/students/{student_id}/certificates/{cert_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke Certificate
+         * @description Take back a certificate issued in error. The student stays on their level.
+         */
+        post: operations["revoke_certificate_api_v2_admin_students__student_id__certificates__cert_id__revoke_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4794,6 +5247,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/calendar-feed/{token}.ics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Calendar Feed */
+        get: operations["get_calendar_feed_api_v2_calendar_feed__token__ics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/coach/academy": {
         parameters: {
             query?: never;
@@ -4979,6 +5449,58 @@ export interface paths {
         head?: never;
         /** Correct a previously recorded attendance mark (48h grace window) */
         patch: operations["correct_attendance_api_v2_coach_occurrences__occurrence_id__attendance__student_id__patch"];
+        trace?: never;
+    };
+    "/api/v2/coach/occurrences/{occurrence_id}/class-recap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Class Recap */
+        get: operations["get_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_get"];
+        /** Save Class Recap */
+        put: operations["save_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/coach/occurrences/{occurrence_id}/class-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Class Report */
+        post: operations["submit_class_report_api_v2_coach_occurrences__occurrence_id__class_reports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/coach/occurrences/{occurrence_id}/class-reports/{report_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Class Report */
+        post: operations["resolve_class_report_api_v2_coach_occurrences__occurrence_id__class_reports__report_id__resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v2/coach/profile": {
@@ -5545,23 +6067,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v2/magic-link/consume": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Consume Magic Link */
-        post: operations["consume_magic_link_api_v2_magic_link_consume_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v2/me": {
         parameters: {
             query?: never;
@@ -5791,6 +6296,40 @@ export interface paths {
         put?: never;
         /** Create a Stripe customer portal session */
         post: operations["open_billing_portal_api_v2_parent_billing_portal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/parent/calendar-feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Calendar Feed Link */
+        get: operations["get_calendar_feed_link_api_v2_parent_calendar_feed_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/parent/calendar-feed/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset Calendar Feed Link */
+        post: operations["reset_calendar_feed_link_api_v2_parent_calendar_feed_reset_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6088,6 +6627,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/parent/makeups/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Makeup Candidates
+         * @description #1037/#1041: each child's missed classes the server would accept a
+         *     makeup request for now, under the academy's current policy.
+         */
+        get: operations["list_makeup_candidates_api_v2_parent_makeups_candidates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/parent/makeups/eligible-targets": {
         parameters: {
             query?: never;
@@ -6311,6 +6871,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/parent/referral": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The current parent's referral code and rewards earned */
+        get: operations["get_referral_api_v2_parent_referral_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/parent/sessions/available": {
         parameters: {
             query?: never;
@@ -6354,6 +6931,47 @@ export interface paths {
         };
         /** Get Certificate Detail */
         get: operations["get_certificate_detail_api_v2_parent_students__student_id__certificates__cert_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/parent/students/{student_id}/certificates/{cert_id}/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Share Certificate
+         * @description Turn on a public link for the child's certificate (idempotent).
+         */
+        post: operations["share_certificate_api_v2_parent_students__student_id__certificates__cert_id__share_post"];
+        /**
+         * Unshare Certificate
+         * @description Turn the public link off; the old link stops working at once (idempotent).
+         */
+        delete: operations["unshare_certificate_api_v2_parent_students__student_id__certificates__cert_id__share_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/parent/students/{student_id}/class-recaps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Child Class Recaps */
+        get: operations["list_child_class_recaps_api_v2_parent_students__student_id__class_recaps_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6612,6 +7230,23 @@ export interface paths {
         put?: never;
         /** Stripe webhook receiver (signature-verified, idempotent on event id) */
         post: operations["stripe_webhook_api_v2_parent_webhooks_stripe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request Password Reset */
+        post: operations["request_password_reset_api_v2_password_reset_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7250,6 +7885,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/public/certificates/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Shared Certificate */
+        get: operations["get_shared_certificate_api_v2_public_certificates__token__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/public/trial-requests": {
         parameters: {
             query?: never;
@@ -7498,6 +8150,28 @@ export interface components {
             /** Percent */
             percent?: number | null;
         };
+        /**
+         * AchNoticePreviewView
+         * @description ``GET /admin/billing/ach-notice/preview``: the autopay date-change notice,
+         *     rendered and never sent, with the autopay families it is meant for (L8).
+         */
+        AchNoticePreviewView: {
+            /** Html */
+            html: string;
+            /** Recipients */
+            recipients: components["schemas"]["AchNoticeRecipientView"][];
+            /** Subject */
+            subject: string;
+        };
+        /** AchNoticeRecipientView */
+        AchNoticeRecipientView: {
+            /** Name */
+            name?: string | null;
+            /** Parent Id */
+            parent_id: string;
+            /** Payment Method */
+            payment_method?: string | null;
+        };
         /** ActivateSubscriptionRequest */
         ActivateSubscriptionRequest: {
             /**
@@ -7723,7 +8397,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "pending_registrations" | "overdue_dues" | "autopay_failure" | "dunning_exhaustion" | "pause_requests" | "scheduled_resume_blocked" | "scheduled_action_failed" | "billing_deferrals" | "waivers" | "session_pressure";
+            kind: "pending_registrations" | "overdue_dues" | "autopay_failure" | "dunning_exhaustion" | "autopay_stuck" | "bank_return_review" | "pause_requests" | "scheduled_resume_blocked" | "scheduled_action_failed" | "billing_deferrals" | "waivers" | "session_pressure";
             /**
              * Severity
              * @enum {string}
@@ -7736,6 +8410,21 @@ export interface components {
         AdminAttentionList: {
             /** Items */
             items: components["schemas"]["AdminAttentionItemView"][];
+            /**
+             * Unavailable
+             * @default []
+             */
+            unavailable: components["schemas"]["AdminAttentionUnavailableView"][];
+        };
+        /**
+         * AdminAttentionUnavailableView
+         * @description An attention source that could not be read: unknown, not "nothing".
+         */
+        AdminAttentionUnavailableView: {
+            /** Label */
+            label: string;
+            /** Source */
+            source: string;
         };
         /** AdminAuditLogList */
         AdminAuditLogList: {
@@ -8166,8 +8855,17 @@ export interface components {
             enrollment_id: string;
             /** Full Name */
             full_name: string;
+            /** Latest Event Date */
+            latest_event_date?: string | null;
+            /** Latest Event Type */
+            latest_event_type?: string | null;
             /** Level */
             level?: string | null;
+            /**
+             * Not Billed
+             * @default false
+             */
+            not_billed: boolean;
             /** Parent Id */
             parent_id: string;
             /** Parent Name */
@@ -8249,6 +8947,11 @@ export interface components {
              * @default []
              */
             actions: ("send_invite" | "autopay_on" | "autopay_off" | "send_invoice" | "record_payment")[];
+            /**
+             * Credits
+             * @default []
+             */
+            credits: components["schemas"]["FamilyAccountCredit"][];
             /** Generated At */
             generated_at: string;
             header: components["schemas"]["FamilyHeader"];
@@ -8370,6 +9073,8 @@ export interface components {
             phone?: string | null;
             /** Registration */
             registration?: ("registered" | "invited" | "not_invited") | null;
+            /** Sibling Student Ids */
+            sibling_student_ids?: string[];
             /**
              * Stage
              * @enum {string}
@@ -8387,6 +9092,11 @@ export interface components {
              * Format: date-time
              */
             generated_at: string;
+            /**
+             * Not Billed Families
+             * @default 0
+             */
+            not_billed_families: number;
             /** Preset Counts */
             preset_counts?: {
                 [key: string]: number;
@@ -8549,7 +9259,10 @@ export interface components {
         };
         /**
          * AdminInboxCountsView
-         * @description How many rows each inbox queue is holding for a human right now.
+         * @description How many rows each decision queue is holding for a human right now.
+         *
+         *     A queue whose count could not be read is absent from ``counts`` and named
+         *     in ``unavailable`` so the page can say so instead of showing zero.
          */
         AdminInboxCountsView: {
             /** Counts */
@@ -8558,6 +9271,11 @@ export interface components {
             };
             /** Total */
             total: number;
+            /**
+             * Unavailable
+             * @default []
+             */
+            unavailable: string[];
         };
         /** AdminMarkMessageReadResponse */
         AdminMarkMessageReadResponse: {
@@ -8878,6 +9596,16 @@ export interface components {
             /** Unplaced */
             unplaced?: components["schemas"]["UnplacedStudent"][];
         };
+        /**
+         * AdminOverdueFamiliesView
+         * @description Academy-wide family counts across every billing period (L2 B2).
+         */
+        AdminOverdueFamiliesView: {
+            /** Needs Action Count */
+            needs_action_count: number;
+            /** Past Due Count */
+            past_due_count: number;
+        };
         /** AdminPauseRequestList */
         AdminPauseRequestList: {
             /** Requests */
@@ -9003,6 +9731,18 @@ export interface components {
              * @default 0
              */
             discount_cents: number;
+            /** Dispute Amount Cents */
+            dispute_amount_cents?: number | null;
+            /** Dispute Id */
+            dispute_id?: string | null;
+            /** Dispute Outcome */
+            dispute_outcome?: string | null;
+            /** Dispute Reason */
+            dispute_reason?: string | null;
+            /** Dispute Status */
+            dispute_status?: string | null;
+            /** Disputed At */
+            disputed_at?: string | null;
             /** Enrollment Id */
             enrollment_id?: string | null;
             /** Final Amount Cents */
@@ -9067,11 +9807,6 @@ export interface components {
             /** Voided By */
             voided_by?: string | null;
         };
-        /** AdminPayoutList */
-        AdminPayoutList: {
-            /** Payouts */
-            payouts: components["schemas"]["AdminPayoutView"][];
-        };
         /** AdminPayoutPayslipView */
         AdminPayoutPayslipView: {
             /** Lines */
@@ -9093,7 +9828,7 @@ export interface components {
              * Basis
              * @enum {string}
              */
-            basis: "scheduled" | "substitute" | "actual";
+            basis: "scheduled" | "substitute" | "actual" | "assistant";
             /** Coach Id */
             coach_id: string;
             /** Currency */
@@ -9132,6 +9867,11 @@ export interface components {
             lines: components["schemas"]["AdminPayoutPeriodLineView"][];
             /** Paid Amount Cents */
             paid_amount_cents?: number | null;
+            /**
+             * Paid Amount Differs
+             * @default false
+             */
+            paid_amount_differs: boolean;
             /** Paid At */
             paid_at?: string | null;
             /** Paid Method */
@@ -9153,6 +9893,12 @@ export interface components {
              */
             period_start: string;
             /**
+             * Revenue Basis
+             * @default expected
+             * @enum {string}
+             */
+            revenue_basis: "expected" | "invoiced";
+            /**
              * Status
              * @enum {string}
              */
@@ -9163,35 +9909,8 @@ export interface components {
             unpaid_occurrence_ids: string[];
             /** Unpaid Occurrences */
             unpaid_occurrences?: components["schemas"]["AdminUnpaidOccurrenceView"][];
-        };
-        /** AdminPayoutView */
-        AdminPayoutView: {
-            /** Amount Cents */
-            amount_cents: number;
-            /** Coach Id */
-            coach_id: string;
-            /** Expected Revenue Cents */
-            expected_revenue_cents?: number | null;
-            /** Paid At */
-            paid_at: string | null;
-            /** Payout Id */
-            payout_id: string;
-            /**
-             * Period End
-             * Format: date-time
-             */
-            period_end: string;
-            /**
-             * Period Start
-             * Format: date-time
-             */
-            period_start: string;
-            /** Rule Label */
-            rule_label?: string | null;
-            /** Sessions Count */
-            sessions_count?: number | null;
-            /** Students Count */
-            students_count?: number | null;
+            /** Version */
+            version: number;
         };
         /** AdminPayoutWarningView */
         AdminPayoutWarningView: {
@@ -9207,7 +9926,7 @@ export interface components {
              * Reason
              * @enum {string}
              */
-            reason: "missing_session_price_for_percent_revenue" | "missing_rate" | "missing_percent";
+            reason: "missing_session_price_for_percent_revenue" | "missing_invoiced_tuition_for_percent_revenue" | "percent_rate_on_assistant" | "missing_rate" | "missing_percent";
             /** Repair Action */
             repair_action: string;
             /** Session Id */
@@ -9278,6 +9997,11 @@ export interface components {
              * @default 0
              */
             manual_enrollment_count: number;
+            /**
+             * Not Billed Enrollment Count
+             * @default 0
+             */
+            not_billed_enrollment_count: number;
             /** Period */
             period: string;
             /**
@@ -9796,6 +10520,11 @@ export interface components {
              */
             monthly_fee_cents: number;
             /**
+             * Not Billed Enrollment Count
+             * @default 0
+             */
+            not_billed_enrollment_count: number;
+            /**
              * Other Expenses Cents
              * @default 0
              */
@@ -9966,8 +10695,15 @@ export interface components {
             enrolled_count: number;
             /** Location */
             location: string;
+            /**
+             * Not Billed Count
+             * @default 0
+             */
+            not_billed_count: number;
             /** Parking Notes */
             parking_notes?: string | null;
+            /** Phase */
+            phase?: ("active" | "upcoming" | "ended") | null;
             /** Session Id */
             session_id: string;
             /**
@@ -10134,6 +10870,11 @@ export interface components {
             lifecycle_as_of?: string | null;
             /** Medical Notes */
             medical_notes?: string | null;
+            /**
+             * Not Billed
+             * @default false
+             */
+            not_billed: boolean;
             /** Notes */
             notes?: string | null;
             /**
@@ -10320,6 +11061,15 @@ export interface components {
             enrollment_id: string;
             /** Location */
             location?: string | null;
+            /**
+             * Not Billed
+             * @default false
+             */
+            not_billed: boolean;
+            /** Not Billed Note */
+            not_billed_note?: string | null;
+            /** Not Billed Reason */
+            not_billed_reason?: string | null;
             /** Payment Mode */
             payment_mode?: string | null;
             /** Pending Cancellation At */
@@ -10370,6 +11120,11 @@ export interface components {
             lifecycle: "active" | "at_risk" | "paused" | "on_hold" | "pending_cancel" | "left" | "never_enrolled" | "trial";
             /** Lifecycle As Of */
             lifecycle_as_of?: string | null;
+            /**
+             * Not Billed
+             * @default false
+             */
+            not_billed: boolean;
             /** Parent Email */
             parent_email?: string | null;
             /** Parent Id */
@@ -10458,7 +11213,7 @@ export interface components {
              * @default unknown_unpaid_reason
              * @enum {string}
              */
-            reason: "no_rate_configured" | "rate_gap" | "missing_session_price_for_percent_revenue" | "attendance_override" | "replaced_by_actual_coach" | "unknown_unpaid_reason" | "missing_rate" | "missing_percent";
+            reason: "no_rate_configured" | "rate_gap" | "missing_session_price_for_percent_revenue" | "missing_invoiced_tuition_for_percent_revenue" | "percent_rate_on_assistant" | "attendance_override" | "replaced_by_actual_coach" | "unknown_unpaid_reason" | "missing_rate" | "missing_percent";
             /** Repair Action */
             repair_action?: string | null;
             /** Session Id */
@@ -10991,6 +11746,30 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** AiControlsRequest */
+        AiControlsRequest: {
+            /** Coach Review Narratives */
+            coach_review_narratives: boolean;
+            /** Daily Call Caps */
+            daily_call_caps: {
+                [key: string]: number;
+            };
+            /** Monthly Call Cap */
+            monthly_call_cap: number;
+        };
+        /** AiControlsView */
+        AiControlsView: {
+            /** Coach Review Narratives */
+            coach_review_narratives: boolean;
+            /** Daily Call Caps */
+            daily_call_caps: {
+                [key: string]: number;
+            };
+            /** Features */
+            features: string[];
+            /** Monthly Call Cap */
+            monthly_call_cap: number;
+        };
         /** AiUsageView */
         AiUsageView: {
             /** Cap */
@@ -11223,6 +12002,11 @@ export interface components {
              * Format: date-time
              */
             generated_at: string;
+            /**
+             * Not Billed
+             * @default 0
+             */
+            not_billed: number;
             /** Students */
             students: number;
         };
@@ -11750,18 +12534,133 @@ export interface components {
              */
             skipped: number;
         };
+        /** BulkPlacementBody */
+        BulkPlacementBody: {
+            /** Credited Skill Ids */
+            credited_skill_ids?: string[];
+            /** Level Id */
+            level_id: string;
+            /**
+             * Notify Parents
+             * @default false
+             */
+            notify_parents: boolean;
+            /** Program Id */
+            program_id?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Student Ids */
+            student_ids: string[];
+        };
         /** BulkStatusBody */
         BulkStatusBody: {
             /** Level Id */
-            level_id: string;
+            level_id?: string | null;
             /** Program Id */
             program_id: string;
             /** Skill Id */
             skill_id: string;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "INTRODUCED" | "LEARNING" | "PRACTICING" | "TEST_READY" | "NEEDS_REVIEW";
             /** Student Ids */
             student_ids: string[];
+        };
+        /**
+         * BulkTransferEnrollmentsRequest
+         * @description A0-8: move several roster rows to one class in one request.
+         */
+        BulkTransferEnrollmentsRequest: {
+            /**
+             * Effective Date
+             * Format: date
+             */
+            effective_date: string;
+            /** Enrollment Ids */
+            enrollment_ids: string[];
+            /** Reason */
+            reason?: string | null;
+            /** Target Session Id */
+            target_session_id: string;
+        };
+        /** BulkTransferEnrollmentsResponse */
+        BulkTransferEnrollmentsResponse: {
+            /** Failed Count */
+            failed_count: number;
+            /** Moved Count */
+            moved_count: number;
+            /** Results */
+            results: components["schemas"]["BulkTransferRowView"][];
+        };
+        /** BulkTransferRowView */
+        BulkTransferRowView: {
+            /** Enrollment Id */
+            enrollment_id: string;
+            /** Error Code */
+            error_code?: string | null;
+            /** Message */
+            message?: string | null;
+            /** Ok */
+            ok: boolean;
+        };
+        /** CalendarFeedLinkView */
+        CalendarFeedLinkView: {
+            /** Url */
+            url: string;
+        };
+        /** CampaignPreviewExclusion */
+        CampaignPreviewExclusion: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Email */
+            email?: string | null;
+            /**
+             * Is Family Contact
+             * @default false
+             */
+            is_family_contact: boolean;
+            /** Reason */
+            reason: string;
+        };
+        /** CampaignPreviewRecipient */
+        CampaignPreviewRecipient: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Email */
+            email: string;
+            /**
+             * Is Family Contact
+             * @default false
+             */
+            is_family_contact: boolean;
+        };
+        /** CampaignPreviewRequest */
+        CampaignPreviewRequest: {
+            audience: components["schemas"]["SendCampaignAudience"];
+        };
+        /**
+         * CampaignPreviewResponse
+         * @description Resolved audience before a send (#1029): unique addresses, and the
+         *     families and opted-in contacts they belong to. Never an enrollment count.
+         */
+        CampaignPreviewResponse: {
+            /**
+             * Audience Fingerprint
+             * @default
+             */
+            audience_fingerprint: string;
+            /** Contact Count */
+            contact_count: number;
+            /** Exclusions */
+            exclusions?: components["schemas"]["CampaignPreviewExclusion"][];
+            /** Family Count */
+            family_count: number;
+            /** Recipient Count */
+            recipient_count: number;
+            /** Recipients */
+            recipients?: components["schemas"]["CampaignPreviewRecipient"][];
         };
         /** CancelAccountDeletionPayload */
         CancelAccountDeletionPayload: {
@@ -11805,6 +12704,15 @@ export interface components {
             affected_enrollment_ids?: string[];
             /** Billing Result */
             billing_result?: string | null;
+            /** Credit Skips */
+            credit_skips?: {
+                [key: string]: number;
+            };
+            /**
+             * Credit Total Cents
+             * @default 0
+             */
+            credit_total_cents: number;
             /**
              * Credits Issued
              * @default 0
@@ -11902,6 +12810,32 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** ChildClassRecapList */
+        ChildClassRecapList: {
+            /** Recaps */
+            recaps: components["schemas"]["ChildClassRecapView"][];
+        };
+        /** ChildClassRecapView */
+        ChildClassRecapView: {
+            /**
+             * Class Starts At
+             * Format: date-time
+             */
+            class_starts_at: string;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Practiced Skills */
+            practiced_skills: components["schemas"]["ChildRecapSkillView"][];
+            /** Taught Skills */
+            taught_skills: components["schemas"]["ChildRecapSkillView"][];
+        };
+        /** ChildPracticeView */
+        ChildPracticeView: {
+            /** Skill Ids */
+            skill_ids: string[];
+            /** Student Id */
+            student_id: string;
+        };
         /** ChildProfileView */
         ChildProfileView: {
             /**
@@ -11940,6 +12874,15 @@ export interface components {
              * @enum {string}
              */
             skill_level: "beginner" | "intermediate" | "advanced" | "";
+        };
+        /** ChildRecapSkillView */
+        ChildRecapSkillView: {
+            /** Name */
+            name: string;
+            /** Passed */
+            passed: boolean;
+            /** Skill Id */
+            skill_id: string;
         };
         /**
          * ClassPublicFieldsRequest
@@ -11990,6 +12933,90 @@ export interface components {
             /** Title */
             title?: string | null;
         };
+        /** ClassRecapView */
+        ClassRecapView: {
+            /** Ai Enabled */
+            ai_enabled: boolean;
+            /** Can Edit */
+            can_edit: boolean;
+            /** Can Resolve */
+            can_resolve: boolean;
+            /**
+             * Class Starts At
+             * Format: date-time
+             */
+            class_starts_at: string;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Practice */
+            practice: components["schemas"]["ChildPracticeView"][];
+            /** Reports */
+            reports: components["schemas"]["ClassReportView"][];
+            /** Revision */
+            revision: number;
+            /** Roster */
+            roster: components["schemas"]["RecapRosterView"][];
+            /** Skill Options */
+            skill_options: components["schemas"]["RecapSkillView"][];
+            /** Source */
+            source: string | null;
+            /** Taught Skills */
+            taught_skills: components["schemas"]["RecapSkillView"][];
+            /** Updated At */
+            updated_at: string | null;
+        };
+        /** ClassReportHandoffList */
+        ClassReportHandoffList: {
+            /** Reports */
+            reports: components["schemas"]["ClassReportHandoffView"][];
+        };
+        /** ClassReportHandoffView */
+        ClassReportHandoffView: {
+            /** Author Id */
+            author_id: string;
+            /**
+             * Class Starts At
+             * Format: date-time
+             */
+            class_starts_at: string;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Report Id */
+            report_id: string;
+            /**
+             * Submitted At
+             * Format: date-time
+             */
+            submitted_at: string;
+            /** Text */
+            text: string;
+        };
+        /** ClassReportView */
+        ClassReportView: {
+            /** Ai Used */
+            ai_used: boolean;
+            /** Applied Revision */
+            applied_revision: number | null;
+            /** Is Mine */
+            is_mine: boolean;
+            /** Outcome */
+            outcome: string;
+            /** Pass Claims */
+            pass_claims: components["schemas"]["PassClaimView"][];
+            /** Questions */
+            questions: string[];
+            /** Report Id */
+            report_id: string;
+            /** Resolved At */
+            resolved_at: string | null;
+            /**
+             * Submitted At
+             * Format: date-time
+             */
+            submitted_at: string;
+            /** Text */
+            text: string;
+        };
         /** ClassRiskView */
         ClassRiskView: {
             /** At Risk */
@@ -12006,6 +13033,100 @@ export interface components {
             students: number;
             /** Title */
             title: string;
+        };
+        /**
+         * CloseAcademyDatesRequest
+         * @description Academy-wide closure: every class from ``start_date`` to ``end_date``
+         *     (academy-local, inclusive) is cancelled in one step.
+         */
+        CloseAcademyDatesRequest: {
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /**
+             * End Date
+             * Format: date
+             */
+            end_date: string;
+            /**
+             * Notify
+             * @default true
+             */
+            notify: boolean;
+            /** Reason */
+            reason: string;
+            /**
+             * Start Date
+             * Format: date
+             */
+            start_date: string;
+        };
+        /** CloseAcademyDatesResponse */
+        CloseAcademyDatesResponse: {
+            /**
+             * Cancelled
+             * @default 0
+             */
+            cancelled: number;
+            /**
+             * Credits Issued
+             * @default 0
+             */
+            credits_issued: number;
+            /** Dates */
+            dates?: components["schemas"]["ClosureDateView"][];
+            /**
+             * Families Affected
+             * @default 0
+             */
+            families_affected: number;
+            /**
+             * Families Notified
+             * @default 0
+             */
+            families_notified: number;
+            /**
+             * Notice Failed
+             * @default false
+             */
+            notice_failed: boolean;
+            /**
+             * Skipped
+             * @default 0
+             */
+            skipped: number;
+            /** Timezone */
+            timezone: string;
+        };
+        /** ClosureDateView */
+        ClosureDateView: {
+            /** Billing Warning */
+            billing_warning?: string | null;
+            /**
+             * Credits Issued
+             * @default 0
+             */
+            credits_issued: number;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Session Id */
+            session_id: string;
+            /** Session Title */
+            session_title?: string | null;
+            /** Skip Reason */
+            skip_reason?: string | null;
+            /**
+             * Start At
+             * Format: date-time
+             */
+            start_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "cancelled" | "would_cancel" | "skipped";
         };
         /**
          * CoachAcademyView
@@ -12187,6 +13308,8 @@ export interface components {
         };
         /** CoachRosterEntry */
         CoachRosterEntry: {
+            /** Attendance Marked At */
+            attendance_marked_at?: string | null;
             /** Attendance Status */
             attendance_status?: ("present" | "absent" | "late" | "voided") | null;
             /** Enrollment Status */
@@ -12285,6 +13408,11 @@ export interface components {
             timezone?: string | null;
             /** Title */
             title: string;
+            /**
+             * Trial Guests
+             * @default []
+             */
+            trial_guests: components["schemas"]["CoachTrialGuest"][];
         };
         /** CoachSessionAnnouncementList */
         CoachSessionAnnouncementList: {
@@ -12359,6 +13487,21 @@ export interface components {
             date: string;
             /** Sessions */
             sessions: components["schemas"]["CoachSession"][];
+        };
+        /**
+         * CoachTrialGuest
+         * @description L9: a family with no account who booked a free trial on the public page.
+         *     The coach sees the parent's name and the player's age only.
+         */
+        CoachTrialGuest: {
+            /** Age */
+            age?: string | null;
+            /** Name */
+            name: string;
+            /** Trial Outcome */
+            trial_outcome?: ("came" | "no_show") | null;
+            /** Trial Request Id */
+            trial_request_id: string;
         };
         /** CoachTrialOutcomeBody */
         CoachTrialOutcomeBody: {
@@ -12521,11 +13664,14 @@ export interface components {
              */
             funds_route_to_academy: boolean;
             health: components["schemas"]["BillingHealthDto"];
+            /** Payments Blocked Reason */
+            payments_blocked_reason?: string | null;
             /**
              * Payments Possible
              * @default false
              */
             payments_possible: boolean;
+            refund_failures?: components["schemas"]["RefundFailuresDto"];
             webhook_events: components["schemas"]["WebhookBacklogDto"];
         };
         /** ConnectedAccountReadinessDto */
@@ -12543,6 +13689,11 @@ export interface components {
              */
             configured: boolean;
             /**
+             * Direct Charges Supported
+             * @default false
+             */
+            direct_charges_supported: boolean;
+            /**
              * Payouts Enabled
              * @default false
              */
@@ -12554,18 +13705,6 @@ export interface components {
             ready_for_charges: boolean;
             /** Status */
             status?: string | null;
-        };
-        /** ConsumeMagicLinkRequest */
-        ConsumeMagicLinkRequest: {
-            /** Token */
-            token: string;
-        };
-        /** ConsumeMagicLinkResponse */
-        ConsumeMagicLinkResponse: {
-            /** Custom Token */
-            custom_token: string;
-            /** Next Path */
-            next_path: string;
         };
         /** ContactPatch */
         ContactPatch: {
@@ -12581,6 +13720,46 @@ export interface components {
             phone?: string | null;
             /** Relationship */
             relationship?: string | null;
+        };
+        /** CopiedRosterRowView */
+        CopiedRosterRowView: {
+            /** Error Code */
+            error_code?: string | null;
+            /** Full Name */
+            full_name: string;
+            /** Message */
+            message?: string | null;
+            /** Ok */
+            ok: boolean;
+            /** Student Id */
+            student_id: string;
+        };
+        /**
+         * CopySessionRequest
+         * @description A0-8 Copy class. Omitted schedule fields keep the source class's.
+         */
+        CopySessionRequest: {
+            /**
+             * Copy Roster
+             * @default false
+             */
+            copy_roster: boolean;
+            /** Days Of Week */
+            days_of_week?: string[] | null;
+            /** End Time */
+            end_time?: string | null;
+            /** Start Time */
+            start_time?: string | null;
+            /** Title */
+            title: string;
+        };
+        /** CopySessionResponse */
+        CopySessionResponse: {
+            /** Price Copied */
+            price_copied: boolean;
+            /** Roster */
+            roster: components["schemas"]["CopiedRosterRowView"][];
+            session: components["schemas"]["AdminSessionView"];
         };
         /** CorrectAttendanceRequest */
         CorrectAttendanceRequest: {
@@ -12692,8 +13871,6 @@ export interface components {
              * @default true
              */
             requires_coach_recommendation: boolean;
-            /** Sequence */
-            sequence: number;
         };
         /** CreateMakeupRequestRequest */
         CreateMakeupRequestRequest: {
@@ -12858,10 +14035,18 @@ export interface components {
             /** Name */
             name: string;
             /**
+             * Pass Rule
+             * @default ONE_TAP
+             * @enum {string}
+             */
+            pass_rule: "ONE_TAP" | "N_TRIES" | "LEAD_COACH";
+            /**
              * Pass Threshold Pct
              * @default 70
              */
             pass_threshold_pct: number;
+            /** Pass Tries */
+            pass_tries?: number | null;
             /** Program Id */
             program_id: string;
             /**
@@ -12870,8 +14055,6 @@ export interface components {
              * @enum {string}
              */
             scoring_type: "ATTEMPT_BASED" | "CHECKLIST_BASED" | "COACH_APPROVAL" | "RALLY_COUNT" | "TIME_BASED" | "POINTS_BASED";
-            /** Sequence */
-            sequence: number;
         };
         /** CreateSkillNoteBody */
         CreateSkillNoteBody: {
@@ -12933,6 +14116,56 @@ export interface components {
              */
             student_ref: "prospective" | "existing_student";
         };
+        /**
+         * CreditMissedClassRequest
+         * @description Credit a missed class (#1207): record a PAST date as no class.
+         */
+        CreditMissedClassRequest: {
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /** Reason */
+            reason: string;
+        };
+        /** CreditMissedClassResponse */
+        CreditMissedClassResponse: {
+            /** Billing Result */
+            billing_result?: string | null;
+            /** Credit Skips */
+            credit_skips?: {
+                [key: string]: number;
+            };
+            /**
+             * Credit Total Cents
+             * @default 0
+             */
+            credit_total_cents: number;
+            /**
+             * Credits Issued
+             * @default 0
+             */
+            credits_issued: number;
+            /** Dry Run */
+            dry_run: boolean;
+            /** Families */
+            families?: components["schemas"]["MissedClassFamilyView"][];
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Payroll Flag */
+            payroll_flag?: string | null;
+            /**
+             * Schedule Changed
+             * @default false
+             */
+            schedule_changed: boolean;
+            /**
+             * Start At
+             * Format: date-time
+             */
+            start_at: string;
+        };
         /** DMRequest */
         DMRequest: {
             /** Body */
@@ -12968,6 +14201,13 @@ export interface components {
         DeleteExpenseRequest: {
             /** Reason */
             reason: string;
+        };
+        /** DeliveryProblemsView */
+        DeliveryProblemsView: {
+            /** Failed */
+            failed: components["schemas"]["FailedDeliveryView"][];
+            /** Suppressed Emails */
+            suppressed_emails: string[];
         };
         /** DenyMakeupRequestBody */
         DenyMakeupRequestBody: {
@@ -13176,6 +14416,31 @@ export interface components {
             /** Success Url */
             success_url: string;
         };
+        /** EnrollmentBillingView */
+        EnrollmentBillingView: {
+            /** Billing Type */
+            billing_type: string;
+            /** Enrollment Id */
+            enrollment_id: string;
+            /**
+             * Kept Invoice Ids
+             * @default []
+             */
+            kept_invoice_ids: string[];
+            /** Not Billed */
+            not_billed: boolean;
+            /** Not Billed Note */
+            not_billed_note?: string | null;
+            /** Not Billed Reason */
+            not_billed_reason?: ("owner_child" | "coach_child" | "scholarship" | "other") | null;
+            /** Skipped Period */
+            skipped_period?: string | null;
+            /**
+             * Voided Invoice Ids
+             * @default []
+             */
+            voided_invoice_ids: string[];
+        };
         /** EnrollmentDeparturePolicyView */
         EnrollmentDeparturePolicyView: {
             /** Delete Enrollment Requires Owner */
@@ -13290,6 +14555,15 @@ export interface components {
             /** Session Id */
             session_id: string;
         };
+        /** FailedDeliveryView */
+        FailedDeliveryView: {
+            /** Delivery Id */
+            delivery_id: string;
+            /** Failed Reason */
+            failed_reason: string;
+            /** Recipient Email */
+            recipient_email: string | null;
+        };
         /** FailedPaymentRowDto */
         FailedPaymentRowDto: {
             /**
@@ -13348,6 +14622,33 @@ export interface components {
             with_reason: number;
             /** Without Reason */
             without_reason: number;
+        };
+        /**
+         * FamilyAccountCredit
+         * @description One account credit on the family record (#1207).
+         */
+        FamilyAccountCredit: {
+            /** Amount Cents */
+            amount_cents: number;
+            /**
+             * Applied Invoices
+             * @default []
+             */
+            applied_invoices: string[];
+            /** Approved By Name */
+            approved_by_name?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Credit Id */
+            credit_id: string;
+            /** Reason */
+            reason: string;
+            /** Remaining Amount Cents */
+            remaining_amount_cents: number;
+            /** Status */
+            status: string;
+            /** Type */
+            type: string;
         };
         /** FamilyAllocation */
         FamilyAllocation: {
@@ -13475,6 +14776,15 @@ export interface components {
             enrollment_id: string;
             /** Monthly Price Cents */
             monthly_price_cents?: number | null;
+            /**
+             * Not Billed
+             * @default false
+             */
+            not_billed: boolean;
+            /** Not Billed Note */
+            not_billed_note?: string | null;
+            /** Not Billed Reason */
+            not_billed_reason?: string | null;
             /** Override Price Cents */
             override_price_cents?: number | null;
             /** Recurring Discount */
@@ -13498,6 +14808,11 @@ export interface components {
             active: number;
             /** Cancelled */
             cancelled: number;
+            /**
+             * Not Billed
+             * @default 0
+             */
+            not_billed: number;
             /** Paused */
             paused: number;
         };
@@ -13756,6 +15071,11 @@ export interface components {
              */
             updated_at: string;
         };
+        /** FamilyOffersResponse */
+        FamilyOffersResponse: {
+            referral_program: components["schemas"]["ReferralProgramView"];
+            sibling_discount: components["schemas"]["SiblingDiscountView"];
+        };
         /** FamilyParent */
         FamilyParent: {
             /** Email */
@@ -13778,6 +15098,18 @@ export interface components {
              * @enum {string}
              */
             state: "registered" | "invited" | "not_invited";
+        };
+        /** FamilySiblingDiscountView */
+        FamilySiblingDiscountView: {
+            /** Enabled */
+            enabled: boolean;
+            /** Enrollments */
+            enrollments: components["schemas"]["SiblingDiscountEnrollmentView"][];
+            next_period?: components["schemas"]["SiblingDiscountPeriodView"] | null;
+            /** Percent Bps */
+            percent_bps?: number | null;
+            /** Period */
+            period: string;
         };
         /** FamilyStudent */
         FamilyStudent: {
@@ -14197,6 +15529,8 @@ export interface components {
             status: "create" | "skip" | "error";
             /** Student Date Of Birth */
             student_date_of_birth?: string | null;
+            /** Student Id */
+            student_id?: string | null;
             /** Student Name */
             student_name: string;
             /** Warnings */
@@ -14221,6 +15555,24 @@ export interface components {
             rows_skip: number;
             /** Rows Total */
             rows_total: number;
+        };
+        /** IneligibleMakeupView */
+        IneligibleMakeupView: {
+            /** Class Title */
+            class_title: string;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Reason */
+            reason: string;
+            /**
+             * Start At
+             * Format: date-time
+             */
+            start_at: string;
+            /** Student Id */
+            student_id: string;
+            /** Student Name */
+            student_name: string;
         };
         /** InquiryConversionView */
         InquiryConversionView: {
@@ -14688,6 +16040,56 @@ export interface components {
              */
             sent_at: string;
         };
+        /** MakeupCandidateView */
+        MakeupCandidateView: {
+            /** Class Title */
+            class_title: string;
+            /**
+             * End At
+             * Format: date-time
+             */
+            end_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Has Notice */
+            has_notice: boolean;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Session Id */
+            session_id: string;
+            /**
+             * Start At
+             * Format: date-time
+             */
+            start_at: string;
+            /** Student Id */
+            student_id: string;
+            /** Student Name */
+            student_name: string;
+        };
+        /** MakeupCandidatesResponse */
+        MakeupCandidatesResponse: {
+            /** Candidates */
+            candidates: components["schemas"]["MakeupCandidateView"][];
+            /**
+             * Ineligible
+             * @default []
+             */
+            ineligible: components["schemas"]["IneligibleMakeupView"][];
+            /**
+             * Makeups Enabled
+             * @default true
+             */
+            makeups_enabled: boolean;
+            /**
+             * Requires Notice
+             * @default false
+             */
+            requires_notice: boolean;
+        };
         /** MakeupRequestAdminRow */
         MakeupRequestAdminRow: {
             /** Approved Target Occurrence Id */
@@ -14904,6 +16306,8 @@ export interface components {
         MarkPayoutPeriodPaidRequest: {
             /** Amount Cents */
             amount_cents: number;
+            /** Expected Version */
+            expected_version?: number | null;
             /**
              * Method
              * @enum {string}
@@ -14954,6 +16358,47 @@ export interface components {
             roles: ("admin" | "coach" | "assistant_coach" | "parent" | "student" | "owner" | "billing" | "front_desk")[];
             /** Status */
             status: string;
+        };
+        /** MilestoneInput */
+        MilestoneInput: {
+            /** Count */
+            count: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "skills_passed" | "levels_completed";
+        };
+        /** MilestoneView */
+        MilestoneView: {
+            /** Count */
+            count: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "skills_passed" | "levels_completed";
+            /**
+             * Since
+             * Format: date-time
+             */
+            since: string;
+        };
+        /** MissedClassFamilyView */
+        MissedClassFamilyView: {
+            /**
+             * Amount Cents
+             * @default 0
+             */
+            amount_cents: number;
+            /** Enrollment Id */
+            enrollment_id: string;
+            /** Outcome */
+            outcome: string;
+            /** Student Id */
+            student_id?: string | null;
+            /** Student Name */
+            student_name?: string | null;
         };
         /** ModifyUserRoleRequest */
         ModifyUserRoleRequest: {
@@ -15145,6 +16590,19 @@ export interface components {
             /** Youtube Links */
             youtube_links?: components["schemas"]["VideoLink"][];
         };
+        /** NoClassDate */
+        NoClassDate: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
         /** NoteBody */
         NoteBody: {
             /** Body */
@@ -15257,6 +16715,8 @@ export interface components {
         OverridePayoutLineRequest: {
             /** Amount Cents */
             amount_cents?: number | null;
+            /** Expected Version */
+            expected_version?: number | null;
             /** Reason */
             reason: string;
         };
@@ -15360,6 +16820,8 @@ export interface components {
             logo_url?: string | null;
             /** Payment Instructions */
             payment_instructions?: string | null;
+            /** Schedule Published Through */
+            schedule_published_through?: string | null;
             self_service?: components["schemas"]["ParentSelfServiceSwitchesView"];
             /** Timezone */
             timezone?: string | null;
@@ -15874,6 +17336,11 @@ export interface components {
              */
             first_name: string;
             /**
+             * Heard From
+             * @default
+             */
+            heard_from: string;
+            /**
              * Last Name
              * @default
              */
@@ -15883,6 +17350,11 @@ export interface components {
              * @default
              */
             phone: string;
+            /**
+             * Referral Code
+             * @default
+             */
+            referral_code: string;
         };
         /** ParentProgressNoteView */
         ParentProgressNoteView: {
@@ -15919,8 +17391,28 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** ParentReferralResponse */
+        ParentReferralResponse: {
+            /** Enabled */
+            enabled: boolean;
+            /** Referral Code */
+            referral_code?: string | null;
+            /** Referred Credit Cents */
+            referred_credit_cents?: number | null;
+            /** Referrer Credit Cents */
+            referrer_credit_cents?: number | null;
+            /**
+             * Rewards Earned
+             * @default 0
+             */
+            rewards_earned: number;
+            /** Share Url */
+            share_url?: string | null;
+        };
         /** ParentScheduleEntryView */
         ParentScheduleEntryView: {
+            /** Cancellation Reason */
+            cancellation_reason?: string | null;
             /** Coach Name */
             coach_name?: string | null;
             /**
@@ -16200,6 +17692,18 @@ export interface components {
             /** Waiver Version */
             waiver_version?: string | null;
         };
+        /** PassClaimView */
+        PassClaimView: {
+            /** Skill Id */
+            skill_id: string;
+            /** Student Id */
+            student_id: string;
+        };
+        /** PasswordResetRequest */
+        PasswordResetRequest: {
+            /** Email */
+            email: string;
+        };
         /** PatchApplicationRequest */
         PatchApplicationRequest: {
             /**
@@ -16240,6 +17744,11 @@ export interface components {
             level_ups_this_month: number;
             /** Levels */
             levels: components["schemas"]["DashboardLevel"][];
+            /**
+             * Not Billed Count
+             * @default 0
+             */
+            not_billed_count: number;
             /** Program Id */
             program_id: string;
             /** Program Name */
@@ -16384,6 +17893,38 @@ export interface components {
         PayoutAuditTrailView: {
             /** Entries */
             entries: components["schemas"]["PayoutAuditEntryView"][];
+        };
+        /**
+         * PayoutPeriodWriteRequest
+         * @description Optional body of approve and recompute.
+         */
+        PayoutPeriodWriteRequest: {
+            /** Expected Version */
+            expected_version?: number | null;
+        };
+        /**
+         * PayrollSettingsView
+         * @description How a percent coach's invoiced-tuition base is counted (L7).
+         *
+         *     Applies to periods generated or recomputed after a change.
+         */
+        PayrollSettingsView: {
+            /** Payroll Ach Discount Reduces Base */
+            payroll_ach_discount_reduces_base: boolean;
+            /** Payroll Assistant Pay From */
+            payroll_assistant_pay_from: string | null;
+            /**
+             * Payroll Cancelled Class Share
+             * @enum {string}
+             */
+            payroll_cancelled_class_share: "ran_only" | "all_scheduled";
+            /** Payroll Count Checkout First Month */
+            payroll_count_checkout_first_month: boolean;
+            /**
+             * Payroll Missing Invoices
+             * @enum {string}
+             */
+            payroll_missing_invoices: "block" | "pay_zero";
         };
         /** PipelineBoardCardView */
         PipelineBoardCardView: {
@@ -16865,6 +18406,18 @@ export interface components {
              */
             visibility: "private" | "shared";
         };
+        /** ProgressSettingsView */
+        ProgressSettingsView: {
+            /** Milestones */
+            milestones: components["schemas"]["MilestoneView"][];
+            /** Milestones Enabled */
+            milestones_enabled: boolean;
+            /**
+             * Share Name
+             * @enum {string}
+             */
+            share_name: "first_name" | "initial";
+        };
         /** PublicAcademyDto */
         PublicAcademyDto: {
             /** Brand Color */
@@ -16960,6 +18513,33 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * PublicCertificateDto
+         * @description A certificate a parent chose to share (L5B, ``/c/<token>``).
+         *
+         *     The minimum only: the child's first name or initial (the academy's
+         *     choice), the level as it was when issued, the certificate number and
+         *     issue date, and the academy's branding. No surname, no parent, no email,
+         *     no ids, no skills list and no program.
+         */
+        PublicCertificateDto: {
+            academy: components["schemas"]["PublicBrandDto"];
+            /** Cert Number */
+            cert_number: string;
+            /**
+             * Issued On
+             * Format: date
+             */
+            issued_on: string;
+            /** Level Color */
+            level_color?: string | null;
+            /** Level Name */
+            level_name: string;
+            /** Level Number */
+            level_number?: number | null;
+            /** Recipient Name */
+            recipient_name: string;
+        };
         /** PublicClassDto */
         PublicClassDto: {
             age_band?: components["schemas"]["PublicAgeBandDto"] | null;
@@ -16990,6 +18570,11 @@ export interface components {
             timezone?: string | null;
             /** Title */
             title: string;
+            /**
+             * Trial Dates
+             * @default []
+             */
+            trial_dates: components["schemas"]["PublicTrialDateDto"][];
             /** Venue Address */
             venue_address?: string | null;
         };
@@ -17100,6 +18685,11 @@ export interface components {
             published: boolean;
             /** Seats Left Threshold */
             seats_left_threshold: number;
+            /**
+             * Self Book Trials
+             * @default false
+             */
+            self_book_trials: boolean;
             /** Show Availability */
             show_availability: boolean;
             /** Show Price */
@@ -17109,6 +18699,11 @@ export interface components {
              * @enum {string}
              */
             theme: "floodlit" | "daylight" | "showcase";
+            /**
+             * Trial Guest Cap
+             * @default 2
+             */
+            trial_guest_cap: number;
             /** Trials Open */
             trials_open: boolean;
         };
@@ -17139,6 +18734,21 @@ export interface components {
             band: string;
             /** Seats Left */
             seats_left?: number | null;
+        };
+        /**
+         * PublicTrialDateDto
+         * @description One date a family can book a free trial on (L9; only while the academy
+         *     has self-booked trials on). ``slot_key`` is an opaque digest, never the
+         *     occurrence id; send it back with the trial form to book that date.
+         */
+        PublicTrialDateDto: {
+            /** Slot Key */
+            slot_key: string;
+            /**
+             * Starts At
+             * Format: date-time
+             */
+            starts_at: string;
         };
         /**
          * PublicTrialRequestAckDto
@@ -17213,6 +18823,27 @@ export interface components {
             key: string;
             /** Label */
             label: string | null;
+        };
+        /** RecapRosterView */
+        RecapRosterView: {
+            /** Attendance */
+            attendance: string;
+            /** Name */
+            name: string;
+            /** Student Id */
+            student_id: string;
+        };
+        /** RecapSkillView */
+        RecapSkillView: {
+            /**
+             * Level Name
+             * @default
+             */
+            level_name: string;
+            /** Name */
+            name: string;
+            /** Skill Id */
+            skill_id: string;
         };
         /** RecommendLevelUpBody */
         RecommendLevelUpBody: {
@@ -17386,7 +19017,7 @@ export interface components {
              */
             coach_override: boolean;
             /** Level Id */
-            level_id: string;
+            level_id?: string | null;
             /** Mutation Id */
             mutation_id?: string | null;
             /**
@@ -17405,6 +19036,157 @@ export interface components {
              * @default 0
              */
             success_count: number;
+        };
+        /** ReferralEmailPreviewResponse */
+        ReferralEmailPreviewResponse: {
+            /** Emails */
+            emails: components["schemas"]["ReferralEmailView"][];
+        };
+        /** ReferralEmailView */
+        ReferralEmailView: {
+            /** Html */
+            html: string;
+            /** Key */
+            key: string;
+            /** Subject */
+            subject: string;
+        };
+        /** ReferralListResponse */
+        ReferralListResponse: {
+            /** Referrals */
+            referrals: components["schemas"]["ReferralRowView"][];
+        };
+        /**
+         * ReferralProgramRequest
+         * @description Partial: only the keys sent change. No bounds here on purpose; the use
+         *     case owns them so one path names the offending field in the 422.
+         */
+        ReferralProgramRequest: {
+            /** Credit Expiry Days */
+            credit_expiry_days?: number | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Hold Days */
+            hold_days?: number | null;
+            /** Max Rewards Per Referrer Per Year */
+            max_rewards_per_referrer_per_year?: number | null;
+            /** Referred Credit Cents */
+            referred_credit_cents?: number | null;
+            /** Referrer Credit Cents */
+            referrer_credit_cents?: number | null;
+            /** Trigger */
+            trigger?: ("first_paid_invoice" | "first_paid_monthly_invoice") | null;
+        };
+        /** ReferralProgramView */
+        ReferralProgramView: {
+            /** Credit Expiry Days */
+            credit_expiry_days?: number | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Hold Days */
+            hold_days?: number | null;
+            /** Max Rewards Per Referrer Per Year */
+            max_rewards_per_referrer_per_year?: number | null;
+            /** Referred Credit Cents */
+            referred_credit_cents?: number | null;
+            /** Referrer Credit Cents */
+            referrer_credit_cents?: number | null;
+            /** Trigger */
+            trigger?: ("first_paid_invoice" | "first_paid_monthly_invoice") | null;
+        };
+        /** ReferralRowView */
+        ReferralRowView: {
+            /**
+             * Attributed At
+             * Format: date-time
+             */
+            attributed_at: string;
+            /**
+             * Competing Codes
+             * @default []
+             */
+            competing_codes: string[];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Grant Due At */
+            grant_due_at?: string | null;
+            /** Granted At */
+            granted_at?: string | null;
+            /** Qualified At */
+            qualified_at?: string | null;
+            /** Reason */
+            reason?: ("unknown_code" | "self_referral" | "existing_family" | "yearly_cap_reached") | null;
+            /** Referral Code */
+            referral_code: string;
+            /** Referral Id */
+            referral_id: string;
+            /** Referred Credit Cents */
+            referred_credit_cents?: number | null;
+            /** Referred Name */
+            referred_name?: string | null;
+            /** Referrer Credit Cents */
+            referrer_credit_cents?: number | null;
+            /** Referrer Name */
+            referrer_name?: string | null;
+            /** Reviewed At */
+            reviewed_at?: string | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "contact" | "application";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "needs_review" | "pending" | "granted" | "ineligible";
+        };
+        /** RefundFailureDto */
+        RefundFailureDto: {
+            /**
+             * Amount Cents
+             * @default 0
+             */
+            amount_cents: number;
+            /**
+             * Currency
+             * @default usd
+             */
+            currency: string;
+            /** Failed At */
+            failed_at?: string | null;
+            /**
+             * Parent Id
+             * @default
+             */
+            parent_id: string;
+            /** Payment Id */
+            payment_id: string;
+            /**
+             * Reason
+             * @default unknown
+             */
+            reason: string;
+            /** Refund Id */
+            refund_id: string;
+        };
+        /** RefundFailuresDto */
+        RefundFailuresDto: {
+            /**
+             * Count
+             * @default 0
+             */
+            count: number;
+            /** Rows */
+            rows?: components["schemas"]["RefundFailureDto"][];
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
         };
         /** RegisterDeviceRequest */
         RegisterDeviceRequest: {
@@ -17494,16 +19276,20 @@ export interface components {
              * @default false
              */
             acknowledge_paid_clawback: boolean;
+            /** Expected Version */
+            expected_version?: number | null;
             /** Reason */
             reason: string;
         };
+        /** ReorderBody */
+        ReorderBody: {
+            /** Ids */
+            ids: string[];
+        };
         /** RepairCoachPayRateWindowRequest */
         RepairCoachPayRateWindowRequest: {
-            /**
-             * Amount Cents
-             * @default 0
-             */
-            amount_cents: number;
+            /** Amount Cents */
+            amount_cents?: number | null;
             /**
              * Billing Unit
              * @enum {string}
@@ -17599,6 +19385,11 @@ export interface components {
             /** Reason */
             reason?: string | null;
         };
+        /** RevokeCertificateBody */
+        RevokeCertificateBody: {
+            /** Reason */
+            reason: string;
+        };
         /** RevokeSupportAccessPayload */
         RevokeSupportAccessPayload: {
             /** Academy Id */
@@ -17629,6 +19420,22 @@ export interface components {
             /** Message */
             message: string;
         };
+        /** SaveClassRecapBody */
+        SaveClassRecapBody: {
+            /**
+             * Class Starts At
+             * Format: date-time
+             */
+            class_starts_at: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Mutation Id */
+            mutation_id: string;
+            /** Practice */
+            practice?: components["schemas"]["ChildPracticeView"][];
+            /** Taught Skill Ids */
+            taught_skill_ids?: string[];
+        };
         /** SchedulePriceChangeRequest */
         SchedulePriceChangeRequest: {
             /** Effective Period */
@@ -17637,6 +19444,16 @@ export interface components {
             new_price_cents: number;
             /** Plan Id */
             plan_id: string;
+        };
+        /** SchedulePublishRequest */
+        SchedulePublishRequest: {
+            /** Published Through */
+            published_through: string | null;
+        };
+        /** SchedulePublishView */
+        SchedulePublishView: {
+            /** Published Through */
+            published_through?: string | null;
         };
         /**
          * ScheduledClassFee
@@ -17745,6 +19562,8 @@ export interface components {
             role: "parent" | "coach";
             /** Session Id */
             session_id?: string | null;
+            /** Session Ids */
+            session_ids?: string[] | null;
             /**
              * Type
              * @enum {string}
@@ -17756,6 +19575,8 @@ export interface components {
             audience: components["schemas"]["SendCampaignAudience"];
             /** Body */
             body: string;
+            /** Expected Audience Fingerprint */
+            expected_audience_fingerprint?: string | null;
             /** Idempotency Key */
             idempotency_key?: string | null;
             /** Subject */
@@ -17772,6 +19593,11 @@ export interface components {
             deduplicated: boolean;
             /** Failed Count */
             failed_count: number;
+            /**
+             * Queued
+             * @default false
+             */
+            queued: boolean;
             /** Sent Count */
             sent_count: number;
             /** Total Recipients */
@@ -17967,11 +19793,8 @@ export interface components {
         };
         /** SetCoachPayRateRequest */
         SetCoachPayRateRequest: {
-            /**
-             * Amount Cents
-             * @default 0
-             */
-            amount_cents: number;
+            /** Amount Cents */
+            amount_cents?: number | null;
             /**
              * Billing Unit
              * @enum {string}
@@ -17986,6 +19809,20 @@ export interface components {
             effective_from?: string | null;
             /** Percent */
             percent?: number | null;
+        };
+        /** SetEnrollmentBillingRequest */
+        SetEnrollmentBillingRequest: {
+            /** Not Billed */
+            not_billed: boolean;
+            /** Note */
+            note?: string | null;
+            /** Reason */
+            reason?: ("owner_child" | "coach_child" | "scholarship" | "other") | null;
+            /**
+             * Void Open Invoices
+             * @default false
+             */
+            void_open_invoices: boolean;
         };
         /**
          * SetNoteVisibilityRequest
@@ -18086,6 +19923,62 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** SiblingDiscountEnrollmentView */
+        SiblingDiscountEnrollmentView: {
+            /** Billing Type */
+            billing_type?: string | null;
+            /** Enrollment Id */
+            enrollment_id: string;
+            /** Exclusion */
+            exclusion?: ("paused" | "not_active" | "billing_type" | "deferral" | "pending_cancellation" | "skip_period" | "no_class_fee") | null;
+            /** Not Billed Reason */
+            not_billed_reason?: string | null;
+            /** Percent Bps */
+            percent_bps?: number | null;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "sibling_discount" | "full_price_child" | "manual_discount_larger" | "already_invoiced" | "not_billed_this_month" | "only_one_child" | "one_class_per_child" | "setting_off";
+            /** Session Id */
+            session_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "discounted" | "full_price" | "not_eligible" | "off";
+            /** Student Id */
+            student_id: string;
+        };
+        /** SiblingDiscountPeriodView */
+        SiblingDiscountPeriodView: {
+            /** Enrollments */
+            enrollments: components["schemas"]["SiblingDiscountEnrollmentView"][];
+            /** Period */
+            period: string;
+        };
+        /** SiblingDiscountRequest */
+        SiblingDiscountRequest: {
+            /** Applies To */
+            applies_to?: ("all_classes" | "one_class_per_child") | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Full Price Child */
+            full_price_child?: ("highest_tuition" | "lowest_tuition" | "first_enrolled") | null;
+            /** Percent Bps */
+            percent_bps?: number | null;
+        };
+        /** SiblingDiscountView */
+        SiblingDiscountView: {
+            /** Applies To */
+            applies_to?: ("all_classes" | "one_class_per_child") | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Full Price Child */
+            full_price_child?: ("highest_tuition" | "lowest_tuition" | "first_enrolled") | null;
+            /** Percent Bps */
+            percent_bps?: number | null;
+        };
         /** SourceConversionView */
         SourceConversionView: {
             /** Conversion Rate */
@@ -18163,6 +20056,11 @@ export interface components {
         };
         /** StartInvoicePaymentRequest */
         StartInvoicePaymentRequest: {
+            /**
+             * Bundle Student Balance
+             * @default false
+             */
+            bundle_student_balance: boolean;
             /** Cancel Url */
             cancel_url: string;
             /**
@@ -18299,6 +20197,16 @@ export interface components {
             created_at: string;
             /** Delete Student Profile */
             delete_student_profile: boolean;
+            /**
+             * Enforced
+             * @default false
+             */
+            enforced: boolean;
+            /**
+             * Operator Note
+             * @default Recorded only: nothing is deleted or redacted. A platform admin must work the checklist in docs/policy/governance-deletion-cascade.md.
+             */
+            operator_note: string;
             /** Pii Handling Policy */
             pii_handling_policy: {
                 [key: string]: unknown;
@@ -18406,6 +20314,23 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** SubmitClassReportBody */
+        SubmitClassReportBody: {
+            /**
+             * Class Starts At
+             * Format: date-time
+             */
+            class_starts_at: string;
+            /** Report Id */
+            report_id: string;
+            /** Text */
+            text: string;
+            /**
+             * Use Ai
+             * @default false
+             */
+            use_ai: boolean;
+        };
         /** SubscriptionSummary */
         SubscriptionSummary: {
             /** Billing Status */
@@ -18414,6 +20339,25 @@ export interface components {
             cancel_at_period_end: boolean;
             /** Current Period End */
             current_period_end?: string | null;
+        };
+        /** SuggestNoClassDatesBody */
+        SuggestNoClassDatesBody: {
+            /** Class Dates */
+            class_dates: string[];
+            /** Text */
+            text: string;
+        };
+        /** SuggestNoClassDatesResponse */
+        SuggestNoClassDatesResponse: {
+            /** No Class */
+            no_class: components["schemas"]["NoClassDate"][];
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
+            /** Prompt Version */
+            prompt_version: string;
         };
         /** SupportAccessGrantPayload */
         SupportAccessGrantPayload: {
@@ -18439,6 +20383,11 @@ export interface components {
              */
             created_at: string;
             /**
+             * Enforced
+             * @default false
+             */
+            enforced: boolean;
+            /**
              * Expires At
              * Format: date-time
              */
@@ -18447,6 +20396,11 @@ export interface components {
             granted_by_platform_role: string;
             /** Granted By User Id */
             granted_by_user_id: string;
+            /**
+             * Operator Note
+             * @default Recorded only: no sign-in path reads support access grants, so this grants no access.
+             */
+            operator_note: string;
             /** Purpose */
             purpose: string;
             /** Revoke Reason */
@@ -18482,10 +20436,20 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Enforced
+             * @default false
+             */
+            enforced: boolean;
             /** Impersonation Enabled */
             impersonation_enabled: boolean;
             /** Impersonation Request Id */
             impersonation_request_id: string;
+            /**
+             * Operator Note
+             * @default Recorded only: impersonation is not built; no session can be issued.
+             */
+            operator_note: string;
             /** Purpose */
             purpose: string;
             /** Requested By Platform Role */
@@ -18547,8 +20511,18 @@ export interface components {
             created_at: string;
             /** Deletion Request Id */
             deletion_request_id: string;
+            /**
+             * Enforced
+             * @default false
+             */
+            enforced: boolean;
             /** Hard Delete Allowed */
             hard_delete_allowed: boolean;
+            /**
+             * Operator Note
+             * @default Recorded only: nothing is deleted. A platform admin must work the checklist in docs/policy/governance-deletion-cascade.md.
+             */
+            operator_note: string;
             /** Reason */
             reason: string;
             /** Requested By Membership Id */
@@ -18595,10 +20569,20 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Enforced
+             * @default false
+             */
+            enforced: boolean;
             /** Export Request Id */
             export_request_id: string;
             /** Include Pii */
             include_pii: boolean;
+            /**
+             * Operator Note
+             * @default Recorded only: no worker builds governance exports. Download the data from the tenant page export (Data export and purge).
+             */
+            operator_note: string;
             /** Pii Handling Policy */
             pii_handling_policy: {
                 [key: string]: unknown;
@@ -18742,6 +20726,8 @@ export interface components {
             assigned_occurrence_id: string | null;
             /** Assigned Occurrence Start At */
             assigned_occurrence_start_at?: string | null;
+            /** Contact Id */
+            contact_id?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -18753,6 +20739,10 @@ export interface components {
             decided_by: string | null;
             /** Denial Reason */
             denial_reason: string | null;
+            /** Guest Age */
+            guest_age?: string | null;
+            /** Guest Name */
+            guest_name?: string | null;
             /** Linked Application Id */
             linked_application_id: string | null;
             /** Outcome */
@@ -19048,6 +21038,13 @@ export interface components {
             /** Max Hold Days */
             max_hold_days: number;
         };
+        /** UpdateFamilyOffersRequest */
+        UpdateFamilyOffersRequest: {
+            /** Reason */
+            reason?: string | null;
+            referral_program?: components["schemas"]["ReferralProgramRequest"] | null;
+            sibling_discount?: components["schemas"]["SiblingDiscountRequest"] | null;
+        };
         /** UpdateLevelBody */
         UpdateLevelBody: {
             /** Color */
@@ -19056,6 +21053,8 @@ export interface components {
             completion_rule?: string | null;
             /** Description */
             description?: string | null;
+            /** Is Active */
+            is_active?: boolean | null;
             /** Name */
             name?: string | null;
             /** Requires Admin Approval */
@@ -19167,6 +21166,18 @@ export interface components {
             /** Sort Order */
             sort_order?: number | null;
         };
+        /** UpdateProgressSettingsBody */
+        UpdateProgressSettingsBody: {
+            /** Milestones */
+            milestones?: components["schemas"]["MilestoneInput"][];
+            /** Milestones Enabled */
+            milestones_enabled: boolean;
+            /**
+             * Share Name
+             * @enum {string}
+             */
+            share_name: "first_name" | "initial";
+        };
         /**
          * UpdatePublicPageSettingsRequest
          * @description Partial: only the keys sent are changed. ``null`` (or blank) clears
@@ -19193,12 +21204,16 @@ export interface components {
             published?: boolean | null;
             /** Seats Left Threshold */
             seats_left_threshold?: number | null;
+            /** Self Book Trials */
+            self_book_trials?: boolean | null;
             /** Show Availability */
             show_availability?: boolean | null;
             /** Show Price */
             show_price?: boolean | null;
             /** Theme */
             theme?: ("floodlit" | "daylight" | "showcase") | null;
+            /** Trial Guest Cap */
+            trial_guest_cap?: number | null;
             /** Trials Open */
             trials_open?: boolean | null;
         };
@@ -19274,19 +21289,25 @@ export interface components {
             coach_override_allowed?: boolean | null;
             /** Description */
             description?: string | null;
+            /** Is Active */
+            is_active?: boolean | null;
             /** Is Required */
             is_required?: boolean | null;
             /** Name */
             name?: string | null;
+            /** Pass Rule */
+            pass_rule?: ("ONE_TAP" | "N_TRIES" | "LEAD_COACH") | null;
             /** Pass Threshold Pct */
             pass_threshold_pct?: number | null;
+            /** Pass Tries */
+            pass_tries?: number | null;
             /** Scoring Type */
-            scoring_type?: string | null;
+            scoring_type?: ("ATTEMPT_BASED" | "CHECKLIST_BASED" | "COACH_APPROVAL" | "RALLY_COUNT" | "TIME_BASED" | "POINTS_BASED") | null;
         };
         /** UpdateSkillStatusBody */
         UpdateSkillStatusBody: {
             /** Level Id */
-            level_id: string;
+            level_id?: string | null;
             /** Program Id */
             program_id: string;
             /**
@@ -19308,7 +21329,7 @@ export interface components {
             /** Introduced At */
             introduced_at?: string | null;
             /** Level Id */
-            level_id: string;
+            level_id?: string | null;
             /** Program Id */
             program_id: string;
             /**
@@ -19891,6 +21912,59 @@ export interface operations {
             };
         };
     };
+    get_ai_controls_api_v2_admin_ai_controls_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiControlsView"];
+                };
+            };
+        };
+    };
+    put_ai_controls_api_v2_admin_ai_controls_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiControlsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiControlsView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_import_sharing_api_v2_admin_ai_import_sharing_get: {
         parameters: {
             query?: never;
@@ -20173,6 +22247,37 @@ export interface operations {
             };
         };
     };
+    preview_ach_notice_api_v2_admin_billing_ach_notice_preview_get: {
+        parameters: {
+            query?: {
+                parent_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AchNoticePreviewView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_connect_readiness_api_v2_admin_billing_connect_readiness_get: {
         parameters: {
             query?: never;
@@ -20229,6 +22334,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FailedPaymentsResponse"];
+                };
+            };
+        };
+    };
+    get_family_offers_api_v2_admin_billing_family_offers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FamilyOffersResponse"];
+                };
+            };
+        };
+    };
+    set_family_offers_api_v2_admin_billing_family_offers_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateFamilyOffersRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FamilyOffersResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -20973,6 +23131,77 @@ export interface operations {
             };
         };
     };
+    list_referrals_api_v2_admin_billing_referrals_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferralListResponse"];
+                };
+            };
+        };
+    };
+    preview_referral_emails_api_v2_admin_billing_referrals_email_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferralEmailPreviewResponse"];
+                };
+            };
+        };
+    };
+    approve_referral_api_v2_admin_billing_referrals__referral_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                referral_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferralRowView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_billing_rules_api_v2_admin_billing_rules_get: {
         parameters: {
             query?: never;
@@ -21297,6 +23526,39 @@ export interface operations {
             };
         };
     };
+    preview_email_campaign_api_v2_admin_campaigns_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CampaignPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignPreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_class_public_profiles_api_v2_admin_class_public_profiles_get: {
         parameters: {
             query?: never;
@@ -21313,6 +23575,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClassPublicProfileList"];
+                };
+            };
+        };
+    };
+    list_class_report_handoffs_api_v2_admin_class_reports_handoffs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassReportHandoffList"];
+                };
+            };
+        };
+    };
+    close_academy_dates_api_v2_admin_closures_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseAcademyDatesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloseAcademyDatesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -21414,6 +23729,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_delivery_problems_api_v2_admin_comms_delivery_problems_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryProblemsView"];
                 };
             };
         };
@@ -21746,6 +24081,59 @@ export interface operations {
             };
         };
     };
+    get_progress_settings_api_v2_admin_curriculum_progress_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProgressSettingsView"];
+                };
+            };
+        };
+    };
+    update_progress_settings_api_v2_admin_curriculum_progress_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProgressSettingsBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProgressSettingsView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     dashboard_attention_api_v2_admin_dashboard_attention_get: {
         parameters: {
             query?: never;
@@ -21885,6 +24273,39 @@ export interface operations {
             };
         };
     };
+    bulk_transfer_enrollments_api_v2_admin_enrollments_bulk_transfer_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkTransferEnrollmentsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkTransferEnrollmentsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     quote_enrollment_api_v2_admin_enrollments_quote_post: {
         parameters: {
             query?: never;
@@ -21939,6 +24360,41 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_enrollment_billing_api_v2_admin_enrollments__enrollment_id__billing_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                enrollment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetEnrollmentBillingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrollmentBillingView"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -23076,6 +25532,37 @@ export interface operations {
             };
         };
     };
+    get_family_sibling_discount_api_v2_admin_families__parent_id__sibling_discount_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                parent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FamilySiblingDiscountView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     family_timeline_api_v2_admin_families__parent_id__timeline_get: {
         parameters: {
             query?: {
@@ -23227,26 +25714,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_payouts_api_v2_admin_finance_payouts_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AdminPayoutList"];
                 };
             };
         };
@@ -23625,6 +26092,41 @@ export interface operations {
             };
         };
     };
+    reorder_skills_api_v2_admin_levels__level_id__skills_order_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                level_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReorderBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_messages_api_v2_admin_messages_get: {
         parameters: {
             query?: never;
@@ -23760,6 +26262,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PathwayDashboardResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    place_students_in_bulk_api_v2_admin_pathway_placements_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkPlacementBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -24041,6 +26576,26 @@ export interface operations {
             };
         };
     };
+    payments_overdue_families_api_v2_admin_payments_overdue_families_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOverdueFamiliesView"];
+                };
+            };
+        };
+    };
     refund_api_v2_admin_payments_refund_post: {
         parameters: {
             query?: never;
@@ -24293,7 +26848,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["PayoutPeriodWriteRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -24488,7 +27047,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["PayoutPeriodWriteRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -24532,6 +27095,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminPayoutPeriodView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_payroll_settings_api_v2_admin_payroll_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayrollSettingsView"];
+                };
+            };
+        };
+    };
+    update_payroll_settings_api_v2_admin_payroll_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PayrollSettingsView"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayrollSettingsView"];
                 };
             };
             /** @description Validation Error */
@@ -25198,6 +27814,41 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reorder_levels_api_v2_admin_programs__program_id__levels_order_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                program_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReorderBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25978,6 +28629,92 @@ export interface operations {
             };
         };
     };
+    get_schedule_publish_api_v2_admin_schedule_publish_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulePublishView"];
+                };
+            };
+        };
+    };
+    set_schedule_publish_api_v2_admin_schedule_publish_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SchedulePublishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulePublishView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suggest_no_class_dates_api_v2_admin_schedule_suggest_no_class_dates_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuggestNoClassDatesBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestNoClassDatesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     seed_lesson_cards_route_api_v2_admin_seed_lesson_cards_post: {
         parameters: {
             query?: never;
@@ -26291,6 +29028,35 @@ export interface operations {
             };
         };
     };
+    cancel_guest_trial_booking_api_v2_admin_self_service_trials__request_id__cancel_booking_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     deny_trial_request_api_v2_admin_self_service_trials__request_id__deny_post: {
         parameters: {
             query?: never;
@@ -26569,6 +29335,41 @@ export interface operations {
             };
         };
     };
+    credit_missed_class_api_v2_admin_session_occurrences__occurrence_id__credit_missed_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                occurrence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreditMissedClassRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditMissedClassResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_session_occurrence_replacement_api_v2_admin_session_occurrences__occurrence_id__replacement_patch: {
         parameters: {
             query?: never;
@@ -26736,7 +29537,7 @@ export interface operations {
         parameters: {
             query?: {
                 date?: string;
-                /** @description Set to 'upcoming' to return all sessions starting from today through the next 30 days. Overrides 'date' when both are passed. */
+                /** @description 'upcoming': classes with a date from the academy's today through the next 30 days. 'all': every class (active, upcoming, ended) with its phase. 'open': the same without ended classes. Overrides 'date' when both are passed. */
                 window?: string | null;
                 /** @description Filter sessions by coach ID */
                 coach_id?: string | null;
@@ -27046,6 +29847,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminSessionView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    copy_session_api_v2_admin_sessions__session_id__copy_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CopySessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopySessionResponse"];
                 };
             };
             /** @description Validation Error */
@@ -27624,6 +30460,42 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_certificate_api_v2_admin_students__student_id__certificates__cert_id__revoke_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                student_id: string;
+                cert_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RevokeCertificateBody"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -28720,6 +31592,42 @@ export interface operations {
             };
         };
     };
+    get_calendar_feed_api_v2_calendar_feed__token__ics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No calendar for this link on this host. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_academy_api_v2_coach_academy_get: {
         parameters: {
             query?: never;
@@ -29025,6 +31933,139 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CorrectAttendanceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                occurrence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassRecapView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                occurrence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveClassRecapBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassRecapView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_class_report_api_v2_coach_occurrences__occurrence_id__class_reports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                occurrence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitClassReportBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassReportView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_class_report_api_v2_coach_occurrences__occurrence_id__class_reports__report_id__resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                occurrence_id: string;
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassReportView"];
                 };
             };
             /** @description Validation Error */
@@ -30297,39 +33338,6 @@ export interface operations {
             };
         };
     };
-    consume_magic_link_api_v2_magic_link_consume_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ConsumeMagicLinkRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConsumeMagicLinkResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     me_api_v2_me_get: {
         parameters: {
             query?: never;
@@ -30728,6 +33736,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_calendar_feed_link_api_v2_parent_calendar_feed_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarFeedLinkView"];
+                };
+            };
+        };
+    };
+    reset_calendar_feed_link_api_v2_parent_calendar_feed_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarFeedLinkView"];
                 };
             };
         };
@@ -31271,6 +34319,26 @@ export interface operations {
             };
         };
     };
+    list_makeup_candidates_api_v2_parent_makeups_candidates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MakeupCandidatesResponse"];
+                };
+            };
+        };
+    };
     list_eligible_makeup_targets_api_v2_parent_makeups_eligible_targets_get: {
         parameters: {
             query: {
@@ -31680,6 +34748,26 @@ export interface operations {
             };
         };
     };
+    get_referral_api_v2_parent_referral_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParentReferralResponse"];
+                };
+            };
+        };
+    };
     list_available_sessions_api_v2_parent_sessions_available_get: {
         parameters: {
             query?: never;
@@ -31750,6 +34838,101 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    share_certificate_api_v2_parent_students__student_id__certificates__cert_id__share_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                student_id: string;
+                cert_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unshare_certificate_api_v2_parent_students__student_id__certificates__cert_id__share_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                student_id: string;
+                cert_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_child_class_recaps_api_v2_parent_students__student_id__class_recaps_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                student_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChildClassRecapList"];
                 };
             };
             /** @description Validation Error */
@@ -32217,6 +35400,37 @@ export interface operations {
                         [key: string]: unknown;
                     };
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    request_password_reset_api_v2_password_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordResetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -33638,6 +36852,44 @@ export interface operations {
             };
         };
     };
+    get_shared_certificate_api_v2_public_certificates__token__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicCertificateDto"];
+                };
+            };
+            /** @description No shared certificate for this link on this host. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     submit_trial_request_api_v2_public_trial_requests_post: {
         parameters: {
             query?: never;
@@ -33663,7 +36915,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Trials are switched off (Public.TrialsClosed). */
+            /** @description Trials are switched off (Public.TrialsClosed), or the chosen trial date is no longer open (Public.SlotUnavailable). */
             409: {
                 headers: {
                     [name: string]: unknown;

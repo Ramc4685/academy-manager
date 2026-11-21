@@ -14,6 +14,10 @@ from backend.v2.contexts.platform.audit.application.use_cases import (
 )
 from backend.v2.contexts.platform.billing.application.use_cases.manage_platform_billing import (
     HasFeature,
+    ScheduleTenantCancellation,
+    ScheduleTenantCancellationCommand,
+    StartTenantTrial,
+    StartTenantTrialCommand,
 )
 from backend.v2.contexts.platform.billing.application.use_cases.plan_checkout import (
     AlreadyOnGrowth,
@@ -661,6 +665,33 @@ async def test_sync_ignores_another_subscription_until_the_stored_one_is_cancell
     assert row.stripe_subscription_id == "sub_growth_2"
     assert row.billing_status == "active"
     assert row.stripe_subscription_created_at == datetime.fromtimestamp(1793800000, tz=UTC)
+
+
+@pytest.mark.asyncio
+async def test_a_late_delete_for_the_cancelled_subscription_keeps_the_new_trial() -> None:
+    plans, subs, stripe = FakePlans(_plan("growth")), FakeSubscriptions(), FakeStripe()
+    sync = _sync(plans, subs)
+    await sync.execute(
+        "customer.subscription.created", _sub_event("customer.subscription.created", "active")
+    )
+    await ScheduleTenantCancellation(
+        plans=plans, subscriptions=subs, stripe=stripe, clock=lambda: NOW
+    ).execute(ScheduleTenantCancellationCommand(academy_id=ACADEMY, cancel_at_period_end=False))
+    await StartTenantTrial(plans=plans, subscriptions=subs, clock=lambda: NOW).execute(
+        StartTenantTrialCommand(
+            academy_id=ACADEMY, plan_id="plan_growth", trial_ends_at=NOW + timedelta(days=14)
+        )
+    )
+    trial = subs.rows[ACADEMY]
+
+    # Stripe's webhook for the delete we issued arrives after the trial write.
+    await sync.execute(
+        "customer.subscription.deleted",
+        _sub_event("customer.subscription.deleted", "canceled", canceled_at=1793800000),
+    )
+    assert subs.rows[ACADEMY] == trial
+    has_ai = HasFeature(plans=plans, subscriptions=subs, clock=lambda: NOW)
+    assert await has_ai.execute(ACADEMY, "ai") is True
 
 
 def _seed_flat_upgrading(subs: FakeSubscriptions) -> None:

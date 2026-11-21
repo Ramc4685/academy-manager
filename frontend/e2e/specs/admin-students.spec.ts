@@ -1,5 +1,8 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
+import { stubFamilyRecord } from "../fixtures/family-index";
+import { stubFamilySiblingDiscount } from "../fixtures/saas-stubs";
+
 const ADMIN_ME = {
   user_id: "user-admin-students-e2e",
   email: "admin@example.com",
@@ -77,6 +80,12 @@ async function stubAdminAcademy(page: Page) {
   await page.route("**/api/v2/admin/inbox/counts", (route) =>
     fulfillJson(route, { counts: {}, total: 0 }),
   );
+  // The Payment risk tile reads academy-wide overdue counts (L2 B2).
+  await page.route("**/api/v2/admin/payments/overdue-families", (route) =>
+    fulfillJson(route, { past_due_count: 0, needs_action_count: 0 }),
+  );
+  await stubFamilySiblingDiscount(page);
+  await stubFamilyRecord(page);
 }
 
 
@@ -455,10 +464,28 @@ test.describe("admin students", () => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, studentFixture);
     });
+    const kid = (student_id: string, name: string, lifecycle: string) => ({
+      student_id,
+      name,
+      lifecycle,
+      lifecycle_as_of: null,
+      classes: [],
+      matched: false,
+    });
+    await stubFamilyRecord(page, {
+      children: [kid("student-1", "Amit Rao", "active"), kid("student-2", "Mira Rao", "paused")],
+      sibling_student_ids: ["student-1", "student-2"],
+    });
 
     await page.goto("/admin/students/student-1");
     await page.waitForLoadState("networkidle");
     await expect(page.getByTestId("admin-student-detail")).toContainText("Amit Rao");
+    // Siblings are marked whatever the billing says: Mira's class is paused.
+    await expect(page.getByTestId("admin-student-siblings")).toHaveText("Sibling of Mira Rao");
+    await expect(page.getByTestId("admin-student-sibling-student-2")).toHaveAttribute(
+      "href",
+      "/admin/students/student-2",
+    );
     await expect(page.getByTestId("admin-student-summary-strip")).toContainText("$110");
     await expect(page.getByTestId("admin-student-summary-strip")).toContainText("91%");
     await expect(page.getByRole("tab", { name: "Training" })).toBeVisible();

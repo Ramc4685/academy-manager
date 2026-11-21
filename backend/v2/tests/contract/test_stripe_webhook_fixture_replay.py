@@ -339,6 +339,7 @@ class FakeBillingLedger:
         self.allocation_keys: set[str] = set()
         self.allocations: list[dict[str, Any]] = []
         self.payment_attempts: dict[str, dict[str, Any]] = {}
+        self.reversals: dict[str, dict[str, Any]] = {}
         self.fail_allocate = False
 
     async def create_invoice(
@@ -448,12 +449,16 @@ class FakeBillingLedger:
         self.allocation_keys.add(idempotency_key)
         self.allocations.append(
             {
+                "allocation_id": f"alloc:{idempotency_key}",
                 "payment_id": payment_id,
                 "invoice_id": invoice_id,
                 "amount_cents": amount_cents,
                 "idempotency_key": idempotency_key,
             }
         )
+
+    async def list_allocations_for_payment(self, payment_id: str) -> list[dict[str, Any]]:
+        return [a for a in self.allocations if a["payment_id"] == payment_id]
 
     async def get_payment_allocation_by_idempotency_key(
         self, idempotency_key: str
@@ -484,11 +489,61 @@ class FakeBillingLedger:
             update={
                 "refunded_cents": refunded_cents,
                 "status": status,
+                "unapplied_amount_cents": self._unapplied(payment_id, refunded_cents),
                 "updated_at": updated_at,
             }
         )
         self.payments[payment_id] = updated
         return updated
+
+    async def apply_payment_return(
+        self,
+        payment_id: str,
+        *,
+        amount_cents: int,
+        source_key: str | None,
+        updated_at: Any,
+    ) -> tuple[LedgerPayment, bool]:
+        """Mirrors the Mongo repo: cumulative charge refunds merge, keyed sources add once."""
+        payment = self.payments[payment_id]
+        sources = self.__dict__.setdefault("return_sources", {}).setdefault(payment_id, {})
+        if source_key is not None and source_key in sources:
+            return payment, False
+        keyed = sum(sources.values())
+        before = payment.refunded_cents
+        if source_key is None:
+            refunded = min(payment.amount_cents, max(before - keyed, amount_cents) + keyed)
+        else:
+            refunded = min(payment.amount_cents, before + amount_cents)
+            sources[source_key] = amount_cents
+        if refunded == before:
+            return payment, False
+        status = "refunded" if refunded >= payment.amount_cents else "partially_refunded"
+        updated = await self.mark_payment_refunded(
+            payment_id, refunded_cents=refunded, status=status, updated_at=updated_at
+        )
+        return updated, True
+
+    def _unapplied(self, payment_id: str, refunded_cents: int) -> int:
+        """Mongo's rule: amount less refunded less still-allocated, never negative."""
+        allocated = sum(
+            a["amount_cents"] for a in self.allocations if a["payment_id"] == payment_id
+        )
+        return max(0, self.payments[payment_id].amount_cents - refunded_cents - allocated)
+
+    async def list_reversals_for_payment(self, payment_id: str) -> list[dict[str, Any]]:
+        return [r for r in self.reversals.values() if r["payment_id"] == payment_id]
+
+    async def repair_after_reversal(
+        self, *, reversal_idempotency_key: str, reason: str, reversed_at: datetime
+    ) -> None:
+        reversal = self.reversals.get(reversal_idempotency_key)
+        if reversal is None:
+            return
+        invoice = self.invoices[reversal["invoice_id"]]
+        self.invoices[invoice.invoice_id] = invoice.model_copy(
+            update={"status": "open", "balance_due_cents": invoice.total_cents}
+        )
 
     async def record_payment_attempt(
         self,
@@ -533,6 +588,9 @@ class FakeBillingLedger:
         return_code: str | None,
         reversed_at: datetime,
     ) -> dict[str, Any] | None:
+        # Same idempotency as the Mongo repo: one reversal row per reversal key.
+        if reversal_idempotency_key in self.reversals:
+            return self.reversals[reversal_idempotency_key]
         for allocation in list(self.allocations):
             if allocation["idempotency_key"] != allocation_idempotency_key:
                 continue
@@ -548,9 +606,14 @@ class FakeBillingLedger:
                 }
             )
             self.payments[payment.payment_id] = payment.model_copy(
-                update={"unapplied_amount_cents": 0, "updated_at": reversed_at}
+                update={
+                    "unapplied_amount_cents": self._unapplied(
+                        payment.payment_id, payment.refunded_cents
+                    ),
+                    "updated_at": reversed_at,
+                }
             )
-            return {
+            reversal = {
                 "payment_id": payment.payment_id,
                 "invoice_id": invoice.invoice_id,
                 "amount_cents": allocation["amount_cents"],
@@ -558,6 +621,8 @@ class FakeBillingLedger:
                 "return_code": return_code,
                 "idempotency_key": reversal_idempotency_key,
             }
+            self.reversals[reversal_idempotency_key] = reversal
+            return reversal
         return None
 
 
@@ -656,7 +721,13 @@ async def test_fixture_autopay_ach_return_reopens_paid_invoice() -> None:
         attempt for attempt in ledger.payment_attempts.values() if attempt["status"] == "returned"
     )
     assert returned_attempt["failure_code"] == "R01"
-    assert outbox.events[-1].name == "Billing.PaymentRefunded"
+    names = [event.name for event in outbox.events]
+    assert "Billing.PaymentRefunded" in names
+    # L1 A4-5: the parent is told the bank took the payment back.
+    notice = next(e for e in outbox.events if e.name == "Billing.DunningNoticeRequested")
+    assert notice.payload.failure_code == "R01"
+    assert notice.payload.terminal is True
+    assert notice.payload.balance_due_cents == 10_000
 
 
 @pytest.mark.asyncio
@@ -827,3 +898,7 @@ async def test_invoice_pay_link_allocation_failure_is_retryable() -> None:
 
     assert len(ledger.payments) == 1
     assert ledger.allocations == []
+
+
+# The ACH receipt, admin charge-now and dispute replays run on the real ledger:
+# test_stripe_webhook_real_ledger.py.

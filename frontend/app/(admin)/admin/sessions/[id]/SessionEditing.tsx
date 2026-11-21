@@ -16,6 +16,7 @@ import {
   type AdminStudentAttendanceView,
   type AdminUserView,
 } from "@/lib/api/admin";
+import { assignableCoaches } from "@/lib/admin/coach-roles";
 import { roleLabel } from "@/lib/admin/role-label";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -68,6 +69,7 @@ export function ReplacementCoachTable({
   onEdit,
   onCancel,
   onViewAttendance,
+  onViewRecap,
   showStatus = false,
   emptyLabel,
 }: {
@@ -89,6 +91,8 @@ export function ReplacementCoachTable({
    * "Attendance", which opens the per-student marks with a Void action.
    */
   onViewAttendance?: (occurrence: AdminSessionOccurrenceView) => void;
+  /** A date that has started and was not cancelled offers its class recap. */
+  onViewRecap?: (occurrence: AdminSessionOccurrenceView) => void;
   /** Show the Cancelled chip column (#671). */
   showStatus?: boolean;
   emptyLabel?: string;
@@ -193,6 +197,17 @@ export function ReplacementCoachTable({
             onClick={() => onViewAttendance(occurrence)}
           >
             Attendance
+          </Button>
+        )}
+        {onViewRecap && occurrence.status !== "cancelled" && hasStarted(occurrence) && (
+          <Button
+            variant="secondary"
+            size="sm"
+            className={buttonClass}
+            data-testid={`recap-occurrence-${occurrence.occurrence_id}`}
+            onClick={() => onViewRecap(occurrence)}
+          >
+            Class recap
           </Button>
         )}
       </div>
@@ -607,7 +622,10 @@ export function OccurrenceReplacementDialog({
     queryFn: () => listAdminUsers("coach"),
     enabled: dialogOpen,
   });
-  const coaches = coachesQuery.data?.users ?? [];
+  const coaches = assignableCoaches(
+    coachesQuery.data?.users ?? [],
+    occurrence?.actual_coach_id,
+  );
 
   useEffect(() => {
     if (!dialogOpen) return;
@@ -766,12 +784,14 @@ export function SessionAssistantsDialog({
       ...(assistantsQuery.data?.users ?? []),
     ]) {
       if (user.user_id === session?.coach_id) continue;
+      const assigned = session?.assistant_coach_ids?.includes(user.user_id);
+      if (user.status !== "active" && !assigned) continue;
       if (!byId.has(user.user_id)) byId.set(user.user_id, user);
     }
     return [...byId.values()].sort((a, b) =>
       (a.display_name || a.email).localeCompare(b.display_name || b.email),
     );
-  }, [coachesQuery.data, assistantsQuery.data, session?.coach_id]);
+  }, [coachesQuery.data, assistantsQuery.data, session?.coach_id, session?.assistant_coach_ids]);
 
   // Assistants already on the session whose membership no longer appears in
   // the directory (role removed, account disabled) stay visible so an admin

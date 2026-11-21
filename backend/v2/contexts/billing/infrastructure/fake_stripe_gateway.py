@@ -24,6 +24,7 @@ from backend.v2.contexts.billing.application.ports import (
     StripeGateway,
     StripeResourceNotFound,
 )
+from backend.v2.contexts.billing.domain.errors import StripeIdempotencyConflict
 from backend.v2.contexts.billing.domain.fees import check_application_fee_cents
 from backend.v2.shared.ids import new_ulid
 
@@ -39,6 +40,11 @@ class FakeStripeGateway(StripeGateway):
         self.saved_cards: dict[tuple[str | None, str, str], tuple[str, str]] = {}
         # PaymentIntents the fake knows in full, by id.
         self._payment_intents_by_id: dict[str, dict[str, Any]] = {}
+        # (stripe_account, idempotency_key) -> the off-session answer Stripe replays.
+        # (account, key) -> (answer, request): Stripe replays an answer only for the same request.
+        self._off_session_by_key: dict[
+            tuple[str | None, str], tuple[tuple[str, str, str | None], dict[str, Any]]
+        ] = {}
         self.invoice_checkouts: list[dict[str, Any]] = []
         self.checkouts: list[dict[str, Any]] = []
         self.subscription_checkouts: list[dict[str, Any]] = []
@@ -52,6 +58,7 @@ class FakeStripeGateway(StripeGateway):
         self.refund_requests: list[dict[str, Any]] = []
         self._refunds_by_key: dict[str, dict[str, Any]] = {}
         self.cancelled_subscriptions: list[dict[str, Any]] = []
+        self.missing_subscription_ids: set[str] = set()
         # (stripe_account, customer_id) -> payment method ids still attached.
         self.attached_payment_methods: dict[tuple[str | None, str], list[str]] = {}
         self.paused_subscriptions: list[dict[str, Any]] = []
@@ -84,6 +91,9 @@ class FakeStripeGateway(StripeGateway):
         self.unexpirable_checkouts: set[str] = set()
         # Stripe Invoicing invoices voided alongside a ledger void (#784).
         self.voided_invoices: list[str] = []
+        # (id, stripe_account) of every invoice / subscription read (#983).
+        self.retrieved_invoices: list[tuple[str, str | None]] = []
+        self.retrieved_subscriptions: list[tuple[str, str | None]] = []
 
     # -- account dimension -------------------------------------------------
 
@@ -429,7 +439,11 @@ class FakeStripeGateway(StripeGateway):
             )
         self.expired_checkouts.append(checkout_session_id)
 
-    async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
+    async def retrieve_invoice(
+        self, stripe_invoice_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
+        self._require_on_account(stripe_invoice_id, stripe_account, "invoice")
+        self.retrieved_invoices.append((stripe_invoice_id, stripe_account))
         return {
             "id": stripe_invoice_id,
             "object": "invoice",
@@ -442,7 +456,11 @@ class FakeStripeGateway(StripeGateway):
     async def void_stripe_invoice(self, stripe_invoice_id: str) -> None:
         self.voided_invoices.append(stripe_invoice_id)
 
-    async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
+    async def retrieve_subscription(
+        self, stripe_subscription_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
+        self._require_on_account(stripe_subscription_id, stripe_account, "subscription")
+        self.retrieved_subscriptions.append((stripe_subscription_id, stripe_account))
         return {
             "id": stripe_subscription_id,
             "object": "subscription",
@@ -515,7 +533,12 @@ class FakeStripeGateway(StripeGateway):
             )
 
     async def search_app_owned_payment_intents(
-        self, *, academy_id: str, limit: int = 100, stripe_account: str | None = None
+        self,
+        *,
+        academy_id: str,
+        limit: int = 100,
+        stripe_account: str | None = None,
+        parent_id: str | None = None,
     ) -> list[dict[str, Any]]:
         source = (
             self.connected_payment_intents.get(stripe_account, [])
@@ -526,10 +549,21 @@ class FakeStripeGateway(StripeGateway):
             # PaymentIntents seeded per account live on that account.
             if pi.get("id") and str(pi["id"]) not in self._owners:
                 self.register_object(str(pi["id"]), stripe_account=stripe_account or None)
+        # Like Stripe, the search also finds the off-session PaymentIntents this
+        # fake created on that account.
+        created = [
+            pi
+            for pi_id, pi in self._payment_intents_by_id.items()
+            if self._owners.get(pi_id, None) == (stripe_account or None)
+        ]
         matched = [
             pi
-            for pi in source
+            for pi in [*source, *created]
             if str((pi.get("metadata") or {}).get("academy_id") or "") == academy_id
+            and (
+                parent_id is None
+                or str((pi.get("metadata") or {}).get("parent_id") or "") == parent_id
+            )
             and str(pi.get("status") or "").lower() in {"succeeded", "processing"}
         ]
         return matched[: max(1, min(int(limit), 100))]
@@ -592,6 +626,8 @@ class FakeStripeGateway(StripeGateway):
     async def cancel_subscription(
         self, stripe_subscription_id: str, *, at_period_end: bool
     ) -> None:
+        if stripe_subscription_id in self.missing_subscription_ids:
+            return  # mirrors RealStripeGateway: resource_missing counts as cancelled
         self.cancelled_subscriptions.append(
             {
                 "stripe_subscription_id": stripe_subscription_id,
@@ -737,6 +773,28 @@ class FakeStripeGateway(StripeGateway):
         stripe_account: str | None = None,
     ) -> tuple[str, str, str | None]:
         _check_single_route(connected_account_id, stripe_account)
+        # Stripe replays the first answer for a key it still remembers (24h), and
+        # compares the WHOLE request, not just the amount: any other parameter is an
+        # IdempotencyError, which RealStripeGateway raises as StripeIdempotencyConflict.
+        key = (stripe_account, idempotency_key)
+        request = {
+            "amount": amount_cents,
+            "currency": currency,
+            "customer": customer_id,
+            "payment_method": payment_method_id,
+            "metadata": dict(metadata),
+            "connected_account_id": connected_account_id,
+            "application_fee_amount": application_fee_cents,
+        }
+        replay = self._off_session_by_key.get(key)
+        if replay is not None:
+            answer, first_request = replay
+            if first_request != request:
+                raise StripeIdempotencyConflict(
+                    "Stripe PaymentIntent creation failed: idempotency key reused with "
+                    "different parameters"
+                )
+            return answer
         check_application_fee_cents(
             fee_cents=application_fee_cents,
             amount_cents=amount_cents,
@@ -785,8 +843,19 @@ class FakeStripeGateway(StripeGateway):
             "on_behalf_of": connected_account_id,
             "transfer_data": record["transfer_data"],
             "application_fee_amount": record["application_fee_amount"],
+            "latest_charge": {
+                "id": f"ch_fake_{pi_id}",
+                "refunded": False,
+                "amount_refunded": 0,
+                "disputed": False,
+            },
         }
+        self._off_session_by_key[key] = ((pi_id, "succeeded", None), request)
         return pi_id, "succeeded", None
+
+    def expire_idempotency_keys(self) -> None:
+        """Stripe forgets an idempotency key after 24h; a later call charges again."""
+        self._off_session_by_key.clear()
 
     async def get_default_payment_method(
         self, *, academy_id: str, parent_id: str, stripe_account: str | None = None

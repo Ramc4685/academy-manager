@@ -1,8 +1,7 @@
 """Mongo-backed email suppression list, plus the send-time gate over it.
 
-**Deliberately NOT tenant-scoped** — this is not a ``TenantScopedRepository``,
-following the documented precedent of ``MongoMagicLinkRepository``. Two
-reasons, both load-bearing:
+**Deliberately NOT tenant-scoped** — this is not a ``TenantScopedRepository``.
+Two reasons, both load-bearing:
 
 * the Resend sender domain is shared by every academy, so a hard bounce
   observed while academy A was mailing must stop academy B from mailing the
@@ -129,6 +128,13 @@ class MongoSuppressionRepository:
 
     async def list_active(self, *, limit: int = 100) -> list[EmailSuppression]:
         cursor = self._suppressions.find({"active": True}).sort([("last_seen_at", -1)]).limit(limit)
+        return [_to_model(doc) async for doc in cursor]
+
+    async def list_active_for(self, emails: list[str]) -> list[EmailSuppression]:
+        keys = sorted({normalize_email(e) for e in emails if e})
+        if not keys:
+            return []
+        cursor = self._suppressions.find({"email": {"$in": keys}, "active": True})
         return [_to_model(doc) async for doc in cursor]
 
     async def release(self, *, email: str, released_by: str) -> bool:

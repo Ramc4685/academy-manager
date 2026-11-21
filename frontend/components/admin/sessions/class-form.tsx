@@ -16,6 +16,7 @@
  * read-only.
  */
 
+import { assignableCoaches } from "@/lib/admin/coach-roles";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -75,7 +76,7 @@ const inputClass =
 const lockedInputClass =
   "disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-rally-muted";
 
-const DAYS_OF_WEEK = [
+export const DAYS_OF_WEEK = [
   { value: "Mon", label: "Monday" },
   { value: "Tue", label: "Tuesday" },
   { value: "Wed", label: "Wednesday" },
@@ -487,13 +488,16 @@ function usePricing(enabled: boolean) {
   });
 }
 
-function useCoaches(enabled: boolean) {
+function useCoaches(enabled: boolean, currentCoachId?: string | null) {
   const query = useQuery({
     queryKey: queryKeys.admin.users("coach"),
     queryFn: () => listAdminUsers("coach"),
     enabled,
   });
-  return { coaches: query.data?.users ?? [], loading: query.isLoading };
+  return {
+    coaches: assignableCoaches(query.data?.users ?? [], currentCoachId),
+    loading: query.isLoading,
+  };
 }
 
 function invalidatePricing(queryClient: ReturnType<typeof useQueryClient>) {
@@ -522,7 +526,7 @@ export function EditClassDialog({
   const [touchedChoice, setTouchedChoice] = useState<string | null>(null);
   const [customFee, setCustomFee] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const { coaches, loading: coachesLoading } = useCoaches(open);
+  const { coaches, loading: coachesLoading } = useCoaches(open, session?.coach_id);
   const pricingQuery = usePricing(open && isOwner);
   // "Scheduled: $X from <Month>" (Settings overhaul PR 26): readable by any
   // admin; a failed read just hides the note.

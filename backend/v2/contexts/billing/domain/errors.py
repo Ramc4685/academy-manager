@@ -23,6 +23,34 @@ class WebhookAccountLookupUnavailable(DomainError):
     status_code = 503
 
 
+class StripeUnavailable(DomainError):
+    """Stripe could not be asked (network, rate limit, auth, a bad request on our
+    side). Not a decline: it must never spend a retry rung or email the parent
+    that their payment failed (L1 A4-3)."""
+
+    code = "Billing.StripeUnavailable"
+    status_code = 503
+
+
+class StripeIdempotencyConflict(DomainError):
+    """Stripe refused an idempotency key reused with other parameters. Not an
+    outage: an earlier request under this key exists and may have charged, so
+    the caller must not retry it blindly; a person reviews it."""
+
+    code = "Billing.StripeIdempotencyConflict"
+    status_code = 409
+
+
+class BillingSettingsUnavailable(DomainError):
+    """The billing settings could not be read before a charge. Nothing was sent
+    to Stripe: without the settings the ACH discount is unknown, so charging
+    could bill full price. An admin gets a 503 and retries; the dunning worker
+    parks the rung as a technical failure."""
+
+    code = "Billing.SettingsUnavailable"
+    status_code = 503
+
+
 class PaymentNotFound(DomainError):
     code = "Billing.PaymentNotFound"
     status_code = 404

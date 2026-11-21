@@ -154,6 +154,7 @@ async def _seed_family(db, acad: str, *, parent_id: str = "p-1") -> None:
             "stripe_customer_id": "cus_1",
             "payment_method_label": "Visa",
             "payment_method_last4": "4242",
+            "stripe_account_id": "acct_1",  # the academy's account, seeded below
         }
     )
     await db["academy_connected_accounts"].insert_one(
@@ -322,6 +323,7 @@ async def test_full_family_view(db, acad) -> None:
     assert header["enrollment_counts"] == {
         "active": 1,
         "held": 0,
+        "not_billed": 0,
         "paused": 1,
         "cancelled": 0,
     }
@@ -588,3 +590,130 @@ def test_class_fee_reads_the_fee_the_way_the_monthly_invoice_does() -> None:
     assert facts.override_price_cents == 9_000
     # Unchanged: the manual-invoice pre-fill still reads this field.
     assert facts.monthly_price_cents is None
+
+
+def _credit(acad: str, credit_id: str, **fields) -> dict:
+    doc = {
+        "academy_id": acad,
+        "credit_id": credit_id,
+        "parent_id": "p-1",
+        "type": "CLASS_CANCELLATION_CREDIT",
+        "status": "APPROVED",
+        "amount_cents": 1500,
+        "remaining_amount_cents": 1500,
+        "currency": "usd",
+        "reason": "Class cancelled on 2026-09-12: gym closed",
+        "approved_by": "admin-1",
+        "created_at": datetime(2026, 9, 9, tzinfo=UTC),
+        "updated_at": datetime(2026, 9, 9, tzinfo=UTC),
+    }
+    doc.update(fields)
+    return doc
+
+
+@pytest.mark.asyncio
+async def test_family_credits_list_who_why_how_much_and_where_it_went(db, acad) -> None:
+    """#1207: the owner can answer "did the parents get their money back?"."""
+    await _seed_family(db, acad)
+    await _seed_invoices(db, acad)
+    await db["users"].insert_one(
+        {
+            "user_id": "admin-1",
+            "academy_id": acad,
+            "display_name": "Owner Pat",
+            "email": "pat@example.com",
+            "roles": ["admin"],
+        }
+    )
+    await db["account_credit_ledger"].insert_many(
+        [
+            _credit(
+                acad,
+                "cr-applied",
+                remaining_amount_cents=0,
+                applied_invoice_ids=["inv-sep-arjun"],
+                applications=[{"invoice_id": "inv-sep-arjun", "amount_cents": 1500}],
+                created_at=datetime(2026, 9, 2, tzinfo=UTC),
+            ),
+            _credit(
+                acad,
+                "cr-manual",
+                type="MANUAL_CREDIT",
+                reason="Goodwill",
+                approved_by=None,
+                created_at=datetime(2026, 9, 5, tzinfo=UTC),
+            ),
+            # Projections and voided credits are not credits the family holds.
+            _credit(acad, "cr-proj", type="CREDIT_APPLIED", status="APPLIED"),
+            _credit(acad, "cr-void", status="VOIDED"),
+            # Another family's and another academy's credits never show.
+            _credit(acad, "cr-other-parent", parent_id="p-2"),
+            _credit("other-acad", "cr-other-tenant"),
+        ]
+    )
+
+    view = await _read_model(db).build("p-1")
+
+    assert view is not None
+    AdminFamilyBillingView.model_validate(view)
+    assert view["credits"] == [
+        {
+            "credit_id": "cr-manual",
+            "type": "MANUAL_CREDIT",
+            "status": "APPROVED",
+            "amount_cents": 1500,
+            "remaining_amount_cents": 1500,
+            "reason": "Goodwill",
+            "created_at": "2026-09-05T00:00:00+00:00",
+            "approved_by_name": None,
+            "applied_invoices": [],
+        },
+        {
+            "credit_id": "cr-applied",
+            "type": "CLASS_CANCELLATION_CREDIT",
+            "status": "APPROVED",
+            "amount_cents": 1500,
+            "remaining_amount_cents": 0,
+            "reason": "Class cancelled on 2026-09-12: gym closed",
+            "created_at": "2026-09-02T00:00:00+00:00",
+            "approved_by_name": "Owner Pat",
+            "applied_invoices": ["INV-3"],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_pause_timeline_names_the_review_date_from_event_metadata(db, acad) -> None:
+    """#1052: the read model must project ``metadata``, or every pause reads "review required"."""
+    await _seed_family(db, acad)
+    await db["enrollment_events"].delete_many({"academy_id": acad})
+    await db["enrollment_events"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "event_id": "ev-review",
+                "event_type": "paused",
+                "enrollment_id": "e-hannah",
+                "student_id": "s-hannah",
+                "occurred_at": datetime(2026, 9, 4, 19, 59, tzinfo=UTC),
+                "metadata": {"review_on": "2026-10-15"},
+            },
+            {
+                "academy_id": acad,
+                "event_id": "ev-legacy",
+                "event_type": "paused",
+                "enrollment_id": "e-hannah",
+                "student_id": "s-hannah",
+                "occurred_at": datetime(2026, 8, 4, 19, 59, tzinfo=UTC),
+                "metadata": "legacy string, not a dict",
+            },
+        ]
+    )
+
+    view = await _read_model(db).build("p-1")
+
+    assert view is not None
+    summaries = [e["summary"] for e in view["timeline"] if e["code"] == "enrollment:paused"]
+    assert len(summaries) == 2
+    assert summaries[0].endswith("review Oct 15")
+    assert summaries[1].endswith("review required")

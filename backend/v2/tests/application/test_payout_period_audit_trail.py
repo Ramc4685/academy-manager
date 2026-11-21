@@ -29,7 +29,9 @@ from backend.v2.contexts.finance.application.use_cases.manage_payout_period impo
 )
 from backend.v2.contexts.finance.domain.payout_audit import PayoutAuditEntry
 from backend.v2.contexts.finance.domain.payout_period import (
+    PAYOUT_TRANSITION_FIELDS,
     PayoutPeriod,
+    PayoutPeriodConflictError,
     PayoutPeriodStateError,
     PersistedPayoutLine,
     approve,
@@ -59,18 +61,26 @@ class FakeRepo:
         return None
 
     async def find_overlapping(
-        self, *, coach_id: str, period_start: datetime, period_end: datetime
+        self,
+        *,
+        coach_id: str,
+        period_start: datetime,
+        period_end: datetime,
+        exclude_period_id: str | None = None,
     ) -> PayoutPeriod | None:
         return None
 
     async def find_by_id(self, period_id: str) -> PayoutPeriod | None:
         return self._by_id.get(period_id)
 
-    async def find_locked_status_for_coach(self, *, coach_id: str, at: datetime) -> str | None:
+    async def find_locked_status_for_coach(
+        self, *, coach_id: str, at: datetime, include_draft: bool = False
+    ) -> str | None:
+        statuses = {"approved", "paid"} | ({"draft"} if include_draft else set())
         for period in self._by_id.values():
             if (
                 period.coach_id == coach_id
-                and period.status in {"approved", "paid"}
+                and period.status in statuses
                 and period.period_start <= at < period.period_end
             ):
                 return period.status
@@ -81,13 +91,29 @@ class FakeRepo:
         return period
 
     async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
-        if period.period_id not in self._by_id:
+        current = self._by_id.get(period.period_id)
+        if current is None:
             raise LookupError(period.period_id)
-        self._by_id[period.period_id] = period
-        return period
+        if current.version != period.version:
+            # Same refusal as the Mongo repo's version-guarded write (L7).
+            raise PayoutPeriodConflictError(period.period_id)
+        stored = current.model_copy(
+            update={f: getattr(period, f) for f in PAYOUT_TRANSITION_FIELDS}
+            | {"version": current.version + 1}
+        )
+        self._by_id[period.period_id] = stored
+        return stored
 
     async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
-        return await self.replace(period)
+        current = self._by_id.get(period.period_id)
+        if current is None:
+            raise LookupError(period.period_id)
+        if current.version != period.version:
+            # Same refusal as the Mongo repo's version-guarded write (L7).
+            raise PayoutPeriodConflictError(period.period_id)
+        stored = period.model_copy(update={"version": current.version + 1})
+        self._by_id[period.period_id] = stored
+        return stored
 
 
 class FakeAudit:
@@ -145,6 +171,7 @@ def _period(**overrides) -> PayoutPeriod:
         total_minor=sum(line.amount_minor for line in lines),
         lines=lines,
         generated_at=_dt("2026-06-01T00:00:00"),
+        revenue_basis="invoiced",
     )
     base.update(overrides)
     return PayoutPeriod(**base)
@@ -178,7 +205,7 @@ async def test_generate_writes_a_generated_audit_entry() -> None:
     entries = await audit.list_for_period(period.period_id)
     assert [entry.action for entry in entries] == ["generated"]
     assert entries[0].actor_id == "owner-1"
-    assert entries[0].after == {"total_minor": 5_000, "line_count": 1}
+    assert entries[0].after == {"total_minor": 5_000, "line_count": 1, "version": 0}
 
 
 @pytest.mark.asyncio
@@ -219,7 +246,7 @@ async def test_approve_writes_an_approved_audit_entry() -> None:
     entries = await audit.list_for_period("pp-1")
     assert [entry.action for entry in entries] == ["approved"]
     assert entries[0].before == {"status": "draft"}
-    assert entries[0].after == {"status": "approved", "total_minor": 5_000}
+    assert entries[0].after == {"status": "approved", "total_minor": 5_000, "version": 1}
 
     # Idempotent re-approve must not append a second entry.
     await use_case.execute(period_id="pp-1", actor_id="owner-1")
@@ -251,6 +278,7 @@ async def test_mark_paid_writes_a_marked_paid_audit_entry() -> None:
         "paid_method": "ach",
         "paid_reference": "ref-9",
         "status": "paid",
+        "version": 1,
     }
 
 

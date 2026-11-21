@@ -1,6 +1,7 @@
 "use client";
 
-import { getAll, put, remove } from "./idb";
+import { clearStore, getAll, put, remove } from "./idb";
+import { currentOwner, type MutationOwner } from "./owner";
 
 /**
  * IndexedDB-backed mutation queue for offline attendance writes.
@@ -28,6 +29,8 @@ export interface QueuedMutation {
   endpoint: "/coach/attendance";  // single endpoint for Wave 1B
   payload: Record<string, unknown>;
   labels?: QueuedMutationLabels;
+  /** Who queued it; the sync never replays it under anyone else (lib/offline/owner.ts). */
+  owner?: MutationOwner;
   status: QueuedStatus;
   attempts: number;
   created_at: string;             // ISO
@@ -39,6 +42,7 @@ const STORE = "mutations" as const;
 
 export async function enqueue(m: Omit<QueuedMutation, "status" | "attempts" | "created_at">): Promise<QueuedMutation> {
   const full: QueuedMutation = {
+    owner: currentOwner() ?? undefined,
     ...m,
     status: "queued",
     attempts: 0,
@@ -77,6 +81,11 @@ export async function getById(mutation_id: string): Promise<QueuedMutation | nul
 
 export async function dropById(mutation_id: string): Promise<void> {
   await remove(STORE, mutation_id);
+}
+
+/** Logout: nothing queued on this device may outlive the session. */
+export async function clearAll(): Promise<void> {
+  await clearStore(STORE);
 }
 
 const MAX_QUEUE = 200;

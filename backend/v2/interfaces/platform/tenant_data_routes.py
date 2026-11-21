@@ -12,6 +12,7 @@ from datetime import datetime
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from backend.v2.contexts.platform.application.use_cases.tenant_data_offboarding import (
@@ -85,20 +86,20 @@ async def export_tenant_data(
     service: TenantDataOffboardingService = Depends(get_tenant_data_offboarding),
 ) -> Response:
     """Download a zip of every tenant-scoped collection for one academy."""
+    # Streamed, so no SHA-256 header: it is in the tenant.data_exported audit row.
     request_id, ip_address = _request_meta(request)
-    archive = await service.export_tenant(
+    export = await service.export_tenant(
         academy_id,
         actor_user_id=claims.user_id,
         reason=payload.reason,
         request_id=request_id,
         ip_address=ip_address,
     )
-    return Response(
-        content=archive.content,
+    return StreamingResponse(
+        export.chunks,
         media_type="application/zip",
         headers={
-            "Content-Disposition": _content_disposition(archive.filename),
-            "X-Export-Sha256": archive.sha256,
+            "Content-Disposition": _content_disposition(export.filename),
             "Cache-Control": "no-store",
         },
     )

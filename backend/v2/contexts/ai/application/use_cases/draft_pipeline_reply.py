@@ -133,7 +133,7 @@ def parse_reply_draft(text: str, *, allowed_url: str | None) -> ReplyDraft:
     except (ValueError, ValidationError) as exc:
         raise AiProviderError("the model's answer could not be read") from exc
     allowed = _allowed_link_forms(allowed_url)
-    for url in _URL.findall(draft.body):
+    for url in _URL.findall(" ".join([draft.subject, draft.body, *draft.key_points])):
         found = url.rstrip(".,;)").rstrip("/").lower()
         if found not in allowed:
             raise AiProviderError("the model's answer could not be read", reason="invented_link")

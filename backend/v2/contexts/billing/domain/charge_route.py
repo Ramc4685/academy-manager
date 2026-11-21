@@ -116,6 +116,16 @@ class ChargeRoute(BaseModel):
         """The connected account a charge routes to, or None on the platform."""
         return self.stripe_account_id if self.kind == "connected" else None
 
+    def holds_card(self, card_account: str | None) -> bool:
+        """Whether a card stored on ``card_account`` (None = platform) is on the
+        account this route charges (#981). A refused or unconfigured route says
+        "nobody can pay" on its own, so no card is singled out as wrong there."""
+        if self.is_platform:
+            return card_account is None
+        if self.is_connected:
+            return card_account == self.stripe_account_id
+        return True
+
     def on_account_kwargs(self) -> dict[str, Any]:
         """Gateway kwargs that put one Stripe call on this route's account.
 

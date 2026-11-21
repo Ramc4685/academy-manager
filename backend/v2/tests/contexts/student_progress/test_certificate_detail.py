@@ -38,8 +38,14 @@ class _Certs:
     def __init__(self, certs: list[SkillCertificate]) -> None:
         self._certs = certs
 
-    async def list_for_student(self, student_id: str) -> list[SkillCertificate]:
-        return [c for c in self._certs if c.student_id == student_id]
+    async def list_for_student(
+        self, student_id: str, *, include_revoked: bool = False
+    ) -> list[SkillCertificate]:
+        return [
+            c
+            for c in self._certs
+            if c.student_id == student_id and (include_revoked or c.status != "revoked")
+        ]
 
 
 class _Lookup:
@@ -119,3 +125,34 @@ async def test_removed_level_keeps_the_certificate_without_a_number() -> None:
     assert detail.level_number is None
     assert detail.skills == []
     assert detail.next_level is None
+
+
+@pytest.mark.asyncio
+async def test_a_snapshot_wins_over_the_live_curriculum() -> None:
+    """A skill renamed (or a level reordered) after issue leaves the certificate alone."""
+    issued = _cert("c4", "s1", "lvl-1").model_copy(
+        update={"skill_names": ["Old grip name"], "level_number": 3, "level_color": "#123456"}
+    )
+
+    detail = await _use_case(issued).execute(
+        GetCertificateDetailCommand(student_id="s1", cert_id="c4")
+    )
+
+    assert detail is not None
+    assert detail.skills == ["Old grip name"]
+    assert detail.level_number == 3
+    assert detail.certificate.level_color == "#123456"
+
+
+@pytest.mark.asyncio
+async def test_a_revoked_certificate_opens_for_the_admin_only() -> None:
+    revoked = _cert("c5", "s1", "lvl-1").model_copy(update={"status": "revoked"})
+    use_case = _use_case(revoked)
+
+    hidden = await use_case.execute(GetCertificateDetailCommand(student_id="s1", cert_id="c5"))
+    admin = await use_case.execute(
+        GetCertificateDetailCommand(student_id="s1", cert_id="c5", include_revoked=True)
+    )
+
+    assert hidden is None
+    assert admin is not None and admin.certificate.status == "revoked"

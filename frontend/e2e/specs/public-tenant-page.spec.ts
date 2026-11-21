@@ -219,6 +219,16 @@ test.describe("trials closed", () => {
     await expect(page.getByText("First class free")).toHaveCount(0);
     await expect(page.getByRole("link", { name: /^Register for/ })).toHaveCount(3);
   });
+
+  // L9 C2: with no trial form on the page, the ?ref= code is still remembered
+  // for the registration (the Register links drop the query string).
+  test("remembers the ?ref= referral code", async ({ page }) => {
+    await page.goto("/?ref=QZ7KX4MP");
+    await expect(page.getByTestId("trial-closed")).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem("courtmastr.referral_code")))
+      .toContain('"code":"QZ7KX4MP"');
+  });
 });
 
 test.describe("every class full", () => {

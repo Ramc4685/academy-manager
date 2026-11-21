@@ -5,15 +5,18 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
+from functools import partial
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
+from backend.v2.interfaces.admin.academy_clock import academy_today
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
     AdminAttentionItemView,
     AdminAttentionList,
+    AdminAttentionUnavailableView,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
@@ -25,6 +28,18 @@ log = logging.getLogger(__name__)
 #: family is very likely being billed for a class they think they stopped
 #: (issue #616): escalate the card rather than leaving it a flat count.
 _STALE_PAUSE_REQUEST_DAYS = 7
+
+#: How a failed source is named on the page ("Could not check <label>").
+_SOURCE_LABELS: dict[str, str] = {
+    "pending_registrations": "registrations",
+    "dunning_alerts": "autopay failures",
+    "overdue_dues": "overdue payments",
+    "pause_requests": "pause requests",
+    "stuck_scheduled_actions": "scheduled enrollment changes",
+    "billing_deferral_warnings": "paused billing",
+    "waivers": "waivers",
+    "sessions": "today's classes",
+}
 
 
 def _oldest_pending_days(rows: list[Any]) -> int:
@@ -48,18 +63,25 @@ def _oldest_pending_days(rows: list[Any]) -> int:
 
 @router.get("/dashboard/attention", response_model=AdminAttentionList)
 async def dashboard_attention(
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    request: Request,
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminAttentionList:
-    """Aggregate dashboard attention signals from existing admin BFF sources."""
+    """Aggregate dashboard attention signals from existing admin BFF sources.
+
+    A source that fails is named in ``unavailable`` (owner rule: a count that
+    fails to load is "unavailable", never a silent 0).
+    """
 
     items: list[AdminAttentionItemView] = []
-    today = date.today()
+    unavailable: list[str] = []
+    read = partial(_read_attention_source, unavailable)
+    today = await academy_today(use_cases, claims.academy_id)
 
     # Issue #776: a registration waiting for a decision is the single most
     # time-sensitive thing an academy can be sitting on — the family has
     # usually already paid — and it used to appear nowhere on the home screen.
-    pending_registrations = await _read_attention_source(
+    pending_registrations = await read(
         "pending_registrations", _pending_registration_count, 0, use_cases
     )
     if pending_registrations:
@@ -82,7 +104,7 @@ async def dashboard_attention(
     # Issue #774: the owner was never told when a card failed or when the
     # dunning ladder gave up — both only ever reached the parent. Optional on
     # the bundle so an older composition simply shows neither card.
-    dunning_alerts = await _read_attention_source(
+    dunning_alerts = await read(
         "dunning_alerts",
         getattr(use_cases, "count_dunning_alerts", None) or _no_dunning_alerts,
         {},
@@ -120,6 +142,58 @@ async def dashboard_attention(
             )
         )
 
+    stuck = int(dunning_alerts.get("autopay_stuck") or 0)
+    needs_setup = int(dunning_alerts.get("autopay_needs_stripe_setup") or 0)
+    if stuck or needs_setup:
+        sentences = []
+        if needs_setup:
+            sentences.append(
+                f"{needs_setup} famil{'ies' if needs_setup != 1 else 'y'} can't be charged "
+                "until you finish Stripe setup."
+            )
+        if stuck:
+            sentences.append(
+                f"{stuck} famil{'ies' if stuck != 1 else 'y'} could not be charged because "
+                "of a problem on our side, not the card."
+            )
+        # Billing health shows Stripe setup only; a fault on our side retries
+        # on its own every run, so say that instead of pointing at a screen.
+        sentences.append(
+            "Nothing was charged. Open Billing health to finish setup."
+            if needs_setup
+            else "Nothing was charged; autopay tries again on its next run."
+        )
+        items.append(
+            AdminAttentionItemView(
+                attention_id="autopay-stuck",
+                kind="autopay_stuck",
+                title="Autopay stuck",
+                detail=" ".join(sentences),
+                severity="high",
+                href="/admin/billing-health" if needs_setup else "/admin/payments",
+                count=stuck + needs_setup,
+            )
+        )
+
+    returns_to_review = int(dunning_alerts.get("bank_returns_to_review") or 0)
+    if returns_to_review:
+        items.append(
+            AdminAttentionItemView(
+                attention_id="bank-return-review",
+                kind="bank_return_review",
+                title="Bank returns to check",
+                detail=(
+                    f"{returns_to_review} "
+                    f"{'family has' if returns_to_review == 1 else 'families have'} a bank "
+                    "return that needs a manual look: the money came back, but the invoice "
+                    "was not reopened automatically."
+                ),
+                severity="high",
+                href="/admin/payments",
+                count=returns_to_review,
+            )
+        )
+
     stuck_actions_reader = getattr(use_cases, "list_stuck_scheduled_actions", None)
 
     # Fan out all independent data fetches concurrently.
@@ -127,62 +201,60 @@ async def dashboard_attention(
 
     if callable(stuck_actions_reader):
         (
-            dues_rows,
+            overdue_count,
             pause_requests,
             stuck_actions,
             billing_deferral_warnings,
             waiver_report,
             sessions,
         ) = await asyncio.gather(
-            _read_attention_source("dues_followup", use_cases.list_dues_followup, []),
-            _read_attention_source(
-                "pause_requests", use_cases.list_admin_pause_requests.execute, []
-            ),
-            _read_attention_source("stuck_scheduled_actions", stuck_actions_reader, []),
-            _read_attention_source(
+            read("overdue_dues", _past_due_family_count, 0, request),
+            read("pause_requests", use_cases.list_admin_pause_requests.execute, []),
+            read("stuck_scheduled_actions", stuck_actions_reader, []),
+            read(
                 "billing_deferral_warnings",
                 use_cases.list_billing_deferral_warnings,
                 [],
                 today=today,
                 limit=100,
             ),
-            _read_attention_source("waivers", use_cases.list_admin_waivers.execute, None),
-            _read_attention_source("sessions", use_cases.list_admin_sessions, [], today),
+            read("waivers", use_cases.list_admin_waivers.execute, None),
+            read("sessions", use_cases.list_admin_sessions, [], today),
         )
     else:
         (
-            dues_rows,
+            overdue_count,
             pause_requests,
             billing_deferral_warnings,
             waiver_report,
             sessions,
         ) = await asyncio.gather(
-            _read_attention_source("dues_followup", use_cases.list_dues_followup, []),
-            _read_attention_source(
-                "pause_requests", use_cases.list_admin_pause_requests.execute, []
-            ),
-            _read_attention_source(
+            read("overdue_dues", _past_due_family_count, 0, request),
+            read("pause_requests", use_cases.list_admin_pause_requests.execute, []),
+            read(
                 "billing_deferral_warnings",
                 use_cases.list_billing_deferral_warnings,
                 [],
                 today=today,
                 limit=100,
             ),
-            _read_attention_source("waivers", use_cases.list_admin_waivers.execute, None),
-            _read_attention_source("sessions", use_cases.list_admin_sessions, [], today),
+            read("waivers", use_cases.list_admin_waivers.execute, None),
+            read("sessions", use_cases.list_admin_sessions, [], today),
         )
 
-    overdue_count = len([row for row in dues_rows if int(row.get("total_due_cents") or 0) > 0])
     if overdue_count:
         items.append(
             AdminAttentionItemView(
                 attention_id="overdue-dues",
                 kind="overdue_dues",
                 title="Overdue dues",
-                detail=f"{overdue_count} parent account{'s' if overdue_count != 1 else ''} need follow-up.",
+                detail=(
+                    f"{overdue_count} famil{'ies' if overdue_count != 1 else 'y'} "
+                    "past the due date without autopay cover, counting every month. "
+                    "Payments lists the current month."
+                ),
                 severity="high",
-                # The Dues page is gone; Payments owns chasing balances (spec §6).
-                href="/admin/payments",
+                href="/admin/payments#bucket-past_due",
                 count=overdue_count,
             )
         )
@@ -315,7 +387,13 @@ async def dashboard_attention(
             )
         )
 
-    return AdminAttentionList(items=items)
+    return AdminAttentionList(
+        items=items,
+        unavailable=[
+            AdminAttentionUnavailableView(source=label, label=_SOURCE_LABELS.get(label, label))
+            for label in unavailable
+        ],
+    )
 
 
 async def _pending_registration_count(use_cases: AdminUseCases) -> int:
@@ -330,7 +408,18 @@ async def _no_dunning_alerts() -> dict[str, int]:
     return {}
 
 
+async def _past_due_family_count(request: Request) -> int:
+    """Families past the due date without autopay cover, in ANY period (L2 B2).
+
+    Overdue means the day after the due date on the academy's clock; drafts
+    never count. A missing reader raises, so the card reads "unavailable".
+    """
+    counts = await request.app.state.admin_overdue_families.counts()
+    return int(counts["past_due"])
+
+
 async def _read_attention_source(
+    unavailable: list[str],
     label: str,
     reader: Callable[..., Awaitable[Any]],
     default: Any,
@@ -341,6 +430,7 @@ async def _read_attention_source(
         return await reader(*args, **kwargs)
     except Exception:
         log.warning("admin dashboard attention source unavailable: %s", label, exc_info=True)
+        unavailable.append(label)
         return default
 
 

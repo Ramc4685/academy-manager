@@ -7,6 +7,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from backend.v2.contexts.billing.domain.ach_returns import (
+    ACH_MAX_ATTEMPTS,
+    ACH_RETRY_DELAY_DAYS,
+    ach_failure_disposition,
+    is_bank_debit_failure,
+)
+
 DUNNING_SCHEDULE_DAYS = (0, 3, 5, 7)
 MAX_DUNNING_ATTEMPTS = len(DUNNING_SCHEDULE_DAYS)
 
@@ -16,6 +23,59 @@ MAX_DUNNING_ATTEMPTS = len(DUNNING_SCHEDULE_DAYS)
 #: here, beside the ladder it belongs to, so the application layer can read the
 #: rule without importing the Mongo repository that obeys it.
 FIRST_ATTEMPT_LOCAL_HOUR = 9
+
+#: Stripe API or network error: we never reached the card or bank (A4-3).
+STRIPE_UNAVAILABLE = "stripe_unavailable"
+
+#: Technical parks retry every tick. Once a ladder has been parked for these alone
+#: for TECHNICAL_PARK_CAP, it parks as TECHNICAL_FAILURE_CAPPED instead, which is
+#: rechecked once a day rather than hourly: the failing call stops hitting Stripe
+#: every hour, the admin and the alert take over, and a paid or voided invoice
+#: stands down on the next daily check (A7-6).
+TECHNICAL_PARK_REASONS = frozenset(
+    {"charge_technical_failure", "attempt_indeterminate", STRIPE_UNAVAILABLE}
+)
+TECHNICAL_PARK_CAP = timedelta(hours=24)
+TECHNICAL_FAILURE_CAPPED = "technical_failure_capped"
+
+#: A capped recheck found a PaymentIntent on the invoice that is not cleanly this
+#: charge (refunded, disputed, another amount or source), or a found charge that
+#: left a balance. Parked for a person to decide and never charged again: charging
+#: on top of it could take money a person already refunded. It is rechecked once a
+#: day without calling Stripe, so a paid or voided invoice stands the ladder down.
+EXISTING_CHARGE_NEEDS_REVIEW = "existing_charge_needs_review"
+
+#: Park reasons that mean "we could not ask the bank" because of something on our
+#: side. A ladder parked for one of these is listed for the admin and counted by
+#: the ops digest; settling ACH debits, open checkouts and paused enrollments are
+#: ordinary states and stay quiet (L1 A7-1).
+PARK_REASONS_NEEDING_ATTENTION = frozenset(
+    {
+        "charge_technical_failure",
+        "attempt_indeterminate",
+        "connected_account_not_ready",
+        "stripe_not_configured",
+        STRIPE_UNAVAILABLE,
+        TECHNICAL_FAILURE_CAPPED,
+        EXISTING_CHARGE_NEEDS_REVIEW,
+    }
+)
+
+#: The subset the academy fixes itself by finishing Stripe setup, so the owner
+#: dashboard words them as "finish Stripe setup", not a fault on our side.
+PARK_REASONS_NEEDING_STRIPE_SETUP = frozenset(
+    {"connected_account_not_ready", "stripe_not_configured"}
+)
+
+#: Attempt failure codes for a bank return or dispute the ledger did not reverse
+#: (partial, or nothing reversible): the owner reconciles these by hand.
+UNSUPPORTED_PARTIAL_RETURN = "unsupported_partial_ach_return"
+UNRECONCILED_RETURN = "unreconciled_payment_return"
+RETURN_CODES_NEEDING_MANUAL_REVIEW = frozenset({UNSUPPORTED_PARTIAL_RETURN, UNRECONCILED_RETURN})
+
+#: No saved card or bank: the parent has to act, not us. Emailed to the parent
+#: once and shown in the Payments buckets, never an ops-digest fault (owner 2026-11-15).
+NO_SAVED_PAYMENT_METHOD = "no_saved_payment_method"
 
 DunningStatus = Literal["active", "processing", "resolved", "dunned", "suppressed"]
 AutopayDisableStatus = Literal["pending", "succeeded", "failed", "not_required"]
@@ -40,6 +100,23 @@ class DunningState(BaseModel):
     last_failure_code: str | None = None
     suppression_reason: str | None = None
     suppressed_at: datetime | None = None
+    #: When this rung first parked; survives re-claims so "parked for a day" is
+    #: measurable (each re-park overwrites suppressed_at).
+    parked_since: datetime | None = None
+    #: Start of the current unbroken run of TECHNICAL_PARK_REASONS parks; cleared
+    #: by any other park or any recorded attempt.
+    technical_parked_since: datetime | None = None
+    #: Set on claim when the bank debit this rung was waiting on has come back
+    #: failed: the worker records that failure instead of debiting again (A4-2).
+    settling_failure_code: str | None = None
+    #: The last failed rung was a bank debit, so a terminal ladder pauses autopay
+    #: (re-link a bank) instead of disabling it.
+    last_failure_was_bank_debit: bool = False
+    #: The family charge this rung belongs to (L8). Stamped at claim on every
+    #: member, so a stale-lease re-claim charges exactly the same group under the
+    #: same PaymentIntent key. Kept after the attempt as a marker: the members'
+    #: settle claims and their one notice find each other by it.
+    charge_group_id: str | None = None
     notification_attempts: tuple[int, ...] = ()
     last_notification_at: datetime | None = None
     terminal_at: datetime | None = None
@@ -57,6 +134,8 @@ class DunningState(BaseModel):
         worker_id: str,
         now: datetime,
         lease_expires_at: datetime | None = None,
+        settling_failure_code: str | None = None,
+        charge_group_id: str | None = None,
     ) -> DunningState:
         if self.status not in {"active", "processing"}:
             raise ValueError("only active or stale-processing dunning states can be claimed")
@@ -71,6 +150,8 @@ class DunningState(BaseModel):
                 "processing_worker_id": worker_id,
                 "processing_started_at": now,
                 "lease_expires_at": lease_expires_at,
+                "settling_failure_code": settling_failure_code,
+                "charge_group_id": charge_group_id,
                 "suppression_reason": None,
                 "suppressed_at": None,
                 "updated_at": now,
@@ -86,6 +167,7 @@ class DunningState(BaseModel):
                 "processing_attempt_no": None,
                 "processing_worker_id": None,
                 "processing_started_at": None,
+                "settling_failure_code": None,
                 "lease_expires_at": None,
                 "next_attempt_at": next_attempt_at,
                 "updated_at": now,
@@ -99,10 +181,12 @@ class DunningState(BaseModel):
                 "processing_attempt_no": None,
                 "processing_worker_id": None,
                 "processing_started_at": None,
+                "settling_failure_code": None,
                 "lease_expires_at": None,
                 "next_attempt_at": None,
                 "suppression_reason": reason,
                 "suppressed_at": now,
+                "parked_since": None,
                 "updated_at": now,
             }
         )
@@ -110,16 +194,24 @@ class DunningState(BaseModel):
     def park(self, *, reason: str, now: datetime) -> DunningState:
         if self.status != "processing":
             raise ValueError("only processing dunning states can be parked")
+        technical_since = None
+        if reason in TECHNICAL_PARK_REASONS:
+            technical_since = self.technical_parked_since or now
+            if now - technical_since >= TECHNICAL_PARK_CAP:
+                reason = TECHNICAL_FAILURE_CAPPED
         return self.model_copy(
             update={
                 "status": "active",
                 "processing_attempt_no": None,
                 "processing_worker_id": None,
                 "processing_started_at": None,
+                "settling_failure_code": None,
                 "lease_expires_at": None,
                 "next_attempt_at": None,
                 "suppression_reason": reason,
                 "suppressed_at": now,
+                "parked_since": self.parked_since or now,
+                "technical_parked_since": technical_since,
                 "updated_at": now,
             }
         )
@@ -131,8 +223,10 @@ class DunningState(BaseModel):
                 "processing_attempt_no": None,
                 "processing_worker_id": None,
                 "processing_started_at": None,
+                "settling_failure_code": None,
                 "lease_expires_at": None,
                 "next_attempt_at": None,
+                "parked_since": None,
                 "resolved_at": now,
                 "updated_at": now,
             }
@@ -187,6 +281,14 @@ def record_dunning_attempt_result(
 
     attempt_no = state.processing_attempt_no
     first_attempt_at = state.first_attempt_at or now
+    # A failed bank debit (settled-then-failed, or refused at creation) runs the
+    # bank ladder: only insufficient funds retries (counted from when the failure
+    # is reported), anything else stops at once. A card decline keeps the card
+    # schedule, even on a card that sat in "processing".
+    bank_debit = not succeeded and is_bank_debit_failure(
+        failure_code, settled=state.settling_failure_code is not None
+    )
+    bank_disposition = (ach_failure_disposition(failure_code) or "stop") if bank_debit else None
     if succeeded:
         return state.model_copy(
             update={
@@ -195,9 +297,12 @@ def record_dunning_attempt_result(
                 "processing_attempt_no": None,
                 "processing_worker_id": None,
                 "processing_started_at": None,
+                "settling_failure_code": None,
                 "lease_expires_at": None,
                 "first_attempt_at": first_attempt_at,
+                "technical_parked_since": None,
                 "last_attempt_at": now,
+                "parked_since": None,
                 "next_attempt_at": None,
                 "last_failure_code": None,
                 "resolved_at": now,
@@ -205,7 +310,11 @@ def record_dunning_attempt_result(
             }
         )
 
-    if attempt_no >= MAX_DUNNING_ATTEMPTS:
+    if (
+        attempt_no >= MAX_DUNNING_ATTEMPTS
+        or bank_disposition == "stop"
+        or (bank_debit and attempt_no >= ACH_MAX_ATTEMPTS)
+    ):
         return state.model_copy(
             update={
                 "status": "dunned",
@@ -213,11 +322,15 @@ def record_dunning_attempt_result(
                 "processing_attempt_no": None,
                 "processing_worker_id": None,
                 "processing_started_at": None,
+                "settling_failure_code": None,
                 "lease_expires_at": None,
                 "first_attempt_at": first_attempt_at,
+                "technical_parked_since": None,
                 "last_attempt_at": now,
+                "parked_since": None,
                 "next_attempt_at": None,
                 "last_failure_code": failure_code,
+                "last_failure_was_bank_debit": bank_debit,
                 "terminal_at": now,
                 "autopay_disable_status": "pending" if state.enrollment_id else "not_required",
                 "autopay_disable_error": None,
@@ -225,7 +338,10 @@ def record_dunning_attempt_result(
             }
         )
 
-    next_due = first_attempt_at + timedelta(days=DUNNING_SCHEDULE_DAYS[attempt_no])
+    if bank_debit:
+        next_due = now + timedelta(days=ACH_RETRY_DELAY_DAYS[attempt_no - 1])
+    else:
+        next_due = first_attempt_at + timedelta(days=DUNNING_SCHEDULE_DAYS[attempt_no])
     return state.model_copy(
         update={
             "status": "active",
@@ -233,11 +349,15 @@ def record_dunning_attempt_result(
             "processing_attempt_no": None,
             "processing_worker_id": None,
             "processing_started_at": None,
+            "settling_failure_code": None,
             "lease_expires_at": None,
             "first_attempt_at": first_attempt_at,
+            "technical_parked_since": None,
             "last_attempt_at": now,
             "next_attempt_at": next_due,
+            "parked_since": None,
             "last_failure_code": failure_code,
+            "last_failure_was_bank_debit": bank_debit,
             "updated_at": now,
         }
     )

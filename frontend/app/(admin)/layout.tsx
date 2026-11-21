@@ -11,6 +11,7 @@ import { usePersonaAuth } from "@/lib/auth/use-persona-auth";
 import { useOnline } from "@/lib/pwa/online";
 import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { queryKeys } from "@/lib/query/keys";
+import { inboxBadge } from "@/lib/admin-inbox-tabs";
 import { TenantProvider } from "@/lib/tenant/tenant-context";
 import { useIsDesktop } from "@/lib/use-is-desktop";
 import { PhoneCountryProvider } from "@/lib/phone-country";
@@ -111,11 +112,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // scope, and landing on one directly shows the owner-only panel instead of a
   // page whose every request would 404.
   const inboxPending = inboxCountsQuery.data?.total ?? 0;
+  // A queue that failed to count is unknown, not empty (L2 A0-5).
+  const inboxUnknown = (inboxCountsQuery.data?.unavailable ?? []).length > 0;
   const nav = navForRoles(ADMIN_NAV, auth.isOwner).map((group) => ({
     ...group,
     items: group.items.map((item) =>
       item.href === "/admin/inbox"
-        ? { ...item, count: inboxPending || undefined }
+        ? { ...item, count: inboxBadge(inboxPending, inboxUnknown) }
         : item,
     ),
   }));

@@ -25,6 +25,7 @@ from backend.v2.contexts.enrollment.domain.errors import (
     PayoutPeriodFrozen,
 )
 from backend.v2.contexts.enrollment.domain.models import Enrollment, Session, SessionOccurrence
+from backend.v2.contexts.enrollment.domain.self_service import TrialRequest
 
 NOW = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
 START = NOW + timedelta(days=3)
@@ -112,14 +113,38 @@ class FakeMakeups:
         return self.count
 
 
+def _trial(request_id: str, **fields: Any) -> TrialRequest:
+    return TrialRequest(
+        request_id=request_id,
+        academy_id="acad-1",
+        student_ref="existing_student" if fields.get("student_id") else "prospective",
+        requested_session_id="sess-1",
+        preferred_start="2026-09-01",
+        preferred_end="2026-09-30",
+        created_at=datetime(2026, 9, 1, tzinfo=UTC),
+        **fields,
+    )
+
+
 @dataclass
 class FakeTrials:
     reopened: list[str] = field(default_factory=list)
     student_ids: list[str] = field(default_factory=list)
+    guests: list[TrialRequest] = field(default_factory=list)
 
-    async def reopen_for_assigned_occurrence(self, occurrence_id: str) -> list[str]:
+    async def reopen_for_assigned_occurrence(self, occurrence_id: str) -> list[TrialRequest]:
         self.reopened.append(occurrence_id)
-        return list(self.student_ids)
+        return [
+            _trial(f"tr-{sid}", parent_user_id="par-1", student_id=sid) for sid in self.student_ids
+        ] + list(self.guests)
+
+
+@dataclass
+class FakeGuestNotifier:
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    async def trial_date_cancelled(self, **kwargs: Any) -> None:
+        self.calls.append(kwargs)
 
 
 @dataclass
@@ -193,6 +218,7 @@ def _build(
     billing: FakeBilling | None = None,
     notifier: FakeNotifier | None = None,
     events: FakeEvents | None = None,
+    guest_notifier: FakeGuestNotifier | None = None,
 ) -> CancelSessionOccurrence:
     return CancelSessionOccurrence(
         occurrences=occurrences,  # type: ignore[arg-type]
@@ -204,6 +230,7 @@ def _build(
         trials=trials,  # type: ignore[arg-type]
         billing_sync=billing,  # type: ignore[arg-type]
         notifier=notifier,  # type: ignore[arg-type]
+        guest_notifier=guest_notifier,
         clock=lambda: NOW,
     )
 
@@ -458,8 +485,12 @@ class FakePayoutLock:
         self._status = status
         self.calls: list[tuple[str, datetime]] = []
 
-    async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None:
+    async def locked_status_for(
+        self, *, coach_id: str, at: datetime, include_draft: bool = False
+    ) -> str | None:
         self.calls.append((coach_id, at))
+        if self._status == "draft" and not include_draft:
+            return None
         return self._status
 
 
@@ -483,3 +514,65 @@ async def test_cancel_is_refused_once_the_coach_payout_period_is_paid() -> None:
 
     assert occurrences.rows["occ-1"].status != "cancelled"
     assert lock.calls == [("coach-1", START)]
+
+
+@pytest.mark.asyncio
+async def test_website_guests_on_the_cancelled_date_are_told_and_not_on_the_roster_audience() -> (
+    None
+):
+    guest = _trial(
+        "tr-guest",
+        contact_id="contact-1",
+        status="approved",
+        assigned_occurrence_id="occ-1",
+        guest_slot=1,
+    )
+    guest_notifier = FakeGuestNotifier()
+    notifier = FakeNotifier()
+    use_case = _build(
+        occurrences=FakeOccurrences({"occ-1": _occurrence()}),
+        trials=FakeTrials(guests=[guest]),
+        billing=FakeBilling(),
+        notifier=notifier,
+        guest_notifier=guest_notifier,
+    )
+
+    result = await use_case.execute(
+        CancelSessionOccurrenceCommand(occurrence_id="occ-1", reason="hall flooded")
+    )
+
+    assert result.trials_reopened == 1
+    [call] = guest_notifier.calls
+    assert [t.request_id for t in call["trials"]] == ["tr-guest"]
+    assert call["reason"] == "hall flooded"
+    # A guest has no Student row, so the roster notifier is never asked about it.
+    assert notifier.calls[0]["extra_student_ids"] == []
+
+
+@pytest.mark.asyncio
+async def test_result_carries_the_credit_total_and_why_families_were_skipped() -> None:
+    """#1207: Month dates shows the money per date, and says when none was owed."""
+    billing = FakeBilling(
+        result={
+            "billing_result": "credited=1,skipped=2",
+            "credits": {"enr-1": "cr-1"},
+            "credited_cents": 3000,
+            "skip_counts": {"covered_by_free_classes": 1, "first_month_proration_excludes_date": 1},
+        }
+    )
+    use_case = _build(
+        occurrences=FakeOccurrences({"occ-1": _occurrence()}),
+        enrollments=FakeEnrollments([_enrollment("enr-1", "st-1")]),
+        billing=billing,
+    )
+
+    result = await use_case.execute(
+        CancelSessionOccurrenceCommand(occurrence_id="occ-1", reason="gym closed")
+    )
+
+    assert result.credits_issued == 1
+    assert result.credit_total_cents == 3000
+    assert result.credit_skips == {
+        "covered_by_free_classes": 1,
+        "first_month_proration_excludes_date": 1,
+    }

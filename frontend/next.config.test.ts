@@ -109,3 +109,36 @@ describe("next.config CSP img-src", () => {
     expect(imgSrc).toContain("https://academy-courtmastr.web.app");
   });
 });
+
+describe("next.config CSP Firebase sign-in", () => {
+  // Regression: enforcing the policy as it was would have blocked Google
+  // sign-in (gapi script and the auth-helper iframe).
+  it("allows the gapi loader and the Firebase auth-helper iframe", async () => {
+    const rules = (await config.headers?.()) ?? [];
+    const csp = rules
+      .flatMap((rule) => rule.headers)
+      .find((header) => header.key === "Content-Security-Policy-Report-Only");
+    const parts = csp?.value.split("; ") ?? [];
+    expect(parts.find((part) => part.startsWith("script-src "))).toContain("https://apis.google.com");
+    const frameSrc = parts.find((part) => part.startsWith("frame-src "));
+    expect(frameSrc).toContain("'self'");
+    expect(frameSrc).toMatch(/https:\/\/[\w-]+\.firebaseapp\.com/);
+  });
+});
+
+describe("next.config CSP Turnstile", () => {
+  // L9: the public trial booking's Turnstile widget (script + challenge iframe).
+  it("allows the Turnstile loader and challenge iframe", async () => {
+    const rules = (await config.headers?.()) ?? [];
+    const csp = rules
+      .flatMap((rule) => rule.headers)
+      .find((header) => header.key === "Content-Security-Policy-Report-Only");
+    const parts = csp?.value.split("; ") ?? [];
+    expect(parts.find((part) => part.startsWith("script-src "))).toContain(
+      "https://challenges.cloudflare.com",
+    );
+    expect(parts.find((part) => part.startsWith("frame-src "))).toContain(
+      "https://challenges.cloudflare.com",
+    );
+  });
+});

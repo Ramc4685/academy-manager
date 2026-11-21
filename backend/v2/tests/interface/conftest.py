@@ -80,6 +80,7 @@ from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
+from backend.v2.tests.idempotency_fakes import ClaimableStore
 
 # --- in-memory fakes ---
 
@@ -336,7 +337,7 @@ class FakeOutbox:
         self.appended.append(event)
 
 
-class FakeIdempotencyStore:
+class FakeIdempotencyStore(ClaimableStore):
     def __init__(self) -> None:
         self.data: dict = {}
 
@@ -415,7 +416,9 @@ class _EnrollmentWriterAdapter:
     async def update_status(self, enrollment_id: str, status: str) -> None:
         await self._store.update_enrollment_status(enrollment_id, status)
 
-    async def update_session(self, enrollment_id: str, session_id: str) -> None:
+    async def update_session(
+        self, enrollment_id: str, session_id: str, *, expected_session_id: str | None = None
+    ) -> None:
         pass
 
     async def update_amount_cents(self, enrollment_id: str, amount_cents: int | None) -> None:
@@ -472,6 +475,11 @@ class FakeOccurrenceRosterQuery:
 
 def _now() -> datetime:
     return datetime(2026, 5, 16, 9, 0, tzinfo=UTC)
+
+
+def _marking_now() -> datetime:
+    # After every fixture class has started: a future class cannot be marked.
+    return datetime(2026, 5, 16, 19, 0, tzinfo=UTC)
 
 
 @pytest.fixture()
@@ -848,7 +856,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             outbox=_outbox,
             idempotency_store=_idempotency_store,
             academy_id=lambda: "test-academy",
-            clock=_now,
+            clock=_marking_now,
         ),
         bulk_mark_attendance=BulkMarkAttendance(
             attendance_repo=_attendance_repo,
@@ -857,14 +865,14 @@ def _build_use_cases(seed_data) -> CoachUseCases:
             outbox=_outbox,
             idempotency_store=_idempotency_store,
             academy_id=lambda: "test-academy",
-            clock=_now,
+            clock=_marking_now,
         ),
         correct_attendance=CorrectAttendance(
             attendance_repo=_attendance_repo,
             occurrence_lookup=_occurrence_lookup,
             outbox=_outbox,
             academy_id=lambda: "test-academy",
-            clock=_now,
+            clock=_marking_now,
         ),
         list_attendance_for_occurrence=_attendance_repo.list_for_occurrence,
         overdue_cents_by_student=_overdue_cents_by_student,
@@ -1015,6 +1023,7 @@ from typing import Any
 
 import pytest
 
+from backend.v2.composition.occurrence_cancellation import OccurrenceAttendanceAdapter
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
     GenerateMonthlyPayments,
@@ -1028,7 +1037,6 @@ from backend.v2.contexts.billing.application.use_cases.finance import (
     DeleteExpense,
     EditExpense,
     Expense,
-    Payout,
     RecordExpense,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
@@ -1060,6 +1068,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     full_name_key,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
+    BulkTransferEnrollments,
     CancelEnrollment,
     CancelSession,
     CreateSession,
@@ -1077,6 +1086,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
 from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
     CancelSessionOccurrence,
 )
+from backend.v2.contexts.enrollment.application.use_cases.copy_session import CopySession
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
     ApprovePauseRequest,
     DeclinePauseRequest,
@@ -1122,7 +1132,7 @@ class _AdminFakeOutbox:
 
 
 @dataclass
-class _AdminFakeIdempotencyStore:
+class _AdminFakeIdempotencyStore(ClaimableStore):
     data: dict[str, Any] = field(default_factory=dict)
 
     async def get(self, key):
@@ -1311,7 +1321,7 @@ class FakeEnrollmentWriter:
         self.rows[enrollment_id] = before.model_copy(update={"status": "withdrawn"})
         return before
 
-    async def update_session(self, enrollment_id, session_id):
+    async def update_session(self, enrollment_id, session_id, *, expected_session_id=None):
         e = self.rows.get(enrollment_id)
         if e is not None:
             self.move_history.append(
@@ -1582,7 +1592,15 @@ class FakeOccurrenceBilling:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    async def apply(self, *, occurrence_id, session_id, start_at, reason, actor_id):
+    async def apply(self, *, occurrence_id, session_id, start_at, reason, actor_id, dry_run=False):
+        if dry_run:
+            return {
+                "families": [
+                    {"enrollment_id": "enr-1", "amount_cents": 3000, "outcome": "would_credit"}
+                ],
+                "credited_cents": 3000,
+                "skip_counts": {},
+            }
         self.calls.append(
             {
                 "occurrence_id": occurrence_id,
@@ -1596,6 +1614,8 @@ class FakeOccurrenceBilling:
             "billing_policy": "cancelled_date_credited",
             "billing_result": "credited=1,override=written",
             "credits": {"enr-1": "credit-671"},
+            "credited_cents": 3000,
+            "skip_counts": {"covered_by_free_classes": 1},
         }
 
 
@@ -1908,17 +1928,6 @@ class FakeExpenseRepo:
 
 
 @dataclass
-class FakePayoutRepo:
-    rows: dict[str, Payout] = field(default_factory=dict)
-
-    async def list_all(self):
-        return sorted(self.rows.values(), key=lambda p: p.period_start, reverse=True)
-
-    async def list_for_coach(self, coach_id):
-        return [p for p in self.rows.values() if p.coach_id == coach_id]
-
-
-@dataclass
 class FakeMessageRepo:
     rows: dict[str, Message] = field(default_factory=dict)
 
@@ -2103,7 +2112,6 @@ def admin_seed():
         "payments": FakePaymentRepo(),
         "tuition_discounts": FakeTuitionDiscountRepo(),
         "expenses": FakeExpenseRepo(),
-        "payouts": FakePayoutRepo(),
         "messages": FakeMessageRepo(),
         "waivers": FakeAdminWaivers(),
         # Issue #774: owner-facing autopay counts for the home attention list.
@@ -2155,7 +2163,6 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     idem = seed["idempotency"]
     stripe = seed["stripe"]
     expenses = seed["expenses"]
-    payouts = seed["payouts"]
     messages = seed["messages"]
     waivers = seed["waivers"]
     comms = CommsService(messages=messages, academy_id="acad")  # type: ignore[arg-type]
@@ -2269,6 +2276,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         if window == "upcoming":
             today = _now().date()
             return [s for s in live if s.start_at.date() >= today]
+        if window in {"all", "open"}:
+            return live
         if on_date is None:
             on_date = _now().date()
         return [s for s in live if s.start_at.date() == on_date]
@@ -2369,7 +2378,9 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         approved payout period so the owner-override path (#821) is reachable
         from the route tests; every other coach's window is open."""
 
-        async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None:
+        async def locked_status_for(
+            self, *, coach_id: str, at: datetime, include_draft: bool = False
+        ) -> str | None:
             return "approved" if coach_id == "coach-frozen" else None
 
     _coach_attendance_audit = seed["coach_attendance_audit"]
@@ -2392,6 +2403,19 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             student_id="st-1",
             marked_by="coach-1",
             marked_at=datetime(2026, 5, 16, 9, 5, tzinfo=UTC),
+            status="present",
+        )
+    )
+    # #1207: occ-admin-held is seeded only by test_admin_credit_missed_class.
+    _student_attendance.saved.append(
+        Attendance(
+            attendance_id="att-held-1",
+            academy_id="acad",
+            occurrence_id="occ-admin-held",
+            session_id="sess-1",
+            student_id="st-1",
+            marked_by="coach-1",
+            marked_at=datetime(2026, 5, 2, 9, 5, tzinfo=UTC),
             status="present",
         )
     )
@@ -2465,8 +2489,8 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
     send_dues_reminders = SendDuesReminders(sender=_FakeDuesReminderSender())
 
     class _NoPastDueInvoices:
-        async def list_past_due(self, *, due_on):
-            _ = due_on
+        async def list_past_due(self, *, due_from, due_to):
+            _ = due_from, due_to
             return []
 
     class _UnusedPastDueSender:
@@ -2775,6 +2799,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         enrollments=enrollments_q,
         enrollment_events=enrollment_events,
         billing_sync=_occurrence_billing,
+        attendance=OccurrenceAttendanceAdapter(_student_attendance),  # type: ignore[arg-type]
         clock=lambda: datetime(2026, 5, 15, 12, 0, tzinfo=UTC),
     )
 
@@ -2795,6 +2820,14 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         edit_roster_add=edit_roster_add,
         cancel_enrollment=cancel_enrollment,
         transfer_enrollment=transfer_enrollment,
+        bulk_transfer_enrollments=BulkTransferEnrollments(transfer=transfer_enrollment),
+        copy_session=CopySession(
+            sessions=sessions,
+            create_session=create_session,
+            enrollments=enrollments_q,
+            students=students,
+            roster_add=edit_roster_add,
+        ),
         override_enrollment_fee=override_enrollment_fee,
         pause_enrollment=pause_enrollment,
         resume_enrollment=resume_enrollment,
@@ -2824,7 +2857,6 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         edit_expense=edit_expense,
         delete_expense=delete_expense,
         expenses=expenses,  # type: ignore[arg-type]
-        payouts=payouts,  # type: ignore[arg-type]
         revenue_query=revenue_query,
         list_admin_sessions=list_admin_sessions,
         list_session_occurrences=list_session_occurrences,
@@ -2886,6 +2918,13 @@ def _claims(role: str) -> AuthClaims:
     )
 
 
+class _NoOverdueFamilies:
+    """Default cross-period overdue reader: nobody owes (main.py wires the real one)."""
+
+    async def counts(self) -> dict[str, int]:
+        return {"past_due": 0, "needs_action": 0}
+
+
 def _make_admin_app(claims: AuthClaims | None, use_cases: AdminUseCases) -> FastAPI:
     if claims is None:
         claims = _claims("admin")
@@ -2894,6 +2933,7 @@ def _make_admin_app(claims: AuthClaims | None, use_cases: AdminUseCases) -> Fast
     app.include_router(admin_router, prefix="/api/v2")
     app.dependency_overrides[get_auth_claims] = lambda: claims
     app.dependency_overrides[get_admin_use_cases] = lambda: use_cases
+    app.state.admin_overdue_families = _NoOverdueFamilies()
     return app
 
 

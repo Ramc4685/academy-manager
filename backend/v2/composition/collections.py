@@ -31,7 +31,7 @@ from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
 
-def _parent_payments_link(db: Any) -> Any:
+def parent_payments_link(db: Any) -> Any:
     """Resolve one academy's parent-payments URL and display name.
 
     The same two facts ``list_dues_followup`` resolved for its WhatsApp link,
@@ -59,6 +59,6 @@ def compose_admin_collections(db: Any) -> MongoCollectionsReadModel:
         connected_accounts=MongoConnectedAccountRepository(db),
         billing_settings=MongoBillingSettingsRepository(db),
         customers=MongoParentBillingCustomerRepository(db),
-        parent_payments_link=_parent_payments_link(db),
+        parent_payments_link=parent_payments_link(db),
         phone_calling_code=academy_calling_code_lookup(db),
     )

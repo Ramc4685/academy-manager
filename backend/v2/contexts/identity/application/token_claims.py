@@ -12,13 +12,12 @@ from __future__ import annotations
 
 from backend.v2.contexts.identity.domain.errors import InvalidToken
 
-# Providers whose tokens this backend mints for itself. ``ConsumeMagicLink``
-# calls ``create_custom_token`` with a ``user_id`` it has already resolved from
-# a single-use link, so the identity is ours, not the caller's — there is no
-# attacker-supplied email claim to verify. Firebase provisions those accounts
-# with ``email_verified=False`` (see ``FirebaseAdminAdapter.create_user``), so
-# demanding the claim here would lock out every magic-link parent.
-_SERVER_MINTED_PROVIDERS = frozenset({"custom"})
+# Server-minted Firebase custom tokens. Only the deleted parent magic-link flow
+# ever minted them; nothing does now. A session still carrying this provider is
+# a leftover of a (possibly forwarded) inbox link, and its refresh token stays
+# valid until revoked, so it is refused whatever its email claim says: the
+# parent signs in again.
+_REFUSED_PROVIDERS = frozenset({"custom"})
 
 
 def require_verified_email(token_claims: dict[str, object]) -> None:
@@ -41,7 +40,7 @@ def require_verified_email(token_claims: dict[str, object]) -> None:
     provider = None
     if isinstance(firebase_claims, dict):
         provider = firebase_claims.get("sign_in_provider")
-    if provider in _SERVER_MINTED_PROVIDERS:
-        return
+    if provider in _REFUSED_PROVIDERS:
+        raise InvalidToken("server-minted sessions are no longer accepted")
     if token_claims.get("email_verified") is not True:
         raise InvalidToken("email must be verified")

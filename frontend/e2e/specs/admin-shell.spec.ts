@@ -8,9 +8,13 @@ import {
   rowActionControl,
 } from "../helpers/row-actions";
 import {
+  stubCampaignPreview,
   stubCoachAcademy,
   stubCoachMessages,
+  stubFamilyOffers,
+  stubFamilySiblingDiscount,
   stubNurtureSequence,
+  stubProgressSettings,
   stubParentMessages,
 } from "../fixtures/saas-stubs";
 import { stubFamilyIndex } from "../fixtures/family-index";
@@ -398,6 +402,10 @@ async function stubAdminBff(
     return fulfillJson(route, {});
   });
   await stubNurtureSequence(page);
+  await stubFamilyOffers(page);
+  await stubFamilySiblingDiscount(page);
+  await stubProgressSettings(page);
+  await stubCampaignPreview(page);
   await page.route("**/api/v2/admin/sessions*", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { sessions: [] });

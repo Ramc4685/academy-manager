@@ -100,7 +100,10 @@ class FakeInvoices:
     async def get_invoice_for_enrollment_period(
         self, enrollment_id: str, period: str, *, statuses: set[str] | None = None
     ) -> LedgerInvoice | None:
-        return self.rows.get(enrollment_id)
+        # Keyed by enrollment for brevity, but only the asked period matches,
+        # as in the real ledger: a permissive fake hid the #1207 past-month bug.
+        invoice = self.rows.get(enrollment_id)
+        return invoice if invoice is not None and invoice.period == period else None
 
     async def get_lines_for_invoice(self, invoice_id: str) -> list[InvoiceLine]:
         return list(self.lines.get(invoice_id, []))
@@ -194,14 +197,19 @@ def _cmd(**overrides: Any) -> ApplyOccurrenceCancellationCommand:
 
 
 def _build(
-    reader: FakeReader, invoices: FakeInvoices, credits: FakeCredits, overrides: FakeOverrides
+    reader: FakeReader,
+    invoices: FakeInvoices,
+    credits: FakeCredits,
+    overrides: FakeOverrides,
+    *,
+    now: datetime = NOW,
 ):
     return ApplyOccurrenceCancellation(
         reader=reader,  # type: ignore[arg-type]
         overrides=overrides,  # type: ignore[arg-type]
         invoices=invoices,  # type: ignore[arg-type]
         credits=credits,  # type: ignore[arg-type]
-        clock=lambda: NOW,
+        clock=lambda: now,
     )
 
 
@@ -655,3 +663,131 @@ async def test_continuing_family_second_cancellation_credits_the_four_class_rate
 
     assert {d.outcome for d in result.decisions} == {"credited"}
     assert {row.amount_cents for row in credits.rows} == {1750}
+
+
+# --- #1207: preview a missed class, and say what each date credited ---------
+
+LATER = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
+
+
+def _mixed_reader() -> FakeReader:
+    """An invoiced family (credited), a free-class family (skipped) and an
+    un-invoiced ongoing family (credited from the class fee)."""
+    continuing = _enrollment("enr-1", billing_start_at=None)
+    free_class = _enrollment("enr-2", billing_start_at=WEDNESDAYS[0])
+    fee_based = _enrollment("enr-3", billing_start_at=None)
+    return FakeReader(
+        occurrences=[_wednesday(i) for i in range(5)],
+        enrollments=[continuing, free_class, fee_based],
+        bases={
+            "enr-1": PeriodChargeBasis(
+                calculation_type="MONTHLY_TUITION",
+                final_amount_cents=12000,
+                total_eligible_classes=4,
+                billable_remaining_classes=4,
+            ),
+            f"{free_class.student_id}:sess-1": _five_class_basis(),
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_dry_run_prices_every_family_exactly_as_the_real_run_and_writes_nothing() -> None:
+    """The missed-class preview must quote the cents the confirm then issues.
+
+    The date's month is over (now is November): the family never invoiced for
+    September was never charged, so nothing is credited from the class fee.
+    """
+    invoices = FakeInvoices({"enr-1": _invoice("enr-1", subtotal=12000)})
+    credits, overrides = FakeCredits(), FakeOverrides()
+    use_case = _build(_mixed_reader(), invoices, credits, overrides, now=LATER)
+
+    preview = await use_case.execute(_cmd(start_at=WEDNESDAYS[2], dry_run=True))
+
+    assert credits.rows == [] and overrides.written == []
+    quoted = {d.enrollment_id: (d.outcome, d.amount_cents) for d in preview.decisions}
+    assert quoted == {
+        "enr-1": ("would_credit", 3000),
+        "enr-2": ("skipped:covered_by_free_classes", 0),
+        "enr-3": ("skipped:not_invoiced", 0),
+    }
+    assert preview.credited_cents == 3000
+
+    real = await use_case.execute(_cmd(start_at=WEDNESDAYS[2]))
+
+    issued = {d.enrollment_id: (d.outcome, d.amount_cents) for d in real.decisions}
+    assert issued == {
+        "enr-1": ("credited", 3000),
+        "enr-2": ("skipped:covered_by_free_classes", 0),
+        "enr-3": ("skipped:not_invoiced", 0),
+    }
+    assert [row.amount_cents for row in credits.rows] == [3000]
+
+
+@pytest.mark.asyncio
+async def test_dry_run_after_the_real_run_reports_the_credits_already_issued() -> None:
+    invoices = FakeInvoices({"enr-1": _invoice("enr-1", subtotal=12000)})
+    credits = FakeCredits()
+    use_case = _build(_mixed_reader(), invoices, credits, FakeOverrides())
+    await use_case.execute(_cmd(start_at=WEDNESDAYS[2]))
+
+    again = await use_case.execute(_cmd(start_at=WEDNESDAYS[2], dry_run=True))
+
+    assert {d.outcome for d in again.decisions if d.credit_id} == {"already_credited"}
+    assert again.credited_cents == 5400
+    assert len(credits.rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_result_summarises_credited_cents_and_skip_reasons() -> None:
+    invoices = FakeInvoices({"enr-1": _invoice("enr-1", subtotal=12000)})
+    result = await _build(_mixed_reader(), invoices, FakeCredits(), FakeOverrides()).execute(
+        _cmd(start_at=WEDNESDAYS[2])
+    )
+
+    assert result.credited_cents == 5400
+    assert result.skip_counts == {"covered_by_free_classes": 1}
+
+
+@pytest.mark.asyncio
+async def test_a_past_un_invoiced_month_and_a_free_tuition_child_are_never_credited() -> None:
+    """The fix for the risk review: money never collected is never credited."""
+    reader = FakeReader(
+        enrollments=[
+            _enrollment(
+                "nocharge", billing_start_at=datetime(2026, 6, 1, tzinfo=UTC), billed=False
+            ),
+            _enrollment("was-paused", billing_start_at=datetime(2026, 5, 1, tzinfo=UTC)),
+        ]
+    )
+    credits, overrides = FakeCredits(), FakeOverrides()
+    use_case = _build(reader, FakeInvoices(), credits, overrides, now=LATER)
+
+    for dry_run in (True, False):
+        result = await use_case.execute(_cmd(start_at=DATES[1], dry_run=dry_run))
+        assert {d.enrollment_id: d.outcome for d in result.decisions} == {
+            "nocharge": "skipped:free_tuition",
+            "was-paused": "skipped:not_invoiced",
+        }
+    assert credits.rows == []
+
+
+@pytest.mark.asyncio
+async def test_a_child_marked_not_billed_after_paying_is_still_credited() -> None:
+    """Not billed never touches an invoice already charged, so that money is real."""
+    reader = FakeReader(enrollments=[_enrollment("enr-1", billed=False)])
+    invoices = FakeInvoices({"enr-1": _invoice("enr-1", subtotal=12000)})
+    credits = FakeCredits()
+    result = await _build(reader, invoices, credits, FakeOverrides()).execute(_cmd())
+    assert [d.outcome for d in result.decisions] == ["credited"]
+    assert len(credits.rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_unmatched_date_says_the_schedule_changed() -> None:
+    reader = FakeReader(enrollments=[_enrollment("enr-1")])
+    result = await _build(reader, FakeInvoices(), FakeCredits(), FakeOverrides()).execute(
+        _cmd(start_at=datetime(2026, 9, 12, 15, 0, tzinfo=UTC), dry_run=True)
+    )
+    assert result.schedule_matched is False
+    assert result.decisions == ()

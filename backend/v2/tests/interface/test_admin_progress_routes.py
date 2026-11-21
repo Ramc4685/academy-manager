@@ -49,6 +49,9 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     AdminStudentPage,
     AdminStudentSummary,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_certificate_detail import (
+    GetCertificateDetail,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_certificates import (
     GetStudentCertificates,
 )
@@ -78,6 +81,9 @@ from backend.v2.contexts.student_progress.application.use_cases.record_test_atte
 from backend.v2.contexts.student_progress.application.use_cases.review_level_up import (
     ReviewLevelUpRecommendation,
 )
+from backend.v2.contexts.student_progress.application.use_cases.revoke_certificate import (
+    RevokeCertificate,
+)
 from backend.v2.contexts.student_progress.application.use_cases.update_skill_status import (
     UpdateSkillStatus,
 )
@@ -93,6 +99,7 @@ from backend.v2.interfaces.admin.progress_routes import router as progress_route
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
 from backend.v2.shared.http import register_exception_handlers
 from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.tests.fixtures.certificate_fakes import SequentialCertNumbers
 
 ACADEMY_ID = "test-academy"
 
@@ -225,6 +232,25 @@ class _FakeSkillProgressRepo:
         self.rows[(sp.student_id, sp.skill_id)] = sp
         return sp
 
+    async def insert_if_missing(self, sp) -> bool:
+        if (sp.student_id, sp.skill_id) in self.rows:
+            return False
+        self.rows[(sp.student_id, sp.skill_id)] = sp
+        return True
+
+    async def set_status_unless_passed(
+        self, student_id, skill_id, status, *, at, by, introduced_at=None
+    ):
+        # Mirrors the Mongo filter: never over a PASSED row.
+        row = self.rows.get((student_id, skill_id))
+        if row is None or row.status == "PASSED":
+            return False
+        update = {"status": status, "last_updated_at": at, "last_updated_by": by}
+        if introduced_at:
+            update["introduced_at"] = introduced_at
+        self.rows[(student_id, skill_id)] = row.model_copy(update=update)
+        return True
+
     async def get(self, student_id: str, skill_id: str):
         return self.rows.get((student_id, skill_id))
 
@@ -252,6 +278,9 @@ class _FakeTestAttemptRepo:
 
     async def list_for_student_skill(self, student_id: str, skill_id: str) -> list:
         return [a for a in self.rows if a.student_id == student_id and a.skill_id == skill_id]
+
+    async def list_for_student_skills(self, student_id: str, skill_ids: list[str]) -> list:
+        return [a for a in self.rows if a.student_id == student_id and a.skill_id in skill_ids]
 
     async def count_for_student_skill(self, student_id: str, skill_id: str) -> int:
         return len(await self.list_for_student_skill(student_id, skill_id))
@@ -345,10 +374,15 @@ class _FakeEnrollmentLookup:
 
     def __init__(self) -> None:
         self.withdrawn: set[str] = set()
+        #: Ids the academy has no student for: placement refuses them.
+        self.unknown: set[str] = set()
         self.batch_calls: list[list[str]] = []
 
     async def has_active_or_paused_enrollment(self, student_id: str) -> bool:
         return student_id not in self.withdrawn
+
+    async def student_exists(self, student_id: str) -> bool:
+        return student_id not in self.unknown
 
     async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
         self.batch_calls.append(list(student_ids))
@@ -362,8 +396,28 @@ class _FakeCertificateRepo:
     async def save(self, cert) -> None:
         self.rows.append(cert)
 
-    async def list_for_student(self, student_id: str) -> list:
-        return [c for c in self.rows if c.student_id == student_id]
+    async def revoke(self, student_id: str, cert_id: str, *, at, by: str, reason: str) -> bool:
+        # Same compare-and-set as the Mongo repo: only an issued certificate flips.
+        for i, c in enumerate(self.rows):
+            if c.student_id == student_id and c.cert_id == cert_id and c.status != "revoked":
+                self.rows[i] = c.model_copy(
+                    update={
+                        "status": "revoked",
+                        "revoked_at": at,
+                        "revoked_by": by,
+                        "revoke_reason": reason,
+                        "share_token": None,
+                    }
+                )
+                return True
+        return False
+
+    async def list_for_student(self, student_id: str, *, include_revoked: bool = False) -> list:
+        return [
+            c
+            for c in self.rows
+            if c.student_id == student_id and (include_revoked or c.status != "revoked")
+        ]
 
 
 class _FakeListAdminStudents:
@@ -466,6 +520,32 @@ def test_coach_engagement_stats_repo_ignores_not_started_placement_rows() -> Non
     )
 
 
+class _PlacementAudit:
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    async def record_placed(self, **row: object) -> bool:
+        self.rows.append(row)
+        return True
+
+
+class _FakeCertificateAudit:
+    """Mirrors MongoCertificateAuditLog: one row per certificate, True only when new."""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, object] = {}
+        self.fail_next = False
+
+    async def record_revoked(self, cert) -> bool:
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("audit write failed")
+        if cert.cert_id in self.rows:
+            return False
+        self.rows[cert.cert_id] = cert
+        return True
+
+
 @pytest.fixture()
 def env():
     # --- curriculum: seed the real badminton pathway into fakes ---
@@ -498,6 +578,8 @@ def env():
     attempt_repo = _FakeTestAttemptRepo()
     rec_repo = _FakeRecommendationRepo()
     cert_repo = _FakeCertificateRepo()
+    cert_audit = _FakeCertificateAudit()
+    placement_audit = _PlacementAudit()
     enrollment_lookup = _FakeEnrollmentLookup()
 
     student_progress = SimpleNamespace(
@@ -505,10 +587,14 @@ def env():
             level_progress=level_repo,
             skill_progress=skill_repo,
             skill_lookup=skill_lookup,
+            recommendations=rec_repo,
+            enrollment_lookup=enrollment_lookup,
+            audit=placement_audit,
         ),
         update_skill_status=UpdateSkillStatus(
             level_progress=level_repo,
             skill_progress=skill_repo,
+            skill_lookup=skill_lookup,
         ),
         record_test_attempt=RecordTestAttempt(
             level_progress=level_repo,
@@ -528,6 +614,7 @@ def env():
             level_progress=level_repo,
             skill_progress=skill_repo,
             certificates=cert_repo,
+            cert_numbers=SequentialCertNumbers(),
             skill_lookup=skill_lookup,
             enrollment_lookup=enrollment_lookup,
         ),
@@ -559,6 +646,10 @@ def env():
             enrollment_lookup=enrollment_lookup,
         ),
         get_certificates=GetStudentCertificates(certificates=cert_repo),
+        get_certificate_detail=GetCertificateDetail(
+            certificates=cert_repo, skill_lookup=skill_lookup
+        ),
+        revoke_certificate=RevokeCertificate(certificates=cert_repo, audit=cert_audit),
     )
     # Curriculum + student-name lookups the approve route uses to populate
     # certificate display fields (P1.2). Backed by the same fake repos.
@@ -604,6 +695,8 @@ def env():
         level_repo=level_repo,
         rec_repo=rec_repo,
         cert_repo=cert_repo,
+        cert_audit=cert_audit,
+        placement_audit=placement_audit,
         enrollment_lookup=enrollment_lookup,
         program_id=program.program_id,
         level1=level1,
@@ -638,6 +731,7 @@ def _pass_all_level1_skills(env, student_id: str, coach_id: str = "coach-1") -> 
             result = _run(
                 env.ns.record_test_attempt.execute(
                     RecordTestAttemptCommand(
+                        can_sign_off=True,
                         student_id=student_id,
                         skill_id=skill.skill_id,
                         level_id=env.level1.level_id,
@@ -767,6 +861,7 @@ def test_replayed_approve_is_conflict_and_performs_no_writes(env):
         _run(
             env.ns.record_test_attempt.execute(
                 RecordTestAttemptCommand(
+                    can_sign_off=True,
                     student_id=student_id,
                     skill_id=level2_skill.skill_id,
                     level_id=env.level2.level_id,
@@ -1229,3 +1324,181 @@ def test_pathway_dashboard_route_is_not_found_for_coach() -> None:
     client = TestClient(_build_app(SimpleNamespace(), claims))
 
     assert client.get("/api/v2/admin/pathway/dashboard").status_code == 404
+
+
+def test_bulk_placement_places_credits_and_audits_each_student(env):
+    sink = env.placement_audit
+    credited = env.level1_skills[0].skill_id
+
+    response = env.client.post(
+        "/api/v2/admin/pathway/placements",
+        json={
+            "program_id": env.program_id,
+            "level_id": env.level1.level_id,
+            "student_ids": ["st-bulk-1", "st-bulk-2", "st-bulk-1"],
+            "credited_skill_ids": [credited],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    results = response.json()["results"]
+    assert [(r["student_id"], r["outcome"]) for r in results] == [
+        ("st-bulk-1", "placed"),
+        ("st-bulk-2", "placed"),
+    ]
+    assert [row["student_id"] for row in sink.rows] == ["st-bulk-1", "st-bulk-2"]
+    assert sink.rows[0]["credited_skill_ids"] == [credited]
+
+
+def test_bulk_placement_refuses_a_credit_from_another_level_per_student(env):
+    response = env.client.post(
+        "/api/v2/admin/pathway/placements",
+        json={
+            "program_id": env.program_id,
+            "level_id": env.level1.level_id,
+            "student_ids": ["st-bulk-3"],
+            "credited_skill_ids": [env.level2_skills[0].skill_id],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["results"] == [
+        {
+            "student_id": "st-bulk-3",
+            "outcome": "refused",
+            "code": "StudentProgress.SkillNotOnCurrentLevel",
+        }
+    ]
+
+
+@pytest.mark.parametrize("count", [0, 51])
+def test_bulk_placement_caps_the_batch_at_the_edge(env, count):
+    response = env.client.post(
+        "/api/v2/admin/pathway/placements",
+        json={
+            "level_id": env.level1.level_id,
+            "student_ids": [f"st-{i}" for i in range(count)],
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_assistant_coach_cannot_place_or_credit_skills(env):
+    """Credits write PASSED, so the placement route is admin and owner only."""
+    assistant = AuthClaims(
+        user_id="helper-1",
+        email="helper@example.com",
+        academy_id=ACADEMY_ID,
+        roles=("assistant_coach",),
+    )
+    client = TestClient(_build_app(env.use_cases, assistant))
+    response = client.post(
+        "/api/v2/admin/pathway/placements",
+        json={
+            "program_id": env.program_id,
+            "level_id": env.level1.level_id,
+            "student_ids": ["st-bulk-4"],
+            "credited_skill_ids": [env.level1_skills[0].skill_id],
+        },
+    )
+    assert response.status_code in (403, 404)
+
+
+def test_bulk_placement_refuses_an_unknown_student_and_places_the_rest(env):
+    env.enrollment_lookup.unknown.add("st-typo")
+
+    response = env.client.post(
+        "/api/v2/admin/pathway/placements",
+        json={
+            "program_id": env.program_id,
+            "level_id": env.level1.level_id,
+            "student_ids": ["st-real", "st-typo"],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["results"][1] == {
+        "student_id": "st-typo",
+        "outcome": "refused",
+        "code": "StudentProgress.StudentNotFound",
+    }
+    assert [r.student_id for r in env.level_repo.rows] == ["st-real"]
+
+
+def test_single_placement_of_an_unknown_student_is_404(env):
+    env.enrollment_lookup.unknown.add("st-ghost")
+
+    response = _place(env, "st-ghost")
+
+    assert response.status_code == 404, response.text
+    assert response.json()["error"]["code"] == "StudentProgress.StudentNotFound"
+    assert env.level_repo.rows == []
+
+
+def _issued_certificate(env, student_id: str) -> str:
+    _place(env, student_id)
+    _pass_all_level1_skills(env, student_id)
+    rec = _recommend(env, student_id)
+    return env.client.post(f"/api/v2/admin/level-up/{rec.rec_id}/approve").json()["cert_id"]
+
+
+def test_revoke_marks_the_certificate_audits_and_keeps_the_student_on_level(env):
+    cert_id = _issued_certificate(env, "st-revoke")
+    url = f"/api/v2/admin/students/st-revoke/certificates/{cert_id}"
+
+    revoked = env.client.post(f"{url}/revoke", json={"reason": " Approved by mistake "})
+
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["status"] == "revoked"
+    assert revoked.json()["revoke_reason"] == "Approved by mistake"
+    assert list(env.cert_audit.rows) == [cert_id]
+    # The admin still sees it, marked; the student was not moved back.
+    listed = env.client.get("/api/v2/admin/students/st-revoke/certificates").json()
+    assert [c["status"] for c in listed["certificates"]] == ["revoked"]
+    assert env.client.get(url).json()["certificate"]["status"] == "revoked"
+    assert _get_progress(env, "st-revoke").json()["current_level_id"] == env.level2.level_id
+    # A second revoke is refused, not re-audited.
+    again = env.client.post(f"{url}/revoke", json={"reason": "again"})
+    assert again.status_code == 409
+    assert len(env.cert_audit.rows) == 1
+
+
+def test_a_revoke_whose_audit_write_failed_is_audited_on_retry(env):
+    cert_id = _issued_certificate(env, "st-revoke-retry")
+    url = f"/api/v2/admin/students/st-revoke-retry/certificates/{cert_id}/revoke"
+    env.cert_audit.fail_next = True
+    client = TestClient(env.client.app, raise_server_exceptions=False)
+
+    assert client.post(url, json={"reason": "mistake"}).status_code == 500
+
+    retry = env.client.post(url, json={"reason": "mistake"})
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["status"] == "revoked"
+    assert list(env.cert_audit.rows) == [cert_id]
+    assert env.client.post(url, json={"reason": "again"}).status_code == 409
+
+
+def test_revoke_needs_a_reason_and_a_real_certificate(env):
+    cert_id = _issued_certificate(env, "st-revoke-2")
+    base = "/api/v2/admin/students/st-revoke-2/certificates"
+
+    assert env.client.post(f"{base}/{cert_id}/revoke", json={"reason": "  "}).status_code == 422
+    missing = env.client.post(f"{base}/nope/revoke", json={"reason": "x"})
+    assert missing.status_code == 404
+    other_child = env.client.post(
+        f"/api/v2/admin/students/someone-else/certificates/{cert_id}/revoke", json={"reason": "x"}
+    )
+    assert other_child.status_code == 404
+
+
+def test_revoke_is_not_found_for_a_coach(env):
+    coach = AuthClaims(
+        user_id="coach-9", email="c@example.com", academy_id=ACADEMY_ID, roles=("coach",)
+    )
+    client = TestClient(_build_app(env.use_cases, coach))
+
+    response = client.post(
+        "/api/v2/admin/students/st-x/certificates/c-1/revoke", json={"reason": "x"}
+    )
+
+    assert response.status_code == 404

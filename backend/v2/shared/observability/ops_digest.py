@@ -148,6 +148,12 @@ JOB_STALE_AFTER: dict[str, timedelta] = {
     "send_checkout_recovery_notices": timedelta(hours=3),
     # Lead nurture (AI strategy Phase 3 C1): hourly ticks, once per local day.
     "send_nurture_steps": timedelta(hours=3),
+    # L9 A6-11: website-lead owner alerts re-sent (hourly ticks, once per local day).
+    "resend_due_owner_alerts": timedelta(hours=3),
+    # L11 item 7: the background campaign queue (every minute).
+    "process_campaign_queue": timedelta(minutes=30),
+    # L9 C2: the referral sweep (hourly ticks, once per local day).
+    "process_referrals": timedelta(hours=3),
     # Tap-to-master: evening auto-approval of queued level-ups.
     "auto_approve_level_ups": timedelta(hours=3),
     # Issue #776: the owner's daily brief (hourly ticks, once per local day).
@@ -208,8 +214,12 @@ class OpsDigestSnapshot:
     dead_letter_total: int = 0
     dead_letter_recent: int = 0
     dunning_terminals_recent: int = 0
+    #: Autopay ladders parked on our side for more than PARKED_STALE_AFTER (A7-1).
+    dunning_parked_stale: int = 0
     digest_sends_failed: int = 0
     digest_sends_failed_exhausted: int = 0
+    #: Email campaigns still ``sending`` after CAMPAIGN_STUCK_AFTER (L11).
+    campaigns_stuck_sending: int = 0
     last_invoice_run: dict[str, Any] | None = None
     last_invoice_tick_at: datetime | None = None
     #: Last heartbeat per scheduled job, straight from ``ops_job_runs``.
@@ -228,7 +238,9 @@ class OpsDigestSnapshot:
             or self.webhooks_failed_stale
             or self.dead_letter_recent
             or self.dunning_terminals_recent
+            or self.dunning_parked_stale
             or self.digest_sends_failed_exhausted
+            or self.campaigns_stuck_sending
             or self.stale_jobs
             or self.errors
         )
@@ -390,6 +402,41 @@ async def _dunning_terminal_count(db: AsyncIOMotorDatabase[Any], since: datetime
     return {"dunning_terminals_recent": int(count)}
 
 
+#: Mirrors billing ``domain.dunning.PARK_REASONS_NEEDING_ATTENTION``; shared may not
+#: import a context. ACH debits settling and open checkouts are not faults.
+_PARK_REASONS_NEEDING_ATTENTION = (
+    "attempt_indeterminate",
+    "charge_technical_failure",
+    "connected_account_not_ready",
+    "existing_charge_needs_review",
+    "stripe_not_configured",
+    "stripe_unavailable",
+    "technical_failure_capped",
+)
+PARKED_STALE_AFTER = timedelta(hours=2)
+
+
+async def _dunning_parked_count(db: AsyncIOMotorDatabase[Any], now: datetime) -> dict[str, int]:
+    """Ladders that could not charge for a reason on our side and are still stuck.
+
+    A parked rung retries every tick, so one still parked after two hours will not
+    clear by itself. Rows parked before ``parked_since`` existed (null) count too.
+    Cross-tenant and unindexed for the same reason as the terminal count.
+    """
+    count = await db["dunning_states"].count_documents(
+        {
+            "status": "active",
+            "next_attempt_at": None,
+            "suppression_reason": {"$in": list(_PARK_REASONS_NEEDING_ATTENTION)},
+            "$or": [
+                {"parked_since": None},
+                {"parked_since": {"$lte": now - PARKED_STALE_AFTER}},
+            ],
+        }
+    )
+    return {"dunning_parked_stale": int(count)}
+
+
 async def _digest_send_failure_counts(
     db: AsyncIOMotorDatabase[Any], since: datetime
 ) -> dict[str, int]:
@@ -426,6 +473,21 @@ async def _digest_send_failure_counts(
     }
 
 
+CAMPAIGN_STUCK_AFTER = timedelta(minutes=30)
+
+
+async def _campaigns_stuck_count(db: AsyncIOMotorDatabase[Any], now: datetime) -> dict[str, int]:
+    """Campaigns still ``sending`` long after they started. Nothing resumes an
+    inline campaign whose request died (mid-send, or before the hand-off to the
+    background queue), and no admin page lists it, so this is where it shows.
+    A very large background campaign still draining also lands here.
+    Cross-tenant on purpose, like every count in the digest."""
+    count = await db["message_campaigns"].count_documents(
+        {"status": "sending", "created_at": {"$lte": now - CAMPAIGN_STUCK_AFTER}}
+    )
+    return {"campaigns_stuck_sending": int(count)}
+
+
 async def collect_ops_digest(
     db: AsyncIOMotorDatabase[Any],
     *,
@@ -446,7 +508,9 @@ async def collect_ops_digest(
         ("webhooks", _webhook_counts(db, since, stale_before)),
         ("dead_letter", _dead_letter_counts(db, since)),
         ("dunning_terminals", _dunning_terminal_count(db, since)),
+        ("dunning_parked", _dunning_parked_count(db, generated_at)),
         ("digest_sends", _digest_send_failure_counts(db, since)),
+        ("campaigns_stuck", _campaigns_stuck_count(db, generated_at)),
         ("last_invoice_run", _last_invoice_run(db)),
         ("job_ticks", _job_ticks(db)),
     ]
@@ -527,6 +591,7 @@ def render_ops_digest(snapshot: OpsDigestSnapshot) -> tuple[str, str]:
         ("Dead-letter events", snapshot.dead_letter_recent, window, True),
         ("Dead-letter events", snapshot.dead_letter_total, "all time", False),
         ("Dunning terminals", snapshot.dunning_terminals_recent, window, True),
+        ("Autopay charges parked (our side)", snapshot.dunning_parked_stale, "over 2h", True),
         (
             "Digest sends failed (no retries left)",
             snapshot.digest_sends_failed_exhausted,
@@ -534,6 +599,7 @@ def render_ops_digest(snapshot: OpsDigestSnapshot) -> tuple[str, str]:
             True,
         ),
         ("Digest sends failed", snapshot.digest_sends_failed, "incl. will-retry", False),
+        ("Email campaigns stuck sending", snapshot.campaigns_stuck_sending, "over 30m", True),
     ]
     row_html = "".join(
         f"<tr><td>{escape(label)}</td><td align='right'>"

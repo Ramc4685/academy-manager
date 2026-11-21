@@ -121,6 +121,12 @@ class StudentLifecycleSnapshot(BaseModel):
     state: PersonLifecycle
     as_of: date | None = None
     live_session_ids: tuple[str, ...] = ()
+    #: Every live class is not billed: keeps its label, left out of headcounts.
+    not_billed: bool = False
+
+
+#: Recorded absences in a row that make an attending student "at risk".
+AT_RISK_CONSECUTIVE_ABSENCES = 2
 
 
 def _as_date(value: datetime | date | None) -> date | None:
@@ -129,20 +135,11 @@ def _as_date(value: datetime | date | None) -> date | None:
     return value.date() if isinstance(value, datetime) else value
 
 
-def _comparable(value: datetime) -> datetime:
-    """Strip tzinfo so a naive legacy Mongo datetime compares with an aware one.
-
-    Mixing the two raises ``TypeError`` at runtime — the #706 failure mode —
-    and a lifecycle chip is not worth a 500.
-    """
-    return value.replace(tzinfo=None)
-
-
 def derive_lifecycle(
     enrollments: Sequence[LifecycleEnrollment],
     *,
     last_seen_at: datetime | None = None,
-    at_risk_cutoff: datetime | None = None,
+    recent_marks: Sequence[str] = (),
     lead_since: date | None = None,
     is_trial: bool = False,
 ) -> PersonLifecycleState:
@@ -159,11 +156,12 @@ def derive_lifecycle(
     * **R5** else every row is terminal — left;
     * **R6** else there are no rows at all — a lead state.
 
-    ``at_risk_cutoff`` is the start of the window covering the last three
-    scheduled occurrences for this person's classes; ``last_seen_at`` is their
-    newest attendance mark. at_risk is claimed only when a cutoff exists — a
-    class with fewer than three past occurrences cannot tell us anything, and
-    guessing would flag every student in a brand-new session.
+    ``recent_marks`` are this person's recorded attendance statuses on their
+    live classes since they enrolled, newest first. at_risk means the newest
+    ``AT_RISK_CONSECUTIVE_ABSENCES`` of them are all ``absent`` (owner rule,
+    2026-11-15). A class nobody marked adds no mark, so it can never make a
+    student at risk: an unmarked class is a coach alert, not a student risk.
+    ``last_seen_at`` (newest present/late mark) only dates the chip.
     """
     rows = list(enrollments)
     if not rows:
@@ -191,10 +189,8 @@ def derive_lifecycle(
             # The SOONEST end date, not the newest row's: "ends Oct 31" is the
             # fact the family and the coach have to act on first.
             return PersonLifecycleState(state="pending_cancel", as_of=_as_date(min(ends)))
-        stale = at_risk_cutoff is not None and (
-            last_seen_at is None or _comparable(last_seen_at) < _comparable(at_risk_cutoff)
-        )
-        if stale:
+        streak = tuple(recent_marks[:AT_RISK_CONSECUTIVE_ABSENCES])
+        if len(streak) == AT_RISK_CONSECUTIVE_ABSENCES and set(streak) == {"absent"}:
             return PersonLifecycleState(state="at_risk", as_of=_as_date(last_seen_at))
         return PersonLifecycleState(state="active", as_of=None)
 

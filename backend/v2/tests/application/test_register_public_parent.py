@@ -515,3 +515,23 @@ async def test_register_public_parent_does_not_emit_duplicate_welcome_for_existi
     await use_case.execute("firebase-token")
 
     assert outbox.events == []
+
+
+@pytest.mark.asyncio
+async def test_register_public_parent_rejects_server_minted_custom_token() -> None:
+    """A leftover magic-link custom token must never claim a users row by email
+    here (identity_auth:6); the shared verified-email rule refuses it."""
+    use_case = RegisterPublicParent(
+        verifier=FakeVerifier(
+            {
+                "email": "parent@example.com",
+                "uid": "firebase-parent-1",
+                "email_verified": False,
+                "firebase": {"sign_in_provider": "custom"},
+            }
+        ),
+        users=FakeUsers(),
+    )
+
+    with pytest.raises(InvalidToken):
+        await use_case.execute("firebase-token")

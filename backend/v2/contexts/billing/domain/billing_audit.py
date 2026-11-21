@@ -87,6 +87,24 @@ BillingAuditAction = Literal[
     "plan_price_change_scheduled",
     "plan_price_change_cancelled",
     "plan_price_change_applied",
+    # Settings -> Billing rules -> Family offers (L9 C1): the owner changed the
+    # referral programme or the automatic sibling discount. Before/after carry
+    # the whole block. Applies to invoices generated afterwards only.
+    "referral_program_changed",
+    "sibling_discount_changed",
+    # Unattended: the bank took part of a payment back that was never applied
+    # to an invoice, so no attempt row can carry it (attempts need an invoice).
+    # The payment is marked partially refunded; this is the owner's trail.
+    "payment_return_unreconciled",
+    # Settings -> Billing rules -> Coach payroll (L7): the owner changed how a
+    # percent coach's invoiced-tuition base is counted. Applies to periods
+    # generated or recomputed afterwards; approved and paid ones never move.
+    "payroll_settings_changed",
+    # Student Sessions panel / family Billing tab: the owner marked one
+    # enrollment "Not billed" (billing_type NoCharge, with a reason) or started
+    # billing it again. Going forward only; before/after carry the type, the
+    # reason and any invoices voided with it.
+    "enrollment_billing_changed",
 ]
 
 

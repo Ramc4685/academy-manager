@@ -217,3 +217,31 @@ def test_normalize_stages_accepts_commas_and_repeats() -> None:
 def test_money_seam_is_owner_or_admin_today(roles: tuple[str, ...], visible: bool) -> None:
     claims = AuthClaims(user_id="u", email="u@example.test", academy_id="a", roles=roles)  # type: ignore[arg-type]
     assert can_view_family_money(claims) is visible
+
+
+def _child(sid: str, lifecycle: str, *, not_billed: bool = False) -> FamilyChild:
+    return FamilyChild(student_id=sid, name=sid, lifecycle=lifecycle, not_billed=not_billed)
+
+
+def test_not_billed_children_leave_the_tiles_without_moving_a_family() -> None:
+    def record(fid: str, *children: FamilyChild) -> FamilyRecord:
+        base = _family(fid, f"Testparent {fid}")
+        return FamilyRecord(**{**base.__dict__, "children": children, "stage": "active"})
+
+    index = FamilyIndex(
+        academy_id="acad-test",
+        generated_at=NOW,
+        families=(
+            record("only-free", _child("a", "active", not_billed=True)),
+            # Billed sibling left: billed-only would read "left"; never moved there.
+            record("free-and-left", _child("b", "active", not_billed=True), _child("c", "left")),
+            record(
+                "free-and-billed", _child("d", "active", not_billed=True), _child("e", "active")
+            ),
+        ),
+    )
+
+    summary = summarize_family_index(index)
+
+    assert summary.tiles == {"active": 1, "leaving": 0, "left": 0}
+    assert summary.not_billed_families == 2

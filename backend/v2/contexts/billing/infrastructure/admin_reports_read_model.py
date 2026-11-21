@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from bson import ObjectId as BsonObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -46,6 +47,7 @@ from backend.v2.contexts.billing.infrastructure.cash_received import cash_receiv
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     MongoProjectedClassFees,
 )
+from backend.v2.shared.billing_type import is_not_billed
 from backend.v2.shared.occurrences import occurrence_session_id
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.time import academy_timezone_lookup, resolve_reporting_timezone
@@ -560,6 +562,11 @@ def _period_has_unresolved_pay_issues(payout_period: dict[str, Any]) -> bool:
     )
 
 
+def _now() -> datetime:
+    """Seam for tests: the dashboard's aging buckets age against this instant."""
+    return datetime.now(UTC)
+
+
 def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
     """Returns an async callable for the owner finance/operations dashboard."""
     from backend.v2.shared.tenancy import current_academy_id
@@ -568,6 +575,10 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         academy_id = current_academy_id()
         timezone_name = await _reporting_timezone(db, academy_id)
         start, end = month_bounds(period, timezone_name)
+        # How late a balance is NOW, on the academy's clock. Aging against the
+        # month end made a not-yet-due invoice read 1-30 and an old one never
+        # leave 1-30.
+        aging_as_of = _now().astimezone(ZoneInfo(timezone_name)).date()
 
         # Spec 2026-09-07 §3.2: one reader is the definition of cash received.
         cash_collected_cents = (
@@ -613,7 +624,7 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 if family_id:
                     collection_family_ids.add(family_id)
                 due_date = invoice_due_date(invoice, end.date())
-                days_late = max((end.date() - due_date).days, 0)
+                days_late = max((aging_as_of - due_date).days, 0)
                 label = aging_label(days_late)
                 bucket = aging_totals[label]
                 bucket["amount_cents"] = int(bucket["amount_cents"]) + outstanding
@@ -685,7 +696,7 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 if family_id:
                     collection_family_ids.add(family_id)
                 due_date = payment_due_date(payment, end.date())
-                days_late = max((end.date() - due_date).days, 0)
+                days_late = max((aging_as_of - due_date).days, 0)
                 label = aging_label(days_late)
                 bucket = aging_totals[label]
                 bucket["amount_cents"] = int(bucket["amount_cents"]) + outstanding
@@ -715,15 +726,29 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         completed_count = 0
         cancelled_count = 0
         capacity = 0
-        sessions_cursor = db["sessions"].find(
-            {
-                "academy_id": academy_id,
-                "start_at": {"$gte": start, "$lt": end},
-                "is_deleted": {"$ne": True},
-            }
-        )
-        async for session in sessions_cursor:
-            session_id = str(session.get("session_id") or session.get("_id"))
+        # A class counts in every month it meets, not only the month it began:
+        # its occurrences in the month name it (as session economics does),
+        # plus any class whose first date falls in the month.
+        month_session_ids: set[str] = set()
+        async for occurrence in db["session_occurrences"].find(
+            {"academy_id": academy_id, "start_at": {"$gte": start, "$lt": end}},
+            {"session_id": 1, "template_session_id": 1},
+        ):
+            occurrence_session = occurrence_session_id(occurrence)
+            if occurrence_session:
+                month_session_ids.add(occurrence_session)
+        # Two queries, not one $or: session_id carries a partial index and the
+        # planner will not use it inside $or (docs/agent/backend-api-rules.md).
+        month_sessions: dict[str, dict[str, Any]] = {}
+        for clause in (
+            {"start_at": {"$gte": start, "$lt": end}},
+            {"session_id": {"$in": sorted(month_session_ids)}},
+        ):
+            async for doc in db["sessions"].find(
+                {"academy_id": academy_id, **clause, "is_deleted": {"$ne": True}}
+            ):
+                month_sessions.setdefault(str(doc.get("session_id") or doc.get("_id")), doc)
+        for session_id, session in month_sessions.items():
             session_ids.append(session_id)
             status = str(session.get("status") or "scheduled")
             if status == "completed":
@@ -787,8 +812,8 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         rent_cents = int(expense_categories.get("rent", {}).get("amount_cents", 0))
         misc_expenses_cents = expenses_total_cents - rent_cents
 
-        # Which coaches owe payroll this month? Same paying-coach rule payroll
-        # generation uses: actual_coach_id when set, else scheduled_coach_id.
+        # Which coaches owe payroll this month? Same rule payroll generation
+        # uses: actual_coach_id when set, else scheduled_coach_id, plus assistants.
         # Completion is clock-derived, matching MonthlyCoachOccurrenceReader —
         # nothing in the app writes status="completed".
         now = datetime.now(UTC)
@@ -801,7 +826,7 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 "status": {"$ne": "cancelled"},
                 "$or": [{"status": "completed"}, {"end_at": {"$lt": now}}],
             },
-            {"scheduled_coach_id": 1, "actual_coach_id": 1},
+            {"scheduled_coach_id": 1, "actual_coach_id": 1, "assistant_coach_ids": 1},
         )
         async for occurrence in expected_cursor:
             paying_coach = str(
@@ -809,6 +834,10 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             )
             if paying_coach:
                 expected_coach_ids.add(paying_coach)
+            # Assistants are paid their own line (L7), so they owe payroll too.
+            expected_coach_ids.update(
+                str(c) for c in occurrence.get("assistant_coach_ids") or [] if c
+            )
 
         estimated_payroll_cents = 0
         approved_payroll_cents = 0
@@ -1057,11 +1086,22 @@ def make_projected_income_report(
                 "status": "active",
                 "is_deleted": {"$ne": True},
             },
-            {"enrollment_id": 1, "session_id": 1, "parent_id": 1, "student_id": 1},
+            {
+                "enrollment_id": 1,
+                "session_id": 1,
+                "parent_id": 1,
+                "student_id": 1,
+                "billing_type": 1,
+            },
         )
+        not_billed_count = 0
         async for enrollment in enrollments_cursor:
             session_id = str(enrollment.get("session_id") or "")
             if not session_id:
+                continue
+            if is_not_billed(enrollment):
+                # Never invoiced, so never income; reported as "+N not billed".
+                not_billed_count += 1
                 continue
             session_ids.add(session_id)
             enrollment_rows.append(
@@ -1165,6 +1205,7 @@ def make_projected_income_report(
             "enrollment_count": autopay_count + manual_count,
             "autopay_enrollment_count": autopay_count,
             "manual_enrollment_count": manual_count,
+            "not_billed_enrollment_count": not_billed_count,
             "by_session": rows,
             "empty": not rows,
         }
@@ -1737,6 +1778,7 @@ def make_session_economics_report(
             session_id: 0 for session_id in session_ids
         }
         enrollment_to_session: dict[str, str] = {}
+        not_billed_by_session: dict[str, int] = {}
         if session_ids:
             enrollments_cursor = db["enrollments"].find(
                 {
@@ -1745,18 +1787,24 @@ def make_session_economics_report(
                     "status": "active",
                     "is_deleted": {"$ne": True},
                 },
-                {"enrollment_id": 1, "session_id": 1},
+                {"enrollment_id": 1, "session_id": 1, "billing_type": 1},
             )
             async for enrollment in enrollments_cursor:
                 session_id = str(enrollment.get("session_id") or "")
                 enrollment_id = str(enrollment.get("enrollment_id") or "")
                 if not session_id:
                     continue
+                # Mapped even when not billed: invoices issued before the mark
+                # still need their session for paid/outstanding money.
+                if enrollment_id:
+                    enrollment_to_session[enrollment_id] = session_id
+                if is_not_billed(enrollment):
+                    # Not billed: no expected tuition, not in the paying headcount.
+                    not_billed_by_session[session_id] = not_billed_by_session.get(session_id, 0) + 1
+                    continue
                 active_enrollments_by_session[session_id] = (
                     active_enrollments_by_session.get(session_id, 0) + 1
                 )
-                if enrollment_id:
-                    enrollment_to_session[enrollment_id] = session_id
 
         fee_by_session = await projected_fees.fees_for_period(
             {
@@ -1863,23 +1911,27 @@ def make_session_economics_report(
                     unpaid_enrollments_by_session[doc_session_id].add(enrollment_id)
 
         coach_payroll_by_session: dict[str, int] = {session_id: 0 for session_id in session_ids}
-        payout_period_ids: list[str] = []
-        payout_periods_cursor = db["payout_periods"].find(
-            {
-                "academy_id": academy_id,
-                "period_start": {"$gte": start, "$lt": end},
-            },
-            {"period_id": 1},
-        )
-        async for payout_period in payout_periods_cursor:
-            period_id = str(payout_period.get("period_id") or "")
-            if period_id:
-                payout_period_ids.append(period_id)
-        if payout_period_ids:
+        payout_periods = [
+            doc
+            async for doc in db["payout_periods"].find(
+                {
+                    "academy_id": academy_id,
+                    "period_start": {"$gte": start, "$lt": end},
+                },
+                {"period_id": 1, "lines_version": 1},
+            )
+            if doc.get("period_id")
+        ]
+        if payout_periods:
             lines_cursor = db["payout_period_lines"].find(
                 {
                     "academy_id": academy_id,
-                    "period_id": {"$in": payout_period_ids},
+                    # Each period's current set only (finance's
+                    # ``current_lines_filter`` rule; contexts cannot import it).
+                    "$or": [
+                        {"period_id": p["period_id"], "lines_version": p.get("lines_version")}
+                        for p in payout_periods
+                    ],
                 },
                 {"occurrence_id": 1, "amount_minor": 1},
             )
@@ -1934,6 +1986,7 @@ def make_session_economics_report(
                     ),
                     "coach_name": str(session.get("coach_name") or "") or None,
                     "active_enrollment_count": active_enrollments_by_session.get(session_id, 0),
+                    "not_billed_enrollment_count": not_billed_by_session.get(session_id, 0),
                     "paid_student_count": paid_student_count,
                     "unpaid_student_count": unpaid_student_count,
                     "monthly_fee_cents": monthly_fee_by_session.get(session_id, 0),
@@ -1965,7 +2018,7 @@ def make_session_economics_report(
             empty_states.append("No payable session occurrences found for this month.")
         if rows and sum(active_enrollments_by_session.values()) == 0:
             empty_states.append("No active enrollments found for payable sessions.")
-        if rows and not payout_period_ids:
+        if rows and not payout_periods:
             empty_states.append("No payout periods generated for this month.")
         if rows and paid_total == 0 and unpaid_total == 0:
             empty_states.append("No attributable billing rows found for these sessions.")
@@ -2023,7 +2076,9 @@ ENROLLMENT_EVENTS_MAX_LIMIT = 500
 ENROLLMENT_EVENTS_DEFAULT_LIMIT = 100
 
 
-def make_list_enrollment_events(db: Any) -> object:
+def make_list_enrollment_events(
+    db: Any,
+) -> Callable[..., Awaitable[tuple[list[dict[str, Any]], tuple[datetime, str] | None]]]:
     from backend.v2.shared.tenancy import current_academy_id
 
     async def list_enrollment_events(

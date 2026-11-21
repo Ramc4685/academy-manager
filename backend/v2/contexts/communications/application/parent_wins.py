@@ -10,11 +10,22 @@ from __future__ import annotations
 
 import html
 from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta, tzinfo
 
 from backend.v2.contexts.communications.application.unsubscribe_footer import (
     render_unsubscribe_footer,
 )
 from backend.v2.shared.comms.email_theme import EmailBrand, button, shell
+
+#: The evening email goes out at this academy-local time; a day's wins run
+#: from the previous evening's cutoff to this one, so a late class is not lost.
+EVENING_WINS_CUTOFF = time(19, 0)
+
+
+def evening_wins_window(send_date: date, tz: tzinfo) -> tuple[datetime, datetime]:
+    """``[yesterday 19:00, send_date 19:00)`` local: the wins in one evening email."""
+    end = datetime.combine(send_date, EVENING_WINS_CUTOFF, tzinfo=tz)
+    return end - timedelta(days=1), end
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +52,15 @@ class LevelUp:
 
 
 @dataclass(frozen=True, slots=True)
+class MilestoneWin:
+    """A celebration milestone the academy configured, reached in this window (L5B)."""
+
+    #: "skills_passed" | "levels_completed"
+    kind: str
+    count: int
+
+
+@dataclass(frozen=True, slots=True)
 class ChildWins:
     first_name: str
     progress_url: str
@@ -49,6 +69,8 @@ class ChildWins:
     #: A coach-approved AI paragraph (B4). Non-empty replaces the templated
     #: skill sentences; the coach quotes and the button stay.
     narrative: str = ""
+    #: Empty unless the academy switched milestones on in Settings > Curriculum.
+    milestones: tuple[MilestoneWin, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +116,13 @@ def _skill_line(first_name: str, wins: SkillWins) -> str:
     return f"{first_name} mastered {_join(wins.skill_names)} today. {tail}"
 
 
+def _milestone_line(first_name: str, milestone: MilestoneWin) -> str:
+    noun = "skill" if milestone.kind == "skills_passed" else "level"
+    verb = "mastered" if milestone.kind == "skills_passed" else "completed"
+    plural = noun if milestone.count == 1 else f"{noun}s"
+    return f"Milestone: {first_name} has now {verb} {milestone.count} {plural}!"
+
+
 def _quote(note: str) -> str:
     return (
         '<p style="margin:0 0 12px;padding:10px 12px;border-radius:10px;'
@@ -104,7 +133,11 @@ def _quote(note: str) -> str:
 
 def _child_block(child: ChildWins, accent: str) -> str:
     esc = html.escape
-    parts: list[str] = []
+    parts: list[str] = [
+        f'<p style="margin:0 0 12px;font-size:16px;font-weight:700;">'
+        f"{esc(_milestone_line(child.first_name, m))}</p>"
+        for m in child.milestones
+    ]
     for up in child.level_ups:
         parts.append(
             f'<p style="margin:0 0 4px;font-size:18px;font-weight:700;">'
@@ -115,7 +148,9 @@ def _child_block(child: ChildWins, accent: str) -> str:
         parts.extend(_quote(note) for note in up.coach_notes)
     # The narrative is drafted from one level; with wins in two levels the
     # templated lines are the only ones that cover every skill.
-    narrated = bool(child.narrative) and len(child.skill_wins) == 1
+    narrated = bool(child.narrative) and (
+        len(child.skill_wins) == 1 or (not child.skill_wins and len(child.level_ups) == 1)
+    )
     if narrated:
         parts.append(f'<p style="margin:0 0 12px;">{esc(child.narrative)}</p>')
     for wins in child.skill_wins:

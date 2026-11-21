@@ -22,6 +22,8 @@ import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
 import { MonthPicker } from "./_components/MonthPicker";
 import { PayslipsPanel } from "./_components/PayslipsPanel";
+import { useAcademyTimezone } from "@/components/admin/use-academy-today";
+import { academyMonthKey } from "@/lib/format/academy-time";
 
 /** #838: the two batch payroll actions that used to run on a single click. */
 type BulkAction = "generate" | "recompute";
@@ -44,6 +46,7 @@ export default function PayoutsPage() {
 }
 
 function PayoutsContent() {
+  const timezone = useAcademyTimezone();
   const router = useRouter();
   const searchParams = useSearchParams();
   const qc = useQueryClient();
@@ -69,7 +72,7 @@ function PayoutsContent() {
     selectTab(next);
   }
 
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(() => academyMonthKey(timezone));
   const [bulkConfirm, setBulkConfirm] = useState<BulkAction | null>(null);
 
   const { data, isLoading, isError } = useQuery({
@@ -114,7 +117,7 @@ function PayoutsContent() {
     <div className="space-y-4 p-6" data-testid="admin-payouts">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Coach Payroll</h1>
-        {tab === "payroll" && <MonthPicker value={month} onChange={setMonth} />}
+        <MonthPicker value={month} onChange={setMonth} />
       </div>
 
       <div
@@ -156,7 +159,7 @@ function PayoutsContent() {
         tabIndex={0}
       >
         {tab === "payslips" ? (
-          <PayslipsPanel />
+          <PayslipsPanel month={month} />
         ) : (
           <>
             {warningRows.length > 0 && (
@@ -423,6 +426,6 @@ function PayrollRows({
 }
 
 function PayrollStatusChip({ status }: { status: MonthlyPayrollStatus }) {
-  const chip = payslipChipFor(status, null);
+  const chip = payslipChipFor(status);
   return <Chip variant={chip.variant} label={chip.label} />;
 }

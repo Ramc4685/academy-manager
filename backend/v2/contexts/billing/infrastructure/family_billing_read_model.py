@@ -36,6 +36,7 @@ from backend.v2.contexts.billing.application.family_billing import (
     EnrollmentFacts,
     EventFacts,
     FamilyBillingUnavailable,
+    FamilyCreditFacts,
     FamilyFacts,
     InvoiceFacts,
     ManualPaymentFacts,
@@ -50,8 +51,10 @@ from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
 from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import session_amount_cents
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
+    academy_card_route,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoPaymentRepository
+from backend.v2.shared.billing_type import is_not_billed
 from backend.v2.shared.tenancy import current_academy_id
 
 log = logging.getLogger(__name__)
@@ -61,6 +64,8 @@ INVOICE_CAP = 200
 _STUDENT_PARENT_FIELDS = ("parent_id", "parent_user_id")
 _INVOICE_PARENT_FIELDS = ("parent_id", "parent_user_id")
 _UTC_NAME = "UTC"
+#: Credits listed on the family page; a family with more is a data problem.
+_CREDIT_LIST_CAP = 200
 _WEEKDAY_SHORT = {
     "monday": "Mon",
     "mon": "Mon",
@@ -243,6 +248,12 @@ class MongoFamilyBillingReadModel:
         available_credit = await self._secondary(
             "credits_unavailable", warnings, self._available_credit(aliases), 0
         )
+        credit_list = await self._secondary(
+            "credits_unavailable",
+            warnings,
+            self._credit_list(academy_id, aliases, invoice_docs),
+            [],
+        )
         customer = await self._customer(academy_id, parent_id, aliases, warnings)
         connected_ready = await self._connected_account_ready()
 
@@ -316,6 +327,7 @@ class MongoFamilyBillingReadModel:
                     actor_id=_opt_str(ev.get("actor_id")),
                     reason=_opt_str(ev.get("reason")),
                     effective_at=_to_datetime(ev.get("effective_at")),
+                    metadata=_event_metadata(ev.get("metadata")),
                 )
                 for ev in events
             ),
@@ -325,6 +337,7 @@ class MongoFamilyBillingReadModel:
             warnings=tuple(dict.fromkeys(warnings)),
             email_delivery=email_delivery,
             manual_payments=tuple(manual_payments),
+            credits=tuple(credit_list),
         )
         if warnings:
             log.warning("family billing read model: %s for parent %s", warnings, parent_id)
@@ -355,6 +368,9 @@ class MongoFamilyBillingReadModel:
             recurring_discount=discount,
             resume_on=_to_date((deferral or {}).get("resume_on")),
             class_fee_cents=session_amount_cents(session) if session else None,
+            not_billed=is_not_billed(e),
+            not_billed_reason=_opt_str(e.get("not_billed_reason")),
+            not_billed_note=_opt_str(e.get("not_billed_note")),
         )
 
     @staticmethod
@@ -377,6 +393,7 @@ class MongoFamilyBillingReadModel:
             total_cents=_int(inv.get("total_cents")),
             balance_due_cents=_int(inv.get("balance_due_cents")),
             due_date=_to_date(inv.get("due_date")),
+            autopay_charge_date=_to_date(inv.get("autopay_charge_date")),
             created_at=_to_datetime(inv.get("created_at")),
             paid_at=_to_datetime(inv.get("paid_at")),
             voided_at=_to_datetime(inv.get("voided_at")),
@@ -543,6 +560,60 @@ class MongoFamilyBillingReadModel:
             total += _int(await self._credits.balance_for_parent(alias))
         return total
 
+    async def _credit_list(
+        self, academy_id: str, aliases: Sequence[str], invoice_docs: Sequence[dict[str, Any]]
+    ) -> list[FamilyCreditFacts]:
+        """The family's own credits, newest first (#1207). ``CREDIT_APPLIED`` /
+        ``CREDIT_VOIDED`` rows are projections of a credit, not credits."""
+        numbers = {
+            str(inv["invoice_id"]): str(inv.get("invoice_number") or inv["invoice_id"])
+            for inv in invoice_docs
+        }
+        docs = [
+            doc
+            async for doc in self._db["account_credit_ledger"]
+            .find(
+                {
+                    "academy_id": academy_id,
+                    "parent_id": {"$in": list(aliases)},
+                    "type": {"$nin": ["CREDIT_APPLIED", "CREDIT_VOIDED"]},
+                    "status": {"$ne": "VOIDED"},
+                },
+                {"_id": 0},
+            )
+            .sort([("created_at", -1), ("credit_id", -1)])
+            .limit(_CREDIT_LIST_CAP)
+        ]
+        names: dict[str, str | None] = {}
+        for actor in {str(d["approved_by"]) for d in docs if d.get("approved_by")}:
+            try:
+                user = await self._users.get_by_id(actor)
+            except Exception:  # a broken user row must not hide the money
+                log.warning("family billing: approver %s unreadable", actor)
+                user = None
+            names[actor] = user.display_name if user else None
+        out: list[FamilyCreditFacts] = []
+        for doc in docs:
+            applied = [
+                str(a.get("invoice_id"))
+                for a in doc.get("applications") or []
+                if a.get("invoice_id")
+            ] + [str(i) for i in doc.get("applied_invoice_ids") or []]
+            out.append(
+                FamilyCreditFacts(
+                    credit_id=str(doc.get("credit_id") or ""),
+                    type=str(doc.get("type") or ""),
+                    status=str(doc.get("status") or ""),
+                    amount_cents=_int(doc.get("amount_cents")),
+                    remaining_amount_cents=_int(doc.get("remaining_amount_cents")),
+                    reason=str(doc.get("reason") or ""),
+                    created_at=_to_datetime(doc.get("created_at")),
+                    approved_by_name=names.get(str(doc.get("approved_by") or "")),
+                    applied_invoices=tuple(numbers.get(i, i) for i in dict.fromkeys(applied)),
+                )
+            )
+        return out
+
     async def _students(self, academy_id: str, aliases: Sequence[str]) -> list[dict[str, Any]]:
         """The family's children, stored under any alias (one equality read each)."""
         by_id: dict[str, dict[str, Any]] = {}
@@ -693,6 +764,7 @@ class MongoFamilyBillingReadModel:
                 "balance_due_cents": 1,
                 "refunded_cents": 1,
                 "due_date": 1,
+                "autopay_charge_date": 1,
                 "created_at": 1,
                 "paid_at": 1,
                 "voided_at": 1,
@@ -975,6 +1047,7 @@ class MongoFamilyBillingReadModel:
                 "actor_id": 1,
                 "reason": 1,
                 "effective_at": 1,
+                "metadata": 1,
             },
             sort=[("occurred_at", -1)],
             limit=INVOICE_CAP,
@@ -1017,6 +1090,10 @@ class MongoFamilyBillingReadModel:
                 last_invited_at=None,
                 has_login_account=has_login,
             )
+        if not MongoParentBillingCustomerRepository.card_counts(
+            doc, await academy_card_route(self._db)
+        ):
+            doc = {}  # #981: a card autopay cannot charge is no card on file
         label, last4 = MongoParentBillingCustomerRepository.display_payment_method(doc)
         return CustomerFacts(
             has_card=(label, last4) != (None, None),
@@ -1038,3 +1115,10 @@ class MongoFamilyBillingReadModel:
             is_house_academy=bool(getattr(settings, "allow_platform_charge_fallback", False)),
             account=account,
         ).payments_possible
+
+
+def _event_metadata(raw: Any) -> dict[str, str]:
+    # A legacy event may carry non-dict metadata; never let it crash the family page.
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): str(v) for k, v in raw.items() if v}

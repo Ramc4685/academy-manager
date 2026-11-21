@@ -37,6 +37,9 @@ import {
   getPayoutPeriod,
   markPayoutPeriodPaid,
   overridePayoutLine,
+  markPaidInput,
+  PAYOUT_CONFLICT_MESSAGE,
+  payoutErrorMessage,
   recomputePayoutPeriod,
   reopenPayoutPeriod,
   type AdminPayoutPeriodLineView,
@@ -45,7 +48,9 @@ import {
   type PayoutAuditEntryView,
 } from "@/lib/api/v2/payouts";
 import {
+  approvalBlock,
   approvalWarningMessage,
+  percentBasisLabel,
   payoutWarningLabel,
   payoutWarningRepairAction,
   unpaidReasonGuidance,
@@ -55,6 +60,8 @@ import { Avatar } from "@/components/ds/avatar";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
+import { useAcademyTimezone } from "@/components/admin/use-academy-today";
+import { academyDateISO } from "@/lib/format/academy-time";
 
 function money(cents: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
@@ -73,7 +80,7 @@ function formatPayRuleLabel(rate: AdminCoachPayRateView): string {
     year: "numeric",
   });
   if (rate.billing_unit === "percent_of_revenue") {
-    return `Pay rule: ${rate.percent ?? 0}% of expected session revenue · effective since ${since}`;
+    return `Pay rule: ${rate.percent ?? 0}% of invoiced tuition · effective since ${since}`;
   }
   const unit = rate.billing_unit === "per_hour" ? "per hour" : "per session";
   return `Pay rule: ${money(rate.amount_cents, rate.currency)} ${unit} · effective since ${since}`;
@@ -228,6 +235,7 @@ export default function AdminPayoutReviewPage() {
         periodEnd={period.period_end}
         onChanged={refresh}
       />
+      <ApprovalBanner period={period} />
       <WarningBanner period={period} />
       <SummaryCards period={period} />
       <PayLog
@@ -300,6 +308,14 @@ function Header({
                   {period.paid_method ? ` · ${period.paid_method}` : ""}
                 </span>
               )}
+              {period?.paid_amount_differs && period.paid_amount_cents !== null && (
+                <span
+                  data-testid="payout-paid-amount-differs"
+                  className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-amber-800"
+                >
+                  Paid {money(period.paid_amount_cents, period.currency)}, not the total
+                </span>
+              )}
               <span className="font-mono text-sm font-semibold tabular-nums text-rally-ink">
                 {money(period?.total_amount_cents ?? fallbackAmountCents, period?.currency)}
               </span>
@@ -334,16 +350,57 @@ function SummaryCards({ period }: { period: AdminPayoutPeriodView }) {
   );
 }
 
+/** The academy-local last day of the period, e.g. "Oct 31". */
+function useMonthEndLabel(periodEnd: string): string {
+  const timezone = useAcademyTimezone();
+  return new Date(new Date(periodEnd).getTime() - 1).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    timeZone: timezone ?? undefined,
+  });
+}
+
+function ApprovalBanner({ period }: { period: AdminPayoutPeriodView }) {
+  const block = approvalBlock(period, new Date(), useMonthEndLabel(period.period_end));
+  if (!block) return null;
+  return (
+    <div
+      data-testid={`payout-approval-${block.kind}`}
+      className="rounded-md border border-rally-line bg-neutral-50 px-4 py-3 text-sm text-rally-ink"
+    >
+      {block.message}
+    </div>
+  );
+}
+
 function WarningBanner({ period }: { period: AdminPayoutPeriodView }) {
-  if (period.payout_warnings.length === 0) return null;
+  const blocking = period.payout_warnings.filter((w) => w.severity === "blocking");
+  const notes = period.payout_warnings.filter((w) => w.severity !== "blocking");
+  return (
+    <>
+      {notes.map((warning) => (
+        <div
+          key={warning.occurrence_id}
+          className="rounded-md border border-rally-line bg-neutral-50 px-4 py-3 text-sm text-rally-ink"
+          data-testid={`payout-note-${warning.reason}`}
+        >
+          {warning.message} {payoutWarningRepairAction(warning)}
+        </div>
+      ))}
+      {blocking.length > 0 && <BlockingWarnings warnings={blocking} />}
+    </>
+  );
+}
+
+function BlockingWarnings({ warnings }: { warnings: AdminPayoutPeriodView["payout_warnings"] }) {
   return (
     <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
       <div className="font-semibold">
-        Resolve {period.payout_warnings.length} payout warning
-        {period.payout_warnings.length === 1 ? "" : "s"} before approval or payment.
+        Resolve {warnings.length} payout warning
+        {warnings.length === 1 ? "" : "s"} before approval or payment.
       </div>
       <ul className="mt-2 space-y-1">
-        {period.payout_warnings.map((warning) => (
+        {warnings.map((warning) => (
           <li key={warning.occurrence_id}>
             {payoutWarningLabel(warning)}
             {warning.session_title ? ` · ${warning.session_title}` : ""}:{" "}
@@ -371,28 +428,28 @@ function Actions({
   const [showPaid, setShowPaid] = useState(false);
 
   const recompute = useMutation({
-    mutationFn: () => recomputePayoutPeriod(period.period_id),
+    mutationFn: () => recomputePayoutPeriod(period.period_id, period.version),
     onSuccess: (updated) => {
       setError(null);
       onChanged(updated);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(payoutErrorMessage(err)),
   });
   const approve = useMutation({
-    mutationFn: () => approvePayoutPeriod(period.period_id),
+    mutationFn: () => approvePayoutPeriod(period.period_id, period.version),
     onSuccess: (updated) => {
       setError(null);
       onChanged(updated);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(payoutErrorMessage(err)),
   });
   const reopen = useMutation({
-    mutationFn: (reason: string) => reopenPayoutPeriod(period.period_id, reason),
+    mutationFn: (reason: string) => reopenPayoutPeriod(period.period_id, reason, period.version),
     onSuccess: (updated) => {
       setError(null);
       onChanged(updated);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(payoutErrorMessage(err)),
   });
   const markPaid = useMutation({
     mutationFn: (input: MarkPayoutPaidInput) => markPayoutPeriodPaid(period.period_id, input),
@@ -401,7 +458,7 @@ function Actions({
       setShowPaid(false);
       onChanged(updated);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(payoutErrorMessage(err)),
   });
 
   const onReopen = () => {
@@ -432,7 +489,7 @@ function Actions({
   const busy = recompute.isPending || approve.isPending || reopen.isPending || markPaid.isPending;
   const unresolvedOccurrenceIds = new Set<string>();
   for (const warning of period.payout_warnings) {
-    unresolvedOccurrenceIds.add(warning.occurrence_id);
+    if (warning.severity === "blocking") unresolvedOccurrenceIds.add(warning.occurrence_id);
   }
   for (const occ of period.unpaid_occurrences) {
     if (occ.unresolved) unresolvedOccurrenceIds.add(occ.occurrence_id);
@@ -442,6 +499,7 @@ function Actions({
   }
   const unresolvedCount = unresolvedOccurrenceIds.size;
   const unresolvedMessage = approvalWarningMessage(unresolvedCount);
+  const block = approvalBlock(period, new Date(), useMonthEndLabel(period.period_end));
 
   return (
     <div className="space-y-2">
@@ -467,11 +525,13 @@ function Actions({
             icon={<CheckCircle2 className="size-4" aria-hidden="true" />}
             label="Approve"
             title={
-              unresolvedCount > 0
-                ? "Repair unpaid occurrences and recompute before approval."
-                : "Lock the lines and move this payout to approved."
+              block
+                ? block.message
+                : unresolvedCount > 0
+                  ? "Repair unpaid occurrences and recompute before approval."
+                  : "Lock the lines and move this payout to approved."
             }
-            disabled={busy || unresolvedCount > 0}
+            disabled={busy || unresolvedCount > 0 || block !== null}
             onClick={() => approve.mutate()}
             primary
           />
@@ -499,6 +559,7 @@ function Actions({
       {error && (
         <p role="alert" className="text-sm text-red-700">
           {error}
+          {error === PAYOUT_CONFLICT_MESSAGE && <ReloadButton />}
         </p>
       )}
       {unresolvedMessage && (
@@ -509,6 +570,7 @@ function Actions({
       {showPaid && (
         <MarkPaidDialog
           defaultAmountCents={period.total_amount_cents}
+          version={period.version}
           pending={markPaid.isPending}
           onCancel={() => setShowPaid(false)}
           onSubmit={(input) => markPaid.mutate(input)}
@@ -551,6 +613,18 @@ function ActionButton({
   );
 }
 
+function ReloadButton() {
+  return (
+    <button
+      type="button"
+      onClick={() => window.location.reload()}
+      className="ml-2 font-medium underline focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+    >
+      Reload
+    </button>
+  );
+}
+
 const TH = "px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted";
 
 function PayLog({
@@ -564,10 +638,14 @@ function PayLog({
 }) {
   const [correctingOccurrenceId, setCorrectingOccurrenceId] = useState<string | null>(null);
 
+  // A replacement correction already recomputes the draft on the server, bumping
+  // its version; recompute from a fresh read so the old version can't 409.
   const handleCorrectionApplied = async () => {
-    const updated = await recomputePayoutPeriod(period.period_id);
     setCorrectingOccurrenceId(null);
-    onChanged(updated);
+    const fresh = await getPayoutPeriod(period.period_id);
+    onChanged(
+      fresh.status === "draft" ? await recomputePayoutPeriod(fresh.period_id, fresh.version) : fresh,
+    );
   };
 
   return (
@@ -586,7 +664,7 @@ function PayLog({
                 <th className={TH}>Session</th>
                 <th className={TH}>Role</th>
                 <th className={TH}>Status</th>
-                <th className={`${TH} text-right`}>%</th>
+                <th className={`${TH} text-right`}>{percentBasisLabel(period.revenue_basis)}</th>
                 <th className={`${TH} text-right`}>Pay</th>
                 <th className="px-3 py-3" aria-label="Line actions" />
               </tr>
@@ -707,12 +785,15 @@ function PaidRow({
   const [error, setError] = useState<string | null>(null);
   const override = useMutation({
     mutationFn: (input: { amount_cents: number | null; reason: string }) =>
-      overridePayoutLine(period.period_id, line.occurrence_id, input),
+      overridePayoutLine(period.period_id, line.occurrence_id, {
+        ...input,
+        expected_version: period.version,
+      }),
     onSuccess: (updated) => {
       setError(null);
       onChanged(updated);
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setError(payoutErrorMessage(err)),
   });
 
   const editable = period.status === "draft";
@@ -756,12 +837,19 @@ function PaidRow({
         </div>
         {line.expected_revenue_cents !== null && (
           <div className="font-mono text-[10px] text-rally-muted">
-            of {money(line.expected_revenue_cents, line.currency)} expected revenue
+            of {money(line.expected_revenue_cents, line.currency)}{" "}
+            {period.revenue_basis === "invoiced" ? "invoiced tuition" : "expected revenue (legacy)"}
           </div>
         )}
       </td>
       <td className="px-3 py-3 text-xs text-rally-muted">
-        {line.basis === "substitute" ? "Replacement" : "Scheduled"}
+        {line.basis === "assistant" ? (
+          <Chip variant="draft" label="Assistant" />
+        ) : line.basis === "substitute" ? (
+          "Replacement"
+        ) : (
+          "Scheduled"
+        )}
       </td>
       <td className="px-3 py-3">
         <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-emerald-800">
@@ -786,6 +874,7 @@ function PaidRow({
         {error && (
           <div role="alert" className="text-[11px] text-red-700">
             {error}
+            {error === PAYOUT_CONFLICT_MESSAGE && <ReloadButton />}
           </div>
         )}
       </td>
@@ -888,16 +977,22 @@ function AuditTrail({
 
 function MarkPaidDialog({
   defaultAmountCents,
+  version,
   pending,
   onCancel,
   onSubmit,
 }: {
   defaultAmountCents: number;
+  version: number;
   pending: boolean;
   onCancel: () => void;
   onSubmit: (input: MarkPayoutPaidInput) => void;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  // Snapshot at open, like the amount: a refetch while the dialog is open must
+  // not pair the amount the owner saw with a newer version.
+  const [versionAtOpen] = useState(version);
+  const timezone = useAcademyTimezone();
+  const today = academyDateISO(timezone);
   const [method, setMethod] = useState<MarkPayoutPaidInput["method"]>("bank_transfer");
   const [paidAt, setPaidAt] = useState(today);
   const [amount, setAmount] = useState((defaultAmountCents / 100).toFixed(2));
@@ -906,12 +1001,7 @@ function MarkPaidDialog({
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    onSubmit({
-      method,
-      paid_at: new Date(paidAt).toISOString(),
-      amount_cents: Math.round(parseFloat(amount) * 100),
-      reference: reference || null,
-    });
+    onSubmit(markPaidInput({ method, paidAt, amount, reference, versionAtOpen }));
   };
 
   return (

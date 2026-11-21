@@ -64,3 +64,15 @@ class MongoTestAttemptRepository(TenantScopedRepository):
 
     async def count_for_student_skill(self, student_id: str, skill_id: str) -> int:
         return await self._count({"student_id": student_id, "skill_id": skill_id})
+
+    async def list_for_student_skills(
+        self, student_id: str, skill_ids: list[str]
+    ) -> list[TestAttempt]:
+        """Every attempt for these skills in one query (the passport's N+1 fix)."""
+        if not skill_ids:
+            return []
+        cursor = self._find_many(
+            {"student_id": student_id, "skill_id": {"$in": list(skill_ids)}},
+            sort=[("tested_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]

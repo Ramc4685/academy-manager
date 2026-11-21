@@ -36,6 +36,8 @@ export interface FamilyIndexRowFixture {
   /** L2b: the front-desk "owes money" flag. */
   owes_money?: boolean | null;
   matched_parent: boolean;
+  /** Enrolled children when two or more: the "Siblings" chip. */
+  sibling_student_ids?: string[];
 }
 
 export function familyIndexRow(
@@ -53,6 +55,7 @@ export function familyIndexRow(
     registration: "registered",
     money: null,
     matched_parent: false,
+    sibling_student_ids: [],
     ...overrides,
   };
 }
@@ -135,4 +138,27 @@ export async function stubEmptyBillingSetup(page: Page) {
       next_cursor: null,
     }),
   );
+}
+
+/**
+ * `GET /admin/families/{id}/record`: the family page header and the student
+ * page's "Sibling of" line read it. Defaults to a family with no children;
+ * register it after any admin catch-all so this body wins.
+ */
+export async function stubFamilyRecord(
+  page: Page,
+  overrides: Partial<FamilyIndexRowFixture> = {},
+): Promise<void> {
+  await page.route("**/api/v2/admin/families/*/record", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const family = familyIndexRow(overrides);
+    return fulfillJson(route, {
+      generated_at: "2026-09-10T15:00:00Z",
+      family_id: family.family_id,
+      family,
+      money_visible: true,
+      money_view: "amounts",
+      warnings: [],
+    });
+  });
 }

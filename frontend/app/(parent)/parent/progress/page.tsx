@@ -13,12 +13,14 @@ import {
 } from "@/lib/api/parent";
 import { getParentStudentCertificates } from "@/lib/api/curriculum";
 import { queryKeys } from "@/lib/query/keys";
+import { ClassRecapList } from "@/components/parent/ClassRecapList";
 import {
   CertificateList,
   JourneySkeleton,
   LevelRing,
   LevelStrip,
   PracticeDrillCard,
+  MilestoneList,
   RecentWins,
   SkillChecklist,
 } from "./journey";
@@ -301,7 +303,9 @@ function ChildJourney({ studentId, childName }: { studentId: string; childName: 
           </p>
         </div>
       )}
+      <MilestoneList milestones={journey.milestones ?? []} firstName={firstName} />
       <RecentWins wins={journey.recent_wins} studentId={studentId} />
+      <ClassRecapList studentId={studentId} firstName={firstName} />
       {journey.practice_drill && <PracticeDrillCard drill={journey.practice_drill} />}
       {certs && certs.length > 0 && <CertificateList certs={certs} />}
     </div>

@@ -26,6 +26,9 @@ class ParentProfileView(BaseModel):
     last_name: str = ""
     email: str | None = None
     phone: str = ""
+    heard_from: str = Field(default="", max_length=80, pattern=r"^[A-Za-z0-9_.-]*$")
+    #: L9 C2: the referral code the family arrived with (same token rule).
+    referral_code: str = Field(default="", max_length=80, pattern=r"^[A-Za-z0-9_.-]*$")
 
 
 class ChildProfileView(BaseModel):
@@ -151,6 +154,9 @@ class StartInvoicePaymentRequest(BaseModel):
     # Opt into autopay for the covered enrollment(s) as part of this payment.
     # Defaults False so requests from older clients stay one-time-only.
     enroll_autopay: bool = False
+    # Pay this invoice plus the same student's other open invoices, the bundle
+    # a balance-bundled invoice email quoted.
+    bundle_student_balance: bool = False
 
 
 class StartInvoicePaymentResponse(BaseModel):
@@ -492,6 +498,7 @@ class ParentScheduleEntryView(BaseModel):
     # "regular" (standing enrollment) or "makeup" / "trial" for a one-time
     # approved attendance (issue #1038).
     source: Literal["regular", "makeup", "trial"] = "regular"
+    cancellation_reason: str | None = None
 
 
 class ParentScheduleResponse(BaseModel):
@@ -585,6 +592,9 @@ class ParentAcademyView(BaseModel):
     #: Owner-edited plain text for manual payers (Settings overhaul Phase 1
     #: Lane C item 5). None/empty = nothing shown.
     payment_instructions: str | None = None
+    #: Last published month ("YYYY-MM"); None = the academy never publishes,
+    #: so no "not confirmed yet" banner is shown.
+    schedule_published_through: str | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -64,10 +64,12 @@ class PayoutPeriodRepository(Protocol):
         coach_id: str,
         period_start: datetime,
         period_end: datetime,
+        exclude_period_id: str | None = None,
     ) -> PayoutPeriod | None:
         """First period for this coach whose window intersects
-        [period_start, period_end) — including an exact match. Used by
-        generation to reject overlapping windows (#504)."""
+        [period_start, period_end) — including an exact match — other than
+        ``exclude_period_id``. Used by generation to reject overlapping
+        windows (#504) and by approval to refuse approving one."""
         ...
 
     async def find_by_id(self, period_id: str) -> PayoutPeriod | None: ...
@@ -77,8 +79,10 @@ class PayoutPeriodRepository(Protocol):
         *,
         coach_id: str,
         at: datetime,
+        include_draft: bool = False,
     ) -> str | None:
-        """Status of the approved/paid period whose window contains ``at``.
+        """Status of the approved/paid (or, with ``include_draft``, draft)
+        period whose window contains ``at``.
 
         ``None`` when the instant falls in no frozen period. Issue #787:
         coaching and enrollment ask this (through their own ports, wired at
@@ -96,8 +100,11 @@ class PayoutPeriodRepository(Protocol):
         ...
 
     async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
-        """Replace an existing period (state-machine update).
+        """Store a state transition (approve, mark paid, reopen).
 
+        Writes only ``PAYOUT_TRANSITION_FIELDS``, and only while the stored
+        ``version`` is still ``period.version`` (the one the use case loaded);
+        otherwise raises ``PayoutPeriodConflictError`` and changes nothing.
         Raises ``LookupError`` if no period matches ``period.period_id``.
         """
         ...
@@ -106,7 +113,8 @@ class PayoutPeriodRepository(Protocol):
         """Replace an existing period AND rewrite its lines.
 
         Used by recompute and line-override flows where the line set
-        itself changes. Raises ``LookupError`` if the period is missing.
+        itself changes. Same ``version`` guard as ``replace``.
+        Raises ``LookupError`` if the period is missing.
         """
         ...
 

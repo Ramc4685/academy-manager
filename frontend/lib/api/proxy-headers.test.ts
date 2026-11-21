@@ -64,4 +64,17 @@ describe("request id propagation", () => {
     const b = buildProxyHeaders(new Headers(), "https:").get("x-request-id");
     expect(a).not.toBe(b);
   });
+
+  it("drops upstream content-encoding and content-length (body is re-streamed decoded)", () => {
+    const response = buildProxyResponseHeaders(
+      new Headers({
+        "content-encoding": "gzip",
+        "content-length": "123",
+        "content-type": "application/json",
+      })
+    );
+    expect(response.get("content-encoding")).toBeNull();
+    expect(response.get("content-length")).toBeNull();
+    expect(response.get("content-type")).toBe("application/json");
+  });
 });

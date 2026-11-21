@@ -6,6 +6,10 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from backend.v2.contexts.student_progress.domain.milestones import (
+    ProgressSettings,
+    StudentMilestone,
+)
 from backend.v2.contexts.student_progress.domain.models import (
     LevelUpRecommendation,
     SkillCertificate,
@@ -20,6 +24,8 @@ class StudentLevelProgressRepository(Protocol):
     async def get_active(self, student_id: str, program_id: str) -> StudentLevelProgress | None: ...
     async def get_by_id(self, progress_id: str) -> StudentLevelProgress | None: ...
     async def complete(self, progress_id: str, completed_at: datetime) -> None: ...
+    async def withdraw(self, progress_id: str, ended_at: datetime) -> None: ...
+    async def list_active_for_level(self, level_id: str) -> list[StudentLevelProgress]: ...
     async def list_for_student(self, student_id: str) -> list[StudentLevelProgress]: ...
     async def list_active_for_students(
         self, student_ids: list[str], program_id: str
@@ -29,6 +35,18 @@ class StudentLevelProgressRepository(Protocol):
 class StudentSkillProgressRepository(Protocol):
     async def save(self, skill_progress: StudentSkillProgress) -> None: ...
     async def upsert(self, skill_progress: StudentSkillProgress) -> StudentSkillProgress: ...
+    async def insert_if_missing(self, skill_progress: StudentSkillProgress) -> bool: ...
+    async def increment_tries(self, student_id: str, skill_id: str, delta: int) -> int | None: ...
+    async def set_status_unless_passed(
+        self,
+        student_id: str,
+        skill_id: str,
+        status: str,
+        *,
+        at: datetime,
+        by: str,
+        introduced_at: datetime | None = None,
+    ) -> bool: ...
     async def get(self, student_id: str, skill_id: str) -> StudentSkillProgress | None: ...
     async def set_coach_note(
         self, student_id: str, skill_id: str, *, passed_at: datetime, note: str | None
@@ -39,6 +57,7 @@ class StudentSkillProgressRepository(Protocol):
     async def list_passed_for_student_level(
         self, student_id: str, level_id: str
     ) -> list[StudentSkillProgress]: ...
+    async def list_passed_for_student(self, student_id: str) -> list[StudentSkillProgress]: ...
     async def list_recent_for_student(
         self, student_id: str, limit: int = 10
     ) -> list[StudentSkillProgress]: ...
@@ -55,6 +74,9 @@ class TestAttemptRepository(Protocol):
     async def save(self, attempt: TestAttempt) -> None: ...
     async def list_for_student_skill(self, student_id: str, skill_id: str) -> list[TestAttempt]: ...
     async def count_for_student_skill(self, student_id: str, skill_id: str) -> int: ...
+    async def list_for_student_skills(
+        self, student_id: str, skill_ids: list[str]
+    ) -> list[TestAttempt]: ...
 
 
 class LevelUpRecommendationRepository(Protocol):
@@ -133,9 +155,102 @@ class LevelUpRecommendationRepository(Protocol):
 
 
 class CertificateRepository(Protocol):
+    """Reads skip revoked certificates unless ``include_revoked`` (admin only)."""
+
     async def save(self, cert: SkillCertificate) -> None: ...
-    async def list_for_student(self, student_id: str) -> list[SkillCertificate]: ...
+    async def list_for_student(
+        self, student_id: str, *, include_revoked: bool = False
+    ) -> list[SkillCertificate]: ...
     async def list_for_students(self, student_ids: list[str]) -> list[SkillCertificate]: ...
+    async def revoke(
+        self, student_id: str, cert_id: str, *, at: datetime, by: str, reason: str
+    ) -> bool:
+        """Issued -> revoked, dropping the share link. False when nothing was issued."""
+        ...
+
+    async def get_issued_by_share_token(self, token: str) -> SkillCertificate | None:
+        """The issued certificate carrying this share link in the current academy."""
+        ...
+
+    async def set_share_token(self, student_id: str, cert_id: str, token: str) -> bool:
+        """Mint the link on an issued certificate that has none. False otherwise."""
+        ...
+
+    async def clear_share_token(self, student_id: str, cert_id: str) -> bool:
+        """Drop the link. False when there was none."""
+        ...
+
+
+class CertificateAuditLog(Protocol):
+    async def record_revoked(self, cert: SkillCertificate) -> bool:
+        """Write the one ``certificate.revoked`` row for this certificate.
+
+        Idempotent: True only when this call wrote it, so a retry after a
+        failed write can tell it still owes the audit row.
+        """
+        ...
+
+
+class ProgressAuditLog(Protocol):
+    async def record(
+        self,
+        *,
+        audit_id: str,
+        action: str,
+        actor_id: str,
+        entity_type: str,
+        entity_id: str,
+        before: dict[str, object],
+        after: dict[str, object],
+        at: datetime,
+    ) -> bool:
+        """Write one audit row keyed by ``audit_id`` (a retry never doubles it)."""
+        ...
+
+
+class ProgressSettingsStore(Protocol):
+    async def get(self) -> ProgressSettings: ...
+
+    async def set(self, settings: ProgressSettings) -> None:
+        """Targeted write of the progress settings block only."""
+        ...
+
+
+class MilestoneRepository(Protocol):
+    async def record(self, milestone: StudentMilestone) -> None:
+        """Insert once per student and key; a repeat is a no-op."""
+        ...
+
+    async def list_for_student(self, student_id: str) -> list[StudentMilestone]: ...
+
+    async def delete(self, student_id: str, milestone_key: str) -> None:
+        """Drop a record the student no longer holds (an undone pass or a revoke)."""
+        ...
+
+
+class PlacementAuditLog(Protocol):
+    async def record_placed(
+        self,
+        *,
+        student_id: str,
+        program_id: str,
+        level_id: str,
+        progress_id: str,
+        placed_by: str,
+        reason: str,
+        credited_skill_ids: list[str],
+    ) -> bool:
+        """Write the one ``student.pathway_placed`` row for this placement.
+
+        Idempotent (deterministic id): True only when this call wrote it.
+        """
+        ...
+
+
+class CertificateNumbers(Protocol):
+    """Mints the next human-facing certificate number for the current academy."""
+
+    async def next_number(self) -> str: ...
 
 
 class SkillLookup(Protocol):
@@ -164,6 +279,10 @@ class EnrollmentStatusLookup(Protocol):
     """
 
     async def has_active_or_paused_enrollment(self, student_id: str) -> bool: ...
+    async def student_exists(self, student_id: str) -> bool:
+        """The student is on this academy's books (tenant-scoped)."""
+        ...
+
     async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
         """Batch form for the queue: the subset of ``student_ids`` that is live."""
         ...

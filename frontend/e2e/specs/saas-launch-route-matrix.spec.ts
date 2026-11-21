@@ -16,6 +16,7 @@ import { stubEmptyBillingSetup, stubFamilyIndex } from "../fixtures/family-index
 import {
   ACADEMY_A,
   fulfillJson,
+  stubCampaignPreview,
   stubCoachAcademy,
   stubCoachMessages,
   stubMe,
@@ -210,6 +211,7 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   // People CRM family index (engineering-spec §3.2 / §7 Phase 2).
   await stubFamilyIndex(page, { families: [] });
   await stubEmptyBillingSetup(page);
+  await stubCampaignPreview(page);
   await page.route("**/api/v2/admin/inbox/counts", (route) =>
     fulfillJson(route, { counts: {}, total: 0 }),
   );
@@ -264,9 +266,6 @@ async function stubAdminLaunchBff(page: Page): Promise<void> {
   );
   await page.route("**/api/v2/admin/finance/expenses*", (route) =>
     fulfillJson(route, { expenses: [] })
-  );
-  await page.route("**/api/v2/admin/finance/payouts*", (route) =>
-    fulfillJson(route, { payouts: [] })
   );
   await page.route("**/api/v2/admin/finance/revenue*", (route) =>
     fulfillJson(route, { by_month: {} })

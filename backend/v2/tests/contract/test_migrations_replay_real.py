@@ -17,6 +17,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from backend.v2.migrations.runner import run_all_migrations
 
+# Two full replays: ~25s alone, past the global 120s cap under full-suite load.
+pytestmark = pytest.mark.timeout(300)
+
 
 async def _indexes(db) -> dict[str, dict]:
     return {
@@ -31,20 +34,21 @@ async def test_replay_twice_matches_a_fresh_replay(caplog) -> None:
     url = (
         os.environ.get("V2_MONGO_URL") or os.environ.get("MONGO_URL") or "mongodb://127.0.0.1:27017"
     )
-    client: AsyncIOMotorClient = AsyncIOMotorClient(url, serverSelectionTimeoutMS=1500)
+    # A loaded mongod (4 xdist workers replaying migrations) can miss a 1.5s ping.
+    client: AsyncIOMotorClient = AsyncIOMotorClient(url, serverSelectionTimeoutMS=10_000)
     try:
         await client.admin.command("ping")
     except Exception as exc:
         client.close()
         pytest.skip(f"no reachable mongod at {url}: {exc}")
-    suffix = uuid.uuid4().hex[:8]
-    once, twice = client[f"zz_replay_once_{suffix}"], client[f"zz_replay_twice_{suffix}"]
+    db = client[f"zz_replay_{uuid.uuid4().hex[:8]}"]
     try:
-        await run_all_migrations(once)
-        await run_all_migrations(twice)
-        await run_all_migrations(twice)
-        assert await _indexes(twice) == await _indexes(once)
+        # The first replay onto an empty database IS the fresh replay; snapshot
+        # it rather than paying for a third full replay on a second database.
+        await run_all_migrations(db)
+        fresh = await _indexes(db)
+        await run_all_migrations(db)
+        assert await _indexes(db) == fresh
     finally:
-        await client.drop_database(once.name)
-        await client.drop_database(twice.name)
+        await client.drop_database(db.name)
         client.close()

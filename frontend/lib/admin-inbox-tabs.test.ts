@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { INBOX_TABS, defaultInboxTab, isInboxTab } from "./admin-inbox-tabs";
+import { INBOX_TABS, defaultInboxTab, inboxBadge, isInboxTab } from "./admin-inbox-tabs";
 
 describe("defaultInboxTab", () => {
   it("opens the first queue that actually has work", () => {
@@ -28,5 +28,14 @@ describe("defaultInboxTab", () => {
 
   it("covers all eight queues", () => {
     expect(INBOX_TABS).toHaveLength(8);
+  });
+});
+
+describe("inboxBadge", () => {
+  it("never shows a plain number that under-counts", () => {
+    expect(inboxBadge(3, false)).toBe(3);
+    expect(inboxBadge(0, false)).toBeUndefined();
+    expect(inboxBadge(3, true)).toBe("3+");
+    expect(inboxBadge(0, true)).toBe("?");
   });
 });

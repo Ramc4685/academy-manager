@@ -103,6 +103,8 @@ class AdminStudentView(BaseModel):
     last_seen_at: datetime | None = None
     attendance_rate: float | None = None
     dues_status: Literal["current", "due", "overdue"] = "current"
+    #: Every live class is not billed: listed, but out of the headcount tiles.
+    not_billed: bool = False
 
 
 class AdminStudentSessionDiscountView(BaseModel):
@@ -132,6 +134,11 @@ class AdminStudentSessionSummaryView(BaseModel):
     payment_mode: str | None = None
     subscription_status: str | None = None
     amount_cents: int | None = None
+    #: Not billed (``billing_type`` outside the invoiced types, e.g. ``NoCharge``):
+    #: the child attends but is never invoiced; reason/note when an admin set it.
+    not_billed: bool = False
+    not_billed_reason: str | None = None
+    not_billed_note: str | None = None
     discount: AdminStudentSessionDiscountView | None = None
     # Issue #674: billing autopay axis on current rows; lifecycle facts on past rows.
     autopay_status: str | None = None
@@ -408,7 +415,10 @@ class AdminSessionView(BaseModel):
     capacity: int
     amount_cents: int | None = None
     status: Literal["scheduled", "cancelled", "completed"]
+    #: Seats taken, not-billed children included (they still take a seat).
     enrolled_count: int = 0
+    #: How many of ``enrolled_count`` are not billed.
+    not_billed_count: int = 0
     waitlist_count: int = 0
     days_of_week: list[str] = Field(default_factory=list)
     start_time: str | None = None
@@ -422,6 +432,8 @@ class AdminSessionView(BaseModel):
     arrival_minutes_before: int | None = None
     coach_contact_policy: str | None = None
     absence_policy: str | None = None
+    # Set only by the all-classes list (``window=all``), on the academy's clock.
+    phase: Literal["active", "upcoming", "ended"] | None = None
 
 
 class AdminSessionList(BaseModel):
@@ -595,6 +607,21 @@ class WelcomeEmailPreviewView(BaseModel):
     html: str
 
 
+class AchNoticeRecipientView(BaseModel):
+    parent_id: str
+    name: str | None = None
+    payment_method: str | None = None
+
+
+class AchNoticePreviewView(BaseModel):
+    """``GET /admin/billing/ach-notice/preview``: the autopay date-change notice,
+    rendered and never sent, with the autopay families it is meant for (L8)."""
+
+    subject: str
+    html: str
+    recipients: list[AchNoticeRecipientView]
+
+
 class SetSessionAssistantsRequest(BaseModel):
     """Body of ``PUT /admin/sessions/{id}/assistants`` (dedicated editor)."""
 
@@ -619,8 +646,80 @@ class CancelSessionOccurrenceResponse(BaseModel):
     #: Approved trials that were assigned to this date and are pending again (#671).
     trials_reopened: int = 0
     credits_issued: int = 0
+    #: #1207: the date's credits in total, and skip reason → families, so the
+    #: admin sees "nobody was owed" (a free extra class) as plainly as a credit.
+    credit_total_cents: int = 0
+    credit_skips: dict[str, int] = Field(default_factory=dict)
     billing_result: str | None = None
     notified: bool = False
+
+
+class CreditMissedClassRequest(BaseModel):
+    """Credit a missed class (#1207): record a PAST date as no class."""
+
+    reason: str = Field(min_length=1, max_length=500)
+    #: Preview only: price every family, write nothing.
+    dry_run: bool = False
+
+
+class MissedClassFamilyView(BaseModel):
+    enrollment_id: str
+    student_id: str | None = None
+    student_name: str | None = None
+    amount_cents: int = 0
+    #: would_credit | already_credited | skipped:<reason>
+    outcome: str
+
+
+class CreditMissedClassResponse(BaseModel):
+    occurrence_id: str
+    start_at: datetime
+    dry_run: bool
+    #: Per family on a preview; empty once confirmed (the totals below say it).
+    families: list[MissedClassFamilyView] = Field(default_factory=list)
+    credits_issued: int = 0
+    credit_total_cents: int = 0
+    credit_skips: dict[str, int] = Field(default_factory=dict)
+    #: The coach's payout covering the date needs a hand fix or a recompute.
+    payroll_flag: str | None = None
+    #: Preview only: billing never laid out this date; confirming is refused.
+    schedule_changed: bool = False
+    billing_result: str | None = None
+
+
+class CloseAcademyDatesRequest(BaseModel):
+    """Academy-wide closure: every class from ``start_date`` to ``end_date``
+    (academy-local, inclusive) is cancelled in one step."""
+
+    start_date: date
+    end_date: date
+    reason: str = Field(min_length=1, max_length=500)
+    notify: bool = True
+    #: Preview only: list the class dates, cancel nothing.
+    dry_run: bool = False
+
+
+class ClosureDateView(BaseModel):
+    occurrence_id: str
+    session_id: str
+    session_title: str | None = None
+    start_at: datetime
+    status: Literal["cancelled", "would_cancel", "skipped"]
+    skip_reason: str | None = None
+    credits_issued: int = 0
+    billing_warning: str | None = None
+
+
+class CloseAcademyDatesResponse(BaseModel):
+    dates: list[ClosureDateView] = Field(default_factory=list)
+    cancelled: int = 0
+    skipped: int = 0
+    credits_issued: int = 0
+    families_affected: int = 0
+    families_notified: int = 0
+    notice_failed: bool = False
+    #: Academy timezone, so the page shows class times as the academy reads them.
+    timezone: str
 
 
 class UpdateOccurrenceReplacementRequest(BaseModel):
@@ -663,6 +762,13 @@ class AdminEnrollmentView(BaseModel):
     pathway_completion_percentage: int = 0
     pathway_next_action: str = "place_in_level"
     dues_status: Literal["current", "due", "overdue"] = "current"
+    #: Attends but is never invoiced (``billing_type`` NoCharge/Waived): on the
+    #: roster, out of the "In session" headcount.
+    not_billed: bool = False
+    #: Latest lifecycle event on this seat (L2 A0-12), so the roster needs no
+    #: per-row history request. None when the seat has no events.
+    latest_event_type: str | None = None
+    latest_event_date: str | None = None
 
 
 class AdminEnrollmentList(BaseModel):
@@ -680,6 +786,54 @@ class TransferEnrollmentRequest(BaseModel):
     target_session_id: str
     effective_date: date
     reason: str | None = None
+
+
+class CopySessionRequest(BaseModel):
+    """A0-8 Copy class. Omitted schedule fields keep the source class's."""
+
+    title: str = Field(min_length=1, max_length=200)
+    days_of_week: list[str] | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    copy_roster: bool = False
+
+
+class CopiedRosterRowView(BaseModel):
+    student_id: str
+    full_name: str
+    ok: bool
+    error_code: str | None = None
+    message: str | None = None
+
+
+class CopySessionResponse(BaseModel):
+    session: AdminSessionView
+    #: False when an admin (not the owner) copied a priced class: the copy is
+    #: unpriced until the owner sets the fee, as with Create.
+    price_copied: bool
+    roster: list[CopiedRosterRowView]
+
+
+class BulkTransferEnrollmentsRequest(BaseModel):
+    """A0-8: move several roster rows to one class in one request."""
+
+    enrollment_ids: list[str] = Field(min_length=1, max_length=100)
+    target_session_id: str
+    effective_date: date
+    reason: str | None = None
+
+
+class BulkTransferRowView(BaseModel):
+    enrollment_id: str
+    ok: bool
+    error_code: str | None = None
+    message: str | None = None
+
+
+class BulkTransferEnrollmentsResponse(BaseModel):
+    results: list[BulkTransferRowView]
+    moved_count: int
+    failed_count: int
 
 
 class OverrideEnrollmentFeeRequest(BaseModel):
@@ -834,6 +988,13 @@ class AdminPaymentView(BaseModel):
     void_reason: str | None = None
     voided_at: datetime | None = None
     voided_by: str | None = None
+    # Stripe dispute (chargeback) on this payment (#980); absent when never disputed.
+    dispute_id: str | None = None
+    dispute_status: str | None = None
+    dispute_reason: str | None = None
+    dispute_amount_cents: int | None = None
+    dispute_outcome: str | None = None
+    disputed_at: datetime | None = None
     created_at: datetime
     paid_at: datetime | None = None
 
@@ -1179,27 +1340,17 @@ class GenerateInvoiceArtifactResponse(BaseModel):
 # --- Finance (# FINANCE) ---
 
 
-class AdminPayoutView(BaseModel):  # FINANCE
-    payout_id: str
-    coach_id: str
-    amount_cents: int
-    period_start: datetime
-    period_end: datetime
-    paid_at: datetime | None
-    expected_revenue_cents: int | None = None
-    students_count: int | None = None
-    sessions_count: int | None = None
-    rule_label: str | None = None
-
-
-class AdminPayoutList(BaseModel):  # FINANCE
-    payouts: list[AdminPayoutView]
-
-
 class GeneratePayoutPeriodRequest(BaseModel):
     coach_id: str
     period_start: datetime
     period_end: datetime
+
+
+class PayoutPeriodWriteRequest(BaseModel):
+    """Optional body of approve and recompute."""
+
+    expected_version: int | None = Field(default=None, ge=0)
+    """The period ``version`` the screen showed; a stale one is a 409."""
 
 
 class MarkPayoutPeriodPaidRequest(BaseModel):
@@ -1207,12 +1358,14 @@ class MarkPayoutPeriodPaidRequest(BaseModel):
     paid_at: datetime
     amount_cents: int = Field(ge=0)
     reference: str | None = None
+    expected_version: int | None = Field(default=None, ge=0)
+    """The period ``version`` the screen showed; a stale one is a 409."""
 
 
 class AdminPayoutPeriodLineView(BaseModel):
     occurrence_id: str
     coach_id: str
-    basis: Literal["scheduled", "substitute", "actual"]
+    basis: Literal["scheduled", "substitute", "actual", "assistant"]
     minutes: str
     amount_cents: int
     currency: str
@@ -1242,6 +1395,8 @@ class AdminUnpaidOccurrenceView(BaseModel):
         "no_rate_configured",
         "rate_gap",
         "missing_session_price_for_percent_revenue",
+        "missing_invoiced_tuition_for_percent_revenue",
+        "percent_rate_on_assistant",
         "attendance_override",
         "replaced_by_actual_coach",
         "unknown_unpaid_reason",
@@ -1262,6 +1417,8 @@ class AdminPayoutWarningView(BaseModel):
     occurrence_id: str
     reason: Literal[
         "missing_session_price_for_percent_revenue",
+        "missing_invoiced_tuition_for_percent_revenue",
+        "percent_rate_on_assistant",
         "missing_rate",
         "missing_percent",
     ]
@@ -1276,6 +1433,8 @@ class AdminPayoutWarningView(BaseModel):
 
 class AdminPayoutPeriodView(BaseModel):
     period_id: str
+    version: int
+    """Bumped by every write; send it back as ``expected_version``."""
     coach_id: str
     period_start: datetime
     period_end: datetime
@@ -1286,12 +1445,16 @@ class AdminPayoutPeriodView(BaseModel):
     unpaid_occurrence_ids: list[str]
     unpaid_occurrences: list[AdminUnpaidOccurrenceView] = Field(default_factory=list)
     payout_warnings: list[AdminPayoutWarningView] = Field(default_factory=list)
+    revenue_basis: Literal["expected", "invoiced"] = "expected"
+    """What percent lines are a percent of; ``expected`` is a legacy draft."""
     generated_at: datetime
     approved_at: datetime | None = None
     paid_at: datetime | None = None
     paid_method: str | None = None
     paid_amount_cents: int | None = None
     paid_reference: str | None = None
+    paid_amount_differs: bool = False
+    """The recorded payment is not the period total (mark-paid stores any amount)."""
 
 
 class AdminPayoutPayslipView(BaseModel):
@@ -1334,12 +1497,16 @@ class ReopenPayoutPeriodRequest(BaseModel):
     """Required to reopen a period already marked paid (#787): the money is
     out, so reopening it means clawing the payment back or netting it off a
     later period. Ignored for an approved (unpaid) period."""
+    expected_version: int | None = Field(default=None, ge=0)
+    """The period ``version`` the screen showed; a stale one is a 409."""
 
 
 class OverridePayoutLineRequest(BaseModel):
     amount_cents: int | None = Field(default=None, ge=0)
     """New amount for the line; ``None`` clears an existing override."""
     reason: str = Field(min_length=1)
+    expected_version: int | None = Field(default=None, ge=0)
+    """The period ``version`` the screen showed; a stale one is a 409."""
 
 
 class PayoutAuditEntryView(BaseModel):
@@ -1385,7 +1552,7 @@ class AdminCoachPayRateList(BaseModel):
 
 class SetCoachPayRateRequest(BaseModel):
     billing_unit: Literal["per_session", "per_hour", "percent_of_revenue"]
-    amount_cents: int = Field(default=0, ge=0)
+    amount_cents: int | None = Field(default=None, ge=0)
     percent: float | None = Field(default=None, ge=0, le=100)
     currency: str = Field(default="USD", min_length=3, max_length=3)
     effective_from: datetime | None = None
@@ -1401,7 +1568,7 @@ class SetCoachPayRateRequest(BaseModel):
 
 class RepairCoachPayRateWindowRequest(BaseModel):
     billing_unit: Literal["per_session", "per_hour", "percent_of_revenue"]
-    amount_cents: int = Field(default=0, ge=0)
+    amount_cents: int | None = Field(default=None, ge=0)
     percent: float | None = Field(default=None, ge=0, le=100)
     currency: str = Field(default="USD", min_length=3, max_length=3)
     effective_from: datetime
@@ -1781,6 +1948,9 @@ AdminAttentionKind = Literal[
     # reached the parent — a decline mid-ladder, and a ladder that gave up.
     "autopay_failure",
     "dunning_exhaustion",
+    "autopay_stuck",
+    # L1: a bank return or dispute the ledger could not reverse on its own.
+    "bank_return_review",
     "pause_requests",
     "scheduled_resume_blocked",
     "scheduled_action_failed",
@@ -1800,8 +1970,16 @@ class AdminAttentionItemView(BaseModel):
     count: int = 1
 
 
+class AdminAttentionUnavailableView(BaseModel):
+    """An attention source that could not be read: unknown, not "nothing"."""
+
+    source: str
+    label: str
+
+
 class AdminAttentionList(BaseModel):
     items: list[AdminAttentionItemView]
+    unavailable: list[AdminAttentionUnavailableView] = []
 
 
 class BroadcastRequest(BaseModel):
@@ -2276,6 +2454,8 @@ class AdminProjectedIncomeResponse(BaseModel):
     enrollment_count: int = 0
     autopay_enrollment_count: int = 0
     manual_enrollment_count: int = 0
+    #: Active enrollments left out because they are not billed.
+    not_billed_enrollment_count: int = 0
     by_session: list[AdminProjectedIncomeSessionRow] = []
     empty: bool = True
 
@@ -2296,6 +2476,8 @@ class AdminSessionEconomicsRow(BaseModel):
     title: str
     coach_name: str | None = None
     active_enrollment_count: int = 0
+    #: Active enrollments left out of the count and expected total: not billed.
+    not_billed_enrollment_count: int = 0
     paid_student_count: int = 0
     unpaid_student_count: int = 0
     monthly_fee_cents: int = 0
@@ -2388,6 +2570,8 @@ class SendCampaignAudience(BaseModel):
     type: Literal["academy", "session"]
     role: Literal["parent", "coach"] = "parent"
     session_id: str | None = None
+    # #1030: several sessions in one campaign; one copy per address across them.
+    session_ids: list[str] | None = Field(default=None, max_length=50)
 
 
 class SendCampaignRequest(BaseModel):
@@ -2398,6 +2582,39 @@ class SendCampaignRequest(BaseModel):
     # derives one from the campaign content, so an identical retried POST
     # never re-emails the audience (#512).
     idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
+    # #1031: the fingerprint from the preview the admin confirmed. A send whose
+    # audience now resolves differently is refused with 409 audience_changed.
+    expected_audience_fingerprint: str | None = Field(default=None, max_length=128)
+
+
+class CampaignPreviewRequest(BaseModel):
+    audience: SendCampaignAudience
+
+
+class CampaignPreviewRecipient(BaseModel):
+    display_name: str | None = None
+    email: str
+    is_family_contact: bool = False
+
+
+class CampaignPreviewExclusion(BaseModel):
+    display_name: str | None = None
+    email: str | None = None
+    # missing_email | duplicate_address | suppressed | unsubscribed
+    reason: str
+    is_family_contact: bool = False
+
+
+class CampaignPreviewResponse(BaseModel):
+    """Resolved audience before a send (#1029): unique addresses, and the
+    families and opted-in contacts they belong to. Never an enrollment count."""
+
+    recipient_count: int
+    family_count: int
+    contact_count: int
+    recipients: list[CampaignPreviewRecipient] = Field(default_factory=list)
+    exclusions: list[CampaignPreviewExclusion] = Field(default_factory=list)
+    audience_fingerprint: str = ""
 
 
 class SendCampaignResponse(BaseModel):
@@ -2408,6 +2625,9 @@ class SendCampaignResponse(BaseModel):
     # True when this request matched an already-sent campaign via its
     # idempotency key and no new email was sent.
     deduplicated: bool = False
+    # True when the send went to the background queue: the counts are zero
+    # and the emails go out over the next few minutes.
+    queued: bool = False
 
 
 class AdminSignedWaiverCopyView(BaseModel):

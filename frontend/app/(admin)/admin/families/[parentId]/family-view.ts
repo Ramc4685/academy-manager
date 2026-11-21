@@ -1,5 +1,6 @@
 /** Pure view helpers for the Family billing page; no React, no fetch. */
 import type { ChipVariant } from "@/components/ds/chip";
+import type { ChargeAutopayResponse } from "@/lib/api/admin";
 import type {
   FamilyAutopay,
   FamilyEmailDelivery,
@@ -17,6 +18,7 @@ import { isManualPaymentMethod, MANUAL_PAYMENT_METHOD_LABELS } from "@/lib/payme
 import {
   cardChip,
   cardStateFromRegistration,
+  describeCardDeclineCode,
   loginChip,
   loginStateFromRegistration,
   type PeopleChip,
@@ -333,3 +335,35 @@ export function voidPaymentExplainer(p: FamilyManualPayment | null): string {
     ? `${base} The ${formatCents(p.credit_cents)} account credit it created is cancelled.`
     : base;
 }
+
+/**
+ * What "Charge card now" tells the admin when the card was not charged. The
+ * charge route answers 200 with success=false both for bank declines and for
+ * cases where no charge was attempted; only the first is a decline.
+ */
+const CHARGE_NOT_ATTEMPTED: Readonly<Record<string, string>> = {
+  stripe_unavailable: "Couldn't reach Stripe, try again. The card was not charged.",
+  stripe_not_configured: "Stripe isn't set up for this academy, so the card was not charged.",
+  connected_account_not_ready:
+    "The academy's Stripe account isn't ready to take payments yet. The card was not charged.",
+  no_saved_payment_method: "This family has no card on file. Ask them to add one.",
+  autopay_not_active: "Autopay is off for this class, so the card was not charged.",
+  checkout_session_open:
+    "The family has a checkout open for this invoice. Wait for it to finish or expire.",
+  existing_charge_needs_review:
+    "Stripe already has a charge for this invoice that needs a look. Check Billing Health before charging again.",
+};
+
+/**
+ * A message only for outcomes where nothing is in flight: a decline or a
+ * charge that was never attempted, where charging again is safe. A pending
+ * (ACH processing) or 3DS result returns null so the dialog closes: the
+ * request id is already spent, and a second click would start a second charge.
+ */
+export function chargeFailureMessage(result: ChargeAutopayResponse): string | null {
+  if (result.success || result.requires_action) return null;
+  const code = result.decline_code?.trim().toLowerCase();
+  if (!code) return null;
+  return CHARGE_NOT_ATTEMPTED[code] ?? describeCardDeclineCode(code);
+}
+

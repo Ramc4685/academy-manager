@@ -23,6 +23,13 @@ from typing import Any
 from backend.v2.contexts.finance.application.use_cases.manage_payout_period import (
     RecomputePayoutPeriod,
 )
+from backend.v2.contexts.finance.domain.payout_period import (
+    PayoutPeriodConflictError,
+    PayoutPeriodStateError,
+)
+from backend.v2.contexts.finance.infrastructure.mongo_payout_period_repo import (
+    current_lines_filter,
+)
 
 log = logging.getLogger(__name__)
 
@@ -49,12 +56,32 @@ async def draft_payout_periods_for_occurrence(
     )
     if not period_ids:
         return []
-    period_cursor = db["payout_periods"].find(
-        {"academy_id": academy_id, "period_id": {"$in": period_ids}},
-        {"period_id": 1, "status": 1},
-    )
+    candidates = [
+        doc
+        async for doc in db["payout_periods"].find(
+            {"academy_id": academy_id, "period_id": {"$in": period_ids}},
+            {"period_id": 1, "status": 1, "lines_version": 1},
+        )
+    ]
+    if not candidates:
+        return []
+    # Only periods whose current line set holds the occurrence; a stale set
+    # left by an interrupted recompute must not freeze or recompute a period.
+    holding = {
+        str(row["period_id"])
+        async for row in db["payout_period_lines"].find(
+            {
+                "academy_id": academy_id,
+                "occurrence_id": occurrence_id,
+                **current_lines_filter(candidates),
+            },
+            {"period_id": 1},
+        )
+    }
     draft_period_ids: list[str] = []
-    async for period in period_cursor:
+    for period in candidates:
+        if str(period["period_id"]) not in holding:
+            continue
         if str(period.get("status") or "draft") in FROZEN_PAYOUT_STATUSES:
             raise ValueError("Replacement coach cannot be changed after payout is approved or paid")
         draft_period_ids.append(str(period["period_id"]))
@@ -75,11 +102,30 @@ async def recompute_draft_payout_periods(
     screen while losing the change is not.
     """
     for period_id in period_ids:
-        try:
-            await recompute.execute(period_id=period_id, actor_id=actor_id)
-        except Exception:  # pragma: no cover - best effort, post-commit
-            log.warning(
-                "payout_period_recompute_failed period_id=%s occurrence_change=replacement",
-                period_id,
-                exc_info=True,
-            )
+        for attempt in (1, 2):
+            try:
+                await recompute.execute(period_id=period_id, actor_id=actor_id)
+            except PayoutPeriodConflictError:
+                # Someone wrote the period between our load and write; reload once.
+                if attempt == 1:
+                    continue
+                log.warning(
+                    "payout_period_recompute_conflict period_id=%s occurrence_change=replacement",
+                    period_id,
+                    exc_info=True,
+                )
+            except PayoutPeriodStateError:
+                # Approved or paid since the check: it now pays the old coach.
+                log.error(
+                    "payout_period_left_draft_before_recompute period_id=%s "
+                    "occurrence_change=replacement; reopen and recompute it",
+                    period_id,
+                    exc_info=True,
+                )
+            except Exception:  # pragma: no cover - best effort, post-commit
+                log.warning(
+                    "payout_period_recompute_failed period_id=%s occurrence_change=replacement",
+                    period_id,
+                    exc_info=True,
+                )
+            break

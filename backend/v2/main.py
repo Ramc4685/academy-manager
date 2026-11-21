@@ -28,7 +28,7 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
 
-from backend.v2.composition.admin import compose_admin
+from backend.v2.composition.admin import AcademyPortalUrlAdapter, compose_admin
 from backend.v2.composition.admin_platform_fee import compose_admin_platform_fee
 from backend.v2.composition.billing_health import compose_admin_billing_health
 from backend.v2.composition.billing_rules import compose_admin_billing_rules
@@ -39,10 +39,12 @@ from backend.v2.composition.digests import (
 )
 from backend.v2.composition.digests import (
     _build_email_sender,
+    compose_delivery_problems,
     compose_email_credential_probe,
     compose_ingest_email_provider_event,
     compose_list_email_suppressions,
     compose_ops_digest_sender,
+    compose_process_campaign_queue,
     compose_release_email_suppression,
     compose_send_coach_daily_digest,
     compose_send_parent_daily_digest,
@@ -51,11 +53,14 @@ from backend.v2.composition.digests import (
     resolve_digest_schedule,
 )
 from backend.v2.composition.email_adapters import build_user_facing_invite_sender
+from backend.v2.composition.enrollment_billing import compose_admin_enrollment_billing
 from backend.v2.composition.families import compose_admin_families
 from backend.v2.composition.families_crm import compose_admin_family_index
+from backend.v2.composition.family_offers import compose_admin_family_offers
 from backend.v2.composition.family_record import compose_admin_family_record
 from backend.v2.composition.late_fees import compose_apply_late_fees
 from backend.v2.composition.month_close import compose_admin_month_close
+from backend.v2.composition.overdue_families import compose_overdue_families
 from backend.v2.composition.owner import compose_owner
 from backend.v2.composition.owner_brief import send_owner_daily_briefs
 from backend.v2.composition.parent import compose_parent, compose_parent_webhook_handler
@@ -69,7 +74,8 @@ from backend.v2.composition.prospect_email import compose_unsubscribe_prospect
 from backend.v2.composition.public_page_admin import compose_admin_public_page
 from backend.v2.composition.public_page_read import compose_public_page_read
 from backend.v2.composition.public_trial_requests import compose_public_trial_requests
-from backend.v2.composition.push import _build_push_sender
+from backend.v2.composition.push import _build_push_sender, compose_message_push
+from backend.v2.composition.referrals import compose_referrals
 from backend.v2.composition.student import compose_student
 from backend.v2.composition.waitlist_offers import (
     compose_decline_waitlist_offer,
@@ -159,14 +165,14 @@ from backend.v2.contexts.identity.application.use_cases.list_account_deletions i
 from backend.v2.contexts.identity.application.use_cases.load_auth_claims import (
     LoadAuthClaims,
 )
-from backend.v2.contexts.identity.application.use_cases.magic_link import (
-    ConsumeMagicLink,
-)
 from backend.v2.contexts.identity.application.use_cases.register_public_parent import (
     RegisterPublicParent,
 )
 from backend.v2.contexts.identity.application.use_cases.request_account_deletion import (
     RequestAccountDeletion,
+)
+from backend.v2.contexts.identity.application.use_cases.send_password_reset_email import (
+    SendPasswordResetEmail,
 )
 from backend.v2.contexts.identity.application.use_cases.send_registration_verification_email import (
     SendRegistrationVerificationEmail,
@@ -197,9 +203,6 @@ from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import (
 )
 from backend.v2.contexts.identity.infrastructure.mongo_login_audit_recorder import (
     MongoLoginAuditRecorder,
-)
-from backend.v2.contexts.identity.infrastructure.mongo_magic_link_repo import (
-    MongoMagicLinkRepository,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
@@ -234,12 +237,13 @@ from backend.v2.contexts.platform.infrastructure.mongo_tenant_lifecycle_repo imp
 )
 from backend.v2.interfaces.admin.progress_routes import resolve_certificate_display
 from backend.v2.interfaces.admin.router import router as admin_router
+from backend.v2.interfaces.calendar_feed_routes import router as calendar_feed_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.email_webhook_routes import router as email_webhook_router
-from backend.v2.interfaces.magic_link_routes import router as magic_link_router
 from backend.v2.interfaces.me_routes import router as me_router
 from backend.v2.interfaces.owner.router import router as owner_router
 from backend.v2.interfaces.parent.router import router as parent_router
+from backend.v2.interfaces.password_reset_routes import router as password_reset_router
 from backend.v2.interfaces.platform.router import router as platform_router
 from backend.v2.interfaces.public.router import router as public_router
 from backend.v2.interfaces.registration_routes import router as registration_router
@@ -264,9 +268,8 @@ from backend.v2.shared.observability import (
     configure_logging,
     configure_tracing,
 )
-from backend.v2.shared.observability.health import build_health_report
+from backend.v2.shared.observability.health import build_health_report, watch_for_dead_workers
 from backend.v2.shared.observability.ops_alerts import (
-    capture_exception,
     capture_message,
     cron_checkin,
     handle_scheduler_job_event,
@@ -346,6 +349,10 @@ LOCAL_DAILY_JOBS: dict[str, LocalDailyTime] = {
     "send_checkout_recovery_notices": LocalDailyTime(10, 10),
     # Lead nurture (AI strategy Phase 3 C1): the day 2/7/21 steps mid-morning.
     "send_nurture_steps": LocalDailyTime(10, 25),
+    # L9 A6-11: website-lead owner alerts whose background send never landed.
+    "resend_due_owner_alerts": LocalDailyTime(9, 40),
+    # L9 C2: the referral sweep (records, qualifies and grants referrals).
+    "process_referrals": LocalDailyTime(6, 15),
     "send_trial_reminders": LocalDailyTime(16, 0),
     # Monthly report card: the job runs daily but only sends on the 1st.
     "send_parent_report_cards": LocalDailyTime(9, 0),
@@ -445,7 +452,7 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "max_runtime": 5,
     },
     "reconcile_stripe_payment_intents": {
-        "schedule": {"type": "interval", "value": 10, "unit": "minute"},
+        "schedule": {"type": "crontab", "value": "*/10 * * * *"},
         "checkin_margin": 10,
         "max_runtime": 10,
     },
@@ -455,7 +462,7 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
         "max_runtime": 30,
     },
     "process_dunning_retries": {
-        "schedule": {"type": "interval", "value": 60, "unit": "minute"},
+        "schedule": {"type": "crontab", "value": "5 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
@@ -507,7 +514,7 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     # jobs' cadence but frequent enough that a stalled claim (and the seat it
     # is holding open) does not sit unresolved for a full day.
     "process_stalled_hold_reclaims": {
-        "schedule": {"type": "interval", "value": 15, "unit": "minute"},
+        "schedule": {"type": "crontab", "value": "*/15 * * * *"},
         "checkin_margin": 10,
         "max_runtime": 10,
     },
@@ -550,6 +557,27 @@ SCHEDULED_JOB_MONITORS: dict[str, dict[str, Any]] = {
     # step) (nurture_sends claim, migration 0225), so an extra run sends nothing.
     "send_nurture_steps": {
         "schedule": {"type": "crontab", "value": "25 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    # L9 A6-11: re-sends website-lead owner alerts still due; marked sent on
+    # the contact row, so an extra run sends nothing.
+    "resend_due_owner_alerts": {
+        "schedule": {"type": "crontab", "value": "40 * * * *"},
+        "checkin_margin": 30,
+        "max_runtime": 30,
+    },
+    # L11 item 7: the background campaign queue, every minute. Each delivery is
+    # claimed before it is sent, so an extra run never sends twice.
+    "process_campaign_queue": {
+        "schedule": {"type": "interval", "value": 1, "unit": "minute"},
+        "checkin_margin": 5,
+        "max_runtime": 10,
+    },
+    # L9 C2: the referral sweep; a no-op while the programme is off, and every
+    # write is exactly-once, so an extra run grants nothing twice.
+    "process_referrals": {
+        "schedule": {"type": "crontab", "value": "15 * * * *"},
         "checkin_margin": 30,
         "max_runtime": 30,
     },
@@ -724,30 +752,46 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         default_academy_id=runtime_academy_id,
         saas_mode=settings.saas_mode,
     )
+
+    _portal_urls = AcademyPortalUrlAdapter(
+        MongoAcademyRepository(db), frontend_url=settings.frontend_url
+    )
+    # `build_user_facing_invite_sender`, not the plain adapter: a parent is
+    # watching these sends (verification, forgot password, deletion
+    # confirmation), so a stub port in a real environment must fail loudly
+    # rather than report the stub's `ok=True`.
+    _user_facing_sender = build_user_facing_invite_sender(
+        sender=_build_email_sender(settings, db),
+        env=str(getattr(settings, "env", "") or ""),
+        real_email_envs=REAL_EMAIL_ENVS,
+    )
+
     app.state.send_registration_verification_email = SendRegistrationVerificationEmail(
         verifier=verifier,
         links=get_firebase_admin_adapter(),
-        # `build_user_facing_invite_sender`, not the plain adapter: a parent is
-        # watching this send, so a stub port in a real environment must fail
-        # loudly rather than report the stub's `ok=True`.
-        sender=build_user_facing_invite_sender(
-            sender=_build_email_sender(settings, db),
-            env=str(getattr(settings, "env", "") or ""),
-            real_email_envs=REAL_EMAIL_ENVS,
-        ),
+        sender=_user_facing_sender,
         academies=MongoAcademyRepository(db),
         cooldown=MongoVerificationEmailCooldown(db),
+        users=users_repo,
+        password_links=get_firebase_admin_adapter(),
+        brands=AcademyEmailBrands(MongoAcademyRepository(db)),
+        portals=_portal_urls,
+    )
+
+    # Branded "forgot password" mail (replaces Firebase's client-side sender).
+    app.state.send_password_reset_email = SendPasswordResetEmail(
+        users=users_repo,
+        memberships=membership_repo,
+        links=get_firebase_admin_adapter(),
+        sender=_user_facing_sender,
+        academies=MongoAcademyRepository(db),
+        cooldown=MongoVerificationEmailCooldown(db, purpose="password_reset"),
+        portals=_portal_urls,
         brands=AcademyEmailBrands(MongoAcademyRepository(db)),
     )
     app.state.bootstrap_academy = BootstrapAcademy(
         store=MongoTenantBootstrapStore(db),
         invoice_prefix_assigner=compose_invoice_prefix_assigner(db),
-    )
-    # Public parent magic-link consume. Tenant is resolved per-request from the
-    # host; the use case itself checks the token's academy binding against it.
-    app.state.consume_magic_link = ConsumeMagicLink(
-        links=MongoMagicLinkRepository(db),
-        tokens=get_firebase_admin_adapter(),
     )
 
     # Recipient email preferences (#555). Both the public token-authenticated
@@ -763,10 +807,6 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.unregister_push_device = UnregisterPushDevice(devices=_push_device_repo)
     app.state.forget_push_devices = ForgetPushDevices(devices=_push_device_repo)
-    # Self-service account deletion (mobile M5, D1): POST /api/v2/me/account-deletion.
-    app.state.request_account_deletion = RequestAccountDeletion(
-        store=MongoAccountDeletionStore(db), firebase=get_firebase_admin_adapter()
-    )
     # D4: GET /api/v2/admin/account-deletions.
     app.state.list_account_deletions = ListAccountDeletions(store=MongoAccountDeletionStore(db))
     # Support-only restore: POST /api/v2/platform/account-deletions/{id}/cancel.
@@ -790,6 +830,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.ingest_email_provider_event = compose_ingest_email_provider_event(db)
     app.state.list_email_suppressions = compose_list_email_suppressions(db)
     app.state.release_email_suppression = compose_release_email_suppression(db)
+    app.state.delivery_problems = compose_delivery_problems(db)
+    app.state.message_push = compose_message_push(db, settings)
 
     # Tenant resolver — wired only in SaaS mode. In non-SaaS mode the
     # middleware falls back to ``settings.default_academy_id`` so existing
@@ -850,10 +892,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         invoice_prefix_assigner=compose_invoice_prefix_assigner(db),
         default_application_fee_assigner=compose_default_application_fee_assigner(db),
     )
-    app.state.platform_billing = build_platform_billing_use_cases(db)
-
     # Stripe gateway shared across all BFFs that need it.
     stripe_gw = _build_stripe(settings)
+    app.state.platform_billing = build_platform_billing_use_cases(db, stripe=stripe_gw)
 
     # Coach BFF wiring — exposed as app.state.coach for routes via deps.py.
     app.state.coach = compose_coach(db, outbox, idempotency_store, stripe_gw)
@@ -866,6 +907,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         idempotency_store,
         stripe_gw,
         academy_id=runtime_academy_id,
+        auth_users=users_repo,
+        auth_memberships=membership_repo,
     )
     stripe_webhook_processors = {runtime_academy_id: app.state.parent.handle_webhook_event}
 
@@ -957,6 +1000,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.ai_import import compose_ai_import
 
     app.state.ai_import = compose_ai_import(db, app.state.ai)
+    from backend.v2.composition.ai_schedule import compose_ai_schedule
+
+    app.state.ai_schedule = compose_ai_schedule(app.state.ai)
     from backend.v2.composition.evening_wins import compose_send_parent_evening_wins
 
     app.state.parent_evening_wins = compose_send_parent_evening_wins(db)
@@ -971,6 +1017,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.trial_nudges import compose_trial_nudges
 
     app.state.trial_nudges = compose_trial_nudges(db, settings)
+    # L9: self-booked trial and trial decision emails (dark until self_book_trials).
+    from backend.v2.composition.trial_emails import compose_trial_emails
+
+    app.state.trial_emails = compose_trial_emails(db, settings)
+    # A website guest booked on a cancelled date hears it is off; attached
+    # here because composition/admin.py is at its line cap (#743 pattern).
+    app.state.admin.cancel_session_occurrence._guest_notifier = app.state.trial_emails
     # Lead nurture (AI strategy Phase 3 C1): the daily job and the admin editor.
     from backend.v2.composition.nurture import compose_nurture
 
@@ -1039,10 +1092,30 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     _departures = compose_departures(db, withdraw_enrollment=app.state.admin.withdraw_enrollment)
     app.state.admin.stop_all_classes = _departures.stop_all_classes
     app.state.admin.leaving_report = _departures.leaving_report
-    from backend.v2.composition.account_deletion import compose_execute_account_deletions
+    # Coach payroll settings card (L7), same reason.
+    from backend.v2.composition.payroll_settings import compose_payroll_settings
+
+    (
+        app.state.admin.get_payroll_settings,
+        app.state.admin.update_payroll_settings,
+    ) = compose_payroll_settings(db)
+    from backend.v2.composition.account_deletion import (
+        compose_deletion_request_follow_up,
+        compose_execute_account_deletions,
+    )
 
     app.state.execute_account_deletions = compose_execute_account_deletions(
         db, stop_all_classes=_departures.stop_all_classes, stripe=stripe_gw
+    )
+    # Self-service account deletion (mobile M5, D1): POST /api/v2/me/account-deletion.
+    # The follow-up stops classes and autopay and sends the confirmation at
+    # request time, through the same stop-all-classes use case the executor uses.
+    app.state.request_account_deletion = RequestAccountDeletion(
+        store=MongoAccountDeletionStore(db),
+        firebase=get_firebase_admin_adapter(),
+        follow_up=compose_deletion_request_follow_up(
+            db, stop_all_classes=_departures.stop_all_classes, sender=_user_facing_sender
+        ),
     )
     # X2: Skip/Remove on an OFFERED waitlist row must hand its held seat back
     # (and re-offer it); a bare status write leaked the seat. Same promote
@@ -1052,7 +1125,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     # Payments bucket view (composition/admin.py is at its line budget).
     app.state.admin_collections = compose_admin_collections(db)
+    app.state.admin_overdue_families = compose_overdue_families(db)
     app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)
+    app.state.admin_family_offers = compose_admin_family_offers(db)
+    app.state.admin_enrollment_billing = compose_admin_enrollment_billing(db, app.state.admin)
+    app.state.referrals = compose_referrals(db, frontend_url=settings.frontend_url)
     app.state.admin_payment_methods = compose_admin_payment_methods(db)
     # Pricing page under Money (Settings overhaul PR 11b).
     app.state.admin_pricing = compose_admin_pricing(db)
@@ -1079,7 +1156,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Anonymous public tenant page read (Lane B2), GET /api/v2/public/academy.
     app.state.public_page = compose_public_page_read(db)
     # Anonymous public trial request (Lane B4), POST /api/v2/public/trial-requests.
-    app.state.public_trial_requests = compose_public_trial_requests(db, settings)
+    app.state.public_trial_requests = compose_public_trial_requests(
+        db, settings, trial_emails=app.state.trial_emails
+    )
     app.state.unsubscribe_prospect = compose_unsubscribe_prospect(db)
     # Billing Health plumbing, owner-only (spec 2026-09-07 §5.1).
     app.state.admin_billing_health = compose_admin_billing_health(db, stripe_gw)
@@ -1095,6 +1174,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.ai_win_back = compose_ai_win_back(db, app.state.ai, app.state.win_back)
     app.state.ai_technique = compose_ai_technique(db, app.state.ai)
+    # Class recap: shared taught-skills record per occurrence, with the coach's
+    # report read by AI when a model is wired (manual entry otherwise).
+    from backend.v2.composition.class_recap import compose_class_recap
+
+    app.state.class_recap = compose_class_recap(db, app.state.ai)
     # B5 month-close narrator (paid AI): the gated LlmPort over the month-close reader.
     from backend.v2.composition.ai_reports import compose_ai_reports
 
@@ -1223,6 +1307,27 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 totals[key] += result[key]
         if totals["expired"]:
             log.info("waitlist_offers_swept", extra=totals)
+
+    async def _process_campaign_queue() -> None:
+        await _run_leased_job(
+            "process_campaign_queue", timedelta(minutes=5), _process_campaign_queue_body
+        )
+
+    async def _process_campaign_queue_body() -> None:
+        # L11 item 7: background campaigns. Each delivery is claimed before it
+        # is sent, so a crash here resumes on the next tick without a resend.
+        worker = compose_process_campaign_queue(db, settings)
+        attempted = 0
+        for academy_id in await _scheduler_academy_ids(
+            MongoAcademyRepository(db), scheduler_fallback_academy_id
+        ):
+            try:
+                with tenant_scope(academy_id):
+                    attempted += await worker.execute()
+            except Exception:
+                log.exception("campaign_queue_failed", extra={"academy_id": academy_id})
+        if attempted:
+            log.info("campaign_queue_processed", extra={"attempted": attempted})
 
     async def _execute_account_deletions() -> None:
         await _run_leased_job(
@@ -1465,6 +1570,35 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     async def _send_nurture_steps_body() -> None:
         await _send_trial_nudges("send_nurture_steps", app.state.nurture.send_steps.execute)
 
+    async def _resend_due_owner_alerts() -> None:
+        await _run_leased_job(
+            "resend_due_owner_alerts", timedelta(minutes=5), _resend_due_owner_alerts_body
+        )
+
+    async def _resend_due_owner_alerts_body() -> None:
+        notifier = app.state.public_trial_requests.notifier
+        await _send_trial_nudges(
+            "resend_due_owner_alerts",
+            lambda *, academy_id, local_now: notifier.send_due_alerts(academy_id=academy_id),
+        )
+
+    async def _process_referrals() -> None:
+        await _run_leased_job("process_referrals", timedelta(minutes=5), _process_referrals_body)
+
+    async def _process_referrals_body() -> None:
+        totals = {"academy_count": 0, "recorded": 0, "qualified": 0, "granted": 0}
+
+        async def _for_academy(_academy_id: str, _local_now: datetime) -> None:
+            run = await app.state.referrals.process.execute()
+            totals["academy_count"] += 1
+            totals["recorded"] += run.recorded
+            totals["qualified"] += run.qualified
+            totals["granted"] += run.granted
+
+        await _run_local_daily("process_referrals", _for_academy)
+        if totals["recorded"] or totals["qualified"] or totals["granted"]:
+            log.info("referrals_processed", extra=totals)
+
     async def _auto_approve_level_ups() -> None:
         await _run_leased_job(
             "auto_approve_level_ups", timedelta(minutes=5), _auto_approve_level_ups_body
@@ -1557,10 +1691,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # is mid-retry, a quarantine has given up. Folding them together would
         # make the one number that reaches the logs mean two opposite things.
         totals = {"processed": 0, "failed": 0, "quarantined": 0}
-        for academy_id in await _scheduler_academy_ids(
-            MongoAcademyRepository(db),
-            scheduler_fallback_academy_id,
-        ):
+
+        async def _drain(academy_id: str) -> None:
             processor = stripe_webhook_processors.get(academy_id)
             if processor is None:
                 processor = compose_parent_webhook_handler(
@@ -1582,6 +1714,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                     totals["quarantined"] += 1
                 else:
                     totals["failed"] += 1
+
+        await _run_isolated_per_academy(
+            "process_stripe_webhook_events",
+            await _scheduler_academy_ids(
+                MongoAcademyRepository(db), scheduler_fallback_academy_id, include_suspended=True
+            ),
+            _drain,
+        )
         if totals["processed"] or totals["failed"] or totals["quarantined"]:
             log.info("stripe_webhook_events_processed", extra=totals)
 
@@ -1601,10 +1741,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             "quarantined": 0,
             "failed": 0,
         }
-        for academy_id in await _scheduler_academy_ids(
-            MongoAcademyRepository(db),
-            scheduler_fallback_academy_id,
-        ):
+
+        async def _reconcile(academy_id: str) -> None:
             with tenant_scope(academy_id):
                 result = await ReconcileStripePaymentIntents(
                     stripe=stripe_gw,
@@ -1619,6 +1757,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             totals["skipped"] += int(result.get("skipped") or 0)
             totals["quarantined"] += int(result.get("quarantined") or 0)
             totals["failed"] += int(result.get("failed") or 0)
+
+        await _run_isolated_per_academy(
+            "reconcile_stripe_payment_intents",
+            await _scheduler_academy_ids(
+                MongoAcademyRepository(db), scheduler_fallback_academy_id, include_suspended=True
+            ),
+            _reconcile,
+        )
         if totals["repaired"] or totals["quarantined"] or totals["failed"]:
             log.info("stripe_payment_intent_reconciliation_processed", extra=totals)
 
@@ -1628,66 +1774,27 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
 
     async def _process_dunning_retries_body() -> None:
-        totals = {
-            "academy_count": 0,
-            "prepared": 0,
-            "processed": 0,
-            "succeeded": 0,
-            "failed": 0,
-            "dunned": 0,
-            "transient": 0,
-            "notifications_sent": 0,
-            "notifications_failed": 0,
-            "autopay_disabled": 0,
-            "late_fees_applied": 0,
-        }
-        for academy_id in await _scheduler_academy_ids(
-            MongoAcademyRepository(db),
-            scheduler_fallback_academy_id,
-        ):
-            with tenant_scope(academy_id):
-                # Late fees run BEFORE the retries: the fee raises
-                # balance_due_cents, so the dunning notice this same tick may
-                # send quotes the new total (#552). Failures are logged, never
-                # fatal — a late fee must not cost an academy its retries.
-                late_fees = getattr(app.state, "apply_late_fees", None)
-                if late_fees is not None:
-                    try:
-                        fee_result = await late_fees.execute(academy_id=academy_id)
-                    except Exception:
-                        log.exception("late_fee_pass_failed", extra={"academy_id": academy_id})
-                    else:
-                        totals["late_fees_applied"] += int(fee_result.applied)
-                worker = getattr(app.state.admin, "process_dunning_retries", None)
-                if worker is None:
-                    log.warning(
-                        "dunning_retries_worker_missing: process_dunning_retries is not "
-                        "wired on app.state.admin; dunning is NOT running",
-                        extra={"academy_id": academy_id},
-                    )
-                    continue
-                result = await worker.execute(
-                    limit=100,
-                    worker_id=f"scheduler-dunning-worker:{academy_id}",
-                )
-            totals["academy_count"] += 1
-            for key in (
-                "prepared",
-                "processed",
-                "succeeded",
-                "failed",
-                "dunned",
-                "transient",
-                "notifications_sent",
-                "notifications_failed",
-                "autopay_disabled",
-            ):
-                totals[key] += int(getattr(result, key, 0) or 0)
+        worker = getattr(app.state.admin, "process_dunning_retries", None)
+        if worker is None:
+            log.warning(
+                "dunning_retries_worker_missing: process_dunning_retries is not "
+                "wired on app.state.admin; dunning is NOT running",
+            )
+        totals = await _run_dunning_for_academies(
+            academy_ids=await _scheduler_academy_ids(
+                MongoAcademyRepository(db),
+                scheduler_fallback_academy_id,
+            ),
+            late_fees=getattr(app.state, "apply_late_fees", None),
+            worker=worker,
+        )
         if (
             totals["processed"]
             or totals["dunned"]
             or totals["autopay_disabled"]
             or totals["late_fees_applied"]
+            or totals["parked"]
+            or totals["academy_failures"]
         ):
             log.info("dunning_retries_processed", extra=totals)
 
@@ -1783,6 +1890,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             for key, value in academy_totals.items():
                 totals[key] = totals.get(key, 0) + value
             periods.append(local_now.strftime("%Y-%m"))
+            # Fail this academy's local run so the marker goes to failed and the
+            # next hourly ticks today retry it (local_clock.MAX_ATTEMPTS).
+            # Generation is idempotent and the send pass only selects
+            # undelivered invoices, so a retry never duplicates either.
+            reason = _monthly_generation_retry_reason(academy_totals)
+            if reason:
+                raise RuntimeError(f"monthly invoice run incomplete: {reason}")
 
         await _run_local_daily("generate_monthly_invoices", _for_academy)
         if not periods:
@@ -1810,6 +1924,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             or totals["invoices_emailed"]
             or totals["invoice_autopay_notices_sent"]
             or totals["invoice_emails_failed"]
+            # #1033: a failed pass is a signal, not an idle tick, even on a
+            # retry-only tick that generated nothing and emailed nothing.
+            or totals["invoice_email_pass_failed"]
+            or totals["invoice_mint_send_failed"]
+            or totals["generation_failed"]
         ):
             return
         counts = {key: value for key, value in totals.items() if key != "created"}
@@ -1987,10 +2106,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                             admin_cc_enabled=bool(notifs.get("daily_digest_to_admin", False)),
                         )
                     )
-            except Exception as exc:
+            except Exception:
                 totals["failed_academies"] += 1
+                # Reaches Sentry once, through its logging integration (ERROR).
                 log.exception("coach_daily_digest_academy_failed academy=%s", academy_id)
-                capture_exception(exc)
                 continue
             totals["academy_count"] += 1
             totals["coaches"] += result.total_coaches
@@ -2062,10 +2181,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                             digest_date=on_date,
                         )
                     )
-            except Exception as exc:
+            except Exception:
                 totals["failed_academies"] += 1
+                # Reaches Sentry once, through its logging integration (ERROR).
                 log.exception("parent_daily_digest_academy_failed academy=%s", academy_id)
-                capture_exception(exc)
                 continue
             totals["academy_count"] += 1
             totals["parents"] += result.total_parents
@@ -2107,6 +2226,17 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         "cron",
         minute=15,
         id="process_scheduled_cancellation_actions",
+        replace_existing=True,
+        max_instances=1,
+    )
+    # Always registered: with the setting off nothing is queued, so a tick is
+    # one empty read per academy, and a campaign queued before a switch-off
+    # still drains instead of sitting in "sending".
+    scheduler.add_job(
+        _process_campaign_queue,
+        "interval",
+        minutes=1,
+        id="process_campaign_queue",
         replace_existing=True,
         max_instances=1,
     )
@@ -2159,10 +2289,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         replace_existing=True,
         max_instances=1,
     )
+    # Wall-clock crons, not intervals: an interval restarts its timer on every
+    # boot, so each deploy pushed these runs out (G:jobs_data_infra:3).
     scheduler.add_job(
         _process_stalled_hold_reclaims,
-        "interval",
-        minutes=15,
+        "cron",
+        minute="*/15",
         id="process_stalled_hold_reclaims",
         replace_existing=True,
         max_instances=1,
@@ -2222,6 +2354,24 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         max_instances=1,
     )
     scheduler.add_job(
+        _resend_due_owner_alerts,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["resend_due_owner_alerts"].minute,
+        timezone=UTC,
+        id="resend_due_owner_alerts",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _process_referrals,
+        "cron",
+        minute=LOCAL_DAILY_JOBS["process_referrals"].minute,
+        timezone=UTC,
+        id="process_referrals",
+        replace_existing=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
         _auto_approve_level_ups,
         "cron",
         minute=LOCAL_DAILY_JOBS["auto_approve_level_ups"].minute,
@@ -2269,16 +2419,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     scheduler.add_job(
         _reconcile_stripe_payment_intents,
-        "interval",
-        minutes=10,
+        "cron",
+        minute="*/10",
         id="reconcile_stripe_payment_intents",
         replace_existing=True,
         max_instances=1,
     )
     scheduler.add_job(
         _process_dunning_retries,
-        "interval",
-        minutes=60,
+        "cron",
+        minute=5,
         id="process_dunning_retries",
         replace_existing=True,
         max_instances=1,
@@ -2286,9 +2436,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Automated monthly invoice generation (issue #288). Ticks hourly and runs
     # once per academy-local day from 03:00 local (Settings Phase 4); each run
     # generates for an academy with an unfinished period — its billing_day has
-    # passed and no successful run is recorded yet, so a failed run self-heals
-    # on the next tick (issue #431). The first autopay charge is NOT scheduled
-    # here — it is already the attempt-0 rung of the
+    # passed and no successful run is recorded yet (issue #431). A failed,
+    # partial or email-failing run fails its local-day marker, so the next
+    # hourly ticks retry it (up to local_clock.MAX_ATTEMPTS a day), and the
+    # next day's run picks up anything still unfinished. The first autopay
+    # charge is NOT scheduled here — it is already the attempt-0 rung of the
     # existing dunning ladder, which picks up any invoice once its due_date
     # passes (see prepare_due_states / DUNNING_SCHEDULE_DAYS). Adding a second
     # charge trigger here would risk double-charging the same invoice.
@@ -2361,6 +2513,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # and must not page anyone. Never fatal: a mail outage must not stop the app
     # from serving requests.
     await _verify_email_credentials(compose_email_credential_probe())
+    # L11 item 9: production must not boot silently without bounce ingestion
+    # or unsubscribe links. A warning, never a crash.
+    for warning in settings.email_config_warnings().values():
+        log.warning("email_config_incomplete: %s", warning)
+        capture_message(f"Email configuration incomplete: {warning}")
     scheduler.add_job(
         _send_ops_digest,
         "cron",
@@ -2411,6 +2568,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     await seed_job_heartbeats(db)
     scheduler.start()
     app.state.scheduler = scheduler
+    # Fly does not restart a machine whose health check fails, so a dead
+    # scheduler or dispatcher exits the process instead (G:jobs_data_infra:6).
+    worker_watchdog = asyncio.create_task(watch_for_dead_workers(scheduler, dispatcher))
 
     app.state.bootstrap_academy = BootstrapAcademy(
         store=MongoTenantBootstrapStore(db),
@@ -2420,6 +2580,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        worker_watchdog.cancel()
         if scheduler is not None:
             await _drain_scheduler(scheduler, drain_seconds=SCHEDULER_DRAIN_TIMEOUT_SECONDS)
             scheduler.shutdown(wait=False)
@@ -2527,7 +2688,7 @@ async def _resolve_billing_day(
 
     Settings are advisory for generation: the billing context's own rule is
     that a missing or unreadable billing_settings doc "must never block the
-    monthly run" (see MongoMonthlyBilling._load_invoice_due_days). Skipping the
+    monthly run" (see MongoMonthlyBillingGenerator._load_schedule). Skipping the
     academy on a read failure would make an unreadable settings doc a permanent
     silent skip — the exact failure mode issue #431 set out to remove.
     """
@@ -2541,6 +2702,95 @@ async def _resolve_billing_day(
             exc_info=True,
         )
         return int(BillingSettings.default("").billing_day)
+
+
+_DUNNING_TOTAL_KEYS = (
+    "prepared",
+    "processed",
+    "succeeded",
+    "failed",
+    "dunned",
+    "transient",
+    "parked",
+    "technical_failures",
+    "notifications_sent",
+    "notifications_failed",
+    "autopay_disabled",
+)
+
+
+async def _run_isolated_per_academy(
+    job: str, academy_ids: Sequence[str], run: Callable[[str], Awaitable[None]]
+) -> None:
+    """Run ``run(academy_id)`` for each academy, then raise if any of them raised.
+
+    One academy raising is logged (Sentry gets it through the logging
+    integration) and skipped, so a broken Stripe connection or bad row in one
+    academy never stops the money loops for the academies after it (A7-5;
+    mirrors ``run_local_daily_job``).
+    """
+    failures = 0
+    for academy_id in academy_ids:
+        try:
+            await run(academy_id)
+        except Exception:
+            failures += 1
+            log.exception(
+                "scheduled_job_academy_failed job=%s academy=%s",
+                job,
+                academy_id,
+                extra={"job_id": job, "academy_id": academy_id},
+            )
+    if failures:
+        # Every academy ran, but the job must still read as failed in Crons,
+        # the heartbeat and healthz.
+        raise RuntimeError(f"{job}: {failures} academy run(s) failed")
+
+
+async def _run_dunning_for_academies(
+    *, academy_ids: list[str], late_fees: Any | None, worker: Any | None
+) -> dict[str, int]:
+    """One dunning tick across academies; one academy's failure never skips the rest,
+    but the tick raises at the end if any academy's retries failed.
+
+    Late fees run BEFORE the retries: the fee raises balance_due_cents, so the
+    dunning notice this same tick may send quotes the new total (#552).
+    """
+    totals = dict.fromkeys(
+        ("academy_count", "academy_failures", "late_fees_applied", *_DUNNING_TOTAL_KEYS), 0
+    )
+    for academy_id in academy_ids:
+        with tenant_scope(academy_id):
+            if late_fees is not None:
+                try:
+                    fee_result = await late_fees.execute(academy_id=academy_id)
+                except Exception:
+                    log.exception("late_fee_pass_failed", extra={"academy_id": academy_id})
+                else:
+                    totals["late_fees_applied"] += int(fee_result.applied)
+            if worker is None:
+                continue
+            try:
+                result = await worker.execute(
+                    limit=100,
+                    worker_id=f"scheduler-dunning-worker:{academy_id}",
+                )
+            except Exception:
+                # A CAS race in park/finish (or any other error) for one academy must
+                # not cost every later academy its autopay collection this tick.
+                log.exception("dunning_academy_failed", extra={"academy_id": academy_id})
+                totals["academy_failures"] += 1
+                continue
+        totals["academy_count"] += 1
+        for key in _DUNNING_TOTAL_KEYS:
+            totals[key] += int(getattr(result, key, 0) or 0)
+    if totals["academy_failures"]:
+        # Every academy ran; the tick must still read as failed (heartbeat, Crons).
+        raise RuntimeError(
+            f"process_dunning_retries: {totals['academy_failures']} academy run(s) failed,"
+            f" totals={totals}"
+        )
+    return totals
 
 
 async def _run_monthly_invoice_generation(
@@ -2562,7 +2812,11 @@ async def _run_monthly_invoice_generation(
     generation is recorded for the period", not ``billing_day == now.day``. An
     exact-day match meant a single failed 03:00 run (Mongo blip, lease
     handover, crash) silently skipped the whole month, recoverable only by an
-    admin. Now the next daily tick retries until one run completes.
+    admin. Now a later run retries until one completes: the next hourly tick
+    the same day (the job wrapper fails the academy's local-day marker when
+    generation failed, was partial or the email pass raised, see
+    ``_monthly_generation_retry_reason``), else the next day. A single failed
+    email is left at delivery_failed for the next day's send pass.
 
     Two periods are considered each tick: the current one, and the immediately
     prior one when it is unrecorded *and* the academy has generation history
@@ -2586,10 +2840,11 @@ async def _run_monthly_invoice_generation(
     scheduling rules above can be tested without a running app.
 
     ``send_invoices`` (issue #430) emails the period's undelivered invoices.
-    It runs on every tick, not only the ones that generate — it is its own
+    It runs on every run, not only the ones that generate — it is its own
     retry mechanism, since the generation gate above deliberately stops
-    yielding a period once it has been generated. Its failures are contained:
-    generation must never be re-attempted because an email provider was down.
+    yielding a period once it has been generated. Its failures are contained
+    to the academy (counted, never raised here), and a retry re-runs
+    generation only for a period that is still unrecorded.
     """
     period = now.strftime("%Y-%m")
     prior_period = _previous_period(period)
@@ -2611,6 +2866,14 @@ async def _run_monthly_invoice_generation(
         "invoice_emails_failed": 0,
         "invoice_emails_skipped_autopay": 0,
         "invoice_autopay_notices_sent": 0,
+        # Gate or generate() raised; the period stays unrecorded.
+        "generation_failed": 0,
+        # send_invoices itself raised (per-invoice failures are
+        # invoice_emails_failed).
+        "invoice_email_pass_failed": 0,
+        # #1033: the notify-on-mint pass inside generation raised. Not a retry
+        # reason: the sweep right after it re-selects every undelivered invoice.
+        "invoice_mint_send_failed": 0,
     }
     log = logging.getLogger("backend.v2.scheduler")
     for academy_id in academy_ids:
@@ -2628,6 +2891,7 @@ async def _run_monthly_invoice_generation(
             except Exception:
                 # One academy's gate failure must not abort the run for the
                 # rest. Nothing is recorded, so the next tick retries it.
+                totals["generation_failed"] += 1
                 log.exception(
                     "monthly_invoice_generation_gate_failed academy=%s period=%s",
                     academy_id,
@@ -2641,7 +2905,8 @@ async def _run_monthly_invoice_generation(
                     result = await generate(run_period)
                 except Exception:
                     # A failing academy/period leaves no record, so the next
-                    # daily tick retries exactly this (academy, period).
+                    # tick retries exactly this (academy, period).
+                    totals["generation_failed"] += 1
                     log.exception(
                         "monthly_invoice_generation_failed academy=%s period=%s",
                         academy_id,
@@ -2651,6 +2916,14 @@ async def _run_monthly_invoice_generation(
                 ran_any = True
                 generated_periods.append(run_period)
                 totals["period_run_count"] += 1
+                # #1033: the notify-on-mint pass already sent these; the sweep
+                # below only finds what it left undelivered, so each invoice's
+                # email outcome is counted exactly once across the two.
+                mint_send = getattr(result, "mint_send", None)
+                if mint_send is not None:
+                    _fold_send_counts(totals, mint_send)
+                if getattr(result, "mint_send_failed", False):
+                    totals["invoice_mint_send_failed"] += 1
                 created = int(getattr(result, "created", 0) or 0)
                 failed_repair = int(getattr(result, "failed_repair", 0) or 0)
                 if failed_repair:
@@ -2703,7 +2976,7 @@ async def _run_monthly_invoice_generation(
                 totals["academy_count"] += 1
             if send_invoices is not None:
                 # Deliberately outside the `due` loop, and so run on every
-                # tick rather than only on generation ticks. `_due_periods`
+                # run rather than only on generation runs. `_due_periods`
                 # stops yielding a period the moment generation is recorded,
                 # so a send pass gated on it would get exactly one attempt per
                 # month: a single email-provider blip on billing day would
@@ -2734,6 +3007,19 @@ async def _run_monthly_invoice_generation(
     return totals
 
 
+def _fold_send_counts(totals: dict[str, int], outcome: Any) -> None:
+    """Add one send pass's outcome (mint-time or sweep) to the run totals."""
+    for total_key, outcome_key in (
+        ("invoices_emailed", "emailed"),
+        ("invoice_emails_failed", "email_failed"),
+        ("invoice_emails_skipped_autopay", "skipped_autopay"),
+        # Autopay parents get a pre-charge notice, not an invoice email; without
+        # this the digest showed "0 emailed" for a fully notified run.
+        ("invoice_autopay_notices_sent", "autopay_notified"),
+    ):
+        totals[total_key] += int(_outcome_count(outcome, outcome_key))
+
+
 async def _email_generated_invoices(
     *,
     send_invoices: Callable[[str], Awaitable[Any]],
@@ -2744,28 +3030,38 @@ async def _email_generated_invoices(
 ) -> None:
     """Email this academy's undelivered invoices and fold the counts in.
 
-    Called inside the academy's ``tenant_scope``. Swallows every failure by
-    design: generation has already been recorded at this point, and a raised
-    email error would abort the remaining academies in the run.
+    Called inside the academy's ``tenant_scope``. Counts every failure instead
+    of raising: a raised email error would abort the remaining academies in
+    the run. The job wrapper turns the count into a retry.
     """
     try:
         outcome = await send_invoices(run_period)
     except Exception:
+        totals["invoice_email_pass_failed"] += 1
         log.exception(
             "generated_invoice_emails_failed academy=%s period=%s",
             academy_id,
             run_period,
         )
         return
-    for total_key, outcome_key in (
-        ("invoices_emailed", "emailed"),
-        ("invoice_emails_failed", "email_failed"),
-        ("invoice_emails_skipped_autopay", "skipped_autopay"),
-        # Autopay parents get a pre-charge notice, not an invoice email; without
-        # this the digest showed "0 emailed" for a fully notified run.
-        ("invoice_autopay_notices_sent", "autopay_notified"),
-    ):
-        totals[total_key] += int(_outcome_count(outcome, outcome_key))
+    _fold_send_counts(totals, outcome)
+
+
+def _monthly_generation_retry_reason(totals: dict[str, int]) -> str | None:
+    """Why an academy's monthly invoice run must be retried, else ``None``."""
+    failed = {
+        key: totals.get(key, 0)
+        for key in (
+            "generation_failed",
+            "partial_run_count",
+            # Not invoice_emails_failed: SendInvoice records those as delivery_failed
+            # and the next run's send pass re-sends them; an hourly retry could
+            # re-send an autopay notice whose save hit a version conflict.
+            "invoice_email_pass_failed",
+        )
+        if totals.get(key, 0)
+    }
+    return ", ".join(f"{key}={value}" for key, value in failed.items()) or None
 
 
 def _outcome_count(outcome: Any, key: str) -> int:
@@ -2805,16 +3101,39 @@ async def _due_periods(
     return due
 
 
+#: Tenant lifecycle states whose scheduled work stops. A DENYLIST on purpose:
+#: a missing or unknown status keeps running, so a legacy academy row never
+#: silently loses its billing loops.
+SCHEDULER_SKIPPED_TENANT_STATUSES = frozenset({"suspended", "cancelled"})
+
+
 async def _scheduler_academy_ids(
     academies: MongoAcademyRepository,
     default_academy_id: str,
+    *,
+    include_suspended: bool = False,
 ) -> list[str]:
+    """Academies a scheduled job runs for.
+
+    Suspended and cancelled tenants are skipped unless ``include_suspended``:
+    only the inbound-truth jobs (webhook drain, PaymentIntent reconcile) keep
+    them, so money Stripe already moved still lands in the ledger. The
+    fallback academy is added only when it has no ``academies`` row at all,
+    so a suspended one is not re-added through the back door.
+    """
     academy_ids: list[str] = []
     seen: set[str] = set()
-    for academy_id in await academies.list_ids():
-        if academy_id and academy_id not in seen:
-            academy_ids.append(academy_id)
-            seen.add(academy_id)
+    skipped: list[str] = []
+    for academy_id, status in await academies.list_ids_with_status():
+        if not academy_id or academy_id in seen:
+            continue
+        seen.add(academy_id)
+        if not include_suspended and status in SCHEDULER_SKIPPED_TENANT_STATUSES:
+            skipped.append(academy_id)
+            continue
+        academy_ids.append(academy_id)
+    if skipped:
+        log.info("scheduler_skipped_inactive_tenants", extra={"academy_ids": skipped})
     if default_academy_id and default_academy_id not in seen:
         academy_ids.append(default_academy_id)
     return academy_ids
@@ -2865,6 +3184,7 @@ def create_app() -> FastAPI:
             db=getattr(app.state, "db", None),
             scheduler=getattr(app.state, "scheduler", None),
             dispatcher=getattr(app.state, "dispatcher", None),
+            config_warnings=list(settings.email_config_warnings()),
         )
         if not healthy:
             response.status_code = 503
@@ -2874,8 +3194,9 @@ def create_app() -> FastAPI:
     # Persona route packages.
     app.include_router(me_router, prefix="/api/v2")
     app.include_router(registration_router, prefix="/api/v2")
-    app.include_router(magic_link_router, prefix="/api/v2")
+    app.include_router(password_reset_router, prefix="/api/v2")
     app.include_router(unsubscribe_router, prefix="/api/v2")
+    app.include_router(calendar_feed_router, prefix="/api/v2")
     app.include_router(email_webhook_router, prefix="/api/v2")
     # Anonymous, host-resolved, rate limited (interfaces/public/__init__.py).
     app.include_router(public_router, prefix="/api/v2")

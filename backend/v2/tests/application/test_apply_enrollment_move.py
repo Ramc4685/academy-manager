@@ -31,6 +31,7 @@ from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 from backend.v2.contexts.billing.domain.models import CreditLedgerEntry
 from backend.v2.contexts.billing.domain.proration import ClassOccurrence
 from backend.v2.contexts.billing.domain.tuition_discount import TuitionDiscount
+from backend.v2.tests.idempotency_fakes import ClaimableStore
 
 TZ = "America/Chicago"
 NOW = datetime(2026, 9, 9, 15, 0, tzinfo=UTC)
@@ -206,7 +207,7 @@ class FakeSchedules:
         return self.rows.get(session_id)
 
 
-class InMemoryIdempotency:
+class InMemoryIdempotency(ClaimableStore):
     def __init__(self) -> None:
         self.rows: dict[str, dict[str, Any]] = {}
 
@@ -539,7 +540,15 @@ async def test_delta_is_priced_net_of_the_active_tuition_discount() -> None:
     """The invoice was built net of the discount, so the delta must be too."""
     ledger, credits = FakeLedger(), FakeCredits()
     invoice = _invoice(total=6400)  # 8000 less 20%
-    ledger.seed(invoice, _line(invoice, 6400))
+    discount_line = _line(invoice, -1600).model_copy(
+        update={
+            "line_id": "line-discount",
+            "line_type": "discount",
+            "source_type": "tuition_discount",
+            "source_id": "disc-1",
+        }
+    )
+    ledger.seed(invoice, _line(invoice, 8000), discount_line)
     use_case = ApplyEnrollmentMove(
         ledger=ledger,
         credits=credits,

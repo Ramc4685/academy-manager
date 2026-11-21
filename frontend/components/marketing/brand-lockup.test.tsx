@@ -31,14 +31,16 @@ describe("BrandLockup", () => {
     expect(html).toContain("background:#facc15");
   });
 
-  it("never uses brand_color on the platform host, even when one is somehow present", () => {
+  it("shows the CourtMastr logo on the platform host, never an academy logo or brand_color", () => {
     const html = render({
       tone: "dark",
       academyName: null,
-      logoUrl: null,
+      logoUrl: "https://academy.example/logo.png",
       brandColor: "url(https://attacker.example/beacon.png)",
     });
     expect(html).not.toContain("attacker.example");
-    expect(html).toContain("background:#facc15");
+    expect(html).not.toContain("academy.example/logo.png");
+    expect(html).toContain('aria-label="CourtMastr"');
+    expect(html).toContain("CourtMastr");
   });
 });

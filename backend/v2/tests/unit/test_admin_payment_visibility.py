@@ -723,3 +723,138 @@ async def test_student_name_resolution_never_overwrites_a_legacy_row(mongo_db) -
 
     legacy_row = next(r for r in rows if r["payment_id"] == "pay-legacy")
     assert legacy_row["student_name"] == "Mia Rao"
+
+
+async def _stamp_dispute(db: Any, *, pi: str, status: str = "needs_response") -> None:
+    """Stamp a dispute onto payment rows exactly as the webhook does (#980)."""
+    from backend.v2.contexts.billing.domain.payment_dispute import dispute_from_stripe
+    from backend.v2.contexts.billing.infrastructure.mongo_payment_dispute_repo import (
+        MongoPaymentDisputeRepository,
+    )
+
+    dispute = dispute_from_stripe(
+        {
+            "id": "dp_1",
+            "payment_intent": pi,
+            "amount": 13000,
+            "reason": "fraudulent",
+            "status": status,
+            "created": 1788000000,
+        },
+        academy_id=ACADEMY,
+        stripe_account_id=None,
+        payment_id=None,
+        now=datetime(2026, 9, 5, tzinfo=UTC),
+    )
+    with tenant_scope(ACADEMY):
+        await MongoPaymentDisputeRepository(db).stamp_payment(dispute)
+
+
+@pytest.mark.asyncio
+async def test_disputed_payment_shows_its_dispute_on_the_invoice_row(mongo_db) -> None:
+    paid_at = datetime(2026, 9, 3, 17, 14, tzinfo=UTC)
+    await mongo_db["invoices"].insert_one(
+        _invoice("inv-sep", parent_id="parent-1", total_cents=13000, created_at=paid_at)
+    )
+    await mongo_db["ledger_payments"].insert_one(
+        _ledger_payment(
+            "pay-stripe",
+            parent_id="parent-1",
+            amount_cents=13000,
+            paid_at=paid_at,
+            stripe_payment_intent_id="pi_disputed",
+        )
+    )
+    await mongo_db["payment_allocations"].insert_one(
+        {"academy_id": ACADEMY, "payment_id": "pay-stripe", "invoice_id": "inv-sep"}
+    )
+    await _stamp_dispute(mongo_db, pi="pi_disputed")
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        [row] = await admin.list_payments_recent()
+
+    assert row["payment_id"] == "inv-sep"
+    assert row["dispute_id"] == "dp_1"
+    assert row["dispute_status"] == "needs_response"
+    assert row["dispute_reason"] == "fraudulent"
+    assert row["dispute_amount_cents"] == 13000
+    assert row["dispute_outcome"] is None
+
+
+@pytest.mark.asyncio
+async def test_disputed_standalone_ledger_and_legacy_rows_carry_the_dispute(mongo_db) -> None:
+    paid_at = datetime(2026, 9, 1, 20, 19, tzinfo=UTC)
+    await mongo_db["ledger_payments"].insert_one(
+        _ledger_payment(
+            "pay-reg",
+            parent_id="parent-1",
+            amount_cents=7000,
+            paid_at=paid_at,
+            stripe_payment_intent_id="pi_lost",
+        )
+    )
+    await mongo_db["payments"].insert_one(
+        {
+            "payment_id": "pay-legacy",
+            "academy_id": ACADEMY,
+            "parent_id": "parent-2",
+            "amount_cents": 5000,
+            "currency": "usd",
+            "status": "succeeded",
+            "stripe_payment_intent": "pi_legacy_lost",
+            "created_at": paid_at,
+        }
+    )
+    await _stamp_dispute(mongo_db, pi="pi_lost", status="lost")
+    await _stamp_dispute(mongo_db, pi="pi_legacy_lost", status="lost")
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = {r["payment_id"]: r for r in await admin.list_payments_recent()}
+
+    for payment_id in ("pay-reg", "pay-legacy"):
+        assert rows[payment_id]["dispute_id"] == "dp_1"
+        assert rows[payment_id]["dispute_outcome"] == "lost"
+
+
+@pytest.mark.asyncio
+async def test_undisputed_rows_carry_no_dispute_fields(mongo_db) -> None:
+    paid_at = datetime(2026, 9, 1, 20, 19, tzinfo=UTC)
+    await mongo_db["ledger_payments"].insert_one(
+        _ledger_payment("pay-ok", parent_id="parent-1", amount_cents=7000, paid_at=paid_at)
+    )
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        [row] = await admin.list_payments_recent()
+    assert "dispute_id" not in row
+
+
+@pytest.mark.asyncio
+async def test_dispute_on_a_multi_invoice_payment_shows_on_one_row_only(mongo_db) -> None:
+    """One chargeback must not read as three when its payment settled three invoices."""
+    paid_at = datetime(2026, 9, 3, 17, 14, tzinfo=UTC)
+    for invoice_id in ("inv-c", "inv-a", "inv-b"):
+        await mongo_db["invoices"].insert_one(
+            _invoice(invoice_id, parent_id="parent-1", total_cents=4000, created_at=paid_at)
+        )
+        await mongo_db["payment_allocations"].insert_one(
+            {"academy_id": ACADEMY, "payment_id": "pay-balance", "invoice_id": invoice_id}
+        )
+    await mongo_db["ledger_payments"].insert_one(
+        _ledger_payment(
+            "pay-balance",
+            parent_id="parent-1",
+            amount_cents=12000,
+            paid_at=paid_at,
+            stripe_payment_intent_id="pi_balance",
+        )
+    )
+    await _stamp_dispute(mongo_db, pi="pi_balance")
+
+    admin = _admin_use_cases(mongo_db)
+    with tenant_scope(ACADEMY):
+        rows = {r["payment_id"]: r for r in await admin.list_payments_recent()}
+
+    assert [pid for pid, r in sorted(rows.items()) if r.get("dispute_id")] == ["inv-a"]
+    assert all(rows[pid]["stripe_linked"] for pid in ("inv-a", "inv-b", "inv-c"))

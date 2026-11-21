@@ -6,10 +6,12 @@ from fastapi import APIRouter
 
 from .academy_routes import router as academy_router
 from .account_deletion_routes import router as account_deletion_router
+from .ai_controls_routes import router as ai_controls_router
 from .ai_curriculum_routes import router as ai_curriculum_router
 from .ai_import_routes import router as ai_import_router
 from .ai_pipeline_routes import router as ai_pipeline_router
 from .ai_reports_routes import router as ai_reports_router
+from .ai_schedule_routes import router as ai_schedule_router
 from .ai_usage_routes import router as ai_usage_router
 from .ai_win_back_routes import router as ai_win_back_router
 from .audit_routes import router as audit_router
@@ -18,6 +20,7 @@ from .billing_products_routes import router as billing_products_router
 from .billing_routes import router as billing_router
 from .billing_rules_routes import router as billing_rules_router
 from .billing_setup_routes import router as billing_setup_router
+from .class_report_routes import router as class_report_router
 from .coach_pay_rate_routes import router as coach_pay_rate_router
 from .collections_routes import router as collections_router
 from .comms_routes import router as comms_router
@@ -26,9 +29,11 @@ from .departure_policy_routes import router as departure_policy_router
 from .departures_routes import router as departures_router
 from .directory_routes import router as directory_router
 from .dues_routes import router as dues_router
+from .enrollment_billing_routes import router as enrollment_billing_router
 from .families_routes import router as families_router
 from .family_crm_routes import router as family_crm_router
 from .family_index_routes import router as family_index_router
+from .family_offers_routes import router as family_offers_router
 from .family_record_routes import router as family_record_router
 from .hold_routes import router as hold_router
 from .inbox_routes import router as inbox_router
@@ -45,9 +50,12 @@ from .plan_routes import router as plan_router
 from .platform_fee_routes import router as platform_fee_router
 from .pricing_routes import router as pricing_router
 from .progress_routes import router as progress_router
+from .progress_settings_routes import router as progress_settings_router
 from .public_page_routes import router as public_page_router
+from .referral_routes import router as referral_router
 from .registration_routes import router as registration_router
 from .reports_routes import router as reports_router
+from .schedule_publish_routes import router as schedule_publish_router
 from .self_service_policy_routes import router as self_service_policy_router
 from .self_service_request_routes import router as self_service_request_router
 from .session_type_routes import router as session_type_router
@@ -86,6 +94,9 @@ router.include_router(billing_router)
 router.include_router(billing_setup_router)
 router.include_router(billing_products_router)
 router.include_router(billing_rules_router)
+router.include_router(family_offers_router)
+router.include_router(enrollment_billing_router)
+router.include_router(referral_router)
 router.include_router(payment_methods_router)
 router.include_router(platform_fee_router)
 router.include_router(pricing_router)
@@ -95,12 +106,17 @@ router.include_router(coach_pay_rate_router)
 router.include_router(comms_router)
 router.include_router(academy_router)
 router.include_router(ai_usage_router)
+router.include_router(class_report_router)
+router.include_router(ai_controls_router)
 router.include_router(ai_import_router)
+router.include_router(ai_schedule_router)
 router.include_router(waiver_router)
 router.include_router(pathway_router)
+router.include_router(progress_settings_router)
 router.include_router(plan_router)
 router.include_router(progress_router)
 router.include_router(self_service_policy_router)
+router.include_router(schedule_publish_router)
 router.include_router(self_service_request_router)
 router.include_router(trial_outcome_router)
 router.include_router(pipeline_router)

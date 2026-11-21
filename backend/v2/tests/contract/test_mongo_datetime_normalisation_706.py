@@ -22,6 +22,10 @@ from typing import Any
 
 import pytest
 
+from backend.v2.composition.occurrence_cancellation import StudentPresenceAdapter
+from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
+    MongoAttendanceRepository,
+)
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
     AbsenceNotice,
     SubmitAbsenceNotice,
@@ -386,6 +390,7 @@ async def test_submit_makeup_request_over_real_occurrence_repo(db, acad) -> None
         notices=_FakeNoticeQuery(),
         makeups=makeups,
         policies=_FakePolicies(),
+        attendance=StudentPresenceAdapter(MongoAttendanceRepository(db)),
     )
 
     request = await use_case.execute(
@@ -482,6 +487,7 @@ async def test_approve_makeup_request_expired_window_over_real_makeup_repo(db, a
         enrollments=_ReviewFakeEnrollments(),
         sessions=_ReviewFakeSessions(),
         occurrence_roster=_ReviewFakeRoster(),
+        guests=MongoTrialRequestRepository(db),
     )
 
     with pytest.raises(MakeupWindowExpired):
@@ -533,6 +539,7 @@ async def test_approve_makeup_request_open_window_over_real_repos(db, acad) -> N
         enrollments=enrollments,
         sessions=_ReviewFakeSessions([_review_session("session-target")]),
         occurrence_roster=roster,
+        guests=MongoTrialRequestRepository(db),
     )
 
     updated = await use_case.execute(

@@ -14,10 +14,13 @@ updates:
       include: scope
     # One combined PR per ecosystem instead of one per dependency (see #444,
     # #446). Security updates get their own single group.
+    # Groups take minor/patch only: a breaking major (e.g. #1161) used to stall
+    # every safe bump with it, so each major now arrives as its own PR.
     groups:
       backend-deps:
         applies-to: version-updates
         patterns: ["*"]
+        update-types: [minor, patch]
       backend-security:
         applies-to: security-updates
         patterns: ["*"]
@@ -38,6 +41,7 @@ updates:
       frontend-deps:
         applies-to: version-updates
         patterns: ["*"]
+        update-types: [minor, patch]
       frontend-security:
         applies-to: security-updates
         patterns: ["*"]
@@ -53,6 +57,7 @@ updates:
     groups:
       docker-deps:
         patterns: ["*"]
+        update-types: [minor, patch]
 
   - package-ecosystem: github-actions
     directory: /
@@ -66,3 +71,4 @@ updates:
     groups:
       actions-deps:
         patterns: ["*"]
+        update-types: [minor, patch]

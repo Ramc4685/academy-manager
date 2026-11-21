@@ -18,6 +18,7 @@ from backend.v2.contexts.billing.application.ports import (
     StripeResourceNotFound,
     StripeTransientFailure,
 )
+from backend.v2.contexts.billing.domain.errors import StripeIdempotencyConflict, StripeUnavailable
 from backend.v2.contexts.billing.domain.fees import check_application_fee_cents
 
 log = logging.getLogger(__name__)
@@ -82,6 +83,17 @@ def _on_account(stripe_account: str | None) -> dict[str, Any]:
     exactly the kwargs it always did.
     """
     return {"stripe_account": stripe_account} if stripe_account else {}
+
+
+# A saved bank account must carry the Financial Connections permission that
+# lets later off-session debits read it; options for a method Checkout does not
+# show are ignored, so cards are unaffected (A4-10).
+_BANK_SAVE_OPTIONS: dict[str, Any] = {
+    "us_bank_account": {
+        "financial_connections": {"permissions": ["payment_method"]},
+        "verification_method": "automatic",
+    }
+}
 
 
 def _check_single_route(connected_account_id: str | None, stripe_account: str | None) -> None:
@@ -296,6 +308,7 @@ class RealStripeGateway(StripeGateway):
                 customer_creation="always",
                 metadata=setup_metadata,
                 setup_intent_data=setup_intent_data,
+                payment_method_options=_BANK_SAVE_OPTIONS,
                 **_on_account(stripe_account),
             )
 
@@ -383,6 +396,7 @@ class RealStripeGateway(StripeGateway):
             if save_payment_method_for_autopay:
                 # The saved payment method must attach to a customer.
                 request["customer_creation"] = "always"
+                request["payment_method_options"] = _BANK_SAVE_OPTIONS
             if idempotency_key:
                 request["idempotency_key"] = idempotency_key
             request.update(_on_account(stripe_account))
@@ -502,9 +516,11 @@ class RealStripeGateway(StripeGateway):
         message = str(getattr(exc, "user_message", None) or exc).replace("`", "").lower()
         return any(marker in message for marker in _TERMINAL_EXPIRY_MARKERS)
 
-    async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
+    async def retrieve_invoice(
+        self, stripe_invoice_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         def _retrieve() -> Any:
-            return self._stripe.Invoice.retrieve(stripe_invoice_id)
+            return self._stripe.Invoice.retrieve(stripe_invoice_id, **_on_account(stripe_account))
 
         result = await self._run_stripe_retrieve(_retrieve, label="Stripe Invoice")
         return _stripe_object_to_dict(result)
@@ -517,9 +533,13 @@ class RealStripeGateway(StripeGateway):
 
         await asyncio.to_thread(_void)
 
-    async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
+    async def retrieve_subscription(
+        self, stripe_subscription_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         def _retrieve() -> Any:
-            return self._stripe.Subscription.retrieve(stripe_subscription_id)
+            return self._stripe.Subscription.retrieve(
+                stripe_subscription_id, **_on_account(stripe_account)
+            )
 
         result = await self._run_stripe_retrieve(_retrieve, label="Stripe Subscription")
         return _stripe_object_to_dict(result)
@@ -581,23 +601,32 @@ class RealStripeGateway(StripeGateway):
             ) from exc
 
     async def search_app_owned_payment_intents(
-        self, *, academy_id: str, limit: int = 100, stripe_account: str | None = None
+        self,
+        *,
+        academy_id: str,
+        limit: int = 100,
+        stripe_account: str | None = None,
+        parent_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        safe_academy_id = academy_id.replace('"', '\\"')
+        scope = f'metadata["academy_id"]:"{_search_value(academy_id)}"'
+        if parent_id is not None:
+            scope += f' AND metadata["parent_id"]:"{_search_value(parent_id)}"'
         safe_limit = max(1, min(int(limit), 100))
         # `succeeded` covers card/instant settlement; `processing` is the ACH
         # in-flight state (§7.2) — both must be visible to reconciliation, or
         # ACH payments are invisible until they happen to also show up via a
         # later run after settlement.
-        queries = [
-            f'metadata["academy_id"]:"{safe_academy_id}" AND status:"succeeded"',
-            f'metadata["academy_id"]:"{safe_academy_id}" AND status:"processing"',
-        ]
+        queries = [f'{scope} AND status:"succeeded"', f'{scope} AND status:"processing"']
 
         def _search() -> list[dict[str, Any]]:
             by_id: dict[str, dict[str, Any]] = {}
             for query in queries:
-                kwargs: dict[str, Any] = {"query": query, "limit": safe_limit}
+                kwargs: dict[str, Any] = {
+                    "query": query,
+                    "limit": safe_limit,
+                    # Refund and dispute flags live on the charge.
+                    "expand": ["data.latest_charge"],
+                }
                 kwargs.update(_on_account(stripe_account))
                 payment_intents = self._stripe.PaymentIntent.search(**kwargs)
                 data = getattr(payment_intents, "data", None) or []
@@ -677,7 +706,12 @@ class RealStripeGateway(StripeGateway):
             else:
                 self._stripe.Subscription.delete(stripe_subscription_id)
 
-        await asyncio.to_thread(_cancel)
+        try:
+            await asyncio.to_thread(_cancel)
+        except self._stripe.StripeError as exc:
+            if not _is_resource_missing(self._stripe, exc):
+                raise
+            # Stripe no longer has it: already cancelled, so the caller converges.
 
     async def pause_subscription_collection(
         self,
@@ -919,7 +953,7 @@ class RealStripeGateway(StripeGateway):
         try:
             return await asyncio.to_thread(_find)
         except self._stripe.StripeError as exc:
-            raise ValueError(f"Stripe customer lookup failed: {exc}") from exc
+            raise StripeUnavailable(f"Stripe customer lookup failed: {exc}") from exc
 
     async def detach_customer_payment_methods(
         self, stripe_customer_id: str, *, stripe_account: str | None = None
@@ -998,10 +1032,33 @@ class RealStripeGateway(StripeGateway):
             pi = await asyncio.to_thread(_create)
             return str(pi["id"]), str(pi["status"]), None
         except self._stripe.CardError as exc:
-            err = exc.error
-            return "", "failed", str(getattr(err, "decline_code", None) or str(exc))
+            err = getattr(exc, "error", None)
+            # A blocked bank account is a 402 with only ``code`` (bank_account_unusable).
+            code = getattr(err, "decline_code", None) or getattr(err, "code", None)
+            return "", "failed", str(code or getattr(exc, "code", None) or "card_declined")
         except self._stripe.StripeError as exc:
-            raise ValueError(f"Stripe PaymentIntent creation failed: {exc}") from exc
+            if _is_resource_missing(self._stripe, exc):
+                # The saved card/bank was removed (e.g. in the portal): parent action needed.
+                return "", "failed", "no_saved_payment_method"
+            if (
+                isinstance(exc, self._stripe.IdempotencyError)
+                and getattr(exc, "code", None) != "idempotency_key_in_use"
+            ):
+                # The key was used with other parameters: an earlier request exists.
+                # ``idempotency_key_in_use`` (one still in flight) is retriable instead.
+                raise StripeIdempotencyConflict(
+                    f"Stripe PaymentIntent creation failed: {exc}"
+                ) from exc
+            raise StripeUnavailable(f"Stripe PaymentIntent creation failed: {exc}") from exc
+
+
+def _is_resource_missing(stripe_module: Any, exc: Exception) -> bool:
+    invalid_request = getattr(stripe_module, "InvalidRequestError", None)
+    return bool(
+        invalid_request is not None
+        and isinstance(exc, invalid_request)
+        and getattr(exc, "code", None) == "resource_missing"
+    )
 
 
 def destination_refund_params(payment_intent: dict[str, Any]) -> dict[str, bool]:
@@ -1032,3 +1089,8 @@ def _stripe_object_to_dict(result: Any) -> dict[str, Any]:
     if callable(private_to_dict):
         return private_to_dict()
     return dict(result)
+
+
+def _search_value(value: str) -> str:
+    """Escape a value for a Stripe search query string literal."""
+    return value.replace('"', '\\"')

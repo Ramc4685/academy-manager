@@ -17,6 +17,8 @@ import { Modal } from "@/components/ds/modal";
 
 import { centsToDollarInput, dollarsToCents, formatCurrencyCents, getErrorMessage } from "./format";
 import { Field } from "./StudentEditForm";
+import { useAcademyTimezone } from "@/components/admin/use-academy-today";
+import { academyDateISO, academyMonthKey } from "@/lib/format/academy-time";
 
 function CreateInvoiceDialog({
   student,
@@ -31,8 +33,9 @@ function CreateInvoiceDialog({
   onCancel: () => void;
   onSubmit: (payload: { period: string; due_date: string; enrollment_id?: string | null }) => void;
 }) {
-  const [period, setPeriod] = useState(() => new Date().toISOString().slice(0, 7));
-  const [dueDate, setDueDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const timezone = useAcademyTimezone();
+  const [period, setPeriod] = useState(() => academyMonthKey(timezone));
+  const [dueDate, setDueDate] = useState(() => academyDateISO(timezone));
   const [enrollmentId, setEnrollmentId] = useState("");
   const sessions = student.enrolled_sessions ?? [];
 

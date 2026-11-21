@@ -279,6 +279,17 @@ class ParentStripeCustomerRepository(Protocol):
         stripe_account_id: str | None = None,
     ) -> None: ...
 
+    async def flag_payment_method_blocked(
+        self,
+        *,
+        payment_method_id: str,
+        reason: str,
+        at: datetime,
+        stripe_customer_id: str | None = None,
+    ) -> int:
+        """Mark a saved method Stripe can no longer charge; returns rows flagged."""
+        ...
+
 
 class SavedPaymentMethodReader(Protocol):
     """Reads the parent's stored chargeable card on one Stripe account.
@@ -294,6 +305,23 @@ class SavedPaymentMethodReader(Protocol):
     ) -> tuple[str, str] | None:
         """(stripe_customer_id, payment_method_id) on ``stripe_account_id``, or None."""
         ...
+
+    async def payment_method_blocked(self, *, parent_id: str, payment_method_id: str) -> bool:
+        """Stripe has blocked this exact method (closed bank, revoked mandate)."""
+        ...
+
+
+class FamilyAutopayPauser(Protocol):
+    """Pauses every active-autopay enrollment of one parent, audited as the system.
+
+    Money taken back (late bank return, lost dispute) or a bank that cannot be
+    debited again stops autopay for the whole family, not one enrollment (L1 B4).
+    Idempotent per ``request_id``; returns how many enrollments were paused.
+    """
+
+    async def pause_family(
+        self, *, academy_id: str, parent_id: str, reason: str, request_id: str
+    ) -> int: ...
 
 
 class AutopayConsentRepository(Protocol):
@@ -591,7 +619,9 @@ class StripeGateway(Protocol):
     ) -> dict[str, Any]:
         """Fetch current Stripe Checkout Session state for reconciliation."""
 
-    async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
+    async def retrieve_invoice(
+        self, stripe_invoice_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         """Fetch current Stripe invoice state for reconciliation."""
 
     async def void_stripe_invoice(self, stripe_invoice_id: str) -> None:
@@ -604,7 +634,9 @@ class StripeGateway(Protocol):
         rolling back the ledger-side void.
         """
 
-    async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
+    async def retrieve_subscription(
+        self, stripe_subscription_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         """Fetch current Stripe subscription state for reconciliation."""
 
     async def retrieve_payment_intent(
@@ -633,13 +665,19 @@ class StripeGateway(Protocol):
         """Set the Customer default PM used by off-session autopay charges."""
 
     async def search_app_owned_payment_intents(
-        self, *, academy_id: str, limit: int = 100, stripe_account: str | None = None
+        self,
+        *,
+        academy_id: str,
+        limit: int = 100,
+        stripe_account: str | None = None,
+        parent_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Find recent app-owned PaymentIntents (succeeded or ACH `processing`).
 
         When ``stripe_account`` is set (Slice I), the search is scoped to that
         connected account rather than the platform account — money routed
         through a connected account is otherwise invisible to this search.
+        ``parent_id`` narrows it to one parent's PaymentIntents.
         """
 
     async def list_charges_for_customer(
@@ -1049,6 +1087,15 @@ class LedgerRepository(Protocol):
     async def get_payment_by_stripe_payment_intent_id(
         self, stripe_payment_intent_id: str
     ) -> LedgerPayment | None: ...
+    async def record_refund_failure(
+        self,
+        *,
+        stripe_payment_intent_id: str,
+        refund_id: str,
+        reason: str,
+        amount_cents: int,
+        failed_at: datetime,
+    ) -> bool: ...
     async def get_payment_allocation_by_idempotency_key(
         self, idempotency_key: str
     ) -> PaymentAllocation | None: ...
@@ -1079,6 +1126,15 @@ class LedgerRepository(Protocol):
         status: str,
         updated_at: datetime,
     ) -> LedgerPayment: ...
+
+    async def apply_payment_return(
+        self,
+        payment_id: str,
+        *,
+        amount_cents: int,
+        source_key: str | None,
+        updated_at: datetime,
+    ) -> tuple[LedgerPayment, bool]: ...
 
     async def record_payment_attempt(
         self,
@@ -1120,6 +1176,17 @@ class LedgerRepository(Protocol):
     ) -> dict[str, Any] | None: ...
 
     async def list_allocations_for_payment(self, payment_id: str) -> list[PaymentAllocation]: ...
+
+    async def list_reversals_for_payment(self, payment_id: str) -> list[dict[str, Any]]:
+        """Allocation reversal rows already written for this payment."""
+        ...
+
+    async def repair_after_reversal(
+        self, *, reversal_idempotency_key: str, reason: str, reversed_at: datetime
+    ) -> None:
+        """Redo the invoice/payment repair of a reversal that already ran, for a
+        replay after a crash between the allocation delete and the repair."""
+        ...
 
     async def sum_allocations_for_invoice(self, invoice_id: str) -> int: ...
 

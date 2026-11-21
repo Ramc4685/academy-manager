@@ -18,6 +18,10 @@ def test_cancel_marks_the_date_and_reports_the_billing_outcome(admin_client):
     assert body["occurrence"]["cancellation_reason"] == "gym flooded"
     assert body["occurrence"]["cancelled_at"] is not None
     assert body["billing_result"] == "credited=1,override=written"
+    # #1207: Month dates shows the money per date and why a family got none.
+    assert body["credits_issued"] == 1
+    assert body["credit_total_cents"] == 3000
+    assert body["credit_skips"] == {"covered_by_free_classes": 1}
 
 
 def test_cancelled_date_is_visible_on_the_session_occurrence_list(admin_client):

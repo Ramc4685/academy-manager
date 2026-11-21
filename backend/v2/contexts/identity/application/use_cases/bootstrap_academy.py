@@ -20,7 +20,10 @@ from backend.v2.contexts.identity.domain.models import Role, normalize_email
 from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
 
-OWNER_ACADEMY_ROLE: Role = "admin"
+OWNER_ACADEMY_ROLE: Role = "owner"
+#: The first user of a new academy holds both roles: ``owner`` alone opens the
+#: owner-only reads (refunds, money settings, staff grants), ``admin`` the rest.
+OWNER_ACADEMY_ROLES: tuple[Role, ...] = ("admin", OWNER_ACADEMY_ROLE)
 #: Body of the placeholder waiver every bootstrapped academy starts with. The
 #: admin setup checklist (roadmap L7) treats a waiver still carrying exactly
 #: this text as "not done yet", so keep it the single source.
@@ -225,7 +228,7 @@ class BootstrapAcademy:
                 "membership_id": self._id_factory("membership_"),
                 "academy_id": academy_id,
                 "user_id": owner_user_id,
-                "roles": [OWNER_ACADEMY_ROLE],
+                "roles": list(OWNER_ACADEMY_ROLES),
                 "status": "active",
                 "accepted_at": now,
                 "created_at": now,
@@ -246,7 +249,10 @@ class BootstrapAcademy:
             primary_domain=str(academy["primary_domain"]),
             owner_user_id=owner_user_id,
             membership_id=str(membership["membership_id"]),
-            owner_role=OWNER_ACADEMY_ROLE,
+            # A re-run never re-grants, so report what the stored membership holds.
+            owner_role=(
+                OWNER_ACADEMY_ROLE if OWNER_ACADEMY_ROLE in membership.get("roles", []) else "admin"
+            ),
             created=created,
             invoice_prefix=invoice_prefix,
         )

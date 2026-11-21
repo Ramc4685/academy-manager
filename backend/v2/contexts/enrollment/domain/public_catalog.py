@@ -35,6 +35,7 @@ FEW_SEATS_THRESHOLD: Final = 3
 
 _CLASS_ID_PREFIX: Final = "c_"
 _PROGRAM_ID_PREFIX: Final = "p_"
+_SLOT_KEY_PREFIX: Final = "t_"
 #: Bump only together with a plan for links already shared with the old ids.
 _ID_DOMAIN: Final = "courtmastr.public-id.v1"
 _ID_LENGTH: Final = 16  # base32 chars = 80 bits, ample for a few hundred classes
@@ -54,6 +55,11 @@ def public_class_id(academy_id: str, session_id: str) -> str:
 def public_program_id(academy_id: str, program_id: str) -> str:
     """Stable opaque id for one program on one academy's public page."""
     return _PROGRAM_ID_PREFIX + _digest("program", academy_id, program_id)
+
+
+def public_slot_key(academy_id: str, occurrence_id: str) -> str:
+    """Opaque key of one bookable trial date (L9 A6-1); never the occurrence id."""
+    return _SLOT_KEY_PREFIX + _digest("trial-slot", academy_id, occurrence_id)
 
 
 def seats_left(capacity: int, occupied: int) -> int:

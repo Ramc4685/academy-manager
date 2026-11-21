@@ -27,9 +27,10 @@ from backend.v2.tests.contexts.student_progress.test_use_case_events import (
     _SkillProgressRepo,
     _TestAttemptRepo,
 )
+from backend.v2.tests.idempotency_fakes import ClaimableStore
 
 
-class _MemoryIdempotencyStore:
+class _MemoryIdempotencyStore(ClaimableStore):
     def __init__(self) -> None:
         self.rows: dict[str, dict[str, Any]] = {}
 
@@ -51,7 +52,7 @@ def _command(**overrides: Any) -> RecordTestAttemptCommand:
         "success_count": 8,
     }
     base.update(overrides)
-    return RecordTestAttemptCommand(**base)
+    return RecordTestAttemptCommand(can_sign_off=True, **base)
 
 
 def _use_case(
@@ -115,6 +116,72 @@ async def test_distinct_mutation_ids_record_distinct_attempts() -> None:
         second = await use_case.execute(_command(mutation_id="mut-2"))
 
     assert first.attempt_id != second.attempt_id
+    assert len(attempts.rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_same_mutation_id_from_another_coach_or_academy_is_not_a_replay() -> None:
+    """The mutation_id is client-sent: the key carries the academy and the coach,
+    so one coach's (or academy's) id never replays another's result."""
+    store = _MemoryIdempotencyStore()
+    with tenant_scope("academy-1"):
+        mine = await _use_case(
+            attempts=_TestAttemptRepo(), outbox=_FakeOutbox(), store=store
+        ).execute(_command(mutation_id="mut-1"))
+        other_coach = await _use_case(
+            attempts=_TestAttemptRepo(), outbox=_FakeOutbox(), store=store
+        ).execute(_command(mutation_id="mut-1", coach_id="coach-2"))
+    with tenant_scope("academy-2"):
+        other_academy = await _use_case(
+            attempts=_TestAttemptRepo(), outbox=_FakeOutbox(), store=store
+        ).execute(_command(mutation_id="mut-1"))
+
+    assert len({mine.attempt_id, other_coach.attempt_id, other_academy.attempt_id}) == 3
+    assert sorted(k for k in store.rows) == [
+        "record_test_attempt:academy-1:coach-1:mut-1",
+        "record_test_attempt:academy-1:coach-2:mut-1",
+        "record_test_attempt:academy-2:coach-1:mut-1",
+    ]
+
+
+def _legacy_entry(result: Any) -> dict[str, Any]:
+    """What the decorator stored under the old ``record_test_attempt:{mutation_id}`` key."""
+    return {
+        "value": {"_type": "pydantic", "data": result.model_dump(mode="json")},
+        "stored_at": "x",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_pre_deploy_result_under_the_legacy_key_replays_for_its_own_coach() -> None:
+    attempts, store = _TestAttemptRepo(), _MemoryIdempotencyStore()
+    with tenant_scope("academy-1"):
+        uc = _use_case(attempts=attempts, outbox=_FakeOutbox(), store=store)
+        before = await uc.execute(_command())  # recorded before the deploy
+        store.rows["record_test_attempt:mut-1"] = _legacy_entry(before)
+
+        replay = await uc.execute(_command(mutation_id="mut-1"))
+
+    assert replay == before
+    assert len(attempts.rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_key_from_another_coach_or_academy_is_not_replayed() -> None:
+    attempts, store = _TestAttemptRepo(), _MemoryIdempotencyStore()
+    with tenant_scope("academy-1"):
+        uc = _use_case(attempts=attempts, outbox=_FakeOutbox(), store=store)
+        before = await uc.execute(_command())
+        store.rows["record_test_attempt:mut-1"] = _legacy_entry(before)
+
+        other_coach = await uc.execute(_command(mutation_id="mut-1", coach_id="coach-2"))
+    with tenant_scope("academy-2"):
+        # Another tenant's repository holds none of academy-1's attempts.
+        other_academy = await _use_case(
+            attempts=_TestAttemptRepo(), outbox=_FakeOutbox(), store=store
+        ).execute(_command(mutation_id="mut-1"))
+
+    assert before.attempt_id not in (other_coach.attempt_id, other_academy.attempt_id)
     assert len(attempts.rows) == 2
 
 

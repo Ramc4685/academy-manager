@@ -205,6 +205,7 @@ class MongoFamilyIndexReadModel:
                     lifecycle_as_of=snap.as_of if snap is not None else None,
                     session_ids=live,
                     session_titles=tuple(titles.get(sid) or sid for sid in live),
+                    not_billed=bool(snap is not None and snap.not_billed),
                 )
             )
             roster_name = _opt_str(doc.get("parent_name")) or _opt_str(doc.get("guardian_name"))

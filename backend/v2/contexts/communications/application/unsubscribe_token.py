@@ -3,9 +3,9 @@
 Requirements this scheme has to meet, and why the obvious alternative fails:
 
 * **Re-derivable.** The same link must appear in tomorrow's digest and the one
-  after. ``IssueMagicLink`` stores only a SHA-256 of a one-time token and hands
-  back the raw value once — it cannot regenerate a link for the next send, so
-  a magic-link-style stored token is the wrong tool here.
+  after. A stored one-time token (the retired parent magic link kept only a
+  SHA-256 and handed back the raw value once) cannot regenerate a link for the
+  next send, so that style of token is the wrong tool here.
 * **Long-lived.** A six-month-old email must still unsubscribe. There is
   therefore no expiry in the payload; the token is revoked by rotating the
   secret.
@@ -37,6 +37,10 @@ from urllib.parse import quote
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 
 _VERSION = "u1"
+
+#: The RFC 8058 endpoint mailbox providers POST to (``interfaces/unsubscribe_routes``),
+#: reached through the frontend's same-origin ``/api/v2`` proxy on the academy host.
+ONE_CLICK_UNSUBSCRIBE_PATH = "/api/v2/unsubscribe/one-click"
 
 
 def _b64(raw: bytes) -> str:

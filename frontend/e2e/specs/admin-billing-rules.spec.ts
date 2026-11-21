@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 import { billingRulesFixture } from "../fixtures/billing-rules";
+import { stubFamilyOffers } from "../fixtures/saas-stubs";
 
 /**
  * Settings → Billing rules (spec 2026-09-07-billing-rules-design).
@@ -70,6 +71,7 @@ function stubBillingRules(
 ) {
   const seen: { put: unknown } = { put: null };
   let ach = { enabled: false, percent: 0 };
+  void stubFamilyOffers(page);
   void page.route("**/api/v2/admin/billing/rules", (route) => {
     const request = route.request();
     if (request.method() === "GET") {

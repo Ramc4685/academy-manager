@@ -17,7 +17,6 @@ from backend.v2.contexts.billing.application.use_cases.bill_enrollment_period im
     BillEnrollmentPeriodCommand,
     EnrollmentBillingTarget,
 )
-from backend.v2.contexts.billing.application.use_cases.finance import Payout
 from backend.v2.contexts.billing.application.use_cases.remove_invoice_line import (
     RemoveInvoiceLine,
     RemoveInvoiceLineCommand,
@@ -584,6 +583,37 @@ def test_list_payments_uses_filtered_use_case_when_wired(admin_client):
     assert captured["offset"] == 2
 
 
+def test_list_payments_exposes_the_dispute_on_a_disputed_row(admin_client):
+    async def list_payments_filtered(**kwargs):
+        row = {
+            "payment_id": "lp-1",
+            "parent_id": "parent-1",
+            "session_id": None,
+            "amount_cents": 5000,
+            "currency": "usd",
+            "status": "succeeded",
+            "refunded_cents": 0,
+            "created_at": NOW,
+            "dispute_id": "dp_1",
+            "dispute_status": "needs_response",
+            "dispute_reason": "fraudulent",
+            "dispute_amount_cents": 5000,
+            "dispute_outcome": None,
+            "disputed_at": NOW,
+        }
+        return {"payments": [row], "total": 1, "limit": 200, "offset": 0}
+
+    admin_client.use_cases.list_payments_filtered = list_payments_filtered
+    r = admin_client.get("/api/v2/admin/payments")
+    assert r.status_code == 200, r.text
+    row = r.json()["payments"][0]
+    assert row["dispute_id"] == "dp_1"
+    assert row["dispute_status"] == "needs_response"
+    assert row["dispute_reason"] == "fraudulent"
+    assert row["dispute_amount_cents"] == 5000
+    assert row["disputed_at"] is not None
+
+
 def test_payment_feed_returns_rows(admin_client):
     async def list_payment_feed(limit: int = 20):
         assert limit == 5
@@ -989,25 +1019,6 @@ def test_list_payments_hides_voided_rows_by_default(admin_client):
 # --- # FINANCE ---
 
 
-def test_list_payouts_returns_seeded(admin_client):
-    admin_client.seed["payouts"].rows["po-1"] = Payout(
-        payout_id="po-1",
-        academy_id="acad",
-        coach_id="coach-1",
-        amount_cents=80000,
-        period_start=datetime(2026, 4, 1, tzinfo=UTC),
-        period_end=datetime(2026, 4, 30, tzinfo=UTC),
-    )
-    r = admin_client.get("/api/v2/admin/finance/payouts")
-    assert r.status_code == 200
-    assert r.json()["payouts"][0]["payout_id"] == "po-1"
-
-
-def test_list_payouts_wrong_persona_404(coach_on_admin_client):
-    r = coach_on_admin_client.get("/api/v2/admin/finance/payouts")
-    assert r.status_code == 404
-
-
 def test_record_expense_creates_entry(admin_client):
     r = admin_client.post(
         "/api/v2/admin/finance/expenses",
@@ -1115,10 +1126,13 @@ def test_send_invoice_returns_checkout_url_when_stripe_configured(admin_client):
                 "academy_id": "acad",
                 "parent_id": "parent-1",
             },
-            "idempotency_key": "invoice-checkout:inv-1:7000:acct:acct_ready_1",
+            "idempotency_key": stripe.calls[0]["idempotency_key"],
             "stripe_account": "acct_ready_1",
         }
     ]
+    assert stripe.calls[0]["idempotency_key"].startswith(
+        "invoice-checkout:inv-1:7000:acct:acct_ready_1:attempt-"
+    )
 
 
 def test_send_invoice_with_email_marks_sent_and_passes_checkout_url(admin_client):
@@ -1149,6 +1163,7 @@ def test_send_invoice_with_email_marks_sent_and_passes_checkout_url(admin_client
             "balance_due_cents": 7_000,
             "currency": "usd",
             "checkout_url": "https://checkout.stripe.test/invoice",
+            "bundled": False,
         }
     ]
 
@@ -1208,6 +1223,7 @@ async def test_invoice_email_adapter_sends_after_membership_match() -> None:
         users=users,
         academies=_FakeAcademyRepo(),
         sender=sender,
+        pay_page_url="https://blno.example.com/parent/payments",
     )
 
     with tenant_scope("acad"):
@@ -1223,7 +1239,29 @@ async def test_invoice_email_adapter_sends_after_membership_match() -> None:
 
     assert sender.calls[0]["recipient"].email == "parent@example.com"
     assert sender.calls[0]["recipient"].user_id == "parent-1"
-    assert "https://checkout.stripe.test/invoice" in sender.calls[0]["body"]
+    body = sender.calls[0]["body"]
+    # The button opens the app, which mints a fresh Checkout session per click.
+    # A raw Checkout URL in an email dies within 24h (or once completed) and
+    # strands the parent on Stripe's "You're all done here" page.
+    assert "https://blno.example.com/parent/payments?pay=inv-1" in body
+    assert "checkout.stripe.test" not in body
+
+    # A bundled email quotes the student's whole balance: its link pays that.
+    with tenant_scope("acad"):
+        await adapter.send_invoice_email(
+            parent_id="parent-1",
+            invoice_id="inv-1",
+            period="2026-06",
+            total_cents=14_000,
+            balance_due_cents=14_000,
+            currency="usd",
+            checkout_url="https://checkout.stripe.test/balance",
+            bundled=True,
+        )
+    # Student-scoped bundle, not the parent's family-wide balance.
+    assert (
+        "https://blno.example.com/parent/payments?pay=inv-1&amp;bundle=1" in sender.calls[1]["body"]
+    )
 
 
 def test_add_invoice_line_returns_refreshed_invoice_totals(admin_client):
@@ -1301,6 +1339,37 @@ def test_add_invoice_adjustment_allows_negative_discount_line(admin_client):
     assert body["invoice_total_cents"] == 6_000
     assert body["invoice_balance_due_cents"] == 6_000
     assert body["invoice_status"] == "open"
+
+
+def test_add_invoice_adjustment_threads_reason_and_actor_to_the_audit(admin_client):
+    """#1035: the dialog's required Reason was dropped before it reached the
+    writer, so nothing recorded why the parent's bill changed."""
+    calls: list[dict] = []
+
+    async def add_invoice_line(**kwargs) -> dict:
+        calls.append(kwargs)
+        line = {
+            "line_id": "line-1",
+            "invoice_id": "inv-1",
+            "line_type": "adjustment",
+            "description": kwargs["description"],
+            "quantity": 1,
+            "unit_amount_cents": kwargs["unit_amount_cents"],
+            "amount_cents": kwargs["unit_amount_cents"],
+        }
+        invoice = {"total_cents": 0, "balance_due_cents": 0, "status": "open"}
+        return {"line": line, "invoice": invoice}
+
+    admin_client.use_cases.add_invoice_line = add_invoice_line
+
+    response = admin_client.post(
+        "/api/v2/admin/billing/invoices/inv-1/adjustments",
+        json={"description": "Coach benefit", "amount_cents": -7_000, "reason": "Coach child"},
+    )
+
+    assert response.status_code == 201, response.text
+    assert calls[0]["reason"] == "Coach child"
+    assert calls[0]["actor_id"]
 
 
 def test_record_invoice_manual_payment_route(admin_client):

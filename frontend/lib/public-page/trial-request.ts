@@ -28,7 +28,16 @@ export const TRIAL_LIMITS = {
 } as const;
 
 export type TrialField =
-  "name" | "email" | "phone" | "player_age" | "class_id" | "message" | "contact_about_request";
+  | "name"
+  | "email"
+  | "phone"
+  | "player_age"
+  | "class_id"
+  | "slot_key"
+  | "message"
+  | "heard_from"
+  | "contact_about_request"
+  | "turnstile_token";
 
 /** Order the error summary lists fields in (the visual order of the form). */
 export const TRIAL_FIELD_ORDER: TrialField[] = [
@@ -37,8 +46,11 @@ export const TRIAL_FIELD_ORDER: TrialField[] = [
   "phone",
   "player_age",
   "class_id",
+  "slot_key",
   "message",
+  "heard_from",
   "contact_about_request",
+  "turnstile_token",
 ];
 
 export const TRIAL_FIELD_LABEL: Record<TrialField, string> = {
@@ -47,9 +59,45 @@ export const TRIAL_FIELD_LABEL: Record<TrialField, string> = {
   phone: "Phone",
   player_age: "Player's age",
   class_id: "Class",
+  slot_key: "Trial date",
   message: "Anything the coach should know",
+  heard_from: "How did you hear about us",
   contact_about_request: "Contact me about this request",
+  turnstile_token: "Security check",
 };
+
+/** "How did you hear about us?" choices (A6-10); values are plain tokens. */
+export const HEARD_FROM_OPTIONS: { value: string; label: string }[] = [
+  { value: "friend", label: "A friend or family member" },
+  { value: "search", label: "Google or another search" },
+  { value: "facebook", label: "Facebook" },
+  { value: "instagram", label: "Instagram" },
+  { value: "school", label: "School or flyer" },
+  { value: "event", label: "An event" },
+  { value: "other", label: "Something else" },
+];
+
+/**
+ * UTM tags and a family's referral code (`?ref=`, L9 C2) read from the
+ * landing URL; the server keeps only short plain values.
+ */
+const UTM_KEYS = ["utm_source", "utm_medium", "utm_campaign"] as const;
+export type TrialUtm = Partial<
+  Record<(typeof UTM_KEYS)[number] | "referral_code", string>
+>;
+const REFERRAL_CODE = /^[A-Za-z0-9_.-]{1,80}$/;
+
+export function utmFromSearch(search: string): TrialUtm {
+  const params = new URLSearchParams(search);
+  const out: TrialUtm = {};
+  for (const key of UTM_KEYS) {
+    const value = params.get(key)?.trim();
+    if (value) out[key] = value.slice(0, 80);
+  }
+  const ref = params.get("ref")?.trim();
+  if (ref && REFERRAL_CODE.test(ref)) out.referral_code = ref;
+  return out;
+}
 
 export interface TrialFormValues {
   name: string;
@@ -57,11 +105,17 @@ export interface TrialFormValues {
   phone: string;
   player_age: string;
   class_id: string;
+  /** A `trial_dates[].slot_key` to book that date; "" to just ask. */
+  slot_key: string;
   message: string;
+  heard_from: string;
   contact_about_request: boolean;
   marketing_opt_in: boolean;
   /** Honeypot: hidden from people and assistive technology. */
   website: string;
+  /** Cloudflare Turnstile token, only when a date is being booked. */
+  turnstile_token: string;
+  utm: TrialUtm;
 }
 
 export const EMPTY_TRIAL_FORM: TrialFormValues = {
@@ -70,10 +124,14 @@ export const EMPTY_TRIAL_FORM: TrialFormValues = {
   phone: "",
   player_age: "",
   class_id: "",
+  slot_key: "",
   message: "",
+  heard_from: "",
   contact_about_request: false,
   marketing_opt_in: false,
   website: "",
+  turnstile_token: "",
+  utm: {},
 };
 
 export type TrialFieldErrors = Partial<Record<TrialField, string>>;
@@ -126,6 +184,10 @@ export function trialRequestBody(values: TrialFormValues): Record<string, unknow
     contact_about_request: values.contact_about_request,
     marketing_opt_in: values.marketing_opt_in,
     website: values.website,
+    slot_key: optional(values.slot_key),
+    turnstile_token: values.slot_key ? optional(values.turnstile_token) : null,
+    heard_from: optional(values.heard_from),
+    ...values.utm,
   };
 }
 
@@ -147,6 +209,13 @@ export function classifyTrialResponse(status: number, body: unknown): TrialSubmi
   if (status === 200 && isRecord(body) && body.state === "received") return { kind: "received" };
   const error = isRecord(body) && isRecord(body.error) ? body.error : null;
   const message = error && typeof error.message === "string" ? error.message : null;
+  if (status === 409 && error?.code === "Public.SlotUnavailable") {
+    return {
+      kind: "invalid",
+      fields: { slot_key: message ?? "That date has just filled up. Please choose another date." },
+      message: null,
+    };
+  }
   if (status === 409 && error?.code === "Public.TrialsClosed") {
     return {
       kind: "closed",
@@ -202,6 +271,26 @@ export async function submitTrialRequest(
 export interface TrialClassOption {
   value: string;
   label: string;
+  /** Self-bookable trial dates (L9): `value` is the slot key. */
+  dates?: TrialClassOption[];
+}
+
+/** "Saturday, 21 November, 9:00 AM" in the class's own time zone. */
+export function formatTrialDate(startsAt: string, timeZone: string | null): string {
+  const options: Intl.DateTimeFormatOptions = {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    hour: "numeric",
+    minute: "2-digit",
+  };
+  try {
+    return new Intl.DateTimeFormat("en-US", { ...options, timeZone: timeZone ?? undefined }).format(
+      new Date(startsAt),
+    );
+  } catch {
+    return new Intl.DateTimeFormat("en-US", options).format(new Date(startsAt));
+  }
 }
 
 /** Class choices for the select, in page order; a full class says so. */
@@ -215,6 +304,10 @@ export function trialClassOptions(classes: PublicClass[]): TrialClassOption[] {
     return {
       value: cls.public_id,
       label: full ? `${label} (full, join waitlist)` : label,
+      dates: (cls.trial_dates ?? []).map((date) => ({
+        value: date.slot_key,
+        label: formatTrialDate(date.starts_at, cls.timezone),
+      })),
     };
   });
 }

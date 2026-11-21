@@ -24,6 +24,22 @@ export function scheduleSourceLabel(source: string | null | undefined): "Make-up
   return null;
 }
 
+/** The parent-facing reason a date has no class. */
+export function noClassReason(entry: Pick<ParentScheduleEntry, "cancellation_reason">): string {
+  const reason = entry.cancellation_reason?.trim();
+  // A whole-session cancel stamps a machine code, not a sentence.
+  return !reason || reason === "session_cancelled" ? "Class cancelled" : reason;
+}
+
+/**
+ * Whether the academy has published `month` ("YYYY-MM") as final. An academy
+ * that never publishes (`publishedThrough` null) shows every month as final,
+ * which is how the calendar behaved before publishing existed.
+ */
+export function isMonthPublished(month: string, publishedThrough: string | null | undefined): boolean {
+  return !publishedThrough || month <= publishedThrough;
+}
+
 export function scheduleEntryToEvent(
   entry: ParentScheduleEntry,
   { childName, color }: { childName: string; color: string },
@@ -34,7 +50,7 @@ export function scheduleEntryToEvent(
   const labelled = sourceLabel ? `${sourceLabel} — ${base}` : base;
   return {
     id: entry.occurrence_id,
-    title: cancelled ? `Cancelled — ${labelled}` : labelled,
+    title: cancelled ? `No class (${noClassReason(entry)}) — ${labelled}` : labelled,
     // #1043: explicit UTC instants, so the academy-zone grid cannot read a
     // naive timestamp as wall time in its own zone.
     start: calendarInstant(entry.start_at),

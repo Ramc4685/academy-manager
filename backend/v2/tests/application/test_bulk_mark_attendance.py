@@ -8,7 +8,7 @@ ineligible (paused / withdrawn) the rejection must name it.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -25,14 +25,16 @@ from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance imp
 from backend.v2.contexts.coaching.domain.errors import (
     BulkStudentNotEnrolled,
     ConflictAttendanceExists,
+    OccurrenceNotStarted,
 )
 from backend.v2.contexts.coaching.domain.models import Attendance
+from backend.v2.tests.idempotency_fakes import ClaimableStore
 
 FIXED_NOW = datetime(2026, 5, 16, 9, 30, tzinfo=UTC)
 OCC = "occ-2026-05-16"
 
 
-class InMemoryIdempotency:
+class InMemoryIdempotency(ClaimableStore):
     def __init__(self) -> None:
         self.data: dict[str, dict[str, Any]] = {}
 
@@ -80,14 +82,17 @@ class FakeAttendanceRepo:
 
 
 class FakeOccurrenceLookup:
-    def __init__(self, *, template_session_id: str | None = None) -> None:
+    def __init__(
+        self, *, template_session_id: str | None = None, starts_at: datetime = FIXED_NOW
+    ) -> None:
         self.template_session_id = template_session_id
+        self.starts_at = starts_at
 
     async def get(self, occurrence_id: str) -> OccurrenceDetails | None:
         return OccurrenceDetails(
             occurrence_id=occurrence_id,
             session_id="sess-1",
-            starts_at=FIXED_NOW,
+            starts_at=self.starts_at,
             status="scheduled",
             scheduled_coach_id="coach-1",
             template_session_id=self.template_session_id,
@@ -291,3 +296,68 @@ async def test_idempotent_replay_returns_same_result_one_save_each() -> None:
     second = await uc.execute(_cmd("st1", "st-makeup"), coach_id="coach-1")
     assert first == second
     assert len(repo.saved) == 2
+
+
+@pytest.mark.asyncio
+async def test_future_class_batch_is_refused() -> None:
+    repo = FakeAttendanceRepo()
+    uc = _build(
+        attendance_repo=repo,
+        occurrence_lookup=FakeOccurrenceLookup(starts_at=FIXED_NOW + timedelta(days=1)),
+    )
+    with pytest.raises(OccurrenceNotStarted):
+        await uc.execute(_cmd("st1"), coach_id="coach-1")
+    assert repo.saved == []
+
+
+@pytest.mark.asyncio
+async def test_interrupted_batch_replay_finishes_the_remaining_rows() -> None:
+    """A batch cut off after its first row (no idempotency record) must
+    converge on replay instead of 409ing on its own row."""
+    repo = FakeAttendanceRepo()
+    outbox = FakeOutbox()
+    lookup = FakeEnrollmentLookup(active={("sess-1", "st1"), ("sess-1", "st2")})
+    first = _build(attendance_repo=repo, outbox=outbox, enrollment_lookup=lookup)
+    await first.execute(_cmd("st1"), coach_id="coach-1")  # writes row bulk-1:0 only
+
+    replay = _build(attendance_repo=repo, outbox=outbox, enrollment_lookup=lookup)
+    result = await replay.execute(_cmd("st1", "st2"), coach_id="coach-1")
+
+    assert [r.attendance_id for r in result.results] == ["bulk-1:0", "bulk-1:1"]
+    assert sorted(a.attendance_id for a in repo.saved) == ["bulk-1:0", "bulk-1:1"]
+    assert len(outbox.appended) == 2
+
+
+@pytest.mark.asyncio
+async def test_row_from_another_mutation_still_conflicts_the_batch() -> None:
+    repo = FakeAttendanceRepo()
+    lookup = FakeEnrollmentLookup(active={("sess-1", "st1")})
+    await _build(attendance_repo=repo, enrollment_lookup=lookup).execute(
+        _cmd("st1", mutation_id="other"), coach_id="coach-1"
+    )
+    with pytest.raises(ConflictAttendanceExists):
+        await _build(attendance_repo=repo, enrollment_lookup=lookup).execute(
+            _cmd("st1"), coach_id="coach-1"
+        )
+
+
+@pytest.mark.asyncio
+async def test_replay_onto_its_own_voided_row_conflicts() -> None:
+    """An admin voided the batch's row: a replay must not report it as saved."""
+    repo = FakeAttendanceRepo()
+    lookup = FakeEnrollmentLookup(active={("sess-1", "st1")})
+    await _build(attendance_repo=repo, enrollment_lookup=lookup).execute(
+        _cmd("st1"), coach_id="coach-1"
+    )
+    repo.saved = [a.model_copy(update={"status": "voided"}) for a in repo.saved]
+    with pytest.raises(ConflictAttendanceExists):
+        await _build(attendance_repo=repo, enrollment_lookup=lookup).execute(
+            _cmd("st1"), coach_id="coach-1"
+        )
+
+
+def test_batch_size_is_capped() -> None:
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError):
+        _cmd(*[f"st{i}" for i in range(101)])

@@ -143,6 +143,63 @@ async def test_dispatcher_dead_letters_after_attempts_exhausted(db) -> None:
 
 
 @pytest.mark.asyncio
+async def test_dead_letter_logs_an_error_with_its_traceback(db, caplog) -> None:
+    """G:jobs_data_infra:5: a dead letter used to surface only in the next
+    morning's ops digest. The ERROR log reaches Sentry via LoggingIntegration."""
+    import logging
+
+    from backend.v2.shared.events import dispatcher as dispatcher_module
+
+    now = datetime.now(UTC)
+    await db["outbox_events"].insert_one(
+        _event_doc(
+            "alerting",
+            status="pending",
+            attempt_count=MAX_ATTEMPTS - 1,
+            next_retry_at=now,
+            created_at=now,
+        )
+    )
+    dispatcher = EventDispatcher(db, worker_id="worker-alert")
+
+    with caplog.at_level(logging.ERROR, logger=dispatcher_module.__name__):
+        await dispatcher._process_event(await dispatcher._claim_next_event())
+
+    dead = [r for r in caplog.records if r.getMessage().startswith("event_dead_lettered")]
+    assert len(dead) == 1 and dead[0].levelno == logging.ERROR
+    assert str(dead[0].exc_info[1]) == "retry me"
+
+
+@pytest.mark.asyncio
+async def test_unregistered_event_dead_letter_logs_an_error(db, caplog) -> None:
+    import logging
+
+    from backend.v2.shared.events import dispatcher as dispatcher_module
+
+    now = datetime.now(UTC)
+    doc = _event_doc("unknown", status="pending", next_retry_at=now, created_at=now)
+    doc["name"] = "Test.NobodyListens"
+    await db["outbox_events"].insert_one(doc)
+    dispatcher = EventDispatcher(db, worker_id="worker-unknown")
+
+    with caplog.at_level(logging.ERROR, logger=dispatcher_module.__name__):
+        await dispatcher._process_event(await dispatcher._claim_next_event())
+
+    assert [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR] == [
+        "event_dead_lettered name=Test.NobodyListens handler=None"
+        " reason=unregistered_schema_version"
+    ]
+
+
+def test_retries_ride_out_an_hour_long_outage() -> None:
+    from backend.v2.shared.events.dispatcher import RETRY_DELAYS_SECONDS
+
+    # Delay after attempt n is RETRY_DELAYS_SECONDS[n]; the first is dispatch.
+    total = sum(RETRY_DELAYS_SECONDS[1:MAX_ATTEMPTS])
+    assert 50 * 60 <= total <= 70 * 60
+
+
+@pytest.mark.asyncio
 async def test_replay_dead_letter_rewrites_nested_event_id_and_resolves_original(db) -> None:
     _observed_replay_event_ids.clear()
     outbox = MongoOutbox(db)
@@ -286,3 +343,19 @@ def test_audit_only_events_name_real_event_classes() -> None:
         if isinstance(cls, type) and issubclass(cls, DomainEvent) and cls is not DomainEvent
     }
     assert AUDIT_ONLY_EVENTS <= real, AUDIT_ONLY_EVENTS - real
+
+
+def test_every_coaching_event_is_handled_or_audit_only() -> None:
+    """An unhandled coaching event outside AUDIT_ONLY_EVENTS dead-letters on
+    every emit (an admin void did, each time)."""
+    import backend.v2.composition.event_handlers  # noqa: F401  registers handlers
+    from backend.v2.contexts.coaching.domain import events as coaching
+    from backend.v2.shared.events.dispatcher import _REGISTRY, AUDIT_ONLY_EVENTS
+
+    emitted = {
+        (cls.model_fields["name"].default, cls.model_fields["schema_version"].default)
+        for cls in vars(coaching).values()
+        if isinstance(cls, type) and issubclass(cls, DomainEvent) and cls is not DomainEvent
+    }
+    uncovered = emitted - AUDIT_ONLY_EVENTS - set(_REGISTRY)
+    assert not uncovered, uncovered

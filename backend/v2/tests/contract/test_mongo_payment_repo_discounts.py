@@ -176,6 +176,8 @@ async def test_full_month_waiver_still_records_row(db, acad) -> None:
     assert invoice is not None
     assert invoice["total_cents"] == 0
     assert invoice["balance_due_cents"] == 0
+    # #1035: stamped at mint so the send pass delivers "No payment required".
+    assert invoice["zero_net_notice"] is True
 
 
 @pytest.mark.asyncio

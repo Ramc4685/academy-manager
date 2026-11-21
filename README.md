@@ -71,13 +71,14 @@ intended for self-hosting.
 
 | Layer | Technology | Where it runs |
 |---|---|---|
-| Web | Next.js 15 / React 19 (App Router, PWA) | Cloudflare Workers project `academy-next` |
+| Web | Next.js 16 / React 19 (App Router, PWA) | Cloudflare Workers project `academy-next` |
+| Mobile | Capacitor iOS and Android shells around the web app | `mobile/`, checked by `mobile-build-check.yml` |
 | API | FastAPI + Uvicorn (Python 3.12) | Fly.io app `courtmastr-academy-api` (region `ord`) |
 | Database | MongoDB (Atlas) | Managed |
 | Auth / identity | Firebase Authentication | Project `academy-courtmastr` |
 | Payments | Stripe (live mode) | Webhook at `/api/v2/parent/webhooks/stripe` |
 | Transactional email | Resend | Verified `courtmastr.com` sender domain |
-| Scheduler timezone | `America/Chicago` | Set on backend |
+| Scheduler timezone | `America/Chicago` | `SCHEDULER_TZ` in `backend/fly.toml` |
 
 The `academy-next` Cloudflare Worker owns `academy.courtmastr.com/*` directly
 through a Worker Route.
@@ -85,15 +86,19 @@ The legacy CRA app has been removed from the canonical source tree.
 
 ### Deployment pipeline
 
-`.github/workflows/production.yml` is the single GitHub Actions control plane:
+`.github/workflows/production.yml` is the deploy pipeline (other workflows cover
+nightly e2e, release notes, index drift, restore drills and mobile builds):
 
 1. **Validate** — backend compile/tests, v2 DDD boundary checks, and Next.js
    typecheck/lint/build/E2E.
 2. **Production approval** — manual gate (GitHub `production` environment).
-3. **Backend deploy** — `flyctl deploy --remote-only --app courtmastr-academy-api`.
-4. **Frontend deploy** — publish `frontend/` to the Next/Cloudflare Worker.
-5. **Smoke** — `scripts/smoke/production_smoke.sh` against the live URLs.
-6. **Release record** — publish a non-moving, SHA-bearing `deploy-*` GitHub
+3. **Migration dry run** — run pending migrations on a throwaway machine from
+   the exact backend image; the real apply happens in the backend deploy's
+   Fly `release_command`.
+4. **Backend deploy** — `flyctl deploy --remote-only --app courtmastr-academy-api`.
+5. **Frontend deploy** — publish `frontend/` to the Next/Cloudflare Worker.
+6. **Smoke** — `scripts/smoke/production_smoke.sh` against the live URLs.
+7. **Release record** — publish a non-moving, SHA-bearing `deploy-*` GitHub
    Release only when every changed component deployed and smoke passed.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for the operator runbook —
@@ -158,8 +163,12 @@ It is **not** an open-source project.
 ```
 backend/        FastAPI service, deployed to Fly.io
 backend/v2/     Production FastAPI app: DDD contexts, persona BFF routes, migrations, tests
-frontend/       Next.js 15 app (single frontend target, PWA)
-edge/           Retired Cloudflare Worker router kept for historical reference
+frontend/       Next.js 16 app (single frontend target, PWA)
+mobile/         Capacitor iOS and Android shells around the web app
+firebase-emulator/  Local Firebase Auth emulator config
+tests/          Repo-level tests for dev tooling
+memory/         Product requirements notes
+.claude/        Agent roles, workflows and hooks (see docs/agent/agent-roles.md)
 docs/           ADRs, tickets, security matrix, event rules
 scripts/        Smoke tests, importers, ops utilities
 ```

@@ -67,3 +67,15 @@ class MongoLoginAuditRecorder:
                 },
             }
         )
+        # After the audit insert, so a users-write failure cannot lose the
+        # audit row. Once per session: the parent digest reads this to tell a
+        # parent who has signed in from one who never activated.
+        await _stamp_last_login(self._db["users"], user_id, now)
+
+
+async def _stamp_last_login(users: Any, user_id: str, now: datetime) -> None:
+    # Field by field, never an $or across partial-indexed fields (#894).
+    for field in ("user_id", "auth_uid", "_id"):
+        result = await users.update_one({field: user_id}, {"$set": {"last_login_at": now}})
+        if result.matched_count:
+            return

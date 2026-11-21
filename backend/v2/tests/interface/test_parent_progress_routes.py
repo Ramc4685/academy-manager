@@ -131,8 +131,14 @@ class _FakeCertificateRepo:
     async def save(self, cert: SkillCertificate) -> None:
         self._store.append(cert)
 
-    async def list_for_student(self, student_id: str) -> list[SkillCertificate]:
-        return [c for c in self._store if c.student_id == student_id]
+    async def list_for_student(
+        self, student_id: str, *, include_revoked: bool = False
+    ) -> list[SkillCertificate]:
+        return [
+            c
+            for c in self._store
+            if c.student_id == student_id and (include_revoked or c.status != "revoked")
+        ]
 
 
 class _FakeLevelUpRepo:
@@ -409,8 +415,12 @@ def _build_real_parent_progress_app(
     lesson_card: object | None = None,
     journey: object | None = None,
     certificate_detail: object | None = None,
+    milestones: list[object] | None = None,
+    shared_cert: object | None = None,
 ) -> tuple[FastAPI, SimpleNamespace]:
     list_children = _CallableSpy(children)
+    record_milestones = _ExecuteSpy(milestones or [])
+    set_certificate_share = _ExecuteSpy(shared_cert)
     get_program = _ExecuteSpy(
         program
         if program is not None
@@ -458,6 +468,9 @@ def _build_real_parent_progress_app(
             get_in_progress_skills=get_in_progress_skills,
             get_parent_journey=get_parent_journey,
             get_certificate_detail=get_certificate_detail,
+            record_milestones=record_milestones,
+            set_certificate_share=set_certificate_share,
+            certificate_share_url=_fake_share_url,
         ),
     )
 
@@ -476,7 +489,13 @@ def _build_real_parent_progress_app(
         get_lesson_card_for_skill=get_lesson_card_for_skill,
         get_parent_journey=get_parent_journey,
         get_certificate_detail=get_certificate_detail,
+        record_milestones=record_milestones,
+        set_certificate_share=set_certificate_share,
     )
+
+
+async def _fake_share_url(academy_id: str, token: str) -> str:
+    return f"https://{academy_id}.courtmastr.test/c/{token}"
 
 
 def test_parent_progress_summary_returns_owned_children_rows() -> None:
@@ -808,6 +827,26 @@ def test_parent_certificate_detail_returns_own_childs_certificate() -> None:
     ]
 
 
+def test_parent_certificate_detail_carries_the_server_built_share_url() -> None:
+    app, _ = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        certificate_detail=_Dumpable(
+            certificate={"cert_id": "cert-1", "share_token": "tok-abcdefghijklmnop"}, skills=[]
+        ),
+    )
+    shared = TestClient(app).get(f"/api/v2/parent/students/{OWN_STUDENT_ID}/certificates/cert-1")
+    assert shared.json()["share_url"] == (
+        f"https://{ACADEMY_ID}.courtmastr.test/c/tok-abcdefghijklmnop"
+    )
+
+    app, _ = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        certificate_detail=_Dumpable(certificate={"cert_id": "cert-1", "share_token": None}),
+    )
+    unshared = TestClient(app).get(f"/api/v2/parent/students/{OWN_STUDENT_ID}/certificates/cert-1")
+    assert unshared.json()["share_url"] is None
+
+
 def test_parent_certificate_detail_other_child_returns_404_without_lookup() -> None:
     app, spies = _build_real_parent_progress_app(
         children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
@@ -833,3 +872,81 @@ def test_parent_certificate_detail_unknown_cert_returns_404() -> None:
     response = client.get(f"/api/v2/parent/students/{OWN_STUDENT_ID}/certificates/someone-else")
 
     assert response.status_code == 404, response.text
+
+
+# --- L5B PR2: parent opt-in share links and journey milestones -------------------
+
+
+def test_parent_share_and_unshare_call_the_use_case_for_their_own_child() -> None:
+    from backend.v2.contexts.student_progress.application.use_cases.certificate_share import (
+        SetCertificateShareCommand,
+    )
+
+    app, spies = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        shared_cert=SimpleNamespace(share_token="tok-abcdefghijklmnop"),
+    )
+    client = TestClient(app)
+
+    on = client.post(f"/api/v2/parent/students/{OWN_STUDENT_ID}/certificates/cert-1/share")
+    off = client.delete(f"/api/v2/parent/students/{OWN_STUDENT_ID}/certificates/cert-1/share")
+
+    assert on.status_code == 200, on.text
+    # The link is built on the server for the academy's own host, never the
+    # product host the parent may be signed in on (where /c/ is a 404).
+    academy = _parent_claims().academy_id
+    assert on.json() == {
+        "share_token": "tok-abcdefghijklmnop",
+        "share_url": f"https://{academy}.courtmastr.test/c/tok-abcdefghijklmnop",
+    }
+    assert off.status_code == 200, off.text
+    assert spies.set_certificate_share.calls == [
+        (
+            (
+                SetCertificateShareCommand(
+                    student_id=OWN_STUDENT_ID, cert_id="cert-1", actor_id=PARENT_ID, shared=True
+                ),
+            ),
+            {},
+        ),
+        (
+            (
+                SetCertificateShareCommand(
+                    student_id=OWN_STUDENT_ID, cert_id="cert-1", actor_id=PARENT_ID, shared=False
+                ),
+            ),
+            {},
+        ),
+    ]
+
+
+def test_parent_cannot_share_another_familys_certificate() -> None:
+    # Academy membership is not enough: the child must be one of theirs.
+    app, spies = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        shared_cert=SimpleNamespace(share_token="tok-abcdefghijklmnop"),
+    )
+    client = TestClient(app)
+
+    for method in (client.post, client.delete):
+        response = method(f"/api/v2/parent/students/{OTHER_STUDENT_ID}/certificates/cert-1/share")
+        assert response.status_code == 404, response.text
+    assert spies.set_certificate_share.calls == []
+
+
+def test_parent_journey_lists_reached_milestones() -> None:
+    reached = SimpleNamespace(
+        kind="skills_passed", count=10, reached_at=datetime(2026, 11, 3, 18, tzinfo=UTC)
+    )
+    app, spies = _build_real_parent_progress_app(
+        children=[{"student_id": OWN_STUDENT_ID, "full_name": "Owned Student"}],
+        journey=_Journey(None),
+        milestones=[reached],
+    )
+
+    body = TestClient(app).get(f"/api/v2/parent/students/{OWN_STUDENT_ID}/progress-journey").json()
+
+    assert body["milestones"] == [
+        {"kind": "skills_passed", "count": 10, "reached_at": "2026-11-03T18:00:00+00:00"}
+    ]
+    assert spies.record_milestones.calls == [((OWN_STUDENT_ID,), {})]

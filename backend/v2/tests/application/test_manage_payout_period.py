@@ -29,7 +29,9 @@ from backend.v2.contexts.finance.application.use_cases.manage_payout_period impo
 )
 from backend.v2.contexts.finance.domain.payout_audit import PayoutAuditEntry
 from backend.v2.contexts.finance.domain.payout_period import (
+    PAYOUT_TRANSITION_FIELDS,
     PayoutPeriod,
+    PayoutPeriodConflictError,
     PayoutPeriodStateError,
     PayoutWarning,
     PersistedPayoutLine,
@@ -78,18 +80,34 @@ class FakeRepo:
         return period
 
     async def replace(self, period: PayoutPeriod) -> PayoutPeriod:
-        if period.period_id not in self._by_id:
+        current = self._by_id.get(period.period_id)
+        if current is None:
             raise LookupError(period.period_id)
+        if current.version != period.version:
+            # Same refusal as the Mongo repo's version-guarded write (L7).
+            raise PayoutPeriodConflictError(period.period_id)
+        stored = current.model_copy(
+            update={f: getattr(period, f) for f in PAYOUT_TRANSITION_FIELDS}
+            | {"version": current.version + 1}
+        )
         self.replace_calls += 1
-        self._by_id[period.period_id] = period
-        return period
+        self._by_id[period.period_id] = stored
+        return stored
 
     async def replace_with_lines(self, period: PayoutPeriod) -> PayoutPeriod:
-        if period.period_id not in self._by_id:
+        if period.status != "draft":
+            # Same refusal as the Mongo repo: lines change on drafts only.
+            raise PayoutPeriodStateError(period.period_id)
+        current = self._by_id.get(period.period_id)
+        if current is None:
             raise LookupError(period.period_id)
+        if current.version != period.version:
+            # Same refusal as the Mongo repo's version-guarded write (L7).
+            raise PayoutPeriodConflictError(period.period_id)
+        stored = period.model_copy(update={"version": current.version + 1})
         self.replace_with_lines_calls += 1
-        self._by_id[period.period_id] = period
-        return period
+        self._by_id[period.period_id] = stored
+        return stored
 
 
 class FakeAudit:
@@ -186,6 +204,7 @@ def _period(lines: list[PersistedPayoutLine], **overrides) -> PayoutPeriod:
         unpaid_occurrences=[],
         payout_warnings=[],
         generated_at=_dt("2026-06-01T00:00:00"),
+        revenue_basis="invoiced",
     )
     base.update(overrides)
     return PayoutPeriod(**base)
@@ -246,7 +265,7 @@ async def test_recompute_rewrites_lines_and_audits() -> None:
     assert entry.action == "recomputed"
     assert entry.actor_id == "admin-1"
     assert entry.before == {"total_minor": 5000, "line_count": 1}
-    assert entry.after == {"total_minor": 10000, "line_count": 2}
+    assert entry.after == {"total_minor": 10000, "line_count": 2, "version": 1}
 
 
 @pytest.mark.asyncio
@@ -352,7 +371,7 @@ async def test_reopen_paid_period_clears_payment_and_audits_before_snapshot() ->
     assert entry.before is not None
     assert entry.before["status"] == "paid"
     assert entry.before["paid_method"] == "cash"
-    assert entry.after == {"status": "draft", "paid_clawback_acknowledged": True}
+    assert entry.after == {"status": "draft", "paid_clawback_acknowledged": True, "version": 1}
 
 
 @pytest.mark.asyncio
@@ -402,7 +421,7 @@ async def test_override_sets_amount_and_rebuilds_total() -> None:
     assert entry.action == "line_overridden"
     assert entry.occurrence_id == "occ-1"
     assert entry.before == {"amount_minor": 5000, "total_minor": 8000}
-    assert entry.after == {"amount_minor": 6500, "total_minor": 9500}
+    assert entry.after == {"amount_minor": 6500, "total_minor": 9500, "version": 1}
 
 
 @pytest.mark.asyncio

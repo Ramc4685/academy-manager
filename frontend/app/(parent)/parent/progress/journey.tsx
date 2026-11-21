@@ -220,6 +220,48 @@ export function SkillChecklist({ skills }: { skills: Journey["skills"] }) {
   );
 }
 
+/** "10 skills mastered" / "1 level completed". */
+export function milestoneLabel(m: { kind: string; count: number }): string {
+  const noun =
+    m.kind === "levels_completed"
+      ? m.count === 1 ? "level completed" : "levels completed"
+      : m.count === 1 ? "skill mastered" : "skills mastered";
+  return `${m.count} ${noun}`;
+}
+
+/** Milestones the academy celebrates (Settings > Curriculum); nothing when off. */
+export function MilestoneList({
+  milestones,
+  firstName,
+}: {
+  milestones: NonNullable<Journey["milestones"]>;
+  firstName: string;
+}) {
+  if (milestones.length === 0) return null;
+  // Newest first, like the wins below.
+  const sorted = [...milestones].sort((a, b) => b.reached_at.localeCompare(a.reached_at));
+  return (
+    <div className="space-y-2" data-testid="parent-journey-milestones">
+      <h2 className="font-display text-base font-bold text-rally-ink">Milestones</h2>
+      <ul className="space-y-2">
+        {sorted.map((m) => (
+          <li
+            key={`${m.kind}:${m.count}`}
+            className="flex flex-col gap-1 rounded-[14px] border border-rally-volt-300 bg-rally-volt-100 px-3.5 py-3"
+          >
+            <p className="text-xs font-bold text-rally-volt-700">
+              {formatWinDate(m.reached_at)} · Milestone
+            </p>
+            <p className="text-sm font-bold text-rally-ink">
+              {firstName}: {milestoneLabel(m)}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function RecentWins({ wins, studentId }: { wins: JourneyWin[]; studentId: string }) {
   if (wins.length === 0) return null;
   return (

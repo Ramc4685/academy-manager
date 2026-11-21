@@ -28,6 +28,7 @@ from pymongo.errors import WriteError
 
 from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopay import (
     ChargeInvoiceViaAutopay,
+    autopay_idempotency_key,
 )
 from backend.v2.contexts.billing.application.use_cases.parent_billing import (
     GetCheckoutStatus,
@@ -198,7 +199,7 @@ async def test_direct_setup_then_autopay_runs_entirely_on_the_academy_account(re
         doc["stripe_customer_id"],
         doc["default_payment_method_id"],
     )
-    assert pi["idempotency_key"] == f"autopay:{INVOICE}:2026-09:10000:acct:{ACCT}"
+    assert pi["idempotency_key"] == autopay_idempotency_key(INVOICE, None) + f":acct:{ACCT}"
     assert stripe.account_of(pi["id"]) == ACCT
 
 
@@ -222,8 +223,12 @@ async def test_a_platform_card_is_never_charged_on_the_connected_account(real_db
     )
     await _seed_invoice(real_db, ACAD)
 
-    with tenant_scope(ACAD), pytest.raises(ValueError, match="no_saved_payment_method"):
-        await _charge(real_db, stripe).execute(INVOICE)
+    with tenant_scope(ACAD):
+        result = await _charge(real_db, stripe).execute(INVOICE)
+
+    # A normal "parent action needed" result since L1 A4-1, not an exception.
+    assert result.success is False
+    assert result.decline_code == "no_saved_payment_method"
 
     assert stripe.off_session_payment_intents == []
 
@@ -253,7 +258,7 @@ async def test_house_autopay_keeps_the_platform_search_and_key(real_db) -> None:
     pi = stripe.off_session_payment_intents[-1]
     assert pi["stripe_account"] is None
     assert (pi["customer_id"], pi["payment_method_id"]) == ("cus_house", "pm_house")
-    assert pi["idempotency_key"] == f"autopay:{INVOICE}:2026-09:10000"
+    assert pi["idempotency_key"] == autopay_idempotency_key(INVOICE, None)
     assert pi["application_fee_amount"] is None
 
 

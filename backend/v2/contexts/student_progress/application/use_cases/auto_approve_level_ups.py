@@ -25,6 +25,7 @@ from backend.v2.contexts.student_progress.application.use_cases.review_level_up 
 )
 from backend.v2.contexts.student_progress.domain.errors import (
     EnrollmentEnded,
+    LevelNotConfigured,
     RecommendationAlreadyReviewed,
 )
 from backend.v2.contexts.student_progress.domain.logic import check_level_completion
@@ -34,7 +35,7 @@ log = logging.getLogger(__name__)
 AUTO_REVIEWER = "system:auto_level_up"
 
 #: rec_id -> certificate display fields (student_name, level_name,
-#: program_name, level_sequence). Resolved by the caller, as the admin
+#: program_name). Resolved by the caller, as the admin
 #: approve route does, because the names live outside this context.
 CertificateDisplayResolver = Callable[[str], Awaitable[dict[str, object]]]
 
@@ -81,7 +82,7 @@ class AutoApproveLevelUps:
                 continue
             display = await display_for(rec.rec_id)
             try:
-                await self._review.execute(
+                result = await self._review.execute(
                     ReviewLevelUpCommand(
                         rec_id=rec.rec_id,
                         action="approve",
@@ -89,12 +90,20 @@ class AutoApproveLevelUps:
                         student_name=str(display.get("student_name") or ""),
                         level_name=str(display.get("level_name") or ""),
                         program_name=str(display.get("program_name") or ""),
-                        level_sequence=int(display.get("level_sequence") or 1),  # type: ignore[call-overload]
                     )
                 )
-                approved += 1
+                if result.status == "COMPLETED":
+                    approved += 1
+                else:  # superseded by a placement: closed, nothing approved
+                    skipped += 1
+            except LevelNotConfigured as exc:
+                # The next level was retired: only the owner can place or reject.
+                log.info(
+                    "auto_level_up_needs_owner", extra={"rec_id": rec.rec_id, "reason": exc.code}
+                )
+                needs_owner += 1
             except (EnrollmentEnded, RecommendationAlreadyReviewed) as exc:
-                # Withdrawn student, or the owner/coach acted first: leave it.
+                # Withdrawn student, or the owner/coach acted first.
                 log.info("auto_level_up_skipped", extra={"rec_id": rec.rec_id, "reason": exc.code})
                 skipped += 1
         return AutoApproveLevelUpsResult(

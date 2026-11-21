@@ -16,11 +16,14 @@ from pymongo.errors import OperationFailure
 
 from backend.v2.composition.absence_notifications import compose_absence_notifier
 from backend.v2.composition.ai_video_consent import compose_parent_ai_video_consent
+from backend.v2.composition.calendar_feed import compose_calendar_feed
+from backend.v2.composition.families import compose_system_family_autopay_pause
 from backend.v2.composition.level_up_lifecycle import compose_expire_level_up_recommendations
 from backend.v2.composition.lifecycle_billing import (
     build_autopay_status_gateway,
     compose_enrollment_billing_sync,
 )
+from backend.v2.composition.occurrence_cancellation import StudentPresenceAdapter
 from backend.v2.composition.pathway import (
     CurriculumComposition,
     StudentProgressComposition,
@@ -102,6 +105,9 @@ from backend.v2.contexts.billing.domain.plan_price_change import next_period
 from backend.v2.contexts.billing.infrastructure.mongo_autopay_consent_repo import (
     MongoAutopayConsentRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_billing_audit_log import (
+    MongoBillingAuditLogRepository,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo import (
     MongoBillingCounterRepository,
 )
@@ -126,6 +132,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_re
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_dispute_repo import (
     MongoPaymentDisputeRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_payment_intent_directory import (
+    MongoPaymentIntentDirectory,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
@@ -152,6 +161,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_subscription_repo import (
 from backend.v2.contexts.billing.infrastructure.mongo_unretired_checkout_repo import (
     MongoUnretiredCheckoutSessionRepository,
 )
+from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
+    MongoAttendanceRepository,
+)
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
     ListParentAbsences,
     SubmitAbsenceNotice,
@@ -176,6 +188,7 @@ from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_
 )
 from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
     ListEligibleMakeupTargets,
+    ListMakeupCandidates,
     ListParentMakeups,
     SubmitMakeupRequest,
 )
@@ -296,6 +309,7 @@ from backend.v2.shared.comms import Message, MongoMessageRepository
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
+from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.profile.completeness import (
     MEDICAL_NONE_SENTINEL,
     ChildFacts,
@@ -425,6 +439,11 @@ class ParentComposition:
     resolve_assigned_classes: object = None
     # Per-child AI/video opt-in and revoke (Phase 3 E1).
     ai_video_consent: object = None
+    # Phone-calendar subscription (composition/calendar_feed.py); None when
+    # the sign-in repos were not passed in.
+    calendar_feed: object = None
+    # #1037/#1041: parent makeup picker candidates (server-eligible missed classes).
+    list_makeup_candidates: ListMakeupCandidates | None = None
 
 
 class _MongoTransactionRunner:
@@ -696,8 +715,10 @@ def compose_parent_webhook_handler(
             academy_id,
             directory=MongoConnectedAccountDirectory(db),
         ),
+        payment_intent_owners=MongoPaymentIntentDirectory(db),
         payment_disputes=MongoPaymentDisputeRepository(db),
         platform_plan_sync=compose_platform_plan_sync(db, stripe=stripe).execute,
+        family_autopay=compose_system_family_autopay_pause(db),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -706,6 +727,8 @@ def compose_parent_webhook_handler(
         if settings.env == "test"
         else None,
         tenancy_mode=settings.tenancy_mode,
+        academy_timezone=academy_timezone_lookup(db),
+        billing_audit=MongoBillingAuditLogRepository(db),
     )
 
 
@@ -717,6 +740,8 @@ def compose_parent(
     *,
     academy_id: str | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    auth_users: Any | None = None,
+    auth_memberships: Any | None = None,
 ) -> ParentComposition:
     """`clock` is the seam the checkout-start path prices against.
 
@@ -865,8 +890,10 @@ def compose_parent(
             academy_id,
             directory=MongoConnectedAccountDirectory(db),
         ),
+        payment_intent_owners=MongoPaymentIntentDirectory(db),
         payment_disputes=MongoPaymentDisputeRepository(db),
         platform_plan_sync=compose_platform_plan_sync(db, stripe=stripe).execute,
+        family_autopay=compose_system_family_autopay_pause(db),
         outbox=outbox,
         academy_id=academy_id,
         expected_livemode=True
@@ -875,6 +902,8 @@ def compose_parent(
         if settings.env == "test"
         else None,
         tenancy_mode=settings.tenancy_mode,
+        academy_timezone=academy_timezone_lookup(db),
+        billing_audit=MongoBillingAuditLogRepository(db),
     )
     quote_enrollment_uc = QuoteEnrollment(
         sessions=payments_repo,
@@ -932,6 +961,7 @@ def compose_parent(
     )
     list_parent_absences = ListParentAbsences(notices=absence_notices_repo)
 
+    student_presence = StudentPresenceAdapter(MongoAttendanceRepository(db))
     submit_makeup_request = SubmitMakeupRequest(
         students=students_query,
         occurrences=occurrences_query,
@@ -939,8 +969,19 @@ def compose_parent(
         notices=absence_notices_repo,
         makeups=makeup_requests_repo,
         policies=self_service_policies_repo,
+        attendance=student_presence,
     )
     list_parent_makeups = ListParentMakeups(makeups=makeup_requests_repo)
+    list_makeup_candidates = ListMakeupCandidates(
+        students=students_query,
+        enrollments=enrollments_query,
+        occurrences=occurrences_query,
+        sessions=sessions_query,
+        notices=absence_notices_repo,
+        makeups=makeup_requests_repo,
+        policies=self_service_policies_repo,
+        attendance=student_presence,
+    )
     list_eligible_makeup_targets = ListEligibleMakeupTargets(
         students=students_query,
         occurrences=occurrences_query,
@@ -948,6 +989,7 @@ def compose_parent(
         enrollments=enrollments_query,
         occurrence_roster=occurrence_roster_repo,
         policies=self_service_policies_repo,
+        guests=trial_requests_repo,
     )
 
     class _TrialsOpenGate:
@@ -1517,9 +1559,8 @@ def compose_parent(
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
         if not by_id:
             return []
-        billing_customer = await db["parent_billing_customers"].find_one(
-            {"academy_id": academy_id, "parent_id": parent_id}
-        )
+        # #981: a card on another Stripe account than autopay charges is no card.
+        billing_customer = await parent_customers_repo.get_display_customer(parent_id=parent_id)
         autopay_payment_method_type = None
         autopay_payment_method_label = None
         autopay_payment_method_last4 = None
@@ -1954,6 +1995,7 @@ def compose_parent(
         success_url: str,
         cancel_url: str,
         enroll_autopay: bool = False,
+        bundle_student_balance: bool = False,
     ):
         _validate_checkout_redirect_urls(success_url, cancel_url)
         # Tenant-scoped fetch first, then ownership against every id the
@@ -1991,7 +2033,11 @@ def compose_parent(
             settings=billing_settings_repo,
             success_url=redirect_success_url,
             cancel_url=cancel_url,
-        ).execute(invoice_id, enroll_autopay=enroll_autopay)
+        ).execute(
+            invoice_id,
+            enroll_autopay=enroll_autopay,
+            bundle_student_balance=bundle_student_balance,
+        )
         if not result.checkout_url:
             # Still 409, but now with a machine-readable code and the concrete
             # reason SendInvoice recorded (issue #426) instead of a bare string.
@@ -2113,6 +2159,9 @@ def compose_parent(
         idempotency_key = idempotency_key_with_fee(idempotency_key, fee_cents)
         # House: unchanged key. A direct charge scopes it to the academy account.
         idempotency_key = route.idempotency_key(idempotency_key)
+        # One key per attempt, same as SendInvoice: a fixed key replays the
+        # first (possibly dead) session for 24h.
+        idempotency_key = f"{idempotency_key}:attempt-{new_ulid()}"
         # Same reasoning as the single-invoice path (issue #635): every return
         # needs a checkout_session_id so the settlement poll can run, and the
         # opted-in case also picks up autopay activation from it.
@@ -2601,6 +2650,7 @@ def compose_parent(
                 "brand_color": None,
                 "self_service": self_service,
                 "payment_instructions": policy.payment_instructions or None,
+                "schedule_published_through": policy.schedule_published_through,
             }
         return {
             "display_name": str(doc.get("display_name") or "Academy"),
@@ -2613,6 +2663,7 @@ def compose_parent(
             "brand_color": doc.get("brand_color"),
             "self_service": self_service,
             "payment_instructions": policy.payment_instructions or None,
+            "schedule_published_through": policy.schedule_published_through,
         }
 
     async def get_child_schedule(
@@ -3025,6 +3076,7 @@ def compose_parent(
         submit_makeup_request=submit_makeup_request,
         list_parent_makeups=list_parent_makeups,
         list_eligible_makeup_targets=list_eligible_makeup_targets,
+        list_makeup_candidates=list_makeup_candidates,
         submit_trial_request=submit_trial_request,
         list_parent_trial_requests=list_parent_trial_requests,
         preview_self_cancel=preview_self_cancel,
@@ -3039,6 +3091,20 @@ def compose_parent(
         get_parent_home=get_parent_home,
         resolve_assigned_classes=resolve_assigned_classes,
         ai_video_consent=compose_parent_ai_video_consent(db),
+        # The feed checks access with sign-in's own repos; without them there
+        # is no feed at all (fail closed), not a weaker check.
+        calendar_feed=(
+            compose_calendar_feed(
+                db,
+                list_children_for_parent=list_children_for_parent,
+                get_child_schedule=get_child_schedule,
+                users=auth_users,
+                memberships=auth_memberships,
+                clock=clock,
+            )
+            if auth_users is not None and auth_memberships is not None
+            else None
+        ),
         # #828: claiming a held seat inside the three-day window.
         confirm_waitlist_offer=compose_confirm_waitlist_offer(db, settings),
         decline_waitlist_offer=compose_decline_waitlist_offer(db, promote=promote),

@@ -19,6 +19,15 @@ The only public write. Order of decisions, each before the next can run:
 5. **One contact** through CRM's ``CreateContact`` (source ``website``), which
    dedupes a repeat to the row already on file.
 
+**Self-booking (L9, only while ``public_page.self_book_trials`` is on).** A
+``slot_key`` from the page's ``trial_dates`` books that date: the key is
+resolved against this academy's bookable dates (an unknown key is treated as
+absent, so the request is a plain inquiry), Cloudflare Turnstile must pass
+(fail closed: a failed check books nothing and files a plain inquiry with the
+same acknowledgement), and a date that is no longer
+open answers ``409 Public.SlotUnavailable``, the one new answer. A booking
+refused by the per-mailbox or per-academy limits quietly stays an inquiry.
+
 The acknowledgement is the same status, body and headers for a new inquiry,
 a repeat and a honeypot hit, and so is the work on the response path: the
 owner email is ALWAYS handed to ``BackgroundTasks`` and the adapter decides
@@ -39,8 +48,13 @@ from backend.v2.composition.public_trial_requests import PublicTrialRequests
 from backend.v2.contexts.crm.application.use_cases.submit_website_inquiry import (
     WebsiteInquiryForm,
 )
+from backend.v2.contexts.enrollment.application.use_cases.trial_guest_booking import (
+    BookTrialGuestCommand,
+)
 from backend.v2.interfaces.public.academy_page_routes import not_found_response
 from backend.v2.interfaces.public.dtos import PublicTrialFormRequest, PublicTrialRequestAckDto
+from backend.v2.shared.http.client_ip import request_ip
+from backend.v2.shared.http.rate_limit import request_host
 from backend.v2.shared.tenancy.context import tenant_scope
 
 router = APIRouter()
@@ -71,6 +85,14 @@ def _trials_closed() -> JSONResponse:
         409,
         "Public.TrialsClosed",
         "Free trials are paused right now. You can still register for a class with open places.",
+    )
+
+
+def _slot_unavailable() -> JSONResponse:
+    return _error(
+        409,
+        "Public.SlotUnavailable",
+        "That date has just filled up. Please choose another date.",
     )
 
 
@@ -137,7 +159,12 @@ def _form(body: PublicTrialFormRequest) -> WebsiteInquiryForm:
     response_model=PublicTrialRequestAckDto,
     responses={
         404: {"description": "No published academy page on this host."},
-        409: {"description": "Trials are switched off (Public.TrialsClosed)."},
+        409: {
+            "description": (
+                "Trials are switched off (Public.TrialsClosed), or the chosen trial "
+                "date is no longer open (Public.SlotUnavailable)."
+            )
+        },
         413: {"description": "Request body too large."},
         422: {"description": "Invalid fields (Public.InvalidTrialRequest, details.fields)."},
     },
@@ -164,13 +191,33 @@ async def submit_trial_request(request: Request, background_tasks: BackgroundTas
         errors = form.errors()
         if errors:
             return _invalid(errors)
-        class_id = (body.class_id or "").strip() or None
+        settings = profile.settings
+        slot_key = (body.slot_key or "").strip()
+        date = (
+            await deps.list_trial_dates.find(
+                academy_id, slot_key, guest_cap=settings.trial_guest_cap
+            )
+            if slot_key and settings.self_book_trials
+            else None
+        )
+        if date is not None and not await deps.turnstile.verify(
+            body.turnstile_token, remote_ip=request_ip(request), hostname=request_host(request)
+        ):
+            # A failed check books nothing but never loses the inquiry: it is
+            # filed as a plain one (a bot could omit slot_key anyway).
+            date = None
+        # A booked date names its class; it wins over any class_id sent with it.
+        class_id = (
+            date.class_public_id if date is not None else (body.class_id or "").strip() or None
+        )
         choice = await deps.resolve_class_choice.execute(academy_id, class_id)
         if choice.unknown_id:
             return _invalid(
                 {"class_id": "That class is not taking requests. Choose another or leave it blank."}
             )
         chosen = choice.chosen
+        if date is not None and not date.open:
+            return _slot_unavailable()
         if _filled(body.website):
             # Honeypot: same acknowledgement, same background hand-off, no
             # write. Checked only after the same validation and published-class
@@ -187,21 +234,57 @@ async def submit_trial_request(request: Request, background_tasks: BackgroundTas
             return _ack()
         # A trial needs a seat to try: a full chosen class, or an academy with
         # nothing open (or nothing listed yet), files the inquiry as a lead
-        # (the waitlist and "tell me when classes open" variants).
-        wants_trial = (not chosen.full) if chosen is not None else choice.any_open
+        # (the waitlist and "tell me when classes open" variants). A booking
+        # starts as a lead and becomes a trial only once a seat is taken, so a
+        # booking refused on a limit stays a lead.
+        wants_trial = date is None and (
+            (not chosen.full) if chosen is not None else choice.any_open
+        )
         result = await deps.submit_inquiry.execute(
             form,
             requested_session_id=chosen.session_id if chosen else None,
             pipeline_status="trial" if wants_trial else "lead",
-            privacy_notice_url=profile.settings.privacy_notice_url,
+            privacy_notice_url=settings.privacy_notice_url,
+            attribution={
+                "heard_from": body.heard_from,
+                "utm_source": body.utm_source,
+                "utm_medium": body.utm_medium,
+                "utm_campaign": body.utm_campaign,
+                "referral_code": body.referral_code,
+            },
         )
-        if result.field_errors:
+        if result.field_errors or result.contact is None:
             return _invalid(result.field_errors)
+        booking = None
+        contact = result.contact
+        if date is not None:
+            assert contact.email is not None  # the public form requires an email
+            booked = await deps.book_trial.execute(
+                BookTrialGuestCommand(
+                    academy_id=academy_id,
+                    date=date,
+                    contact_id=contact.contact_id,
+                    email=contact.email,
+                    guest_name=contact.name,
+                    guest_age=contact.child_age,
+                )
+            )
+            if booked.refused == "full":
+                # The contact is on file with its owner alert due: the A6-11
+                # sweep tells the owners even though this answer is a 409.
+                return _slot_unavailable()
+            booking = booked.booking
+            if booking is not None:
+                contact = await deps.contacts.promote_lead_to_trial(contact.contact_id) or contact
     background_tasks.add_task(
         deps.notifier.notify,
         academy_id=academy_id,
-        contact=result.contact,
+        contact=contact,
         created=result.created,
         class_title=chosen.title if chosen else None,
+        alert_owner=result.alert_owner,
+        booking=booking,
+        booked_start=date.start_at if booking is not None and date is not None else None,
+        date_requested=date is not None and booking is None,
     )
     return _ack()

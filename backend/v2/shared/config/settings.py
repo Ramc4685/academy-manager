@@ -6,6 +6,7 @@ direct os.environ reads outside this module.
 
 from __future__ import annotations
 
+import logging
 import os
 from functools import lru_cache
 from typing import Annotated, Literal
@@ -182,10 +183,48 @@ class Settings(BaseSettings):
             "key would be worse than not verifying at all (cf. issue #547)."
         ),
     )
+    turnstile_secret_key: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Cloudflare Turnstile secret (V2_TURNSTILE_SECRET_KEY) for public self-booked "
+            "trials (L9). Set => a booking without a valid token is refused (fail closed). "
+            "Unset => the check is skipped (dev, CI)."
+        ),
+    )
     sender_email: str | None = Field(default=None)
     email_delivery_enabled: bool = Field(
         default=False,
         description="When True and resend_api_key is set, emails are sent via Resend. Stub adapter used otherwise.",
+    )
+    marketing_sender_email: str | None = Field(
+        default=None,
+        description=(
+            "From address for campaign (marketing) mail (L11). Unset => campaigns leave "
+            "from the transactional sender, as before."
+        ),
+    )
+    email_send_max_retries: int = Field(
+        default=0,
+        ge=0,
+        le=5,
+        description=(
+            "Extra attempts per email after a provider 429, or a 5xx when the send carries "
+            "an idempotency key (L11). 0 => one attempt, as before."
+        ),
+    )
+    campaign_background_send_enabled: bool = Field(
+        default=False,
+        description=(
+            "Campaigns are queued by the request and sent by a once-a-minute resumable "
+            "job (L11). Off => campaigns send inside the HTTP request, as before."
+        ),
+    )
+    email_list_unsubscribe_enabled: bool = Field(
+        default=False,
+        description=(
+            "Campaign mail carries RFC 8058 List-Unsubscribe headers and the academy's "
+            "postal address in its footer (L11). Needs unsubscribe_token_secret."
+        ),
     )
     ai_enabled: bool = Field(
         default=False,
@@ -196,6 +235,14 @@ class Settings(BaseSettings):
     )
     anthropic_api_key: SecretStr | None = Field(default=None)
 
+    push_extra_events: str = Field(
+        default="",
+        description=(
+            "Comma-separated opt-in push events (L11): direct_message, academy_broadcast, "
+            "class_announcement. Empty => only the four original events push. "
+            "PUSH_DELIVERY_ENABLED stays the global switch."
+        ),
+    )
     push_delivery_enabled: bool = Field(
         default=False,
         description=(
@@ -246,6 +293,23 @@ class Settings(BaseSettings):
         if isinstance(value, list | tuple):
             return ",".join(str(item) for item in value)
         return str(value or "")
+
+    @field_validator("marketing_sender_email", mode="before")
+    @classmethod
+    def _validate_marketing_sender(cls, value: object) -> str | None:
+        """One clean address or ``None``. Checked once, when settings load: a
+        typo or a header-breaking newline would otherwise fail every campaign
+        at the provider, so it is dropped with an error log and campaigns
+        leave from the transactional sender."""
+        from backend.v2.shared.comms.sender_identity import InvalidSenderValue, validate_reply_to
+
+        try:
+            return validate_reply_to(value if isinstance(value, str) else None)
+        except InvalidSenderValue:
+            logging.getLogger(__name__).error(
+                "marketing_sender_email_invalid: campaigns use the transactional sender"
+            )
+            return None
 
     @field_validator("sentry_cron_jobs", mode="before")
     @classmethod
@@ -394,6 +458,26 @@ class Settings(BaseSettings):
         See :func:`resolve_sender_address` — the one place this is decided.
         """
         return resolve_sender_address(self.sender_email, self.frontend_url)
+
+    def email_config_warnings(self) -> dict[str, str]:
+        """Production email that runs without bounce ingestion or one-click
+        unsubscribe (L11 item 9), as ``{opaque code: detail}``. Never fatal:
+        mail still goes out, it just cannot learn from bounces or honour links.
+        The public /healthz shows only the codes; the detail, which names the
+        secret, goes to the boot log and Sentry."""
+        if self.env != "prod" or not (self.email_delivery_enabled and self.resend_api_key):
+            return {}
+        warnings: dict[str, str] = {}
+        if not self.resend_webhook_secret:
+            warnings["email_bounce_ingestion_off"] = (
+                "RESEND_WEBHOOK_SECRET is unset: bounces and complaints are not ingested, "
+                "so dead addresses keep being mailed"
+            )
+        if not self.unsubscribe_token_secret:
+            warnings["email_unsubscribe_links_off"] = (
+                "UNSUBSCRIBE_TOKEN_SECRET is unset: digests and campaigns carry no unsubscribe link"
+            )
+        return warnings
 
     def _validate_production_settings(self) -> None:
         if self.env != "prod":

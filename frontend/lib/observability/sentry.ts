@@ -40,7 +40,7 @@ let sdk: Promise<Sentry | null> | null = null;
 
 /**
  * Drop the query string (and fragment) from a URL. The app carries live
- * credentials and PII in query strings — `/auth/magic?t=<login token>`,
+ * credentials and PII in query strings —
  * `/auth/action?oobCode=<password-reset code>`, `/unsubscribe?t=<token>`,
  * `/login?email=<address>` — and the SDK's default integrations would ship
  * them on every event: `httpContextIntegration` stamps `event.request.url`
@@ -118,14 +118,22 @@ export function initSentry(): Promise<Sentry | null> {
         release: process.env.NEXT_PUBLIC_SENTRY_RELEASE || undefined,
         // Every error event, plus a sampled slice of navigation/fetch spans
         // via browserTracingIntegration (matches the backend's 0.2 sample
-        // rate). The SDK default for PII is already off; keep it explicit so
-        // a future default flip cannot start shipping IPs/cookies.
+        // rate).
         integrations: [mod.browserTracingIntegration()],
         sampleRate: 1,
         tracesSampleRate: 0.2,
-        sendDefaultPii: false,
-        // Query strings carry magic-link tokens, Firebase oobCodes and parent
-        // emails; strip them before anything leaves the browser.
+        // SDK v11 replaced sendDefaultPii with dataCollection, which defaults
+        // to collecting everything. Turn it all off: userInfo also gates the
+        // auto IP address, and no cookies, headers, bodies or query params.
+        dataCollection: {
+          userInfo: false,
+          cookies: false,
+          httpHeaders: false,
+          httpBodies: [],
+          urlQueryParams: false,
+        },
+        // Query strings carry unsubscribe tokens, Firebase oobCodes and
+        // parent emails; strip them before anything leaves the browser.
         beforeSend: scrubEventUrls,
         beforeBreadcrumb: scrubBreadcrumbUrls,
       });

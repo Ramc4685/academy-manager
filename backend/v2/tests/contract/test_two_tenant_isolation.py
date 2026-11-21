@@ -136,6 +136,12 @@ def _ids(academy: str) -> dict[str, str]:
         # Scheduled plan price changes (PR 26) are unseeded: cancelling B's
         # id from A must still find nothing.
         "change_id": f"{academy}-price-change-1",
+        # An inquiry-only referral awaiting the owner's review (L9 C2), with
+        # the programme on, so approving B's id from A reaches the CAS.
+        "referral_id": f"{academy}-referral-1",
+        # A coach's private class report handed to the owner (sent_to_owner,
+        # unresolved), so resolving B's id from A has a real B row to hit.
+        "report_id": f"{academy}-class-report-1",
     }
 
 
@@ -547,6 +553,73 @@ def _seed_docs(academy: str) -> dict[str, list[dict[str, Any]]]:
                 "outcome": None,
                 "outcome_by": None,
                 "outcome_at": None,
+            }
+        ],
+        "referrals": [
+            {
+                "referral_id": ids["referral_id"],
+                "academy_id": academy,
+                "referral_code": "QZ7KX4MP",
+                "referrer_parent_id": ids["parent_id"],
+                "referred_parent_id": f"{academy}-referred-parent",
+                "source": "contact",
+                "source_id": ids["contact_id"],
+                "attributed_at": NOW,
+                "status": "needs_review",
+                "created_at": NOW,
+                "updated_at": NOW,
+            }
+        ],
+        # One shared recap per class (GET/PUT /coach/occurrences/{id}/class-recap)
+        # and one owner handoff (admin /class-reports/handoffs, resolve POST).
+        "class_recaps": [
+            {
+                "recap_id": f"{academy}-class-recap-1",
+                "academy_id": academy,
+                "occurrence_id": ids["occurrence_id"],
+                "session_id": ids["session_id"],
+                "class_starts_at": NOW,
+                "taught_skill_ids": [f"{academy}-skill-1"],
+                "practice": [
+                    {"student_id": ids["student_id"], "skill_ids": [f"{academy}-skill-1"]}
+                ],
+                "revision": 1,
+                "last_mutation_id": None,
+                "source": "direct",
+                "source_report_id": None,
+                "updated_by": ids["coach_id"],
+                "updated_at": NOW,
+            }
+        ],
+        "class_recap_reports": [
+            {
+                "report_id": ids["report_id"],
+                "academy_id": academy,
+                "occurrence_id": ids["occurrence_id"],
+                "class_starts_at": NOW,
+                "author_id": ids["coach_id"],
+                "text": "Private coach note",
+                "submitted_at": NOW,
+                "outcome": "sent_to_owner",
+                "ai_used": False,
+                "questions": [],
+                "pass_claims": [],
+                "applied_revision": None,
+                "resolved_by": None,
+                "resolved_at": None,
+            }
+        ],
+        "billing_settings": [
+            {
+                "academy_id": academy,
+                "referral_program": {
+                    "enabled": True,
+                    "referrer_credit_cents": 2_500,
+                    "hold_days": 7,
+                    "max_rewards_per_referrer_per_year": 10,
+                    "trigger": "first_paid_invoice",
+                    "effective_from": NOW,
+                },
             }
         ],
         # Same shape as MongoCrmContactRepository._to_doc (no dedupe_key).

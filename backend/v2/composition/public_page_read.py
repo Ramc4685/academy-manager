@@ -17,17 +17,38 @@ from backend.v2.contexts.enrollment.application.use_cases.public_catalog import 
     CoachNameDirectory,
     ListPublicCatalog,
 )
+from backend.v2.contexts.enrollment.application.use_cases.trial_guest_booking import (
+    ListBookableTrialDates,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
+    MongoSessionOccurrenceRepository,
+)
+from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_roster_repo import (
+    MongoOccurrenceRosterRepository,
+)
 from backend.v2.contexts.enrollment.infrastructure.mongo_program_repo import (
     MongoProgramRepository,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
 )
+from backend.v2.contexts.enrollment.infrastructure.mongo_trial_request_repo import (
+    MongoTrialRequestRepository,
+)
 from backend.v2.contexts.identity.application.public_academy_profile import (
     GetPublicAcademyProfile,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
+)
+from backend.v2.contexts.student_progress.application.use_cases.certificate_share import (
+    GetSharedCertificate,
+)
+from backend.v2.contexts.student_progress.infrastructure.mongo_certificate_repo import (
+    MongoSkillCertificateRepository,
+)
+from backend.v2.contexts.student_progress.infrastructure.mongo_progress_settings_repo import (
+    MongoProgressSettingsRepository,
 )
 
 
@@ -37,6 +58,9 @@ class PublicPageRead:
     list_catalog: ListPublicCatalog
     coach_names: CoachNameDirectory
     profile_coach_names: ProfileCoachNames
+    list_trial_dates: ListBookableTrialDates
+    #: L5B: the parent-shared certificate page (``/c/<token>``).
+    get_shared_certificate: GetSharedCertificate
 
 
 class _MemberCoachNames:
@@ -82,4 +106,18 @@ def compose_public_page_read(db: Any) -> PublicPageRead:
         ),
         coach_names=coach_names,
         profile_coach_names=ProfileCoachNames(db, coach_names),
+        list_trial_dates=compose_list_bookable_trial_dates(db),
+        get_shared_certificate=GetSharedCertificate(
+            certificates=MongoSkillCertificateRepository(db),
+            settings=MongoProgressSettingsRepository(db),
+        ),
+    )
+
+
+def compose_list_bookable_trial_dates(db: Any) -> ListBookableTrialDates:
+    return ListBookableTrialDates(
+        sessions=MongoSessionRepository(db),
+        occurrences=MongoSessionOccurrenceRepository(db),
+        roster=MongoOccurrenceRosterRepository(db),
+        trials=MongoTrialRequestRepository(db),
     )

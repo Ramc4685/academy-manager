@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from backend.v2.interfaces.coach.deps import CoachUseCases, get_coach_use_cases
 from backend.v2.interfaces.coach.views import CoachSessionTeachingPlanResponse
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import require_coach_surface
+from backend.v2.shared.http import is_coach_supervisor, require_coach_surface
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +94,7 @@ async def get_today_plan(
         on_date=target_date,
         program_id=resolved_id,
         program_name=program_name,
+        academy_wide=is_coach_supervisor(claims),
     )
     return plan.model_dump(mode="json")
 

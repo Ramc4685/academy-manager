@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -238,6 +238,25 @@ def synthesize_recurring_session_docs(
     return rows
 
 
+def session_phase(doc: dict[str, Any], today: date, zone: tzinfo) -> str:
+    """Where a class sits in its life on the academy's ``today``.
+
+    Recurring classes read their ``start_date``/``end_date``; one-off classes
+    read their own instants. Used by the admin all-classes view (L2 A0-6).
+    """
+    if doc.get("days_of_week"):
+        start = _coerce_template_date(doc.get("start_date"))
+        end = _coerce_template_date(doc.get("end_date"))
+    else:
+        start = ensure_utc(doc["start_at"]).astimezone(zone).date()
+        end = ensure_utc(doc["end_at"]).astimezone(zone).date()
+    if start is not None and start > today:
+        return "upcoming"
+    if end is not None and end < today:
+        return "ended"
+    return "active"
+
+
 def _coerce_template_date(value: object) -> date | None:
     if value is None:
         return None
@@ -352,6 +371,22 @@ class MongoSessionRepository(TenantScopedRepository):
             return []
         cursor = self._find_many(_session_ids_filter(session_ids))
         return await sessions_to_domain(self._db, [doc async for doc in cursor])
+
+    async def list_live(self) -> list[Session]:
+        """Recurring classes running today (inside their own ``start_date`` /
+        ``end_date``): the ones whose dated rows an academy closure may need
+        materialised first."""
+        cursor = self._find_many(
+            {"status": {"$nin": ["cancelled", "completed"]}, "days_of_week.0": {"$exists": True}}
+        )
+        academy_timezone = await academy_timezone_lookup(self._db)(current_academy_id())
+        now = datetime.now(UTC)
+        live = []
+        async for doc in cursor:
+            zone = _zone(str(doc.get("timezone") or "").strip() or academy_timezone or None)
+            if session_phase(doc, now.astimezone(zone).date(), zone) == "active":
+                live.append(doc)
+        return await sessions_to_domain(self._db, live)
 
     async def available_for_parent_catalog(self) -> list[ParentAvailableSession]:
         now = datetime.now(UTC)
@@ -634,6 +669,8 @@ def admin_session_projection_fields(doc: dict[str, object]) -> dict[str, object 
         "arrival_minutes_before": _optional_int(doc.get("arrival_minutes_before")),
         "coach_contact_policy": _optional_str(doc.get("coach_contact_policy")),
         "absence_policy": _optional_str(doc.get("absence_policy")),
+        # Filled by the all-classes list only (L2 A0-6); None everywhere else.
+        "phase": None,
     }
 
 

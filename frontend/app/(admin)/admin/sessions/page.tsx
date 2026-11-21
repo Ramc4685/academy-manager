@@ -22,10 +22,12 @@ import {
   type AdminSessionList,
   type AdminSessionView,
 } from "@/lib/api/admin";
+import { notBilledSuffix } from "@/components/admin/not-billed";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 // One class form for Create, list Edit and class-page Edit (class-page PR A).
 import { CreateClassDialog, EditClassDialog } from "@/components/admin/sessions/class-form";
 import { queryKeys } from "@/lib/query/keys";
+import { filterSessions, type SessionPhaseFilter } from "@/lib/admin/session-list-filter";
 import {
   formatAcademyTimeRange,
   parseAcademyInstant,
@@ -120,9 +122,20 @@ export default function AdminSessionsPage() {
   const [cancelTarget, setCancelTarget] = useState<AdminSessionView | null>(null);
   const queryClient = useQueryClient();
 
+  // L2 A0-6: "Next 30 days" stays the default; "All classes" lists every
+  // class (ended ones included) so a class past the window can be found.
+  const [scope, setScope] = useState<"upcoming" | "all">("upcoming");
+  const [phase, setPhase] = useState<SessionPhaseFilter>("any");
+  const [text, setText] = useState("");
+  const listKey = queryKeys.admin.sessions(scope === "all" ? "window-all" : "upcoming");
+  const invalidateLists = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("window-all") });
+  };
+
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: queryKeys.admin.sessions("upcoming"),
-    queryFn: () => listAdminSessions(undefined, { window: "upcoming" }),
+    queryKey: listKey,
+    queryFn: () => listAdminSessions(undefined, { window: scope }),
   });
 
   const deleteMutation = useMutation({
@@ -132,7 +145,7 @@ export default function AdminSessionsPage() {
     },
     onSuccess: () => {
       setCancelError(null);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+      invalidateLists();
     },
     // #467: without this, a 403/404/500 was swallowed by `.mutate()` and the
     // cancel looked identical to a success.
@@ -145,7 +158,8 @@ export default function AdminSessionsPage() {
     },
   });
 
-  const sessions = data?.sessions ?? [];
+  const sessions =
+    scope === "all" ? filterSessions(data?.sessions ?? [], { phase, text }) : (data?.sessions ?? []);
 
   return (
     <section data-testid="admin-sessions" className="space-y-4">
@@ -153,13 +167,50 @@ export default function AdminSessionsPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <ViewToggle view={view} onChange={setView} />
-          <span className="font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
-            Upcoming academy sessions
-          </span>
+          <div className="inline-flex rounded-md border border-rally-line bg-white overflow-hidden">
+            <PillButton active={scope === "upcoming"} onClick={() => setScope("upcoming")}>
+              Next 30 days
+            </PillButton>
+            <PillButton active={scope === "all"} onClick={() => setScope("all")} divider>
+              All classes
+            </PillButton>
+          </div>
+          {scope === "all" && (
+            <>
+              <input
+                type="search"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder="Class, coach, location or day"
+                aria-label="Filter classes"
+                className="min-h-touch rounded-lg border border-rally-line px-3 text-sm"
+                data-testid="admin-sessions-filter-text"
+              />
+              <select
+                value={phase}
+                onChange={(e) => setPhase(e.target.value as SessionPhaseFilter)}
+                aria-label="Class status"
+                className="min-h-touch rounded-lg border border-rally-line px-3 text-sm"
+                data-testid="admin-sessions-filter-phase"
+              >
+                <option value="any">Any status</option>
+                <option value="active">Running now</option>
+                <option value="upcoming">Not started</option>
+                <option value="ended">Ended</option>
+              </select>
+            </>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-3">
           {/* The waitlist is a queue on the Inbox, not its own page; the old
               sidebar entry pointed at /admin/waitlist, which does not exist. */}
+          <Link
+            href={"/admin/sessions/month-dates" as Route}
+            className="inline-flex min-h-touch items-center text-sm font-medium text-rally-cobalt-700 hover:underline"
+            data-testid="admin-sessions-month-dates-link"
+          >
+            Month dates
+          </Link>
           <Link
             href={"/admin/inbox?tab=waitlist" as Route}
             className="inline-flex min-h-touch items-center text-sm font-medium text-rally-cobalt-700 hover:underline"
@@ -221,7 +272,7 @@ export default function AdminSessionsPage() {
       ) : sessions.length === 0 ? (
         <Card p={32}>
           <p className="text-center text-sm text-rally-subtle" data-testid="sessions-empty">
-            No upcoming sessions found.
+            {scope === "all" ? "No classes match." : "No upcoming sessions found."}
           </p>
         </Card>
       ) : (
@@ -269,7 +320,7 @@ export default function AdminSessionsPage() {
         onCreated={(_created, warning) => {
           setCreateOpen(false);
           setCreateWarning(warning ?? null);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+          invalidateLists();
         }}
       />
       <EditClassDialog
@@ -281,7 +332,7 @@ export default function AdminSessionsPage() {
         onSaved={(savedSession) => {
           setEditSession(null);
           queryClient.setQueryData<AdminSessionList | undefined>(
-            queryKeys.admin.sessions("upcoming"),
+            listKey,
             (current) =>
               current
                 ? {
@@ -292,7 +343,7 @@ export default function AdminSessionsPage() {
                 : current,
           );
           queryClient.setQueryData(queryKeys.admin.sessionDetail(savedSession.session_id), savedSession);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+          invalidateLists();
         }}
       />
     </section>
@@ -442,6 +493,11 @@ function SessionList({
                       <span className="font-mono font-semibold tabular-nums text-rally-ink">
                         {s.enrolled_count}/{s.capacity}
                       </span>
+                      {s.not_billed_count ? (
+                        <span className="text-xs text-rally-muted">
+                          incl. {s.not_billed_count} not billed
+                        </span>
+                      ) : null}
                       <Chip variant={fill.variant} label={fill.label} />
                     </div>
                   </td>
@@ -511,6 +567,9 @@ function SessionPhoneList({
                 <span className="font-mono text-sm font-semibold tabular-nums text-rally-ink">
                   {s.enrolled_count}/{s.capacity}
                 </span>
+                {s.not_billed_count ? (
+                  <span className="text-xs text-rally-muted">incl. {s.not_billed_count} not billed</span>
+                ) : null}
                 <Chip variant={fill.variant} label={fill.label} />
               </span>
             }

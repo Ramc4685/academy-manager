@@ -1,4 +1,10 @@
-"""Use case: coach records a test attempt for a student skill."""
+"""Use case: coach records a test attempt for a student skill.
+
+This is the one writer of a tested PASSED, so it owns the skill's pass rule
+for every route (detailed test, tap-to-master): LEAD_COACH refuses a pass
+from an assistant-only coach, and N_TRIES counts a passing attempt as one
+try, passing the skill only on the Nth.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +20,8 @@ from backend.v2.contexts.student_progress.application.ports import (
 )
 from backend.v2.contexts.student_progress.domain.errors import (
     OverrideNotPermitted,
+    PassNeedsLeadCoach,
+    SkillNotOnCurrentLevel,
     StudentNotPlaced,
 )
 from backend.v2.contexts.student_progress.domain.events import (
@@ -46,9 +54,12 @@ class RecordTestAttemptCommand(BaseModel):
     model_config = {"frozen": True}
     student_id: str
     skill_id: str
-    level_id: str
     program_id: str
     coach_id: str
+    #: False for an assistant-only coach. Required, so no route can forget
+    #: it: a LEAD_COACH skill refuses a pass when it is False.
+    #: It also guards taking a lead-coach pass away with a failing attempt.
+    can_sign_off: bool
     session_id: str | None = None
     occurrence_id: str | None = None
     scoring_type: str = "ATTEMPT_BASED"
@@ -76,6 +87,8 @@ class RecordTestAttemptResult(BaseModel):
     score: float
     skill_status: str
     level_completed: bool
+    #: Tries counted so far on an N_TRIES skill (0 for the other rules).
+    tries: int = 0
 
 
 class RecordTestAttempt:
@@ -98,11 +111,41 @@ class RecordTestAttempt:
 
     async def execute(self, cmd: RecordTestAttemptCommand) -> RecordTestAttemptResult:
         if self._idempotency_store is not None and cmd.mutation_id:
+            legacy = await self._replay_legacy_key(cmd)
+            if legacy is not None:
+                return legacy
             return await self._execute_idempotent(cmd)
         return await self._execute(cmd)
 
+    async def _replay_legacy_key(
+        self, cmd: RecordTestAttemptCommand
+    ) -> RecordTestAttemptResult | None:
+        """A result stored under the old unscoped key, if it is provably this coach's.
+
+        An offline mark recorded before the key gained the academy and coach and
+        retried after must replay, not record a second attempt (an N_TRIES skill
+        would count an extra try). The key alone is client-sent, so the stored
+        attempt must exist in this tenant for this student, skill and coach.
+        """
+        # shortcut: reads the pre-scoping key; delete 7 days after deploy, once the idempotency TTL has expired them all.
+        assert self._idempotency_store is not None
+        stored = await self._idempotency_store.get(f"record_test_attempt:{cmd.mutation_id}")
+        try:
+            result = RecordTestAttemptResult.model_validate(stored["value"]["data"])  # type: ignore[index]
+        except (KeyError, TypeError, ValueError):
+            return None
+        attempts = await self._test_attempts.list_for_student_skill(cmd.student_id, cmd.skill_id)
+        owned = any(
+            a.attempt_id == result.attempt_id and a.coach_id == cmd.coach_id for a in attempts
+        )
+        return result if owned else None
+
     @idempotent(
-        key_from=lambda self, cmd: f"record_test_attempt:{cmd.mutation_id}",
+        # mutation_id is client-sent, so the key carries the tenant and the
+        # (server-derived) coach: two coaches or academies never share a result.
+        key_from=lambda self, cmd: (
+            f"record_test_attempt:{_resolve_academy_id()}:{cmd.coach_id}:{cmd.mutation_id}"
+        ),
         result_type=RecordTestAttemptResult,
     )
     async def _execute_idempotent(self, cmd: RecordTestAttemptCommand) -> RecordTestAttemptResult:
@@ -117,13 +160,18 @@ class RecordTestAttempt:
                 program_id=cmd.program_id,
             )
 
-        # Determine threshold from skill configuration
         skill_meta = await self._skill_lookup.get_skill(cmd.skill_id)
-        threshold_pct: float = 70.0
-        coach_override_allowed: bool = False
-        if skill_meta is not None:
-            threshold_pct = getattr(skill_meta, "pass_threshold_pct", 70.0)
-            coach_override_allowed = getattr(skill_meta, "coach_override_allowed", False)
+        # Only the active level's skills count: a client-sent level_id used to
+        # land attempts (and passes) on a level the student is not in.
+        if getattr(skill_meta, "level_id", None) != active.level_id:
+            raise SkillNotOnCurrentLevel(
+                "skill is not on the student's current level",
+                student_id=cmd.student_id,
+                skill_id=cmd.skill_id,
+            )
+        level_id = active.level_id
+        threshold_pct: float = getattr(skill_meta, "pass_threshold_pct", 70.0)
+        coach_override_allowed: bool = getattr(skill_meta, "coach_override_allowed", False)
 
         if cmd.coach_override and not coach_override_allowed:
             raise OverrideNotPermitted(
@@ -137,6 +185,16 @@ class RecordTestAttempt:
             calculate_skill_pass(cmd.attempts_count, cmd.success_count, threshold_pct)
             or cmd.coach_override
         )
+        pass_rule = getattr(skill_meta, "pass_rule", "ONE_TAP")
+        existing_prog = await self._skill_progress.get(cmd.student_id, cmd.skill_id)
+        already_passed = existing_prog is not None and existing_prog.status == "PASSED"
+        # A lead-coach skill is signed off, and taken back, by a lead coach only.
+        if pass_rule == "LEAD_COACH" and not cmd.can_sign_off and (passed or already_passed):
+            raise PassNeedsLeadCoach(
+                "a lead coach signs this skill off",
+                student_id=cmd.student_id,
+                skill_id=cmd.skill_id,
+            )
 
         now = datetime.now(UTC)
         attempt = TestAttempt(
@@ -144,7 +202,7 @@ class RecordTestAttempt:
             academy_id=_resolve_academy_id(),
             student_id=cmd.student_id,
             skill_id=cmd.skill_id,
-            level_id=cmd.level_id,
+            level_id=level_id,
             program_id=cmd.program_id,
             session_id=cmd.session_id,
             occurrence_id=cmd.occurrence_id,
@@ -162,38 +220,78 @@ class RecordTestAttempt:
         await self._test_attempts.save(attempt)
 
         # Update skill status
-        existing_prog = await self._skill_progress.get(cmd.student_id, cmd.skill_id)
-        new_status = "PASSED" if passed else "NEEDS_REVIEW"
-        if existing_prog is None:
-            updated_prog = StudentSkillProgress(
-                skill_progress_id=str(new_ulid()),
-                academy_id=_resolve_academy_id(),
-                student_id=cmd.student_id,
-                skill_id=cmd.skill_id,
-                level_id=cmd.level_id,
-                program_id=cmd.program_id,
-                status=new_status,
-                introduced_at=now,
-                last_updated_at=now,
-                last_updated_by=cmd.coach_id,
-            )
+        tries = 0
+        written = False
+        if passed and pass_rule == "N_TRIES" and already_passed:
+            # A pass stays a pass: a credit (0 tries) or a pass from before the
+            # skill moved to N_TRIES is not demoted by a later passing test.
+            tries = existing_prog.tries if existing_prog is not None else 0
+            new_status = "PASSED"
+        elif passed and pass_rule == "N_TRIES":
+            # A passing attempt is one try; the skill passes on the Nth.
+            needed: int = skill_meta.pass_tries  # type: ignore[union-attr]
+            if existing_prog is None:
+                await self._skill_progress.insert_if_missing(
+                    StudentSkillProgress(
+                        skill_progress_id=str(new_ulid()),
+                        academy_id=_resolve_academy_id(),
+                        student_id=cmd.student_id,
+                        skill_id=cmd.skill_id,
+                        level_id=level_id,
+                        program_id=cmd.program_id,
+                        status="NOT_STARTED",
+                        introduced_at=now,
+                        last_updated_at=now,
+                        last_updated_by=cmd.coach_id,
+                    )
+                )
+                existing_prog = await self._skill_progress.get(cmd.student_id, cmd.skill_id)
+            tries = await self._skill_progress.increment_tries(cmd.student_id, cmd.skill_id, 1) or 0
+            passed = tries >= needed
+            new_status = "PASSED" if passed else "PRACTICING"
+            if not passed:
+                # Conditional: a concurrent tap may have passed it meanwhile.
+                await self._skill_progress.set_status_unless_passed(
+                    cmd.student_id, cmd.skill_id, "PRACTICING", at=now, by=cmd.coach_id
+                )
+                current = await self._skill_progress.get(cmd.student_id, cmd.skill_id)
+                new_status = current.status if current is not None else new_status
+                written = True
         else:
-            updated_prog = existing_prog.model_copy(
-                update={
-                    "status": new_status,
-                    "last_updated_at": now,
-                    "last_updated_by": cmd.coach_id,
-                }
-            )
-        await self._skill_progress.upsert(updated_prog)
+            new_status = "PASSED" if passed else "NEEDS_REVIEW"
+        if not written:
+            if existing_prog is None:
+                updated_prog = StudentSkillProgress(
+                    skill_progress_id=str(new_ulid()),
+                    academy_id=_resolve_academy_id(),
+                    student_id=cmd.student_id,
+                    skill_id=cmd.skill_id,
+                    level_id=level_id,
+                    program_id=cmd.program_id,
+                    status=new_status,
+                    introduced_at=now,
+                    last_updated_at=now,
+                    last_updated_by=cmd.coach_id,
+                )
+            else:
+                updated_prog = existing_prog.model_copy(
+                    update={
+                        "status": new_status,
+                        "last_updated_at": now,
+                        "last_updated_by": cmd.coach_id,
+                        # A real pass is always announced, even over a silent credit.
+                        "silent": False,
+                    }
+                )
+            await self._skill_progress.upsert(updated_prog)
 
         # Check level completion if skill just passed
         level_completed = False
         if passed:
-            all_skills = await self._skill_lookup.list_skills_for_level(cmd.level_id)
+            all_skills = await self._skill_lookup.list_skills_for_level(level_id)
             required_ids = [s.skill_id for s in all_skills if getattr(s, "is_required", True)]
             passed_records = await self._skill_progress.list_passed_for_student_level(
-                cmd.student_id, cmd.level_id
+                cmd.student_id, level_id
             )
             passed_ids = {sp.skill_id for sp in passed_records}
             # Include the one we just passed
@@ -209,14 +307,14 @@ class RecordTestAttempt:
                     payload=SkillTestAttemptedPayload(
                         student_id=cmd.student_id,
                         skill_id=cmd.skill_id,
-                        level_id=cmd.level_id,
+                        level_id=level_id,
                         program_id=cmd.program_id,
                         coach_id=cmd.coach_id,
                         attempt_id=attempt.attempt_id,
                         attempts_count=cmd.attempts_count,
                         success_count=cmd.success_count,
                         score=round(score, 2),
-                        passed=passed,
+                        passed=attempt.passed,
                     ),
                 )
             )
@@ -228,7 +326,7 @@ class RecordTestAttempt:
                         payload=SkillPassedPayload(
                             student_id=cmd.student_id,
                             skill_id=cmd.skill_id,
-                            level_id=cmd.level_id,
+                            level_id=level_id,
                             program_id=cmd.program_id,
                             coach_id=cmd.coach_id,
                             attempt_id=attempt.attempt_id,
@@ -242,7 +340,7 @@ class RecordTestAttempt:
                         academy_id=academy_id,
                         payload=LevelCompletedPayload(
                             student_id=cmd.student_id,
-                            level_id=cmd.level_id,
+                            level_id=level_id,
                             program_id=cmd.program_id,
                             progress_id=active.progress_id,
                         ),
@@ -255,4 +353,5 @@ class RecordTestAttempt:
             score=round(score, 2),
             skill_status=new_status,
             level_completed=level_completed,
+            tries=tries,
         )

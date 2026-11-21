@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -26,6 +27,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_period_end_drop 
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     AcademyTimezoneUnset,
+    BulkTransferEnrollmentsCommand,
     CancelEnrollmentCommand,
     CancelSessionCommand,
     CreateSessionCommand,
@@ -40,6 +42,14 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
 from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
     CancelSessionOccurrenceCommand,
 )
+from backend.v2.contexts.enrollment.application.use_cases.close_academy_dates import (
+    CloseAcademyDatesCommand,
+)
+from backend.v2.contexts.enrollment.application.use_cases.copy_session import (
+    CopyRosterRefused,
+    CopySessionCommand,
+)
+from backend.v2.interfaces.admin.academy_clock import academy_zone
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.owner_gate import (
     ensure_owner_for_enrollment_delete,
@@ -57,14 +67,26 @@ from backend.v2.interfaces.admin.views import (
     AdminSessionView,
     AdminStudentAttendanceList,
     AdminStudentAttendanceView,
+    BulkTransferEnrollmentsRequest,
+    BulkTransferEnrollmentsResponse,
+    BulkTransferRowView,
     CancelSessionOccurrenceRequest,
     CancelSessionOccurrenceResponse,
+    CloseAcademyDatesRequest,
+    CloseAcademyDatesResponse,
+    ClosureDateView,
+    CopiedRosterRowView,
+    CopySessionRequest,
+    CopySessionResponse,
     CorrectStudentAttendanceRequest,
     CreateSessionRequest,
+    CreditMissedClassRequest,
+    CreditMissedClassResponse,
     EditRosterAddRequest,
     EditSessionRequest,
     EnrollmentEventDto,
     EnrollmentEventsResponse,
+    MissedClassFamilyView,
     OverrideEnrollmentFeeRequest,
     PauseEnrollmentRequest,
     RemoveEnrollmentRequest,
@@ -136,7 +158,11 @@ async def list_sessions(
     on_date: str = Query(default=None, alias="date"),
     window: str | None = Query(
         default=None,
-        description="Set to 'upcoming' to return all sessions starting from today through the next 30 days. Overrides 'date' when both are passed.",
+        description=(
+            "'upcoming': classes with a date from the academy's today through the next 30 "
+            "days. 'all': every class (active, upcoming, ended) with its phase. 'open': the "
+            "same without ended classes. Overrides 'date' when both are passed."
+        ),
     ),
     coach_id: str | None = Query(default=None, description="Filter sessions by coach ID"),
     _claims: AuthClaims = Depends(require_persona("admin")),
@@ -178,6 +204,57 @@ async def create_session(
     if use_cases.maintain_session_occurrences is not None:
         await use_cases.maintain_session_occurrences(session)
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))
+
+
+@router.post(
+    "/sessions/{session_id}/copy", response_model=CopySessionResponse, summary="Copy a class"
+)
+async def copy_session(
+    session_id: str,
+    body: CopySessionRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> CopySessionResponse:
+    """A0-8: new class from this one; optionally its active students too."""
+    if use_cases.copy_session is None:
+        raise HTTPException(status_code=503, detail="Copy class is not available.")
+    # Money is owner-only, as on Create: an admin's copy is unpriced.
+    include_price = "owner" in claims.roles
+    if use_cases.get_admin_session is not None:
+        source = await use_cases.get_admin_session(session_id)  # type: ignore[operator]
+        if source is not None:
+            amount = _row_field(source, "amount_cents") if include_price else None
+            await _reject_percent_pay_missing_price(
+                use_cases=use_cases,
+                coach_id=str(_row_field(source, "coach_id") or ""),
+                amount_cents=amount,  # type: ignore[arg-type]
+            )
+    try:
+        result = await use_cases.copy_session.execute(
+            CopySessionCommand(
+                source_session_id=session_id,
+                title=body.title,
+                days_of_week=body.days_of_week,
+                start_time=body.start_time,
+                end_time=body.end_time,
+                include_price=include_price,
+                copy_roster=body.copy_roster,
+                actor_id=claims.user_id,
+            )
+        )
+    # DuplicateSessionSeries goes to the shared DomainError handler (409) so its
+    # session_id detail reaches the dialog's "Open the existing class" link.
+    except AcademyTimezoneUnset as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except CopyRosterRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if use_cases.maintain_session_occurrences is not None:
+        await use_cases.maintain_session_occurrences(result.session)
+    return CopySessionResponse(
+        session=AdminSessionView(**result.session.model_dump(exclude={"academy_id"})),
+        price_copied=include_price,
+        roster=[CopiedRosterRowView(**row.model_dump()) for row in result.roster],
+    )
 
 
 @router.patch("/sessions/{session_id}", response_model=AdminSessionView, summary="Edit session")
@@ -427,7 +504,7 @@ async def cancel_session_occurrence(
 ) -> CancelSessionOccurrenceResponse:
     if use_cases.cancel_session_occurrence is None:
         raise HTTPException(status_code=503, detail="Class-date cancellation is not configured")
-    result = await use_cases.cancel_session_occurrence.execute(  # type: ignore[attr-defined]
+    result = await use_cases.cancel_session_occurrence.execute(
         CancelSessionOccurrenceCommand(
             occurrence_id=occurrence_id,
             reason=body.reason,
@@ -454,8 +531,123 @@ async def cancel_session_occurrence(
         makeups_reopened=result.makeups_reopened,
         trials_reopened=result.trials_reopened,
         credits_issued=result.credits_issued,
+        credit_total_cents=result.credit_total_cents,
+        credit_skips=dict(result.credit_skips),
         billing_result=result.billing_result,
         notified=result.notified,
+    )
+
+
+@router.post(
+    "/session-occurrences/{occurrence_id}/credit-missed",
+    response_model=CreditMissedClassResponse,
+    summary="Credit a missed class: record a past date as no class (#1207)",
+)
+async def credit_missed_class(
+    occurrence_id: str,
+    body: CreditMissedClassRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> CreditMissedClassResponse:
+    """Same path and rule as calling the date off before class: ``dry_run``
+    prices every family, the confirm cancels the date and credits them. No
+    email goes out; families see the credit on Payments."""
+    cancel = use_cases.cancel_session_occurrence
+    if cancel is None:
+        raise HTTPException(status_code=503, detail="Class-date cancellation is not configured")
+    if body.dry_run:
+        preview = await cancel.preview_missed(occurrence_id)
+        names = await _student_names(use_cases, [f.student_id for f in preview.families])
+        return CreditMissedClassResponse(
+            occurrence_id=preview.occurrence.occurrence_id,
+            start_at=preview.occurrence.start_at,
+            dry_run=True,
+            families=[
+                MissedClassFamilyView(**f.model_dump(), student_name=names.get(f.student_id or ""))
+                for f in preview.families
+            ],
+            credits_issued=sum(1 for f in preview.families if f.amount_cents > 0),
+            credit_total_cents=preview.credit_total_cents,
+            credit_skips=dict(preview.credit_skips),
+            payroll_flag=preview.payroll_flag,
+            schedule_changed=preview.schedule_changed,
+        )
+    result = await cancel.execute(
+        CancelSessionOccurrenceCommand(
+            occurrence_id=occurrence_id,
+            reason=body.reason,
+            actor_id=claims.user_id,
+            notify=False,
+            missed=True,
+        )
+    )
+    return CreditMissedClassResponse(
+        occurrence_id=result.occurrence.occurrence_id,
+        start_at=result.occurrence.start_at,
+        dry_run=False,
+        credits_issued=result.credits_issued,
+        credit_total_cents=result.credit_total_cents,
+        credit_skips=dict(result.credit_skips),
+        payroll_flag=result.payroll_flag,
+        billing_result=result.billing_result,
+    )
+
+
+async def _student_names(use_cases: AdminUseCases, student_ids: list[str | None]) -> dict[str, str]:
+    """Best-effort names for the preview; a missing student shows without one."""
+    names: dict[str, str] = {}
+    if use_cases.get_admin_student is None:
+        return names
+    for student_id in {s for s in student_ids if s}:
+        try:
+            student = await use_cases.get_admin_student.execute(student_id)
+        except Exception:  # a name is decoration, never a 500
+            continue
+        names[student_id] = student.full_name
+    return names
+
+
+@router.post(
+    "/closures",
+    response_model=CloseAcademyDatesResponse,
+    summary="Close the academy for a date range: cancel every class date in it",
+)
+async def close_academy_dates(
+    body: CloseAcademyDatesRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> CloseAcademyDatesResponse:
+    if use_cases.close_academy_dates is None:
+        raise HTTPException(status_code=503, detail="Academy closures are not configured")
+    zone_name = await academy_zone(use_cases, claims.academy_id)
+    zone = ZoneInfo(zone_name)
+    result = await use_cases.close_academy_dates.execute(  # type: ignore[attr-defined]
+        CloseAcademyDatesCommand(
+            start_at=datetime.combine(body.start_date, time.min, tzinfo=zone),
+            end_at=datetime.combine(body.end_date + timedelta(days=1), time.min, tzinfo=zone),
+            reason=body.reason,
+            actor_id=claims.user_id,
+            notify=body.notify,
+            dry_run=body.dry_run,
+        )
+    )
+    titles: dict[str, str | None] = {}
+    if use_cases.get_admin_session is not None:
+        for session_id in {d.session_id for d in result.dates}:
+            row = await use_cases.get_admin_session(session_id)  # type: ignore[operator]
+            titles[session_id] = str(_row_field(row, "title") or "") or None if row else None
+    return CloseAcademyDatesResponse(
+        dates=[
+            ClosureDateView(**d.model_dump(), session_title=titles.get(d.session_id))
+            for d in result.dates
+        ],
+        cancelled=result.cancelled,
+        skipped=result.skipped,
+        credits_issued=result.credits_issued,
+        families_affected=result.families_affected,
+        families_notified=result.families_notified,
+        notice_failed=result.notice_failed,
+        timezone=zone_name,
     )
 
 
@@ -776,6 +968,32 @@ async def transfer_enrollment(
         parent_id="",
         status=enrollment.status,
         enrolled_at=datetime.now(UTC),
+    )
+
+
+@router.post("/enrollments/bulk-transfer", response_model=BulkTransferEnrollmentsResponse)
+async def bulk_transfer_enrollments(
+    body: BulkTransferEnrollmentsRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> BulkTransferEnrollmentsResponse:
+    """A0-8: per-row results; a refused row never blocks the others."""
+    if use_cases.bulk_transfer_enrollments is None:
+        raise HTTPException(status_code=503, detail="Bulk transfer is not available.")
+    result = await use_cases.bulk_transfer_enrollments.execute(
+        BulkTransferEnrollmentsCommand(
+            enrollment_ids=body.enrollment_ids,
+            target_session_id=body.target_session_id,
+            effective_at=_start_of_day_utc(body.effective_date),
+            effective_date=body.effective_date,
+            actor_id=claims.user_id,
+            reason=body.reason,
+        )
+    )
+    return BulkTransferEnrollmentsResponse(
+        results=[BulkTransferRowView(**row.model_dump()) for row in result.results],
+        moved_count=result.moved_count,
+        failed_count=result.failed_count,
     )
 
 

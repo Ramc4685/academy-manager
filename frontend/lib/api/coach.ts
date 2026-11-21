@@ -43,7 +43,10 @@ export interface CoachRosterEntry {
   /** Issue #773: ISO calendar date a hold ends; null unless the row is held. */
   hold_return_on?: string | null;
   /** Mark already recorded for this occurrence (hydrates state on reload). */
-  attendance_status?: AttendanceStatus | null;
+  /** "voided": an admin annulled the mark; it counts as unmarked and only an admin can change it. */
+  attendance_status?: AttendanceStatus | "voided" | null;
+  /** When the mark was recorded; a coach may change it for 48 hours. */
+  attendance_marked_at?: string | null;
   /** True when a parent submitted an absence notice for this occurrence. */
   expected_absence?: boolean;
   /** "enrollment" for regular roster rows; "makeup"/"trial" for one-time entries. */
@@ -78,6 +81,16 @@ export interface CoachSession {
    */
   status?: "scheduled" | "cancelled" | "completed";
   cancellation_reason?: string | null;
+  /** L9: families with no account who booked a free trial on the public page. */
+  trial_guests?: CoachTrialGuest[];
+}
+
+/** The coach sees the parent's name and the player's age only. */
+export interface CoachTrialGuest {
+  trial_request_id: string;
+  name: string;
+  age?: string | null;
+  trial_outcome?: TrialOutcome | null;
 }
 
 export interface CoachTodayResponse {
@@ -309,12 +322,20 @@ export async function bulkUpdateCoachSessionSkillStatus(
   });
 }
 
-export type SkillMasteredOutcome = "mastered" | "already_mastered" | "not_on_level" | "not_placed";
+export type SkillMasteredOutcome =
+  | "mastered"
+  | "already_mastered"
+  | "not_on_level"
+  | "not_placed"
+  | "try_recorded"
+  | "needs_lead";
 
 export interface SkillMasteredResult {
   student_id: string;
   outcome: SkillMasteredOutcome;
   level_up_queued: boolean;
+  /** Taps counted so far on an N_TRIES skill. */
+  tries?: number;
 }
 
 /** Tap = got it: passes the skill for each student; the last skill of a level queues the level-up. */
@@ -429,6 +450,8 @@ export async function bulkMarkAttendance(
     {
       method: "POST",
       body: JSON.stringify(payload),
+      // A held batch is flushed on pagehide (#846): let it outlive the page.
+      keepalive: true,
     },
   );
 }
@@ -787,11 +810,11 @@ export function draftCoachNarrative(studentId: string, date?: string): Promise<C
 /** The day's note for one student, whatever its status; null when none was drafted. */
 export async function getCoachStudentNarrative(
   studentId: string,
-  date: string,
+  date?: string,
 ): Promise<CoachNarrative | null> {
   try {
     return await apiFetch<CoachNarrative>(
-      `/coach/students/${encodeURIComponent(studentId)}/narrative?date=${encodeURIComponent(date)}`,
+      `/coach/students/${encodeURIComponent(studentId)}/narrative${date ? `?date=${encodeURIComponent(date)}` : ""}`,
       { method: "GET" },
     );
   } catch (error) {

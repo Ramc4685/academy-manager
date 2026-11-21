@@ -17,12 +17,12 @@ import {
   approveMakeup,
   approveTrial,
   denyMakeup,
+  cancelGuestTrialBooking,
   denyTrial,
   listAdminAbsences,
   listAdminCancellations,
   listAdminMakeups,
   listAdminSessions,
-  listAdminStudents,
   listAdminTrials,
   listSessionOccurrences,
   recordAdminAbsence,
@@ -39,6 +39,7 @@ import { formatPlainDateRange } from "@/lib/format/plain-date";
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
+import { StudentSearchPicker } from "@/components/admin/student-search-picker";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
 import { Modal } from "@/components/ds/modal";
@@ -459,6 +460,7 @@ export function TrialsTab() {
   const [denyTarget, setDenyTarget] = useState<TrialRequestAdminRow | null>(null);
   const [approveTarget, setApproveTarget] = useState<TrialRequestAdminRow | null>(null);
   const [noShowTarget, setNoShowTarget] = useState<TrialRequestAdminRow | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<TrialRequestAdminRow | null>(null);
 
   const apiStatus = statusFilter === "all" ? undefined : statusFilter;
   const { data, isLoading, isError } = useQuery({
@@ -478,6 +480,15 @@ export function TrialsTab() {
     mutationFn: ({ requestId, reason }: { requestId: string; reason: string }) => denyTrial(requestId, { reason }),
     onSuccess: () => {
       setDenyTarget(null);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.selfServiceTrialsAll() });
+    },
+  });
+
+  // L9: staff cancel one approved website guest booking.
+  const cancelMutation = useMutation({
+    mutationFn: (requestId: string) => cancelGuestTrialBooking(requestId),
+    onSuccess: () => {
+      setCancelTarget(null);
       void queryClient.invalidateQueries({ queryKey: queryKeys.admin.selfServiceTrialsAll() });
     },
   });
@@ -511,6 +522,7 @@ export function TrialsTab() {
           onApprove={setApproveTarget}
           onCame={(row) => outcomeMutation.mutate({ requestId: row.request_id, outcome: "came" })}
           onNoShow={setNoShowTarget}
+          onCancelBooking={setCancelTarget}
           outcomePendingId={outcomeMutation.isPending ? outcomeMutation.variables?.requestId ?? null : null}
           outcomeError={
             outcomeMutation.isError && !noShowTarget
@@ -530,6 +542,19 @@ export function TrialsTab() {
             outcomeMutation.reset();
           }}
           onConfirm={() => outcomeMutation.mutate({ requestId: noShowTarget.request_id, outcome: "no_show" })}
+        />
+      )}
+
+      {cancelTarget && (
+        <CancelBookingDialog
+          name={trialChildName(cancelTarget)}
+          pending={cancelMutation.isPending}
+          error={cancelMutation.isError ? "Could not cancel the booking. It may already be cancelled." : null}
+          onCancel={() => {
+            setCancelTarget(null);
+            cancelMutation.reset();
+          }}
+          onConfirm={() => cancelMutation.mutate(cancelTarget.request_id)}
         />
       )}
 
@@ -559,7 +584,16 @@ export function TrialsTab() {
 }
 
 function trialChildName(t: TrialRequestAdminRow): string {
+  if (t.guest_name) {
+    // L9 website guest: the parent's name and the player's age, no child name.
+    return `Guest of ${t.guest_name}${t.guest_age ? `, age ${t.guest_age}` : ""}`;
+  }
   return t.prospective_child_name || t.student_full_name || "Existing child";
+}
+
+/** L9: an approved website guest booking can be cancelled by staff. */
+function canCancelBooking(t: TrialRequestAdminRow): boolean {
+  return t.status === "approved" && Boolean(t.contact_id);
 }
 
 /** People CRM L3a: a trial takes Came / Didn't come once approved (and may be corrected). */
@@ -586,6 +620,7 @@ function TrialsList({
   onApprove,
   onCame,
   onNoShow,
+  onCancelBooking,
   outcomePendingId,
   outcomeError,
 }: {
@@ -594,6 +629,7 @@ function TrialsList({
   onApprove: (row: TrialRequestAdminRow) => void;
   onCame: (row: TrialRequestAdminRow) => void;
   onNoShow: (row: TrialRequestAdminRow) => void;
+  onCancelBooking: (row: TrialRequestAdminRow) => void;
   outcomePendingId: string | null;
   outcomeError: { requestId: string; message: string } | null;
 }) {
@@ -602,7 +638,7 @@ function TrialsList({
     return (
       <PhoneList aria-label="Trial requests" data-testid="admin-trials-phone-list">
         {trials.map((t) => {
-          const name = t.prospective_child_name || t.student_full_name || "Existing child";
+          const name = trialChildName(t);
           return (
             <PhoneListRow
               key={t.request_id}
@@ -624,6 +660,9 @@ function TrialsList({
                           : []),
                         ...(t.outcome !== "no_show"
                           ? [{ key: "no_show", label: "Didn't come", onSelect: () => onNoShow(t) }]
+                          : []),
+                        ...(canCancelBooking(t)
+                          ? [{ key: "cancel_booking", label: "Cancel booking", onSelect: () => onCancelBooking(t) }]
                           : []),
                       ]
                     : []
@@ -678,7 +717,7 @@ function TrialsList({
                     className="border-b border-neutral-100 last:border-0 dark:border-neutral-800"
                   >
                     <td className="px-2 py-3 font-medium text-rally-base">
-                      {t.prospective_child_name || t.student_full_name || "Existing child"}
+                      {trialChildName(t)}
                     </td>
                     <td className="px-2 py-3 text-rally-subtle">
                       {t.requested_session_title || t.requested_session_id}
@@ -739,6 +778,16 @@ function TrialsList({
                           >
                             Didn&apos;t come
                           </Button>
+                          {canCancelBooking(t) && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              data-testid={`admin-trials-cancel-booking-${t.request_id}`}
+                              onClick={() => onCancelBooking(t)}
+                            >
+                              Cancel booking
+                            </Button>
+                          )}
                         </div>
                       ) : null}
                     </td>
@@ -781,7 +830,7 @@ function ApproveTrialDialog({
   return (
     <DialogShell title="Approve trial request" onCancel={onCancel}>
       <p className="text-sm text-rally-subtle">
-        {request.prospective_child_name || request.student_full_name || "Existing child"} ·{" "}
+        {trialChildName(request)} ·{" "}
         {request.requested_session_title || request.requested_session_id} · preferred{" "}
         {formatPlainDateRange(request.preferred_start, request.preferred_end)}
       </p>
@@ -1014,10 +1063,6 @@ function RecordAbsenceDialog({
   const [occurrenceId, setOccurrenceId] = useState("");
   const [countsTowardMakeup, setCountsTowardMakeup] = useState(true);
 
-  const studentsQuery = useQuery({
-    queryKey: queryKeys.admin.students(),
-    queryFn: listAdminStudents,
-  });
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessions("upcoming"),
     queryFn: () => listAdminSessions(undefined, { window: "upcoming" }),
@@ -1028,7 +1073,6 @@ function RecordAbsenceDialog({
     enabled: sessionId !== "",
   });
 
-  const students = studentsQuery.data?.students ?? [];
   const sessions = sessionsQuery.data?.sessions ?? [];
   // Newest first: an admin recording a phone call is usually looking for a
   // date that has just passed.
@@ -1046,26 +1090,12 @@ function RecordAbsenceDialog({
       </p>
       <label className="block text-xs font-semibold text-rally-muted">
         Student
-        <select
-          className={selectClass}
+        <StudentSearchPicker
           value={studentId}
-          onChange={(e) => setStudentId(e.target.value)}
-          disabled={studentsQuery.isLoading}
-          data-testid="record-absence-student-select"
-        >
-          <option value="">
-            {studentsQuery.isLoading
-              ? "Loading students…"
-              : students.length === 0
-                ? "No students found"
-                : "Select a student"}
-          </option>
-          {students.map((s) => (
-            <option key={s.student_id} value={s.student_id}>
-              {s.full_name}
-            </option>
-          ))}
-        </select>
+          onChange={(student) => setStudentId(student.student_id)}
+          selectClassName={selectClass}
+          testId="record-absence-student-select"
+        />
       </label>
       <label className="block text-xs font-semibold text-rally-muted">
         Class
@@ -1128,7 +1158,7 @@ function RecordAbsenceDialog({
         />
         Counts toward a make-up
       </label>
-      {(studentsQuery.isError || sessionsQuery.isError || occurrencesQuery.isError) && (
+      {(sessionsQuery.isError || occurrencesQuery.isError) && (
         <p className="text-xs text-red-700">Could not load the pickers; try again.</p>
       )}
       {error && <p role="alert" className="text-sm text-red-700">{error.message}</p>}
@@ -1385,6 +1415,48 @@ function NoShowDialog({
           onClick={onConfirm}
         >
           {pending ? "Saving…" : "Didn't come"}
+        </Button>
+      </div>
+    </DialogShell>
+  );
+}
+
+function CancelBookingDialog({
+  name,
+  pending,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  pending: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <DialogShell title="Cancel trial booking" onCancel={onCancel}>
+      <p className="text-sm text-rally-base" data-testid="cancel-booking-confirm-text">
+        Cancel the booked date for {name}? Their seat is freed, the family is emailed that the
+        date is off, and the request goes back to Pending so you can offer another date.
+      </p>
+      {error && (
+        <p role="alert" className="text-xs text-red-700">
+          {error}
+        </p>
+      )}
+      <div className="flex justify-end gap-2 pt-2">
+        <Button variant="secondary" size="sm" onClick={onCancel} disabled={pending}>
+          Keep booking
+        </Button>
+        <Button
+          variant="primary"
+          size="sm"
+          data-testid="cancel-booking-confirm"
+          disabled={pending}
+          onClick={onConfirm}
+        >
+          {pending ? "Cancelling…" : "Cancel booking"}
         </Button>
       </div>
     </DialogShell>

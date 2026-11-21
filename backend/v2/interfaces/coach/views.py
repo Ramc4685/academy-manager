@@ -11,6 +11,9 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from backend.v2.contexts.coaching.application.use_cases.bulk_mark_attendance import (
+    BULK_MARK_MAX_ENTRIES,
+)
 from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
     DailyTeachingPlan,
     LevelTeachingGroup,
@@ -60,6 +63,9 @@ class CoachRosterEntry(BaseModel):
     # must be accepted here or one voided mark fails validation for the
     # coach's whole day (same failure shape as #732).
     attendance_status: Literal["present", "absent", "late", "voided"] | None = None
+    # When that mark was recorded, so the coach app can show the 48h
+    # self-correction window has closed instead of failing on tap.
+    attendance_marked_at: datetime | None = None
     # True when a parent submitted an AbsenceNotice (R1) for this student on
     # this occurrence.
     expected_absence: bool = False
@@ -86,6 +92,16 @@ class CoachRosterEntry(BaseModel):
     payment_due_cents: int | None = None
 
 
+class CoachTrialGuest(BaseModel):
+    """L9: a family with no account who booked a free trial on the public page.
+    The coach sees the parent's name and the player's age only."""
+
+    trial_request_id: str
+    name: str
+    age: str | None = None
+    trial_outcome: Literal["came", "no_show"] | None = None
+
+
 class CoachSession(BaseModel):
     session_id: str
     occurrence_id: str
@@ -105,6 +121,7 @@ class CoachSession(BaseModel):
     # screen they'd otherwise show up for.
     status: Literal["scheduled", "cancelled", "completed"] = "scheduled"
     cancellation_reason: str | None = None
+    trial_guests: list[CoachTrialGuest] = []
 
 
 class CoachTodayResponse(BaseModel):
@@ -234,7 +251,9 @@ class BulkAttendanceEntryRequest(BaseModel):
 class BulkMarkAttendanceRequest(BaseModel):
     mutation_id: MutationId
     session_id: str
-    entries: list[BulkAttendanceEntryRequest]
+    # A class register, not an import: caps the per-student lookups one
+    # request can trigger.
+    entries: list[BulkAttendanceEntryRequest] = Field(max_length=BULK_MARK_MAX_ENTRIES)
 
 
 class BulkAttendanceEntryResponse(BaseModel):

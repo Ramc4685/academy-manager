@@ -19,11 +19,13 @@ def _invoice(
     *,
     enrollment_id: str | None = "enr-1",
     balance_due_cents: int = 12_000,
+    parent_id: str | None = None,
 ) -> LedgerInvoice:
     return LedgerInvoice(
         invoice_id=invoice_id,
         academy_id="acad-1",
-        parent_id="par-1",
+        # One family per invoice unless a test says otherwise (L8 groups siblings).
+        parent_id=parent_id or f"par-{invoice_id}",
         student_id="stu-1",
         enrollment_id=enrollment_id,
         period="2026-09",
@@ -222,3 +224,52 @@ async def test_a_failed_notice_is_counted_and_does_not_stop_the_run() -> None:
 
     assert notices.sent == ["inv-a", "inv-b"]
     assert (result.autopay_notified, result.email_failed) == (1, 1)
+
+
+@pytest.mark.asyncio
+async def test_siblings_charged_on_one_day_get_one_pre_charge_notice() -> None:
+    """L8: two children, one family charge, so one notice naming both."""
+    ledger = _FakeLedger(
+        [
+            _invoice("inv-a", enrollment_id="enr-a", parent_id="par-fam"),
+            _invoice("inv-b", enrollment_id="enr-b", parent_id="par-fam"),
+            _invoice("inv-c", enrollment_id="enr-c"),
+        ]
+    )
+    autopay = _FakeAutopay({"enr-a": "active", "enr-b": "active", "enr-c": "active"})
+    calls: list[tuple[str, tuple[str, ...]]] = []
+
+    async def notify(invoice_id: str, *, family_invoice_ids: tuple[str, ...] = ()) -> None:
+        calls.append((invoice_id, tuple(family_invoice_ids)))
+
+    result = await SendGeneratedInvoices(
+        ledger=ledger, autopay=autopay, send=_RecordingSender(), notify_autopay=notify
+    ).execute("2026-09")
+
+    assert calls == [("inv-a", ("inv-a", "inv-b")), ("inv-c", ())]
+    assert result.autopay_notified == 3
+
+
+@pytest.mark.asyncio
+async def test_zero_balance_waiver_on_autopay_is_emailed_not_noticed() -> None:
+    """#1035: autopay never charges a $0 balance, so a pre-charge notice
+    ("X will be charged") would be false. The waiver invoice is emailed."""
+    waived = _invoice("inv-waived", balance_due_cents=0).model_copy(
+        update={"subtotal_cents": 10_000, "discount_cents": 10_000}
+    )
+    sender = _RecordingSender()
+    notices: list[str] = []
+
+    async def notify(invoice_id: str, **_: object) -> None:
+        notices.append(invoice_id)
+
+    result = await SendGeneratedInvoices(
+        ledger=_FakeLedger([waived]),
+        autopay=_FakeAutopay({"enr-1": "active"}),
+        send=sender,
+        notify_autopay=notify,
+    ).execute("2026-09")
+
+    assert sender.sent == ["inv-waived"]
+    assert notices == []
+    assert (result.emailed, result.autopay_notified) == (1, 0)

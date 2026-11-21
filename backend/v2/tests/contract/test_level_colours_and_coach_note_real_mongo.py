@@ -51,6 +51,10 @@ COACH = "coach-colour"
 
 
 async def _seed(db: Any) -> tuple[Any, Any, str, list[Any]]:
+    # Placement refuses a student this academy does not have.
+    await db["students"].insert_one(
+        {"academy_id": ACADEMY, "student_id": STUDENT, "parent_id": "parent", "full_name": "Kid"}
+    )
     await db["enrollments"].insert_one(
         {
             "academy_id": ACADEMY,
@@ -117,7 +121,11 @@ async def test_coach_note_is_tenant_scoped_cleared_on_undo_and_only_on_fresh_win
 
         await progress.mark_skill_mastered.execute(
             MarkSkillMasteredCommand(
-                skill_id=first, program_id=program_id, student_ids=[STUDENT], coach_id=COACH
+                can_sign_off=True,
+                skill_id=first,
+                program_id=program_id,
+                student_ids=[STUDENT],
+                coach_id=COACH,
             )
         )
         row = await progress.set_mastery_note.execute(
@@ -170,7 +178,11 @@ async def test_coach_note_is_tenant_scoped_cleared_on_undo_and_only_on_fresh_win
         )
         await progress.unmark_skill_mastered.execute(
             UnmarkSkillMasteredCommand(
-                student_id=STUDENT, skill_id=first, program_id=program_id, updated_by=COACH
+                can_sign_off=True,
+                student_id=STUDENT,
+                skill_id=first,
+                program_id=program_id,
+                updated_by=COACH,
             )
         )
         doc = await real_db["student_skill_progress"].find_one({"skill_id": first})
@@ -179,7 +191,11 @@ async def test_coach_note_is_tenant_scoped_cleared_on_undo_and_only_on_fresh_win
         # A win from two days ago is closed for notes.
         await progress.mark_skill_mastered.execute(
             MarkSkillMasteredCommand(
-                skill_id=first, program_id=program_id, student_ids=[STUDENT], coach_id=COACH
+                can_sign_off=True,
+                skill_id=first,
+                program_id=program_id,
+                student_ids=[STUDENT],
+                coach_id=COACH,
             )
         )
         await real_db["student_skill_progress"].update_one(
@@ -205,14 +221,22 @@ async def test_a_note_saved_after_an_undo_does_not_bring_the_win_back(real_db: A
         skill = (await real_db["skills"].find_one({"level_id": levels[0].level_id}))["skill_id"]
         await progress.mark_skill_mastered.execute(
             MarkSkillMasteredCommand(
-                skill_id=skill, program_id=program_id, student_ids=[STUDENT], coach_id=COACH
+                can_sign_off=True,
+                skill_id=skill,
+                program_id=program_id,
+                student_ids=[STUDENT],
+                coach_id=COACH,
             )
         )
         repo = MongoStudentSkillProgressRepository(real_db)
         stale = await repo.get(STUDENT, skill)
         await progress.unmark_skill_mastered.execute(
             UnmarkSkillMasteredCommand(
-                student_id=STUDENT, skill_id=skill, program_id=program_id, updated_by=COACH
+                can_sign_off=True,
+                student_id=STUDENT,
+                skill_id=skill,
+                program_id=program_id,
+                updated_by=COACH,
             )
         )
 

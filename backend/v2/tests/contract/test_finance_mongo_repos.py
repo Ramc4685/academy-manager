@@ -24,7 +24,6 @@ from decimal import Decimal
 import pytest
 
 from backend.v2.contexts.billing.application.use_cases.finance import (
-    MongoPayoutRepository,
     MongoTuitionDiscountSummaryQuery,
 )
 from backend.v2.contexts.finance.domain.payout_period import (
@@ -271,167 +270,6 @@ async def test_tuition_discount_summary_groups_discount_lines_by_category(db, ac
 
 
 @pytest.mark.asyncio
-async def test_derived_payout_period_buckets_on_the_academy_clock(db, acad) -> None:
-    """#608: a class that is still May in Chicago must not bill as June."""
-    await db["academies"].insert_one({"academy_id": acad, "timezone": "America/Chicago"})
-    await db["session_occurrences"].insert_one(
-        {
-            "academy_id": acad,
-            "occurrence_id": "occ-late",
-            "session_id": "sess-1",
-            # 2026-05-31 20:00 America/Chicago = 2026-06-01 01:00 UTC.
-            "start_at": _dt("2026-06-01T01:00:00"),
-            "end_at": _dt("2026-06-01T02:00:00"),
-            "status": "completed",
-            "scheduled_coach_id": "coach-blno",
-            "is_payable": True,
-        }
-    )
-    await db["coach_rates"].insert_one(
-        {
-            "academy_id": acad,
-            "coach_id": "coach-blno",
-            "rate_id": "rate-1",
-            "billing_unit": "per_session",
-            "amount_minor": 2500,
-            "currency": "USD",
-            "effective_from": _dt("2026-01-01T00:00:00"),
-            "status": "active",
-        }
-    )
-
-    rows = await MongoPayoutRepository(db).list_all()
-
-    assert [row.payout_id for row in rows] == ["occurrence:2026-05:coach-blno"]
-    # The window is May as Chicago sees it: 2026-05-01 05:00 UTC onwards.
-    assert rows[0].period_start == _dt("2026-05-01T05:00:00")
-
-
-@pytest.mark.asyncio
-async def test_payout_repo_derives_occurrence_attributed_payouts_when_no_periods_exist(
-    db, acad
-) -> None:
-    repo = MongoPayoutRepository(db)
-    await db["session_occurrences"].insert_many(
-        [
-            {
-                "academy_id": acad,
-                "occurrence_id": "occ-1",
-                "session_id": "sess-1",
-                "start_at": _dt("2026-05-27T18:00:00"),
-                "end_at": _dt("2026-05-27T19:00:00"),
-                "status": "completed",
-                "scheduled_coach_id": "coach-blno",
-                "is_payable": True,
-            },
-            {
-                "academy_id": acad,
-                "occurrence_id": "occ-2",
-                "session_id": "sess-2",
-                "start_at": _dt("2026-05-28T18:00:00"),
-                "end_at": _dt("2026-05-28T19:00:00"),
-                "status": "completed",
-                "scheduled_coach_id": "coach-blno",
-                "actual_coach_id": "coach-replacement",
-                "is_payable": True,
-            },
-            {
-                "academy_id": "other-academy",
-                "occurrence_id": "occ-other",
-                "session_id": "sess-other",
-                "start_at": _dt("2026-05-29T18:00:00"),
-                "end_at": _dt("2026-05-29T19:00:00"),
-                "status": "completed",
-                "scheduled_coach_id": "coach-other",
-                "is_payable": True,
-            },
-        ]
-    )
-    await db["coach_rates"].insert_many(
-        [
-            {
-                "academy_id": acad,
-                "coach_id": "coach-blno",
-                "rate_id": "rate-1",
-                "billing_unit": "per_session",
-                "amount_minor": 2500,
-                "currency": "USD",
-                "effective_from": _dt("2026-01-01T00:00:00"),
-                "status": "active",
-            },
-            {
-                "academy_id": acad,
-                "coach_id": "coach-replacement",
-                "rate_id": "rate-2",
-                "billing_unit": "per_session",
-                "amount_minor": 3000,
-                "currency": "USD",
-                "effective_from": _dt("2026-01-01T00:00:00"),
-                "status": "active",
-            },
-            {
-                "academy_id": "other-academy",
-                "coach_id": "coach-other",
-                "rate_id": "rate-other",
-                "billing_unit": "per_session",
-                "amount_minor": 9999,
-                "currency": "USD",
-                "effective_from": _dt("2026-01-01T00:00:00"),
-                "status": "active",
-            },
-        ]
-    )
-    await db["attendance"].insert_many(
-        [
-            {
-                "academy_id": acad,
-                "attendance_id": "att-1",
-                "occurrence_id": "occ-1",
-                "session_id": "sess-1",
-                "student_id": "student-1",
-                "marked_by": "coach-blno",
-                "marked_at": _dt("2026-05-27T19:00:00"),
-                "status": "present",
-            },
-            {
-                "academy_id": acad,
-                "attendance_id": "att-2",
-                "occurrence_id": "occ-2",
-                "session_id": "sess-2",
-                "student_id": "student-2",
-                "marked_by": "coach-blno",
-                "marked_at": _dt("2026-05-28T19:00:00"),
-                "status": "late",
-            },
-            {
-                "academy_id": "other-academy",
-                "attendance_id": "att-other",
-                "occurrence_id": "occ-other",
-                "session_id": "sess-other",
-                "student_id": "student-other",
-                "marked_by": "coach-other",
-                "marked_at": _dt("2026-05-29T19:00:00"),
-                "status": "present",
-            },
-        ]
-    )
-
-    rows = await repo.list_all()
-
-    by_coach = {row.coach_id: row for row in rows}
-    assert set(by_coach) == {"coach-blno", "coach-replacement"}
-    assert "coach-other" not in by_coach
-    assert by_coach["coach-blno"].amount_cents == 2500
-    assert by_coach["coach-blno"].students_count == 1
-    assert by_coach["coach-blno"].sessions_count == 1
-    assert by_coach["coach-blno"].rule_label == "Occurrence attribution"
-    assert by_coach["coach-replacement"].amount_cents == 3000
-    assert by_coach["coach-replacement"].students_count == 1
-    assert by_coach["coach-replacement"].sessions_count == 1
-    assert by_coach["coach-replacement"].rule_label == "Occurrence attribution"
-
-
-@pytest.mark.asyncio
 async def test_save_and_find_by_window_round_trips(db, acad) -> None:
     repo = MongoPayoutPeriodRepository(db)
     saved = await repo.save(_make_period(line_count=2, total=10_000))
@@ -606,9 +444,8 @@ async def test_replace_persists_state_transition(db, acad) -> None:
     fetched = await repo.find_by_id(saved.period_id)
     assert fetched is not None
     assert fetched.status == "approved"
-    # mongomock-motor drops tzinfo on datetimes; compare naive components.
-    assert fetched.approved_at is not None
-    assert fetched.approved_at.replace(tzinfo=UTC) == _dt("2026-06-02T12:00:00")
+    # Hydration re-attaches UTC to the naive datetimes the driver returns.
+    assert fetched.approved_at == _dt("2026-06-02T12:00:00")
 
 
 @pytest.mark.asyncio

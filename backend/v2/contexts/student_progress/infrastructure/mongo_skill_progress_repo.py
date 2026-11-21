@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from pymongo.errors import DuplicateKeyError
+
 from backend.v2.contexts.student_progress.domain.models import StudentSkillProgress
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -35,47 +37,92 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
             last_updated_at=doc["last_updated_at"],
             last_updated_by=str(doc["last_updated_by"]),
             coach_note=doc.get("coach_note") or None,
+            tries=doc.get("tries") or 0,
+            silent=bool(doc.get("silent", False)),
         )
 
+    @staticmethod
+    def _fields(skill_progress: StudentSkillProgress) -> dict[str, object]:
+        # ``tries`` is deliberately absent: only ``increment_tries`` writes it.
+        return {
+            "skill_progress_id": skill_progress.skill_progress_id,
+            "student_id": skill_progress.student_id,
+            "skill_id": skill_progress.skill_id,
+            "level_id": skill_progress.level_id,
+            "program_id": skill_progress.program_id,
+            "status": skill_progress.status,
+            "introduced_at": skill_progress.introduced_at,
+            "last_updated_at": skill_progress.last_updated_at,
+            "last_updated_by": skill_progress.last_updated_by,
+            "coach_note": skill_progress.coach_note,
+            "silent": skill_progress.silent,
+        }
+
     async def save(self, skill_progress: StudentSkillProgress) -> None:
-        await self._insert_one(
-            {
-                "skill_progress_id": skill_progress.skill_progress_id,
-                "student_id": skill_progress.student_id,
-                "skill_id": skill_progress.skill_id,
-                "level_id": skill_progress.level_id,
-                "program_id": skill_progress.program_id,
-                "status": skill_progress.status,
-                "introduced_at": skill_progress.introduced_at,
-                "last_updated_at": skill_progress.last_updated_at,
-                "last_updated_by": skill_progress.last_updated_by,
-                "coach_note": skill_progress.coach_note,
-            }
-        )
+        await self._insert_one(self._fields(skill_progress))
 
     async def upsert(self, skill_progress: StudentSkillProgress) -> StudentSkillProgress:
         await self._update_one(
             {"student_id": skill_progress.student_id, "skill_id": skill_progress.skill_id},
-            {
-                "$set": {
-                    "skill_progress_id": skill_progress.skill_progress_id,
-                    "student_id": skill_progress.student_id,
-                    "skill_id": skill_progress.skill_id,
-                    "level_id": skill_progress.level_id,
-                    "program_id": skill_progress.program_id,
-                    "status": skill_progress.status,
-                    "introduced_at": skill_progress.introduced_at,
-                    "last_updated_at": skill_progress.last_updated_at,
-                    "last_updated_by": skill_progress.last_updated_by,
-                    "coach_note": skill_progress.coach_note,
-                }
-            },
+            {"$set": self._fields(skill_progress)},
             upsert=True,
         )
         saved = await self.get(skill_progress.student_id, skill_progress.skill_id)
         if saved is None:  # pragma: no cover - impossible unless Mongo write failed silently
             raise RuntimeError("skill progress upsert did not persist a row")
         return saved
+
+    async def insert_if_missing(self, skill_progress: StudentSkillProgress) -> bool:
+        """Create the row only when the student has none for this skill.
+
+        Placement and level-up seed with this, so a skill the student already
+        earned is never reset (the November wipe). Returns whether it inserted.
+        """
+        try:
+            result = await self._update_one(
+                {"student_id": skill_progress.student_id, "skill_id": skill_progress.skill_id},
+                {"$setOnInsert": {**self._fields(skill_progress), "tries": 0}},
+                upsert=True,
+            )
+        except DuplicateKeyError:  # a concurrent seed won the unique index
+            return False
+        return result.upserted_id is not None
+
+    async def increment_tries(self, student_id: str, skill_id: str, delta: int) -> int | None:
+        """Atomically add ``delta`` to ``tries`` (never below zero); the new count.
+
+        ``None`` when there is no row, or a decrement found it already at zero.
+        """
+        filter_: dict[str, object] = {"student_id": student_id, "skill_id": skill_id}
+        if delta < 0:
+            filter_["tries"] = {"$gte": -delta}
+        doc = await self._find_one_and_update(filter_, {"$inc": {"tries": delta}})
+        return int(doc.get("tries") or 0) if doc else None
+
+    async def set_status_unless_passed(
+        self,
+        student_id: str,
+        skill_id: str,
+        status: str,
+        *,
+        at: datetime,
+        by: str,
+        introduced_at: datetime | None = None,
+    ) -> bool:
+        """Write a non-pass status, but never over a PASSED row: a stale try
+        that read before a concurrent pass must not take the pass away."""
+        result = await self._update_one(
+            {"student_id": student_id, "skill_id": skill_id, "status": {"$ne": "PASSED"}},
+            {
+                "$set": {
+                    "status": status,
+                    "last_updated_at": at,
+                    "last_updated_by": by,
+                    **({"introduced_at": introduced_at} if introduced_at else {}),
+                }
+            },
+        )
+        return bool(result.matched_count == 1)
 
     async def set_coach_note(
         self, student_id: str, skill_id: str, *, passed_at: datetime, note: str | None
@@ -113,12 +160,26 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def list_passed_for_student(self, student_id: str) -> list[StudentSkillProgress]:
+        """Every skill this student has passed, any level: the milestone count (L5B).
+
+        Silent placement credits are left out, as in ``list_passed_between``.
+        """
+        cursor = self._find_many(
+            {"student_id": student_id, "status": "PASSED", "silent": {"$ne": True}}
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_passed_between(
         self, start: datetime, end: datetime
     ) -> list[StudentSkillProgress]:
         """Skills that reached PASSED in ``[start, end)`` -- the evening win email."""
         cursor = self._find_many(
-            {"status": "PASSED", "last_updated_at": {"$gte": start, "$lt": end}},
+            {
+                "status": "PASSED",
+                "last_updated_at": {"$gte": start, "$lt": end},
+                "silent": {"$ne": True},
+            },
         )
         return [self._to_domain(doc) async for doc in cursor]
 

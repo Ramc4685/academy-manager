@@ -920,7 +920,7 @@ async def test_percent_rate_rounds_half_even() -> None:
 
 
 @pytest.mark.asyncio
-async def test_percent_rate_without_expected_revenue_marks_unpaid() -> None:
+async def test_percent_rate_without_invoiced_tuition_blocks() -> None:
     rate = CoachRate(
         rate_id="cr-1",
         academy_id="acad-1",
@@ -951,10 +951,11 @@ async def test_percent_rate_without_expected_revenue_marks_unpaid() -> None:
     assert statement.lines == []
     assert statement.unpaid_occurrence_ids == ["occ-1"]
     assert [warning.reason for warning in statement.payout_warnings] == [
-        "missing_session_price_for_percent_revenue"
+        "missing_invoiced_tuition_for_percent_revenue"
     ]
-    assert statement.payout_warnings[0].repair_action == "set_session_fee_and_recompute"
-    assert statement.unpaid_occurrences[0].reason == "missing_session_price_for_percent_revenue"
+    assert statement.payout_warnings[0].severity == "blocking"
+    assert statement.payout_warnings[0].repair_action == "invoice_class_month_and_recompute"
+    assert statement.unpaid_occurrences[0].reason == "missing_invoiced_tuition_for_percent_revenue"
 
 
 @pytest.mark.asyncio
@@ -1479,3 +1480,141 @@ async def test_execute_many_rejects_inverted_period() -> None:
             period_start=_dt("2026-06-01T00:00:00"),
             period_end=_dt("2026-05-01T00:00:00"),
         )
+
+
+# ---------------------------------------------------------------------------
+# Assistants (L7)
+# ---------------------------------------------------------------------------
+
+
+def _rate(coach_id: str, unit: str = "per_session", amount: int = 2_500, **kw) -> CoachRate:
+    return CoachRate(
+        rate_id=f"cr-{coach_id}",
+        academy_id="acad-1",
+        coach_id=coach_id,
+        billing_unit=unit,
+        amount_minor=amount,
+        percent_bps=kw.get("percent_bps"),
+        currency="USD",
+        effective_from=_dt("2026-01-01T00:00:00"),
+    )
+
+
+def _assisted(**kw) -> PayableOccurrence:
+    occ = _occurrence("occ-1", start="2026-05-10T18:00:00", end="2026-05-10T19:30:00", **kw)
+    return occ.model_copy(update={"assistant_coach_ids": ["asst-1"]})
+
+
+async def _statement(occ: PayableOccurrence, rates: list[CoachRate], coach_id: str = "asst-1"):
+    return await ComputeCoachPayout(
+        occurrences=FakeOccurrenceQuery([occ]), rates=FakeRateRepo(rates)
+    ).execute(
+        coach_id=coach_id,
+        academy_id="acad-1",
+        period_start=_dt("2026-05-01T00:00:00"),
+        period_end=_dt("2026-06-01T00:00:00"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_assistant_is_paid_their_own_rate() -> None:
+    statement = await _statement(_assisted(), [_rate("coach-A", amount=9_000), _rate("asst-1")])
+    assert [(line.basis, line.amount_minor) for line in statement.lines] == [("assistant", 2_500)]
+
+    hourly = await _statement(_assisted(), [_rate("asst-1", unit="per_hour", amount=2_000)])
+    assert hourly.lines[0].amount_minor == 3_000  # 90 minutes
+
+
+@pytest.mark.asyncio
+async def test_assistant_marked_absent_is_not_paid() -> None:
+    occ = _assisted(coach_attendance=[CoachAttendanceForPayout(coach_id="asst-1", status="absent")])
+    statement = await _statement(occ, [_rate("asst-1")])
+    assert statement.lines == []
+    assert statement.absent_occurrence_ids == ["occ-1"]
+    assert statement.payout_warnings == []
+
+
+@pytest.mark.asyncio
+async def test_assistant_attendance_override_pays_exactly_that() -> None:
+    occ = _assisted(
+        coach_attendance=[
+            CoachAttendanceForPayout(
+                coach_id="asst-1", status="present", role="assistant", rate_override_minor=1_234
+            )
+        ]
+    )
+    statement = await _statement(occ, [])
+    assert [(line.basis, line.amount_minor) for line in statement.lines] == [("assistant", 1_234)]
+
+
+@pytest.mark.asyncio
+async def test_assistant_on_percent_rate_or_no_rate_blocks() -> None:
+    percent = await _statement(
+        _assisted(expected_revenue_minor=10_000),
+        [_rate("asst-1", unit="percent_of_revenue", amount=0, percent_bps=1_000)],
+    )
+    assert percent.lines == []
+    assert [(w.reason, w.severity) for w in percent.payout_warnings] == [
+        ("percent_rate_on_assistant", "blocking")
+    ]
+    # Rates are per coach, not per role: the fix is a per-class override or a flat rate.
+    assert percent.payout_warnings[0].repair_action == "override_assistant_pay_and_recompute"
+
+    no_rate = await _statement(_assisted(), [])
+    assert [(w.reason, w.severity) for w in no_rate.payout_warnings] == [
+        ("missing_rate", "blocking")
+    ]
+    assert "volunteer" in (no_rate.unpaid_occurrences[0].detail or "")
+
+    volunteer = await _statement(_assisted(), [_rate("asst-1", amount=0)])
+    assert [(line.amount_minor, volunteer.payout_warnings) for line in volunteer.lines] == [(0, [])]
+
+
+@pytest.mark.asyncio
+async def test_paying_coach_listed_as_assistant_is_paid_once() -> None:
+    occ = _assisted().model_copy(update={"assistant_coach_ids": ["coach-A", "coach-A"]})
+    statement = await _statement(occ, [_rate("coach-A")], coach_id="coach-A")
+    assert [(line.basis, line.amount_minor) for line in statement.lines] == [("scheduled", 2_500)]
+
+
+class _Gaps:
+    def __init__(self, count: int) -> None:
+        self.count = count
+
+    async def unattributed_invoices(
+        self, academy_id: str, period_start: datetime, period_end: datetime
+    ) -> int:
+        return self.count
+
+
+@pytest.mark.asyncio
+async def test_unattributed_manual_invoices_warn_a_percent_coach_without_blocking() -> None:
+    occ = _occurrence(
+        "occ-1",
+        start="2026-05-10T18:00:00",
+        end="2026-05-10T19:00:00",
+        expected_revenue_minor=10_000,
+    )
+    percent = [_rate("coach-A", unit="percent_of_revenue", amount=0, percent_bps=5_000)]
+
+    async def statement(rates: list[CoachRate], gaps: int):
+        return await ComputeCoachPayout(
+            occurrences=FakeOccurrenceQuery([occ]),
+            rates=FakeRateRepo(rates),
+            invoice_gaps=_Gaps(gaps),
+        ).execute(
+            coach_id="coach-A",
+            academy_id="acad-1",
+            period_start=_dt("2026-05-01T00:00:00"),
+            period_end=_dt("2026-06-01T00:00:00"),
+        )
+
+    warned = await statement(percent, 2)
+    assert warned.total_minor == 5_000
+    assert [(w.reason, w.severity) for w in warned.payout_warnings] == [
+        ("unattributed_manual_invoices", "warning")
+    ]
+    assert "2 invoices" in warned.payout_warnings[0].message
+    # No gaps, or a coach whose pay does not depend on invoices: no warning.
+    assert (await statement(percent, 0)).payout_warnings == []
+    assert (await statement([_rate("coach-A")], 2)).payout_warnings == []

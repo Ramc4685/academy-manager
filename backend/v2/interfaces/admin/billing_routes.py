@@ -42,6 +42,7 @@ from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.owner_gate import ensure_owner_for_invoice_void
 from backend.v2.interfaces.admin.staff_tier import require_staff_tier
 from backend.v2.interfaces.admin.views import (
+    AchNoticePreviewView,
     AdminEnrollmentQuoteRequest,
     AdminEnrollmentQuoteResponse,
     AdminExpenseList,
@@ -52,8 +53,6 @@ from backend.v2.interfaces.admin.views import (
     AdminPaymentFeedResponse,
     AdminPaymentList,
     AdminPaymentView,
-    AdminPayoutList,
-    AdminPayoutView,
     AdminRevenueResponse,
     AdminTuitionDiscountSummaryResponse,
     ApplyPaymentDiscountRequest,
@@ -137,6 +136,26 @@ async def get_invoice_schedule(
         billing_day=result.billing_day,
         invoice_due_days=result.invoice_due_days,
     )
+
+
+@router.get(
+    "/billing/ach-notice/preview",
+    response_model=AchNoticePreviewView,
+    summary="Render the autopay date-change notice (never sent)",
+)
+async def preview_ach_notice(
+    parent_id: str | None = Query(default=None, max_length=200),
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AchNoticePreviewView:
+    use_case = _required_callable(use_cases.preview_ach_notice, "preview_ach_notice")
+    rendered = await use_case(parent_id)  # type: ignore[operator]
+    if rendered is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No autopay date change is scheduled, or the parent is not on autopay",
+        )
+    return AchNoticePreviewView(**rendered)
 
 
 # `PUT /billing/settings/invoice-schedule` (the write side of this legacy
@@ -586,34 +605,6 @@ async def reconcile_stripe_billing(
 # --- # FINANCE ---
 
 
-# DEPRECATED — retire after feat/coach-payroll-month-first ships.
-# Replaced by: GET /admin/payroll/{month} in payroll_routes.py
-# No UI surface should call this route once Phase 2 is merged.
-@router.get("/finance/payouts", response_model=AdminPayoutList)  # FINANCE
-async def list_payouts(
-    _claims: AuthClaims = Depends(require_owner()),
-    use_cases: AdminUseCases = Depends(get_admin_use_cases),
-) -> AdminPayoutList:
-    payouts = await use_cases.payouts.list_all()
-    return AdminPayoutList(
-        payouts=[
-            AdminPayoutView(
-                payout_id=p.payout_id,
-                coach_id=p.coach_id,
-                amount_cents=p.amount_cents,
-                period_start=p.period_start,
-                period_end=p.period_end,
-                paid_at=p.paid_at,
-                expected_revenue_cents=p.expected_revenue_cents,
-                students_count=p.students_count,
-                sessions_count=p.sessions_count,
-                rule_label=p.rule_label,
-            )
-            for p in payouts
-        ]
-    )
-
-
 @router.get("/finance/expenses", response_model=AdminExpenseList)  # FINANCE
 async def list_expenses(
     _claims: AuthClaims = Depends(require_persona("admin")),
@@ -935,7 +926,7 @@ async def add_invoice_line(
 async def add_invoice_adjustment(
     invoice_id: str,
     body: AddInvoiceAdjustmentRequest,
-    _claims: AuthClaims = Depends(require_owner()),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> InvoiceLineResponse:
     add_line = _required_callable(use_cases.add_invoice_line, "Invoice adjustment management")
@@ -947,6 +938,10 @@ async def add_invoice_adjustment(
             quantity=1,
             unit_amount_cents=body.amount_cents,
             product_id=None,
+            # The audit trail keeps why and who (#1035); the parent sees only
+            # the description.
+            reason=body.reason,
+            actor_id=claims.user_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

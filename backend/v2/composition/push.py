@@ -6,12 +6,17 @@ goes to the in-memory stub, so nothing reaches a phone.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from backend.v2.contexts.communications.application.ports import PushSendPort
+from backend.v2.contexts.communications.application.use_cases.notify_message_by_push import (
+    NotifyMessageByPush,
+)
 from backend.v2.contexts.communications.application.use_cases.send_push_to_user import (
     SendPushToUser,
 )
+from backend.v2.contexts.communications.domain.push_events import enabled_push_events
 from backend.v2.contexts.communications.infrastructure.fcm_push_send_port import FcmPushSendPort
 from backend.v2.contexts.communications.infrastructure.mongo_push_device_repo import (
     MongoPushDeviceRepository,
@@ -32,5 +37,57 @@ def compose_send_push_to_user(db: Any, settings: Any) -> SendPushToUser:
     """The push the parent notifiers send after their email (class cancelled,
     waitlist offer, urgent announcement, dues reminders)."""
     return SendPushToUser(
-        devices=MongoPushDeviceRepository(db), sender=_build_push_sender(settings)
+        devices=MongoPushDeviceRepository(db),
+        sender=_build_push_sender(settings),
+        enabled_events=enabled_push_events(getattr(settings, "push_extra_events", "")),
     )
+
+
+def compose_message_push(db: Any, settings: Any) -> NotifyMessageByPush:
+    """Push for DMs, academy broadcasts and routine class announcements (L11)."""
+    from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
+        MongoAudienceResolver,
+    )
+    from backend.v2.contexts.communications.infrastructure.mongo_email_preference_repo import (
+        MongoEmailPreferenceRepository,
+    )
+    from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
+        MongoMembershipRepository,
+    )
+    from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
+
+    # Same role source as authentication: academy_memberships in SaaS mode, the
+    # users record in single-academy mode (main.py's legacy membership adapter).
+    if getattr(settings, "saas_mode", False):
+        memberships = MongoMembershipRepository(db)
+
+        async def roles_of(academy_id: str, user_id: str) -> Sequence[str]:
+            membership = await memberships.get_membership(academy_id, user_id)
+            return membership.roles if membership else ()
+
+    else:
+        users = MongoUserRepository(db)
+
+        async def roles_of(academy_id: str, user_id: str) -> Sequence[str]:
+            user = await users.get_by_id(user_id)
+            return user.roles if user is not None and user.is_active else ()
+
+    async def inbox_path(academy_id: str, user_id: str) -> str:
+        return message_inbox_path(await roles_of(academy_id, user_id))
+
+    return NotifyMessageByPush(
+        push=compose_send_push_to_user(db, settings),
+        audiences=MongoAudienceResolver(db=db),
+        preferences=MongoEmailPreferenceRepository(db),
+        inbox_path=inbox_path,
+    )
+
+
+def message_inbox_path(roles: Sequence[str]) -> str:
+    """The messages page a DM push opens: the parent inbox unless the person
+    only has a coach or staff shell."""
+    if "parent" in roles or not roles:
+        return "/parent/messages"
+    if "coach" in roles or "assistant_coach" in roles:
+        return "/coach/messages"
+    return "/admin/messages"

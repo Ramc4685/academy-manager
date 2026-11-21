@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Protocol
+from datetime import datetime
+from typing import Any, Protocol
 
 from fastapi import Request
 
@@ -30,12 +31,15 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     DeleteExpense,
     EditExpense,
     MongoExpenseRepository,
-    MongoPayoutRepository,
     RecordExpense,
 )
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefund
 from backend.v2.contexts.billing.application.use_cases.money_setting_audit import (
     RecordMoneySettingChange,
+)
+from backend.v2.contexts.billing.application.use_cases.payroll_settings import (
+    GetPayrollSettings,
+    UpdatePayrollSettings,
 )
 from backend.v2.contexts.billing.application.use_cases.send_add_card_reminder import (
     SendAddCardReminder,
@@ -71,6 +75,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     UpdateAdminStudent,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
+    BulkTransferEnrollments,
     CancelEnrollment,
     CancelSession,
     CreateSession,
@@ -85,6 +90,10 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     TransferEnrollment,
     WithdrawEnrollment,
 )
+from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
+    CancelSessionOccurrence,
+)
+from backend.v2.contexts.enrollment.application.use_cases.copy_session import CopySession
 from backend.v2.contexts.enrollment.application.use_cases.departure_policies import (
     GetEnrollmentDeparturePolicy,
     UpdateEnrollmentDeparturePolicy,
@@ -119,6 +128,7 @@ from backend.v2.contexts.enrollment.application.use_cases.self_cancel import (
 )
 from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
     GetSelfServicePolicy,
+    SetSchedulePublishedThrough,
     UpdateSelfServicePolicy,
 )
 from backend.v2.contexts.enrollment.application.use_cases.stop_all_classes import (
@@ -126,6 +136,7 @@ from backend.v2.contexts.enrollment.application.use_cases.stop_all_classes impor
 )
 from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
     ApproveTrialRequest,
+    CancelGuestTrialBooking,
     DenyTrialRequest,
     ListTrialRequestsForAdmin,
 )
@@ -262,7 +273,6 @@ class AdminUseCases:
     edit_expense: EditExpense
     delete_expense: DeleteExpense
     expenses: MongoExpenseRepository
-    payouts: MongoPayoutRepository
     revenue_query: AdminRevenueQuery
     # reads
     list_admin_sessions: object  # callable
@@ -275,9 +285,10 @@ class AdminUseCases:
     list_dues_followup: object  # callable
     send_dues_reminders: SendDuesReminders
     export_report_csv: object  # callable
-    list_enrollment_events: (
-        object  # async (enrollment_id, *, limit, cursor) -> (list[dict], cursor | None)
-    )
+    # async (enrollment_id, *, limit, cursor) -> (events, next cursor | None)
+    list_enrollment_events: Callable[
+        ..., Awaitable[tuple[list[dict[str, Any]], tuple[datetime, str] | None]]
+    ]
     list_billing_deferral_warnings: object  # async (*, today: date, limit: int)
     # comms
     comms: CommsService
@@ -296,6 +307,11 @@ class AdminUseCases:
     # predate it keep constructing AdminUseCases; real admin composition
     # always sets it, and the routes 503 rather than 500 when it is absent.
     session_announcements: SessionAnnouncementService | None = None
+    # A0-8 bulk roster transfer. Optional for the same reason; it loops
+    # `transfer_enrollment`, and the route 503s when it is absent.
+    bulk_transfer_enrollments: BulkTransferEnrollments | None = None
+    # A0-8 Copy class; optional like the two above (route 503s when absent).
+    copy_session: CopySession | None = None
     # recurring tuition discounts (#244)
     set_tuition_discount: object | None = None  # SetTuitionDiscount
     remove_tuition_discount: object | None = None  # RemoveTuitionDiscount
@@ -319,6 +335,9 @@ class AdminUseCases:
     maintain_session_occurrences: object | None = None  # async (session) -> None
     # Read-only welcome email render: async (session_id) -> (subject, html) | None
     preview_welcome_email: object | None = None
+    # Read-only autopay date-change notice (L8): async (parent_id | None) ->
+    # {subject, html, recipients} | None. Never sends.
+    preview_ach_notice: object | None = None
     # Assistant coaches editor (composition/admin_session_staff.py).
     set_session_assistants: object | None = None  # SetSessionAssistants
     add_session_replacement: object | None = None  # async (...) -> dict | None
@@ -329,6 +348,8 @@ class AdminUseCases:
     admin_registration_review: AdminRegistrationReview | None = None
     payout_periods: PayoutPeriodRepository | None = None
     list_monthly_payroll: ListMonthlyPayroll | None = None
+    get_payroll_settings: GetPayrollSettings | None = None
+    update_payroll_settings: UpdatePayrollSettings | None = None
     bulk_generate_payroll: BulkGeneratePayroll | None = None
     bulk_recompute_payroll: BulkRecomputePayroll | None = None
     generate_payout_period: GeneratePayoutPeriod | None = None
@@ -388,7 +409,8 @@ class AdminUseCases:
     # Issue #671: CancelSessionOccurrence — "cancel this date". Optional so
     # older admin fixtures still construct AdminUseCases; the route 503s
     # rather than 500s when a composition root forgets to wire it.
-    cancel_session_occurrence: object | None = None
+    cancel_session_occurrence: CancelSessionOccurrence | None = None
+    close_academy_dates: object | None = None  # CloseAcademyDates
     get_coach_engagement_stats: GetCoachEngagementStats | None = None
     send_campaign: SendCampaign | None = None
     start_stripe_connect_use_case: StartStripeConnectUseCase | None = None
@@ -445,6 +467,7 @@ class AdminUseCases:
     # Parent self-service policy (#absence/makeup/cancel Slice 1)
     self_service_policy: GetSelfServicePolicy | None = None
     update_self_service_policy: UpdateSelfServicePolicy | None = None
+    set_schedule_published_through: SetSchedulePublishedThrough | None = None
     # Admin makeup review + absence queue (R2, Task 5)
     list_makeup_requests_for_admin: ListMakeupRequestsForAdmin | None = None
     approve_makeup_request: ApproveMakeupRequest | None = None
@@ -458,6 +481,7 @@ class AdminUseCases:
     list_trial_requests_for_admin: ListTrialRequestsForAdmin | None = None
     approve_trial_request: ApproveTrialRequest | None = None
     deny_trial_request: DenyTrialRequest | None = None
+    cancel_guest_trial_booking: CancelGuestTrialBooking | None = None
     # Self-cancel audit list (R4, Task 8)
     list_self_cancellations_for_admin: ListSelfCancellationsForAdmin | None = None
     # Read-only view of billing_settings.allow_platform_charge_fallback, which

@@ -85,6 +85,7 @@ from backend.v2.contexts.billing.domain.ledger import (
     finalize,
     record_delivery,
 )
+from backend.v2.shared.ids import new_ulid
 
 log = logging.getLogger(__name__)
 
@@ -147,6 +148,7 @@ class InvoiceEmailPort(Protocol):
         balance_due_cents: int,
         currency: str,
         checkout_url: str | None,
+        bundled: bool = False,
     ) -> str | None:
         """Send the invoice email. Returns the provider message id when the
         provider supplies one (Resend), else None. Raises on delivery failure."""
@@ -264,6 +266,10 @@ class SendInvoice:
                 held_primary = stamped
         return held_primary
 
+    async def _has_charge_line(self, invoice: LedgerInvoice) -> bool:
+        lines = await self._ledger.get_lines_for_invoice(invoice.invoice_id)
+        return any(line.amount_cents > 0 for line in lines)
+
     async def _is_autopaying(self, invoice: LedgerInvoice) -> bool:
         """True when the autopay/dunning worker will charge this invoice itself.
 
@@ -346,7 +352,11 @@ class SendInvoice:
 
         # 2. Finalize draft invoices before sending
         if invoice.status == "draft":
-            if invoice.total_cents == 0:
+            # A blank draft has nothing to say; a draft whose charges are fully
+            # offset by a waiver is a real $0 invoice and is sent (#1035). The
+            # header cannot tell them apart (a hand-billed waiver nets to a $0
+            # subtotal), so look for an actual charge line.
+            if invoice.total_cents == 0 and not await self._has_charge_line(invoice):
                 raise EmptyInvoiceNotSendable("Add at least one charge before sending")
             invoice = finalize(invoice, now=now)
             invoice = await self._ledger.save_invoice(invoice)
@@ -506,6 +516,13 @@ class SendInvoice:
             if route is not None:
                 idempotency_key = route.idempotency_key(idempotency_key)
                 on_account = route.on_account_kwargs()
+            # One key per attempt. A deterministic key made Stripe replay the
+            # first session for 24h: a dead (expired/completed) session came
+            # back, or a click whose success_url differed from the email pass
+            # was rejected outright. Each attempt is a new session by design —
+            # place_checkout_hold below re-points the hold at it, so dunning
+            # still stands off the session the parent is actually on.
+            idempotency_key = f"{idempotency_key}:attempt-{new_ulid()}"
             try:
                 session_id, checkout_url = await self._stripe.create_invoice_checkout_session(
                     invoice_id=gateway_invoice_id,
@@ -613,6 +630,7 @@ class SendInvoice:
                     balance_due_cents=email_balance_due_cents,
                     currency=invoice.currency,
                     checkout_url=checkout_url,
+                    bundled=is_bundled,
                 )
                 invoice = record_delivery(
                     invoice,

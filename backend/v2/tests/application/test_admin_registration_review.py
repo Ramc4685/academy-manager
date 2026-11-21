@@ -236,7 +236,9 @@ class InMemoryEnrollments:
     async def update_status(self, enrollment_id: str, status: str) -> None:
         return None
 
-    async def update_session(self, enrollment_id: str, session_id: str) -> None:
+    async def update_session(
+        self, enrollment_id: str, session_id: str, *, expected_session_id: str | None = None
+    ) -> None:
         return None
 
     async def add_skip_period(self, enrollment_id: str, period: str) -> None:

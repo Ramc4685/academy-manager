@@ -33,6 +33,17 @@ class DuplicateSessionSeries(DomainError):
     status_code = 409
 
 
+class CopyRosterRefused(DomainError):
+    """A roster copy would enroll the same students twice at the same time.
+
+    Copying students into a class that meets when the source meets (or into a
+    one-off class) double-books them and bills them twice for one slot.
+    """
+
+    code = "Enrollment.CopyRosterRefused"
+    status_code = 409
+
+
 class AcademyTimezoneUnset(DomainError):
     """No timezone could be resolved for the tenant, so we refuse to guess.
 
@@ -164,6 +175,13 @@ class EnrollmentNotWithdrawable(DomainError):
     status_code = 409
 
 
+class EnrollmentMovedConcurrently(DomainError):
+    """The row left its class between the read and the move (another request moved it)."""
+
+    code = "Enrollment.MovedConcurrently"
+    status_code = 409
+
+
 class EnrollmentNotTransferable(DomainError):
     """Only an active or paused enrollment can be moved to another session.
 
@@ -203,6 +221,13 @@ class OccurrenceNotCancellable(DomainError):
 
     code = "Enrollment.OccurrenceNotCancellable"
     status_code = 409
+
+
+class ClosureRangeInvalid(DomainError):
+    """An academy closure range that is backwards, in the past or too far out."""
+
+    code = "Enrollment.ClosureRangeInvalid"
+    status_code = 422
 
 
 class WaitlistOfferNotFound(DomainError):
@@ -266,3 +291,24 @@ class InvalidClassPublicFields(DomainError):
 
     code = "Enrollment.InvalidClassPublicFields"
     status_code = 422
+
+
+class OccurrenceNotPast(DomainError):
+    """A date that has not happened yet is called off, not credited as missed (#1207)."""
+
+    code = "Enrollment.OccurrenceNotPast"
+    status_code = 409
+
+
+class MissedClassScheduleChanged(DomainError):
+    """Billing never laid out this date, so it cannot price the credits (#1207)."""
+
+    code = "Enrollment.MissedClassScheduleChanged"
+    status_code = 409
+
+
+class MissedClassHadAttendance(DomainError):
+    """Students were marked present, so the class ran and cannot be credited (#1207)."""
+
+    code = "Enrollment.MissedClassHadAttendance"
+    status_code = 409

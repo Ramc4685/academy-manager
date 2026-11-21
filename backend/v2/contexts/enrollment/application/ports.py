@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import date, datetime
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from typing import Any, Literal, Protocol
 
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
@@ -15,6 +16,7 @@ from backend.v2.contexts.enrollment.domain.models import (
     Student,
 )
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
+from backend.v2.contexts.enrollment.domain.self_service import TrialRequest
 
 
 class SessionQuery(Protocol):
@@ -180,7 +182,12 @@ class EnrollmentWriter(Protocol):
 
     async def update_status(self, enrollment_id: str, status: str) -> None: ...
 
-    async def update_session(self, enrollment_id: str, session_id: str) -> None: ...
+    async def update_session(
+        self, enrollment_id: str, session_id: str, *, expected_session_id: str | None = None
+    ) -> None:
+        """With ``expected_session_id``, raises ``EnrollmentMovedConcurrently``
+        unless the row is still in that class."""
+        ...
 
     async def update_amount_cents(self, enrollment_id: str, amount_cents: int | None) -> None: ...
 
@@ -424,9 +431,18 @@ class MakeupReopener(Protocol):
 
 class TrialReopener(Protocol):
     """Put approved trials assigned to a cancelled date back to pending
-    (issue #671). Returns the student ids so the families can be told."""
+    (issue #671). Returns the reopened requests so the families can be told."""
 
-    async def reopen_for_assigned_occurrence(self, occurrence_id: str) -> list[str]: ...
+    async def reopen_for_assigned_occurrence(self, occurrence_id: str) -> list[TrialRequest]: ...
+
+
+class TrialGuestCancellationNotifier(Protocol):
+    """Tells website guests (no account, no Student row) that their trial
+    date was called off (L9 A6-1). Best effort; never raises."""
+
+    async def trial_date_cancelled(
+        self, *, trials: list[TrialRequest], start_at: datetime, reason: str
+    ) -> None: ...
 
 
 class MakeupPolicyLookup(Protocol):
@@ -441,10 +457,13 @@ class PayoutPeriodLock(Protocol):
     Finance owns ``PayoutPeriod``; Enrollment must not import it, so the
     composition layer reshapes it into this one question. Returns the
     blocking period's status (``"approved"`` / ``"paid"``), or ``None``
-    when the window is still editable.
+    when the window is still editable. ``include_draft`` also reports a
+    ``"draft"`` period (#1207: it must be recomputed before approval).
     """
 
-    async def locked_status_for(self, *, coach_id: str, at: datetime) -> str | None: ...
+    async def locked_status_for(
+        self, *, coach_id: str, at: datetime, include_draft: bool = False
+    ) -> str | None: ...
 
 
 class OccurrenceBillingSync(Protocol):
@@ -466,7 +485,20 @@ class OccurrenceBillingSync(Protocol):
         start_at: datetime,
         reason: str,
         actor_id: str | None,
-    ) -> dict[str, Any]: ...
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """``dry_run`` prices every family as a real run would, writing nothing
+        (#1207); ``families`` lists ``{enrollment_id, amount_cents, outcome}``."""
+        ...
+
+
+class OccurrenceAttendanceCheck(Protocol):
+    """Students marked present or late on one dated class (#1207).
+
+    Coaching owns attendance; a missed class is only credited when this is 0.
+    """
+
+    async def present_count(self, occurrence_id: str) -> int | None: ...
 
 
 class OccurrenceCancellationNotifier(Protocol):
@@ -495,6 +527,53 @@ class OccurrenceCancellationNotifier(Protocol):
         credited_student_ids: Sequence[str] = (),
         billing_warning: str | None = None,
     ) -> None: ...
+
+
+@dataclass(frozen=True)
+class ClosedClassDate:
+    """One class date an academy closure called off, with its notice inputs."""
+
+    session_id: str
+    start_at: datetime
+    one_time_student_ids: tuple[str, ...] = ()
+    credited_student_ids: tuple[str, ...] = ()
+    billing_warning: str | None = None
+
+
+@dataclass(frozen=True)
+class ClosureNotice:
+    """What the closure summary reached: families on the cancelled rosters,
+    the ones actually emailed (a roster-only parent with no email is not), and
+    whether any send failed."""
+
+    families_affected: int = 0
+    families_emailed: int = 0
+    failed: bool = False
+
+
+class AcademyClosureNotifier(Protocol):
+    """One email per family (and per staff member) for a whole closure.
+
+    Same audience and money honesty as ``OccurrenceCancellationNotifier``,
+    summed over every date the closure cancelled. Best-effort: never raises;
+    a failed send is reported in ``ClosureNotice.failed``.
+    """
+
+    async def academy_closed(
+        self, *, dates: Sequence[ClosedClassDate], reason: str, actor_id: str | None
+    ) -> ClosureNotice: ...
+
+
+class LiveSessionLister(Protocol):
+    async def list_live(self) -> list[Session]: ...
+
+
+#: Re-derives a session's dated rows for the materialisation window, exactly as
+#: create/edit do, so a closure finds dates no admin edit has written yet.
+OccurrenceMaterializer = Callable[[Session], Awaitable[None]]
+
+#: How far ahead a weekly class's dated rows are materialised.
+OCCURRENCE_WINDOW = timedelta(days=60)
 
 
 #: What the admin chose for the money side of a withdrawal (issue #670).

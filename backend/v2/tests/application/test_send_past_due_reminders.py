@@ -42,11 +42,11 @@ class _FakeInvoices:
 
     def __init__(self, invoices: list[PastDueInvoice]) -> None:
         self.invoices = invoices
-        self.queried: list[date] = []
+        self.queried: list[tuple[date, date]] = []
 
-    async def list_past_due(self, *, due_on: date) -> list[PastDueInvoice]:
-        self.queried.append(due_on)
-        return [inv for inv in self.invoices if inv.due_date == due_on]
+    async def list_past_due(self, *, due_from: date, due_to: date) -> list[PastDueInvoice]:
+        self.queried.append((due_from, due_to))
+        return [inv for inv in self.invoices if due_from <= inv.due_date <= due_to]
 
 
 class _FakeSender:
@@ -87,7 +87,8 @@ async def test_sends_at_due_plus_15_and_due_plus_20_only() -> None:
         [
             _invoice("inv-15", due_date=date(2026, 9, 5)),  # due+15 today
             _invoice("inv-20", due_date=date(2026, 8, 31)),  # due+20 today
-            _invoice("inv-17", due_date=date(2026, 9, 3)),  # due+17 — not a configured day
+            # due+19: its +15 was four days ago, past the catch-up window.
+            _invoice("inv-19", due_date=date(2026, 9, 1)),
         ]
     )
     sender = _FakeSender()
@@ -97,7 +98,7 @@ async def test_sends_at_due_plus_15_and_due_plus_20_only() -> None:
 
     assert sorted(sender.sent) == [("inv-15", 15), ("inv-20", 20)]
     assert result.sent == 2
-    assert invoices.queried == [date(2026, 9, 5), date(2026, 8, 31)]
+    assert invoices.queried == [(date(2026, 8, 28), date(2026, 9, 5))]
 
 
 @pytest.mark.asyncio
@@ -158,6 +159,83 @@ async def test_paid_off_invoice_is_skipped() -> None:
 
     assert sender.sent == []
     assert result.considered == 0
+
+
+@pytest.mark.asyncio
+async def test_a_missed_day_is_caught_up_once_with_todays_lateness() -> None:
+    """L1 A4-6: an outage on the +15 day no longer loses that reminder."""
+    invoices = _FakeInvoices([_invoice("inv-1", due_date=date(2026, 9, 3))])  # due+17
+    sender = _FakeSender()
+    use_case, stamps = _build(invoices, sender)
+
+    await use_case.execute(today=_TODAY, reminder_days=(15, 20))
+    await use_case.execute(today=_TODAY, reminder_days=(15, 20))
+
+    assert sender.sent == [("inv-1", 17)]
+    assert stamps.stamps == [("inv-1", 15)]
+
+
+@pytest.mark.asyncio
+async def test_before_and_on_the_due_date_reminders_fire() -> None:
+    invoices = _FakeInvoices(
+        [
+            _invoice("due-in-2", due_date=date(2026, 9, 22)),
+            _invoice("due-today", due_date=_TODAY),
+        ]
+    )
+    sender = _FakeSender()
+    use_case, _ = _build(invoices, sender)
+
+    await use_case.execute(today=_TODAY, reminder_days=(-2, 0, 15))
+
+    assert sorted(sender.sent) == [("due-in-2", -2), ("due-today", 0)]
+
+
+@pytest.mark.asyncio
+async def test_autopay_invoices_get_no_before_or_on_due_reminders() -> None:
+    """Should-fix 7: autopay charges on the due date, so "due today" / "due in N
+    days" notices skip it; past-due offsets still fire."""
+    autopay = {"autopay_active": True}
+    invoices = _FakeInvoices(
+        [
+            _invoice("due-in-2", due_date=date(2026, 9, 22)).model_copy(update=autopay),
+            _invoice("due-today", due_date=_TODAY).model_copy(update=autopay),
+            _invoice("late-15", due_date=date(2026, 9, 5)).model_copy(update=autopay),
+        ]
+    )
+    sender = _FakeSender()
+    use_case, stamps = _build(invoices, sender)
+
+    await use_case.execute(today=_TODAY, reminder_days=(-2, 0, 15))
+
+    assert sender.sent == [("late-15", 15)]
+    assert stamps.stamps == [("late-15", 15)]
+
+
+@pytest.mark.asyncio
+async def test_several_matured_offsets_send_one_email_and_stamp_all() -> None:
+    """A re-enabled schedule must not fire a burst: one email, every offset stamped."""
+    invoices = _FakeInvoices([_invoice("inv-1", due_date=date(2026, 9, 18))])  # due+2
+    sender = _FakeSender()
+    use_case, stamps = _build(invoices, sender)
+
+    await use_case.execute(today=_TODAY, reminder_days=(-1, 0, 2))
+
+    assert sender.sent == [("inv-1", 2)]
+    assert stamps.stamps == [("inv-1", -1), ("inv-1", 0), ("inv-1", 2)]
+
+
+@pytest.mark.asyncio
+async def test_l8_calendar_reminds_manual_payers_on_the_5th_8th_and_12th() -> None:
+    """Owner decision: due on the 5th, reminders on the due date, +3 and +7."""
+    invoices = _FakeInvoices([_invoice("inv-jan", due_date=date(2027, 1, 5))])
+    sender = _FakeSender()
+    uc, _ = _build(invoices, sender)
+
+    for day in range(1, 16):
+        await uc.execute(today=date(2027, 1, day), reminder_days=(0, 3, 7))
+
+    assert sender.sent == [("inv-jan", 0), ("inv-jan", 3), ("inv-jan", 7)]
 
 
 def test_reminder_copy_names_the_month_in_words_not_the_raw_period() -> None:

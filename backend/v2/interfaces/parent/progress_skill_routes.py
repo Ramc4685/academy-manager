@@ -9,6 +9,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.v2.contexts.student_progress.application.errors import StudentNotPlaced
+from backend.v2.contexts.student_progress.application.use_cases.certificate_share import (
+    SetCertificateShareCommand,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_certificate_detail import (
     GetCertificateDetailCommand,
 )
@@ -216,6 +219,12 @@ async def get_progress_journey(
     data["practice_drill"] = await _focus_drill(
         use_cases, journey.focus_skill_id, journey.focus_skill_name
     )
+    # L5B: the academy's celebration milestones; empty while they are off.
+    milestones = await use_cases.student_progress.record_milestones.execute(student_id)
+    data["milestones"] = [
+        {"kind": m.kind, "count": m.count, "reached_at": m.reached_at.isoformat()}
+        for m in milestones
+    ]
     return data
 
 
@@ -247,7 +256,60 @@ async def get_certificate_detail(
     )
     if detail is None:
         raise HTTPException(status_code=404, detail="Certificate not found")
-    return detail.model_dump(mode="json")
+    data = detail.model_dump(mode="json")
+    token = (data.get("certificate") or {}).get("share_token")
+    data["share_url"] = await _share_url(use_cases, claims, token)
+    return data
+
+
+async def _share_url(
+    use_cases: ParentUseCases, claims: AuthClaims, token: str | None
+) -> str | None:
+    """The public link on the academy's own host (``/c/`` 404s on the product host)."""
+    if not token or use_cases.student_progress is None:
+        return None
+    return await use_cases.student_progress.certificate_share_url(claims.academy_id, token)
+
+
+async def _set_share(
+    student_id: str, cert_id: str, shared: bool, claims: AuthClaims, use_cases: ParentUseCases
+) -> dict[str, str | None]:
+    # Ownership is the student's own parent fields in this academy, not membership.
+    await _verify_child_ownership(claims.user_id, student_id, use_cases)
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    # CertificateNotFound (404) renders through the DomainError handler.
+    cert = await use_cases.student_progress.set_certificate_share.execute(
+        SetCertificateShareCommand(
+            student_id=student_id, cert_id=cert_id, actor_id=claims.user_id, shared=shared
+        )
+    )
+    return {
+        "share_token": cert.share_token,
+        "share_url": await _share_url(use_cases, claims, cert.share_token),
+    }
+
+
+@router.post("/students/{student_id}/certificates/{cert_id}/share")
+async def share_certificate(
+    student_id: str,
+    cert_id: str,
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> object:
+    """Turn on a public link for the child's certificate (idempotent)."""
+    return await _set_share(student_id, cert_id, True, claims, use_cases)
+
+
+@router.delete("/students/{student_id}/certificates/{cert_id}/share")
+async def unshare_certificate(
+    student_id: str,
+    cert_id: str,
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> object:
+    """Turn the public link off; the old link stops working at once (idempotent)."""
+    return await _set_share(student_id, cert_id, False, claims, use_cases)
 
 
 @router.get("/progress/summary")

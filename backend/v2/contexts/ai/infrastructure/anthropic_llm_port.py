@@ -7,6 +7,7 @@ Constructed only by ``composition.ai.compose_ai`` when ``V2_AI_ENABLED`` and
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -20,9 +21,12 @@ log = logging.getLogger(__name__)
 MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2023-06-01"
 REQUEST_TIMEOUT_SECONDS = 60.0
+#: 429 rate limited, 529 overloaded: worth exactly one more try.
+RETRYABLE_STATUSES = frozenset({429, 529})
+RETRY_DELAY_SECONDS = 1.0
 
-#: List price in cents per million tokens, by model. Rounded up to a whole
-#: cent per call so the audit never under-counts against the cap.
+#: List price in cents per million tokens, by model. ``cost_microcents`` keeps
+#: the exact figure; ``cost_cents`` rounds each call up to a whole cent.
 PRICE_CENTS_PER_MTOK: dict[str, tuple[int, int]] = {
     DEFAULT_MODEL: (10, 50),
     "claude-sonnet-5-5": (200, 1000),
@@ -34,12 +38,16 @@ LONG_PROMPT_INPUT_TOKENS = 100_000
 LONG_PROMPT_PRICE_CENTS_PER_MTOK: dict[str, tuple[int, int]] = {DEFAULT_MODEL: (50, 250)}
 
 
-def cost_cents(model: str, input_tokens: int, output_tokens: int) -> int:
+def cost_microcents(model: str, input_tokens: int, output_tokens: int) -> int:
+    """Exact list price in millionths of a cent."""
     in_price, out_price = PRICE_CENTS_PER_MTOK[model]
     if input_tokens > LONG_PROMPT_INPUT_TOKENS and model in LONG_PROMPT_PRICE_CENTS_PER_MTOK:
         in_price, out_price = LONG_PROMPT_PRICE_CENTS_PER_MTOK[model]
-    micro = input_tokens * in_price + output_tokens * out_price
-    return (micro + 999_999) // 1_000_000
+    return input_tokens * in_price + output_tokens * out_price
+
+
+def cost_cents(model: str, input_tokens: int, output_tokens: int) -> int:
+    return (cost_microcents(model, input_tokens, output_tokens) + 999_999) // 1_000_000
 
 
 class AnthropicLlmPort:
@@ -75,11 +83,19 @@ class AnthropicLlmPort:
                 timeout=REQUEST_TIMEOUT_SECONDS, transport=self._transport
             ) as client:
                 resp = await client.post(MESSAGES_URL, headers=headers, json=body)
+                if resp.status_code in RETRYABLE_STATUSES:
+                    await asyncio.sleep(RETRY_DELAY_SECONDS)
+                    resp = await client.post(MESSAGES_URL, headers=headers, json=body)
         except httpx.HTTPError as exc:
             raise AiProviderError(f"anthropic request failed: {exc}") from exc
         if resp.status_code >= 400:
             raise AiProviderError(f"anthropic answered {resp.status_code}", status=resp.status_code)
-        data: dict[str, Any] = resp.json()
+        try:
+            data: dict[str, Any] = resp.json()
+        except ValueError as exc:
+            raise AiProviderError("anthropic answered with a body that is not JSON") from exc
+        if not isinstance(data, dict):
+            raise AiProviderError("anthropic answered with an unexpected body")
         usage = data.get("usage") or {}
         input_tokens = int(usage.get("input_tokens") or 0)
         output_tokens = int(usage.get("output_tokens") or 0)
@@ -94,7 +110,9 @@ class AnthropicLlmPort:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cost_cents=cost_cents(self._model, input_tokens, output_tokens),
+            cost_microcents=cost_microcents(self._model, input_tokens, output_tokens),
             model=model,
+            truncated=data.get("stop_reason") == "max_tokens",
         )
         log.info(
             "ai_call model=%s prompt_version=%s in=%d out=%d cost_cents=%d stop=%s",

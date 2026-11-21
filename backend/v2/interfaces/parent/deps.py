@@ -22,6 +22,7 @@ from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_
 )
 from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
     ListEligibleMakeupTargets,
+    ListMakeupCandidates,
     ListParentMakeups,
     SubmitMakeupRequest,
 )
@@ -100,6 +101,8 @@ class ParentUseCases:
     # Self-cancel enrollment (R4, Task 8)
     preview_self_cancel: PreviewSelfCancel | None = None
     self_cancel_enrollment: SelfCancelEnrollment | None = None
+    # #1037/#1041; optional so fixtures predating it still construct this.
+    list_makeup_candidates: ListMakeupCandidates | None = None
     get_registration_waiver: object = None  # callable -> Waiver | None
     get_registration_waivers: Callable[[str | None], Awaitable[tuple[list[Any], bool]]] | None = (
         None
@@ -135,6 +138,9 @@ class ParentUseCases:
     resolve_assigned_classes: object | None = None
     # Per-child AI/video opt-in and revoke (Phase 3 E1). Defaulted for old fixtures.
     ai_video_consent: ParentAiVideoConsent | None = None
+    # Phone-calendar subscription (composition/calendar_feed.py): the parent's
+    # link and the public .ics it serves. Defaulted for old fixtures.
+    calendar_feed: Any | None = None
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

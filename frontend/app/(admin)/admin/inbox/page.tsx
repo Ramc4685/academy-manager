@@ -40,6 +40,7 @@ export default function AdminInboxPage() {
     queryFn: getAdminInboxCounts,
   });
   const counts = countsQuery.data?.counts;
+  const unavailable = countsQuery.data?.unavailable ?? [];
 
   const [picked, setPicked] = useState<InboxTab | null>(() =>
     isInboxTab(requested) ? requested : null,
@@ -69,6 +70,7 @@ export default function AdminInboxPage() {
       >
         {INBOX_TABS.map((t) => {
           const count = counts?.[t.id] ?? 0;
+          const unknown = unavailable.includes(t.id);
           return (
             // UI-7: `whitespace-nowrap` keeps "Level-ups" whole when the
             // strip wraps to a second row on a phone.
@@ -91,18 +93,31 @@ export default function AdminInboxPage() {
               }
             >
               {t.label}
-              {count > 0 && (
+              {(count > 0 || unknown) && (
                 <span
                   data-testid={`admin-inbox-count-${t.id}`}
+                  title={unknown ? "Could not count this queue" : undefined}
                   className="ml-1.5 rounded-full bg-rally-cobalt px-1.5 py-0.5 font-mono text-[10px] font-bold text-white"
                 >
-                  {count}
+                  {unknown ? "?" : count}
                 </span>
               )}
             </button>
           );
         })}
       </div>
+
+      {unavailable.length > 0 && (
+        <p
+          role="status"
+          data-testid="admin-inbox-unavailable"
+          className="rounded-lg border border-dashed border-rally-line bg-rally-paper p-3 text-sm text-rally-muted"
+        >
+          Could not count{" "}
+          {unavailable.map((id) => INBOX_TABS.find((t) => t.id === id)?.label ?? id).join(", ")}. Open
+          the tab to check it.
+        </p>
+      )}
 
       {tab === "registrations" && <RegistrationsTab />}
       {tab === "waitlist" && <WaitlistTab />}

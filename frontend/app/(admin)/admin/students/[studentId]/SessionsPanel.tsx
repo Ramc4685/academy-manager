@@ -26,7 +26,12 @@ import { Chip } from "@/components/ds/chip";
 import type { MenuItem } from "@/components/ds/menu";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { Overline } from "@/components/ds/typography";
+import { NotBilledChip, NotBilledDialog } from "@/components/admin/not-billed";
 import { useIsOwner } from "@/components/admin/owner-context";
+import {
+  SiblingDiscountChip,
+  useFamilySiblingDiscount,
+} from "@/components/admin/sibling-discount";
 import {
   DepartureActions,
   type DepartureAction,
@@ -53,6 +58,8 @@ import {
   type EnrolledSessionActionKey,
 } from "./session-rows";
 import { StatusChip } from "./StatusChip";
+import { useAcademyTimezone } from "@/components/admin/use-academy-today";
+import { academyDateISO } from "@/lib/format/academy-time";
 
 const DISCOUNT_CATEGORIES: { value: TuitionDiscountCategory; label: string }[] = [
   { value: "owner_child", label: "Owner child" },
@@ -86,8 +93,12 @@ function SessionsPanel({
   studentName: string;
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
+  const timezone = useAcademyTimezone();
   const billingHref = familyBillingHref(parentId);
   const isOwner = useIsOwner();
+  const sibling = useFamilySiblingDiscount(parentId);
+  const siblingRow = (enrollmentId: string) =>
+    sibling?.enrollments.find((row) => row.enrollment_id === enrollmentId);
   // #865: one layout at a time, like every other admin list since #847.
   const isPhone = useIsPhone();
   const [moving, setMoving] = useState<AdminStudentSessionSummary | null>(null);
@@ -98,10 +109,12 @@ function SessionsPanel({
     useState<AdminStudentSessionSummary | null>(null);
   const [billingOverride, setBillingOverride] =
     useState<AdminStudentSessionSummary | null>(null);
+  const [billingChange, setBillingChange] =
+    useState<AdminStudentSessionSummary | null>(null);
   const [overrideAmount, setOverrideAmount] = useState("");
   const [targetSessionId, setTargetSessionId] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(() =>
-    new Date().toISOString().slice(0, 10),
+    academyDateISO(timezone),
   );
   const [reason, setReason] = useState("");
 
@@ -115,7 +128,7 @@ function SessionsPanel({
     useState<TuitionDiscountKind>("waiver");
   const [discountValue, setDiscountValue] = useState("");
   const [discountStart, setDiscountStart] = useState(() =>
-    new Date().toISOString().slice(0, 10),
+    academyDateISO(timezone),
   );
   const [discountNote, setDiscountNote] = useState("");
 
@@ -153,6 +166,12 @@ function SessionsPanel({
       void queryClient.invalidateQueries({
         queryKey: queryKeys.admin.studentDetail(studentId),
       });
+      // A discount, fee or move can change who gets the sibling discount.
+      if (parentId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.admin.familySiblingDiscount(parentId),
+        });
+      }
       setDiscounting(null);
     },
   });
@@ -163,6 +182,12 @@ function SessionsPanel({
       void queryClient.invalidateQueries({
         queryKey: queryKeys.admin.studentDetail(studentId),
       });
+      // A discount, fee or move can change who gets the sibling discount.
+      if (parentId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.admin.familySiblingDiscount(parentId),
+        });
+      }
       setDiscounting(null);
     },
   });
@@ -184,6 +209,12 @@ function SessionsPanel({
       void queryClient.invalidateQueries({
         queryKey: queryKeys.admin.studentDetail(studentId),
       });
+      // A discount, fee or move can change who gets the sibling discount.
+      if (parentId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.admin.familySiblingDiscount(parentId),
+        });
+      }
       setMoving(null);
       setTargetSessionId("");
       setReason("");
@@ -199,6 +230,12 @@ function SessionsPanel({
       void queryClient.invalidateQueries({
         queryKey: queryKeys.admin.studentDetail(studentId),
       });
+      // A discount, fee or move can change who gets the sibling discount.
+      if (parentId) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.admin.familySiblingDiscount(parentId),
+        });
+      }
       setBillingOverride(null);
       setOverrideAmount("");
     },
@@ -253,7 +290,7 @@ function SessionsPanel({
         setMoving(session);
         setTargetSessionId("");
         setReason("");
-        setEffectiveDate(new Date().toISOString().slice(0, 10));
+        setEffectiveDate(academyDateISO(timezone));
         return;
       case "fee":
         setBillingOverride(session);
@@ -268,7 +305,7 @@ function SessionsPanel({
         setDiscountLabel(d?.category_label ?? "");
         setDiscountKind(d?.kind ?? "waiver");
         setDiscountValue("");
-        setDiscountStart(d?.effective_start ?? new Date().toISOString().slice(0, 10));
+        setDiscountStart(d?.effective_start ?? academyDateISO(timezone));
         setDiscountNote("");
         return;
       }
@@ -276,12 +313,22 @@ function SessionsPanel({
   };
 
   const phoneMenuItems = (session: AdminStudentSessionSummary): MenuItem[] =>
-    enrolledSessionActions(session).map((action) => ({
+    enrolledSessionActions(session).map((action): MenuItem => ({
       key: action.key,
       label: action.label,
       description: action.description,
       onSelect: () => runSessionAction(session, action.key),
-    }));
+    })).concat(
+      isOwner
+        ? [
+            {
+              key: "billing",
+              label: session.not_billed ? "Start billing" : "Not billed",
+              onSelect: () => setBillingChange(session),
+            },
+          ]
+        : [],
+    );
 
   return (
     <>
@@ -354,6 +401,13 @@ function SessionsPanel({
                           href={billingHref}
                           enrollmentId={session.enrollment_id}
                         />
+                        <SiblingDiscountChip row={siblingRow(session.enrollment_id)} view={sibling} />
+                        {session.not_billed && (
+                          <NotBilledChip
+                            reason={session.not_billed_reason}
+                            note={session.not_billed_note}
+                          />
+                        )}
                       </div>
                     </>
                   }
@@ -439,6 +493,13 @@ function SessionsPanel({
                           href={billingHref}
                           enrollmentId={session.enrollment_id}
                         />
+                        <SiblingDiscountChip row={siblingRow(session.enrollment_id)} view={sibling} />
+                        {session.not_billed && (
+                          <NotBilledChip
+                            reason={session.not_billed_reason}
+                            note={session.not_billed_note}
+                          />
+                        )}
                       </div>
                     </td>
                     <td className="py-3 align-top">
@@ -458,6 +519,15 @@ function SessionsPanel({
                               {action.label}
                             </button>
                           ))}
+                        {isOwner && (
+                          <button
+                            className="text-xs font-medium text-rally-cobalt-600 hover:underline"
+                            data-testid={`not-billed-action-${session.enrollment_id}`}
+                            onClick={() => setBillingChange(session)}
+                          >
+                            {session.not_billed ? "Start billing" : "Not billed"}
+                          </button>
+                        )}
                         <DepartureActions
                           enrollmentId={session.enrollment_id}
                           studentName={session.session_title}
@@ -485,6 +555,23 @@ function SessionsPanel({
 
       <PastEnrollmentsPanel rows={pastEnrollments} />
 
+      <NotBilledDialog
+        enrollmentId={billingChange?.enrollment_id ?? null}
+        className={billingChange?.session_title}
+        notBilled={Boolean(billingChange?.not_billed)}
+        onClose={() => setBillingChange(null)}
+        onSaved={() => {
+          setBillingChange(null);
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.admin.studentDetail(studentId),
+          });
+          if (parentId) {
+            void queryClient.invalidateQueries({
+              queryKey: queryKeys.admin.familySiblingDiscount(parentId),
+            });
+          }
+        }}
+      />
       <HoldEnrollmentDialog
         enrollmentId={holding?.enrollment_id ?? null}
         studentName={studentName}

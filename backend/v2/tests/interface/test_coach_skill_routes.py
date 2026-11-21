@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -78,6 +79,9 @@ class _AlwaysEnrolled:
     async def has_active_or_paused_enrollment(self, student_id: str) -> bool:
         return True
 
+    async def student_exists(self, student_id: str) -> bool:
+        return True
+
     async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
         return set(student_ids)
 
@@ -122,6 +126,13 @@ class _FakeSkillProgressRepo:
 
     async def get(self, student_id: str, skill_id: str) -> StudentSkillProgress | None:
         return self._store.get((student_id, skill_id))
+
+    async def insert_if_missing(self, skill_progress: StudentSkillProgress) -> bool:
+        key = (skill_progress.student_id, skill_progress.skill_id)
+        if key in self._store:
+            return False
+        self._store[key] = skill_progress
+        return True
 
     async def list_for_student_level(
         self, student_id: str, level_id: str
@@ -313,6 +324,7 @@ def _build_coach_app() -> FastAPI:
     update_status = UpdateSkillStatus(
         level_progress=level_progress_repo,
         skill_progress=skill_progress_repo,
+        skill_lookup=skill_lookup,
     )
     record_test_uc = RecordTestAttempt(
         level_progress=level_progress_repo,
@@ -363,6 +375,7 @@ def _build_coach_app() -> FastAPI:
     @app.post("/api/v2/coach/students/{student_id}/skills/{skill_id}/test", status_code=201)
     async def record_test(student_id: str, skill_id: str, body: dict) -> dict:
         cmd = RecordTestAttemptCommand(
+            can_sign_off=True,
             student_id=student_id,
             skill_id=skill_id,
             level_id=body.get("level_id", LEVEL_ID),
@@ -1813,7 +1826,11 @@ def test_real_skill_router_supervisor_bulk_status_resolves_occurrence_id_when_da
     )
 
     assert response.status_code == 200, response.text
-    assert response.json() == {"updated": 1, "student_ids": [STUDENT_ID]}
+    assert response.json() == {
+        "updated": 1,
+        "student_ids": [STUDENT_ID],
+        "results": [{"student_id": STUDENT_ID, "outcome": "updated", "code": None}],
+    }
     assert spies.update_skill_status.calls == 1
     assert list_today.execute_for_academy_calls == [date(2026, 9, 9)]
     assert list_today.execute_calls == []
@@ -1872,7 +1889,11 @@ def test_real_skill_router_bulk_status_updates_selected_session_students_only() 
     )
 
     assert response.status_code == 200, response.text
-    assert response.json() == {"updated": 1, "student_ids": [STUDENT_ID]}
+    assert response.json() == {
+        "updated": 1,
+        "student_ids": [STUDENT_ID],
+        "results": [{"student_id": STUDENT_ID, "outcome": "updated", "code": None}],
+    }
     assert spies.update_skill_status.calls == 1
     command = spies.update_skill_status.args[0]
     assert command.student_id == STUDENT_ID
@@ -1900,6 +1921,32 @@ def test_real_skill_router_bulk_status_rejects_student_outside_session() -> None
 
     assert response.status_code == 404, response.text
     assert spies.update_skill_status.calls == 0
+
+
+def test_real_skill_router_test_route_tells_the_use_case_an_assistant_cannot_sign_off() -> None:
+    """Security: the detailed test route must not bypass a LEAD_COACH skill.
+
+    The route passes ``can_sign_off=False`` for an assistant-only coach and
+    RecordTestAttempt refuses the pass (see the real-Mongo pass-rule tests).
+    """
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID], assigned_session_ids={SESSION_ID}
+    )
+    app.dependency_overrides[get_auth_claims] = lambda: _real_router_claims().model_copy(
+        update={"roles": ("assistant_coach",)}
+    )
+    response = TestClient(app).post(
+        f"/api/v2/coach/students/{STUDENT_ID}/skills/{SKILL_ID}/test",
+        json={
+            "program_id": PROGRAM_ID,
+            "session_id": SESSION_ID,
+            "attempts_count": 1,
+            "success_count": 1,
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert spies.record_test_attempt.args[0].can_sign_off is False
 
 
 def test_real_skill_router_rejects_success_count_above_attempts_count() -> None:
@@ -1984,6 +2031,23 @@ def test_real_skill_router_mark_mastered_passes_roster_students_to_use_case() ->
     assert command.student_ids == [STUDENT_ID]
     assert command.skill_id == SKILL_ID
     assert command.session_id == SESSION_ID
+    assert command.can_sign_off is True
+
+
+def test_real_skill_router_mark_mastered_tells_the_use_case_an_assistant_cannot_sign_off() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID], assigned_session_ids={SESSION_ID}
+    )
+    app.dependency_overrides[get_auth_claims] = lambda: _real_router_claims().model_copy(
+        update={"roles": ("assistant_coach",)}
+    )
+    response = TestClient(app).post(
+        f"/api/v2/coach/sessions/{SESSION_ID}/skills/{SKILL_ID}/mastered",
+        json={"program_id": PROGRAM_ID, "student_ids": [STUDENT_ID]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert spies.mark_skill_mastered.args[0].can_sign_off is False
 
 
 @pytest.mark.parametrize(
@@ -2025,6 +2089,38 @@ def test_real_skill_router_unmark_mastered_runs_undo() -> None:
     assert response.json()["status"] == "PRACTICING"
     command = spies.unmark_skill_mastered.args[0]
     assert (command.student_id, command.skill_id) == (STUDENT_ID, SKILL_ID)
+
+
+def test_real_skill_router_undo_is_403_for_an_assistant_on_a_lead_coach_pass() -> None:
+    """The undo route passes the caller's sign-off right; the use case refuses
+    an assistant taking back a lead-coach pass (real-Mongo test covers the rule)."""
+    from backend.v2.contexts.student_progress.domain.errors import PassNeedsLeadCoach
+    from backend.v2.shared.http import register_exception_handlers
+
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID], assigned_session_ids={SESSION_ID}
+    )
+    register_exception_handlers(app)
+    seen: list[Any] = []
+
+    async def lead_only(cmd: Any) -> Any:
+        seen.append(cmd)
+        if not cmd.can_sign_off:
+            raise PassNeedsLeadCoach("a lead coach takes this pass back")
+        return _Dumpable(status="PRACTICING")
+
+    spies.unmark_skill_mastered.execute = lead_only
+    app.dependency_overrides[get_auth_claims] = lambda: _real_router_claims().model_copy(
+        update={"roles": ("assistant_coach",)}
+    )
+    response = TestClient(app).delete(
+        f"/api/v2/coach/sessions/{SESSION_ID}/students/{STUDENT_ID}/skills/{SKILL_ID}/mastered",
+        params={"program_id": PROGRAM_ID},
+    )
+
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "StudentProgress.PassNeedsLeadCoach"
+    assert [c.can_sign_off for c in seen] == [False]
 
 
 def test_real_skill_router_sets_the_mastery_note_for_a_roster_student() -> None:
@@ -2071,3 +2167,69 @@ def test_real_skill_router_mastery_note_refuses_off_roster_unassigned_or_too_lon
 
     assert response.status_code == status
     assert spies.set_mastery_note.calls == 0
+
+
+def test_bulk_status_reports_a_refused_student_without_stopping() -> None:
+    """A3-7: one student off the level used to 409 mid-loop, half the class done."""
+    from backend.v2.contexts.student_progress.application.errors import SkillNotOnCurrentLevel
+
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+
+    async def _refuse(*args: object, **kwargs: object) -> object:
+        spies.update_skill_status.calls += 1
+        raise SkillNotOnCurrentLevel("other level")
+
+    spies.update_skill_status.execute = _refuse  # type: ignore[method-assign]
+    response = TestClient(app).post(
+        f"/api/v2/coach/sessions/{SESSION_ID}/skills/bulk-status",
+        json={
+            "skill_id": SKILL_ID,
+            "program_id": PROGRAM_ID,
+            "student_ids": [STUDENT_ID],
+            "status": "PRACTICING",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["updated"] == 0
+    assert response.json()["results"] == [
+        {
+            "student_id": STUDENT_ID,
+            "outcome": "refused",
+            "code": "StudentProgress.SkillNotOnCurrentLevel",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        (
+            f"/api/v2/coach/sessions/{SESSION_ID}/skills/bulk-status",
+            {
+                "skill_id": SKILL_ID,
+                "program_id": PROGRAM_ID,
+                "student_ids": [STUDENT_ID],
+                "status": "PASSED",
+            },
+        ),
+        (
+            f"/api/v2/coach/students/{STUDENT_ID}/skills/{SKILL_ID}/test",
+            {"program_id": PROGRAM_ID, "attempts_count": 0, "success_count": 0},
+        ),
+    ],
+)
+def test_bulk_status_and_test_bodies_are_validated_at_the_edge(
+    path: str, body: dict[str, object]
+) -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    response = TestClient(app).post(path, json=body)
+
+    assert response.status_code == 422, response.text
+    assert spies.update_skill_status.calls == 0

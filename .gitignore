@@ -118,3 +118,6 @@ test_reports/
 
 # pnpm's content-addressable store, created when installing inside a worktree.
 frontend/.pnpm-store/
+
+# Lead session handoff: owner decisions and prod state, never commit (public repo)
+docs/agent/lead-handoff.md

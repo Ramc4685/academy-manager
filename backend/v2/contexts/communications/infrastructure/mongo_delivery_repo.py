@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from backend.v2.contexts.communications.application.ports import DeliveryRepository
 from backend.v2.contexts.communications.domain.models import Delivery, DeliveryStatus
+from backend.v2.shared.comms.public_failure import SUPPRESSION_REFUSAL
 from backend.v2.shared.tenancy import TenantScopedRepository
 
 
@@ -29,6 +31,79 @@ class MongoDeliveryRepository(TenantScopedRepository, DeliveryRepository):
 
     async def list_for_campaign(self, campaign_id: str) -> list[Delivery]:
         cursor = self._find_many({"campaign_id": campaign_id})
+        return [self._from_doc(d) async for d in cursor]
+
+    async def claim_next_queued(
+        self,
+        campaign_id: str,
+        *,
+        now: datetime,
+        stale_before: datetime,
+        token: str,
+        max_attempts: int,
+    ) -> Delivery | None:
+        doc = await self._find_one_and_update(
+            {
+                "campaign_id": campaign_id,
+                "status": str(DeliveryStatus.QUEUED),
+                "$and": [
+                    {
+                        "$or": [
+                            {"claimed_at": {"$exists": False}},
+                            {"claimed_at": None},
+                            {"claimed_at": {"$lt": stale_before}},
+                        ]
+                    },
+                    {
+                        "$or": [
+                            {"claim_attempts": {"$exists": False}},
+                            {"claim_attempts": {"$lt": max_attempts}},
+                        ]
+                    },
+                ],
+            },
+            {"$set": {"claimed_at": now, "claim_token": token}, "$inc": {"claim_attempts": 1}},
+        )
+        return self._from_doc(doc) if doc else None
+
+    async def finish_claimed(self, delivery: Delivery, *, token: str) -> bool:
+        doc = self._to_doc(delivery)
+        result = await self._update_one(
+            {
+                "delivery_id": delivery.delivery_id,
+                "status": str(DeliveryStatus.QUEUED),
+                "claim_token": token,
+            },
+            {"$set": {k: v for k, v in doc.items() if k != "academy_id"}},
+        )
+        return bool(result.modified_count)
+
+    async def fail_exhausted(
+        self, campaign_id: str, *, max_attempts: int, stale_before: datetime
+    ) -> int:
+        result = await self.collection.update_many(
+            self._scoped(
+                {
+                    "campaign_id": campaign_id,
+                    "status": str(DeliveryStatus.QUEUED),
+                    "claim_attempts": {"$gte": max_attempts},
+                    "claimed_at": {"$lt": stale_before},
+                }
+            ),
+            {"$set": {"status": str(DeliveryStatus.FAILED), "failed_reason": "send_gave_up"}},
+        )
+        return int(result.modified_count)
+
+    async def list_failed(self, *, limit: int) -> list[Delivery]:
+        # A suppression refusal carries the shared list's reason; never list it.
+        cursor = self._find_many(
+            {
+                "status": str(DeliveryStatus.FAILED),
+                "failed_reason": {"$not": {"$regex": SUPPRESSION_REFUSAL.pattern}},
+            },
+            sort=[("_id", -1)],
+            limit=limit,
+        )
         return [self._from_doc(d) async for d in cursor]
 
     @staticmethod

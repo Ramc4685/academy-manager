@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -100,11 +101,40 @@ HOT_LOOKUPS: list[tuple[str, dict[str, Any], str]] = [
         {"academy_id": "acad_0", "digest_id": "dg"},
         "parent_digest_send_id_per_academy_uq",
     ),
+    (
+        "parent_win_sends",
+        {"academy_id": "acad_0", "digest_id": "dg"},
+        "parent_win_send_id_per_academy_uq",
+    ),
+    (
+        "parent_report_card_sends",
+        {"academy_id": "acad_0", "digest_id": "dg"},
+        "parent_report_card_send_id_per_academy_uq",
+    ),
+    # #982: ingest attributes a platform dispute by its PaymentIntent, across
+    # academies, before any tenant scope (0245).
+    (
+        "ledger_payments",
+        {"stripe_payment_intent_id": "pi"},
+        "ledger_payment_intent_directory_lookup",
+    ),
     # CreateContact's idempotent-return read after a dedupe collision (0192).
     (
         "crm_contacts",
         {"academy_id": "acad_0", "dedupe_key": "dk"},
         "crm_contacts_academy_dedupe_unique",
+    ),
+    # The public certificate share page resolves a token (0234).
+    (
+        "skill_certificates",
+        {"academy_id": "acad_0", "share_token": "tok"},
+        "certs_share_token_per_academy_uq",
+    ),
+    # L5B milestones (0241): the recorder's insert-once upsert key.
+    (
+        "student_milestones",
+        {"academy_id": "acad_0", "student_id": "stu", "milestone_key": "skills_passed:10"},
+        "student_milestones_one_per_key_uq",
     ),
 ]
 
@@ -188,6 +218,60 @@ HOT_SHAPED_LOOKUPS: list[tuple[str, dict[str, Any], set[str]]] = [
         "trial_requests",
         {"academy_id": "acad_0", "parent_user_id": "p-1"},
         {"academy_id_1_parent_user_id_1_created_at_-1"},
+    ),
+    # L9 self-booked trials (migration 0236): seated guests per date and the
+    # contact and per-mailbox lookups.
+    (
+        "trial_requests",
+        {
+            "academy_id": "acad_0",
+            "assigned_occurrence_id": {"$in": ["occ-1", "occ-2"]},
+            "guest_slot": {"$gte": 1},
+        },
+        {"trial_requests_guest_slot_unique"},
+    ),
+    (
+        "trial_requests",
+        {"academy_id": "acad_0", "contact_id": {"$eq": "c-1", "$gt": ""}},
+        {"trial_requests_contact"},
+    ),
+    (
+        "trial_requests",
+        {
+            "academy_id": "acad_0",
+            "guest_mailbox": {"$eq": "jamie@example.test", "$gt": ""},
+            "status": "approved",
+            "guest_starts_at": {"$gt": datetime(2026, 1, 1, tzinfo=UTC)},
+        },
+        {"trial_requests_guest_mailbox_class_unique"},
+    ),
+    # L9 C1 sibling discount (migration 0237): the resolver's decision lookup.
+    (
+        "sibling_discount_decisions",
+        {"academy_id": "acad_0", "enrollment_id": "enr-1", "period": "2026-09"},
+        {"sibling_decision_enrollment_period_unique"},
+    ),
+    # L9 C2 referrals (migration 0238): code -> referrer, and the parent's code.
+    (
+        "referral_codes",
+        {"academy_id": "acad_0", "referral_code": "QZ7KX4MP"},
+        {"referral_code_unique"},
+    ),
+    (
+        "referral_codes",
+        {"academy_id": "acad_0", "parent_id": "p-1"},
+        {"referral_code_parent_unique"},
+    ),
+    # ...and its sibling lookup: one $in of parent aliases per student field.
+    (
+        "students",
+        {"academy_id": "acad_0", "parent_id": {"$in": ["p-1", "fb-1"]}},
+        {"parent_children"},
+    ),
+    (
+        "students",
+        {"academy_id": "acad_0", "parent_user_id": {"$in": ["p-1", "fb-1"]}},
+        {"parent_user_children"},
     ),
 ]
 

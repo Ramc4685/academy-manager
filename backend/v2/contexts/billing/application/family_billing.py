@@ -13,7 +13,7 @@ the predicates the dunning worker runs.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, tzinfo
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -28,6 +28,7 @@ from backend.v2.contexts.billing.application.family_money import (
     open_balance,
     registration_state,
 )
+from backend.v2.contexts.billing.domain.ledger import charge_date
 from backend.v2.shared.comms.email_theme import format_money
 
 TIMELINE_CAP = 200
@@ -106,6 +107,11 @@ class EnrollmentFacts:
     #: ``monthly_price_cents`` above is unchanged because the manual invoice
     #: dialog pre-fills from it.
     class_fee_cents: int | None = None
+    #: "Not billed" (billing_type outside the invoiced types): attends, never
+    #: invoiced, out of every headcount. Reason/note when an admin set it.
+    not_billed: bool = False
+    not_billed_reason: str | None = None
+    not_billed_note: str | None = None
 
 
 @dataclass(frozen=True)
@@ -132,6 +138,22 @@ class AllocationFacts:
 class CreditFacts:
     credit_id: str
     amount_cents: int
+
+
+@dataclass(frozen=True)
+class FamilyCreditFacts:
+    """One account credit the family holds or held (#1207): what, why, who, where it went."""
+
+    credit_id: str
+    type: str
+    status: str
+    amount_cents: int
+    remaining_amount_cents: int
+    reason: str
+    created_at: datetime | None
+    approved_by_name: str | None
+    #: Invoice numbers (or ids) the credit was spent on, oldest first.
+    applied_invoices: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -185,6 +207,8 @@ class InvoiceFacts:
     #: refund route and by the Stripe ``charge.refunded`` webhook, so a refund
     #: made in the Stripe dashboard (no audit row) is counted here too.
     refunded_cents: int = 0
+    #: Autopay charge stamp (L8); None charges on the due date.
+    autopay_charge_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -229,6 +253,8 @@ class EventFacts:
     actor_id: str | None
     reason: str | None
     effective_at: datetime | None
+    #: The event's recorded intent, e.g. a pause's ``resume_on``/``review_on``.
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -280,6 +306,7 @@ class FamilyFacts:
     #: taking the whole family page down (the #748 503 pattern).
     email_delivery: EmailDeliveryFacts | None = None
     manual_payments: tuple[ManualPaymentFacts, ...] = ()
+    credits: tuple[FamilyCreditFacts, ...] = ()
 
 
 # --------------------------------------------------------------------------- helpers
@@ -743,6 +770,8 @@ def _audit_entries(facts: FamilyFacts) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for a in facts.audit:
         base = _AUDIT_SUMMARIES.get(a.action, a.action.replace("_", " ").capitalize())
+        if a.action == "invoice_line_added" and int((a.after or {}).get("amount_cents") or 0) < 0:
+            base = "Discount added to invoice"  # a negative adjustment is not a charge (#1035)
         amount = _refund_amount(a)
         how_much = f" · {_money(amount)}" if amount is not None else ""
         why = f" · {a.reason}" if a.reason else ""
@@ -761,14 +790,34 @@ def _audit_entries(facts: FamilyFacts) -> list[dict[str, Any]]:
     return entries
 
 
+def _pause_tail(ev: EventFacts, zone: tzinfo) -> str:
+    """#1052: "resumes" only for a scheduled return; a review pause names its review.
+
+    The dates are calendar dates as the admin picked them, never the event's
+    own timestamp; the year is shown when it differs from the event's
+    academy-local year.
+    """
+    event_year = _as_utc(ev.occurred_at).astimezone(zone).year
+    for key, verb in (("resume_on", "resumes"), ("review_on", "review")):
+        raw = ev.metadata.get(key)
+        try:
+            day = date.fromisoformat(raw) if raw else None
+        except ValueError:
+            day = None
+        if day is not None:
+            year = f", {day.year}" if day.year != event_year else ""
+            return f"{verb} {_MONTHS[day.month - 1]} {day.day}{year}"
+    return "review required"
+
+
 def _event_entries(facts: FamilyFacts, zone: tzinfo) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for ev in facts.events:
         verb = _EVENT_SUMMARIES.get(ev.event_type, ev.event_type)
         who = ev.student_name or "Student"
         tail = ""
-        if ev.event_type == "paused" and ev.effective_at is not None:
-            tail = f" · resumes {_day_label(ev.effective_at, zone)}"
+        if ev.event_type == "paused":
+            tail = f" · {_pause_tail(ev, zone)}"
         elif ev.reason:
             tail = f" · {ev.reason}"
         entries.append(
@@ -854,6 +903,9 @@ def _enrollment_payload(e: EnrollmentFacts) -> dict[str, Any]:
         "autopay_status": e.autopay_status,
         "recurring_discount": e.recurring_discount,
         "resume_on": _iso(e.resume_on),
+        "not_billed": e.not_billed,
+        "not_billed_reason": e.not_billed_reason,
+        "not_billed_note": e.not_billed_note,
         "actions": ["recurring_discount"] if live else [],
     }
 
@@ -993,7 +1045,7 @@ def build_family_billing_view(
         )
         invoice_rows.append(_invoice_payload(inv, eligibility=elig))
         if elig.eligible and inv.due_date is not None:
-            candidate = (inv.due_date, inv.invoice_id)
+            candidate = (charge_date(inv.due_date, inv.autopay_charge_date), inv.invoice_id)
             if next_charge is None or candidate < next_charge:
                 next_charge = candidate
 
@@ -1048,7 +1100,9 @@ def build_family_billing_view(
                 or facts.parent.email,
             },
             "enrollment_counts": {
-                "active": sum(1 for e in enrollments if e.status == "active"),
+                # Not-billed classes are not headcount; counted on their own.
+                "active": sum(1 for e in enrollments if e.status == "active" and not e.not_billed),
+                "not_billed": sum(1 for e in enrollments if e.status == "active" and e.not_billed),
                 "paused": sum(1 for e in enrollments if e.status == _PAUSED),
                 "held": sum(1 for e in enrollments if e.status in _HELD_ENROLLMENT_STATUSES),
                 "cancelled": sum(
@@ -1067,6 +1121,20 @@ def build_family_billing_view(
         ],
         "invoices": invoice_rows,
         "manual_payments": [_manual_payment_payload(p) for p in facts.manual_payments],
+        "credits": [
+            {
+                "credit_id": c.credit_id,
+                "type": c.type,
+                "status": c.status,
+                "amount_cents": c.amount_cents,
+                "remaining_amount_cents": c.remaining_amount_cents,
+                "reason": c.reason,
+                "created_at": _iso(c.created_at),
+                "approved_by_name": c.approved_by_name,
+                "applied_invoices": list(c.applied_invoices),
+            }
+            for c in facts.credits
+        ],
         "timeline": build_timeline(facts, zone=zone),
         "actions": family_actions(
             state=state, has_card=facts.customer.has_card, invoices=facts.invoices

@@ -334,32 +334,39 @@ class FirebaseAdminAdapter:
         return tenant_auth_action_link(firebase_link=link, portal_url=portal_url)
 
     async def _generate_reset_link(self, email: str, *, portal_url: str | None) -> str:
-        """Ask Firebase for the raw reset link — with ActionCodeSettings when
+        return await self._generate_action_link(
+            firebase_admin_auth.generate_password_reset_link, email, portal_url=portal_url
+        )
+
+    async def _generate_action_link(
+        self, generate: Any, email: str, *, portal_url: str | None
+    ) -> str:
+        """Ask Firebase for a raw action link — with ActionCodeSettings when
         a tenant portal is known, falling back to a plain link when Firebase
         rejects the continue URL's domain."""
         settings = _password_reset_action_settings(portal_url)
         if settings is None:
-            link = await asyncio.to_thread(firebase_admin_auth.generate_password_reset_link, email)
+            link = await asyncio.to_thread(generate, email)
             return str(link)
         try:
-            link = await asyncio.to_thread(
-                firebase_admin_auth.generate_password_reset_link, email, settings
-            )
+            link = await asyncio.to_thread(generate, email, settings)
         except Exception as exc:
             if not _is_unauthorized_continue_domain(exc):
                 raise
             # This academy's domain is not in Firebase Authorized Domains yet.
-            # Losing `continueUrl` only costs the post-reset redirect; losing
-            # the invite would lock the parent out entirely, so degrade.
+            # Losing `continueUrl` only costs the post-action redirect; losing
+            # the email would lock the parent out entirely, so degrade.
             _logger.warning(
                 "Firebase rejected continue URL for portal %s; retrying without "
                 "ActionCodeSettings. Add the domain to Firebase Authorized Domains.",
                 portal_url,
             )
-            link = await asyncio.to_thread(firebase_admin_auth.generate_password_reset_link, email)
+            link = await asyncio.to_thread(generate, email)
         return str(link)
 
-    async def generate_email_verification_link(self, email: str) -> str:
+    async def generate_email_verification_link(
+        self, email: str, *, portal_url: str | None = None
+    ) -> str:
         """Generate a Firebase email-verification link for `email`.
 
         Used to send the verification email ourselves (branded, via our own
@@ -370,8 +377,13 @@ class FirebaseAdminAdapter:
         if firebase_admin_auth is None:
             raise RuntimeError("firebase-admin is required for Firebase auth")
         _ensure_firebase_app()
-        link = await asyncio.to_thread(firebase_admin_auth.generate_email_verification_link, email)
-        return str(link)
+        # Same tenant re-hosting as the reset link: the parent lands on their
+        # academy's own /auth/action page and continues to its /login, from any
+        # browser or device.
+        link = await self._generate_action_link(
+            firebase_admin_auth.generate_email_verification_link, email, portal_url=portal_url
+        )
+        return tenant_auth_action_link(firebase_link=link, portal_url=portal_url)
 
     async def update_user_email(self, uid: str, email: str) -> None:
         if firebase_admin_auth is None:
@@ -410,20 +422,6 @@ class FirebaseAdminAdapter:
         except Exception as exc:
             if not _is_firebase_auth_error(exc, "UserNotFoundError"):
                 raise
-
-    async def create_custom_token(self, uid: str) -> str:
-        """Mint a Firebase custom token for ``uid``.
-
-        The browser exchanges this short-lived credential for a real session via
-        ``signInWithCustomToken``. Used by the magic-link consume flow to sign a
-        provisioned parent in without a password. ``create_custom_token`` returns
-        ``bytes``; decode to the ``str`` the JSON response carries.
-        """
-        if firebase_admin_auth is None:
-            raise RuntimeError("firebase-admin is required for Firebase auth")
-        _ensure_firebase_app()
-        token = await asyncio.to_thread(firebase_admin_auth.create_custom_token, uid)
-        return token.decode("utf-8") if isinstance(token, bytes) else str(token)
 
 
 def get_firebase_admin_adapter() -> FirebaseAdminAdapter:

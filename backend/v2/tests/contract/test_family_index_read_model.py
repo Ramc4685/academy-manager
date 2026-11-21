@@ -585,7 +585,8 @@ async def test_query_count_is_fixed_however_many_families(db, acad) -> None:
         assert all(f.money is not None and f.money.balance_cents == 100 for f in index.families)
         counts.append(len(counting.calls))
     assert counts[0] == counts[1]
-    assert counts[1] <= 14, counts
+    # 15: lifecycle snapshots read which children are not billed (one query).
+    assert counts[1] <= 15, counts
 
 
 @pytest.mark.asyncio

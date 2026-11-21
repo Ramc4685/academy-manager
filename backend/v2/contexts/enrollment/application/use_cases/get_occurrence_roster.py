@@ -9,11 +9,17 @@ of absence (Task 2's AbsenceNotice) and which one-time students (makeup/
 trial approvals — Tasks 5/7) were added just for this occurrence. This use
 case composes ``GetSessionRoster``'s output with those two extra reads
 rather than forking or reshaping it.
+
+The roster is the one *for that occurrence's date*, not today's: a child
+whose enrollment began after the class ended is left out, and any child who
+already has a mark for the occurrence stays on it (a withdrawn child's mark
+does not vanish with their enrollment).
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from collections.abc import Sequence
+from datetime import UTC, date, datetime
 from typing import Literal, Protocol
 
 from pydantic import BaseModel
@@ -38,7 +44,8 @@ class OccurrenceRosterItem(BaseModel):
     model_config = {"frozen": True}
 
     # None for one-time (makeup/trial) entries — they have no standing
-    # enrollment. Enrollment-backed rows always set this.
+    # enrollment — and for a marked child who has since left the class (kept
+    # so the past register stays whole). Other enrollment rows set this.
     enrollment_id: str | None
     student_id: str
     full_name: str
@@ -67,6 +74,18 @@ class OccurrenceRosterQuery(Protocol):
     async def list_for_occurrence(self, occurrence_id: str) -> list[OccurrenceRosterEntry]: ...
 
 
+class MarkedStudent(Protocol):
+    @property
+    def student_id(self) -> str: ...
+
+
+class OccurrenceMarksQuery(Protocol):
+    """Attendance already recorded for an occurrence (Coaching-owned; the
+    composition root passes its attendance repository)."""
+
+    async def list_for_occurrence(self, occurrence_id: str) -> Sequence[MarkedStudent]: ...
+
+
 class TrialOutcomeQuery(Protocol):
     async def outcomes_for(self, request_ids: list[str]) -> dict[str, str | None]: ...
 
@@ -81,7 +100,9 @@ class GetOccurrenceRoster:
         students: StudentQuery,
         occurrences: SessionOccurrenceRepository,
         trial_outcomes: TrialOutcomeQuery | None = None,
+        marks: OccurrenceMarksQuery | None = None,
     ) -> None:
+        self._marks = marks
         # Optional so hand-built fixtures that predate L3a keep working.
         self._trial_outcomes = trial_outcomes
         self._get_roster = get_roster
@@ -100,6 +121,20 @@ class GetOccurrenceRoster:
         roster = await self._get_roster.execute(session_id)
         notices = await self._absence_notices.list_for_occurrence(occurrence_id)
         absent_student_ids = {n.student_id for n in notices}
+        occurrence = await self._occurrences.get(occurrence_id)
+        marked_ids = (
+            {m.student_id for m in await self._marks.list_for_occurrence(occurrence_id)}
+            if self._marks is not None
+            else set()
+        )
+        if occurrence is not None:
+            roster = [
+                entry
+                for entry in roster
+                if entry.student_id in marked_ids
+                or entry.enrolled_at is None
+                or _aware(entry.enrolled_at) <= occurrence.end_at
+            ]
 
         out: list[OccurrenceRosterItem] = [
             OccurrenceRosterItem(
@@ -121,7 +156,6 @@ class GetOccurrenceRoster:
             # entirely (session deleted/regenerated) after these rows were
             # written. A coach can never mark such a row (#676's
             # occurrence-status guard rejects the write), so don't render it.
-            occurrence = await self._occurrences.get(occurrence_id)
             if occurrence is None or occurrence.status == "cancelled":
                 one_time_entries = []
         if one_time_entries:
@@ -157,4 +191,24 @@ class GetOccurrenceRoster:
                         ),
                     )
                 )
+        # A child marked for this class but no longer on the roster (withdrawn
+        # since) keeps their row so the mark stays visible.
+        listed = {row.student_id for row in out}
+        departed = [sid for sid in marked_ids if sid not in listed]
+        if departed:
+            for student in await self._students.by_ids(sorted(departed)):
+                out.append(
+                    OccurrenceRosterItem(
+                        enrollment_id=None,
+                        student_id=student.student_id,
+                        full_name=student.full_name,
+                        status=None,
+                        entry_source="enrollment",
+                        expected_absence=student.student_id in absent_student_ids,
+                    )
+                )
         return out
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)

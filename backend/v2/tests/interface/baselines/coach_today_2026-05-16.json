@@ -15,6 +15,7 @@
           "full_name": "Alice",
           "enrollment_status": "active",
           "attendance_status": null,
+          "attendance_marked_at": null,
           "expected_absence": false,
           "entry_source": "enrollment",
           "trial_request_id": null,
@@ -28,6 +29,7 @@
           "full_name": "Bob",
           "enrollment_status": "active",
           "attendance_status": null,
+          "attendance_marked_at": null,
           "expected_absence": false,
           "entry_source": "enrollment",
           "trial_request_id": null,
@@ -40,7 +42,8 @@
       "coach_id": "coach-1",
       "coach_name": null,
       "status": "scheduled",
-      "cancellation_reason": null
+      "cancellation_reason": null,
+      "trial_guests": []
     },
     {
       "session_id": "s-today-2",
@@ -54,7 +57,8 @@
       "coach_id": "coach-1",
       "coach_name": null,
       "status": "scheduled",
-      "cancellation_reason": null
+      "cancellation_reason": null,
+      "trial_guests": []
     }
   ]
 }

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, ClassVar
 from zoneinfo import ZoneInfo
@@ -15,7 +15,13 @@ from backend.v2.contexts.billing.application.autopay_eligibility import (
     ladder_eligibility,
 )
 from backend.v2.contexts.billing.domain.dunning import (
+    EXISTING_CHARGE_NEEDS_REVIEW,
     FIRST_ATTEMPT_LOCAL_HOUR,
+    NO_SAVED_PAYMENT_METHOD,
+    STRIPE_UNAVAILABLE,
+    TECHNICAL_FAILURE_CAPPED,
+    TECHNICAL_PARK_CAP,
+    TECHNICAL_PARK_REASONS,
     DunningState,
     open_initial_dunning_state,
     record_dunning_attempt_result,
@@ -25,6 +31,26 @@ from backend.v2.contexts.billing.domain.payment_attempt_kinds import (
     exclude_non_charge_attempts,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
+
+#: A ladder still retrying on our schedule. The late-fee pass and the payment
+#: reminders both read this, so "no late fee yet" and "no reminder yet" cannot
+#: drift apart. Waiting on the parent to add a card is not a retry in flight:
+#: the invoice stays due, earns its late fee and gets its reminders (A4-1, L8).
+#: A ladder capped after a day of technical failures, or parked for a person to
+#: review a charge Stripe already holds, still counts as a retry: the hold-up is
+#: on our side, so no late fee or reminder (A7-6). (The autopay key no longer
+#: carries the balance, so a late fee would not change it.)
+ACTIVE_RETRY_FILTER: dict[str, Any] = {
+    "status": {"$in": ["active", "processing"]},
+    "suppression_reason": {"$ne": NO_SAVED_PAYMENT_METHOD},
+}
+
+#: Stripe caps a metadata value at 500 characters; a family charge's
+#: comma-joined ``invoice_ids`` must fit, so a bigger family splits (L8).
+MAX_GROUP_INVOICE_IDS_CHARS = 500
+
+#: Lower bound that makes the stamped-invoice query match 0230's partial filter.
+_EPOCH = datetime(1970, 1, 1)
 
 
 class MongoDunningStateRepository(TenantScopedRepository):
@@ -43,7 +69,16 @@ class MongoDunningStateRepository(TenantScopedRepository):
         "connected_account_not_ready",
         "checkout_session_open",
         "stripe_not_configured",
+        STRIPE_UNAVAILABLE,
+        # Retried every tick so autopay picks up a card the parent adds (A4-1).
+        NO_SAVED_PAYMENT_METHOD,
     }
+
+    #: Parked reasons re-claimed once a day instead of every tick (A7-6). A review
+    #: park only runs the stand-down checks on that recheck; it is never charged.
+    daily_recheck_parked_reasons: ClassVar[frozenset[str]] = frozenset(
+        {TECHNICAL_FAILURE_CAPPED, EXISTING_CHARGE_NEEDS_REVIEW}
+    )
 
     #: Local hour (academy timezone) before which no NEW ladder is prepared on
     #: its due date, so the first autopay attempt lands in the morning of the
@@ -51,6 +86,13 @@ class MongoDunningStateRepository(TenantScopedRepository):
     #: The value is the domain constant; this alias keeps the existing call
     #: sites working while the rule itself lives with the ladder.
     first_attempt_local_hour: ClassVar[int] = FIRST_ATTEMPT_LOCAL_HOUR
+
+    #: Parked rungs a fresh family charge may pick up: every reason retried by
+    #: charging again. A settling debit is answered, never charged; a technical
+    #: park may already have charged, so it retries only the way it was charged (L8).
+    groupable_parked_reasons: ClassVar[frozenset[str]] = frozenset(
+        retryable_parked_reasons - {"payment_processing"} - TECHNICAL_PARK_REASONS
+    )
 
     def __init__(
         self,
@@ -88,6 +130,8 @@ class MongoDunningStateRepository(TenantScopedRepository):
             "processing_started_at",
             "lease_expires_at",
             "suppressed_at",
+            "parked_since",
+            "technical_parked_since",
             "autopay_disabled_at",
             "created_at",
             "updated_at",
@@ -116,44 +160,55 @@ class MongoDunningStateRepository(TenantScopedRepository):
             # Too early on the academy's clock: leave today's due invoices
             # for a later tick. Existing ladders still retry on schedule.
             return 0
-        # due_date is stored as a naive midnight; anything due on or before
-        # the academy's local calendar day is ready.
+        # Dates are stored as naive midnights; anything charged (or due) on or
+        # before the academy's local calendar day is ready.
         due_cutoff = datetime.combine(local_now.date(), time.max)
-        cursor = (
-            self._db["invoices"]
-            .find(
-                {
-                    "academy_id": academy_id,
-                    "status": {"$in": ["open", "partially_paid"]},
-                    "balance_due_cents": {"$gt": 0},
-                    "due_date": {"$lte": due_cutoff},
-                    "enrollment_id": {"$exists": True, "$ne": None},
-                },
-                {
-                    "invoice_id": 1,
-                    "parent_id": 1,
-                    "enrollment_id": 1,
-                    "due_date": 1,
-                    "status": 1,
-                    "balance_due_cents": 1,
-                },
-            )
-            .sort([("due_date", ASCENDING), ("invoice_id", ASCENDING)])
+        base = {
+            "academy_id": academy_id,
+            "status": {"$in": ["open", "partially_paid"]},
+            "balance_due_cents": {"$gt": 0},
+            "enrollment_id": {"$exists": True, "$ne": None},
+        }
+        projection = {
+            "invoice_id": 1,
+            "parent_id": 1,
+            "enrollment_id": 1,
+            "due_date": 1,
+            "autopay_charge_date": 1,
+            "status": 1,
+            "balance_due_cents": 1,
+        }
+        # Two indexed queries, never one $or: both indexes are partial (0156,
+        # 0230) and the planner will not use partial indexes under an $or.
+        # Stamped invoices go by their charge day (the $gt matches 0230's
+        # partial filter); unstamped ones by their due date, as before (L8).
+        queries = (
+            (
+                {**base, "autopay_charge_date": {"$gt": _EPOCH, "$lte": due_cutoff}},
+                [("autopay_charge_date", ASCENDING), ("invoice_id", ASCENDING)],
+            ),
+            (
+                {**base, "due_date": {"$lte": due_cutoff}, "autopay_charge_date": None},
+                [("due_date", ASCENDING), ("invoice_id", ASCENDING)],
+            ),
         )
-        batch: list[dict[str, Any]] = []
-        async for invoice_doc in cursor:
-            batch.append(invoice_doc)
-            if len(batch) >= self.prepare_batch_size:
+        for query, sort in queries:
+            batch: list[dict[str, Any]] = []
+            async for invoice_doc in self._db["invoices"].find(query, projection).sort(sort):
+                batch.append(invoice_doc)
+                if len(batch) >= self.prepare_batch_size:
+                    created += await self._prepare_batch(
+                        batch, academy_id=academy_id, now=now, remaining=limit - created
+                    )
+                    batch = []
+                    if created >= limit:
+                        return created
+            if batch:
                 created += await self._prepare_batch(
                     batch, academy_id=academy_id, now=now, remaining=limit - created
                 )
-                batch = []
                 if created >= limit:
                     return created
-        if batch:
-            created += await self._prepare_batch(
-                batch, academy_id=academy_id, now=now, remaining=limit - created
-            )
         return created
 
     async def _prepare_batch(
@@ -175,10 +230,16 @@ class MongoDunningStateRepository(TenantScopedRepository):
         if remaining <= 0:
             return 0
         invoice_ids = [str(doc["invoice_id"]) for doc in batch]
+        # A resolved ladder on an invoice that is owed again (money taken back
+        # after it settled) is re-armed, or it would block autopay for good.
         existing = {
             str(doc["invoice_id"])
             async for doc in self.collection.find(
-                {"academy_id": academy_id, "invoice_id": {"$in": invoice_ids}},
+                {
+                    "academy_id": academy_id,
+                    "invoice_id": {"$in": invoice_ids},
+                    "status": {"$ne": "resolved"},
+                },
                 {"invoice_id": 1},
             )
         }
@@ -217,7 +278,9 @@ class MongoDunningStateRepository(TenantScopedRepository):
             if not eligibility.eligible:
                 continue
             invoice_id = str(invoice_doc["invoice_id"])
-            due_at = _as_datetime(invoice_doc.get("due_date"), now=now)
+            due_at = _as_datetime(
+                invoice_doc.get("autopay_charge_date") or invoice_doc.get("due_date"), now=now
+            )
             state = open_initial_dunning_state(
                 academy_id=academy_id,
                 invoice_id=invoice_id,
@@ -226,6 +289,13 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 due_at=due_at,
                 now=now,
             )
+            rearmed = await self.collection.update_one(
+                {"academy_id": academy_id, "invoice_id": invoice_id, "status": "resolved"},
+                {"$set": _mongo_doc(state)},
+            )
+            if getattr(rearmed, "modified_count", 0):
+                created += 1
+                continue
             result = await self.collection.update_one(
                 {"academy_id": academy_id, "invoice_id": invoice_id},
                 {"$setOnInsert": _mongo_doc(state)},
@@ -236,9 +306,18 @@ class MongoDunningStateRepository(TenantScopedRepository):
         return created
 
     async def claim_next_due(
-        self, *, now: datetime, worker_id: str
+        self,
+        *,
+        now: datetime,
+        worker_id: str,
+        exclude_invoice_ids: Collection[str] = (),
+        charge_group_id: str | None = None,
     ) -> tuple[LedgerInvoice, DunningState] | None:
+        """Claim the next due rung. ``charge_group_id`` is stamped on a fresh claim
+        that will charge, so the worker can gather that family's other due rungs
+        into one charge (L8); a stale-lease re-claim keeps the group it had."""
         academy_id = current_academy_id()
+        excluded = sorted(exclude_invoice_ids)
         # Due-ness is filtered in the query so we never stream the whole active
         # backlog: an active state is a candidate when its next_attempt_at has
         # passed, or when it is parked (next_attempt_at=None) for a retryable
@@ -248,6 +327,7 @@ class MongoDunningStateRepository(TenantScopedRepository):
         cursor = self.collection.find(
             {
                 "academy_id": academy_id,
+                **({"invoice_id": {"$nin": excluded}} if excluded else {}),
                 "$or": [
                     {"status": "active", "next_attempt_at": {"$lte": now}},
                     {
@@ -255,99 +335,280 @@ class MongoDunningStateRepository(TenantScopedRepository):
                         "next_attempt_at": None,
                         "suppression_reason": {"$in": sorted(self.retryable_parked_reasons)},
                     },
+                    # A capped ladder is rechecked once a day (A7-6), so a paid or
+                    # voided invoice stands down and a recovered charge path collects.
+                    # A review park is rechecked daily too, never charged: only
+                    # the stand-down checks run, so a paid invoice resolves it.
+                    {
+                        "status": "active",
+                        "next_attempt_at": None,
+                        "suppression_reason": {"$in": sorted(self.daily_recheck_parked_reasons)},
+                        "suppressed_at": {"$lte": now - TECHNICAL_PARK_CAP},
+                    },
                     {"status": "processing", "lease_expires_at": {"$lte": now}},
                 ],
             }
         ).sort([("next_attempt_at", ASCENDING), ("updated_at", ASCENDING)])
         async for state_doc in cursor:
-            state = self._state_from_doc(state_doc)
-            parked_for_retry_recheck = (
-                state.status == "active"
-                and state.next_attempt_at is None
-                and state.suppression_reason in self.retryable_parked_reasons
+            claimed = await self._claim_candidate(
+                state_doc, now=now, worker_id=worker_id, new_group=charge_group_id
             )
-            parked_for_payment_processing = (
-                parked_for_retry_recheck and state.suppression_reason == "payment_processing"
-            )
-            if state.status == "active":
-                if state.next_attempt_at is None and not parked_for_retry_recheck:
-                    continue
-                if state.next_attempt_at is not None and state.next_attempt_at > now:
-                    continue
-                attempt_no = state.attempt_count + 1
-            elif state.status == "processing":
-                if state.lease_expires_at is None or state.lease_expires_at > now:
-                    continue
-                attempt_no = state.processing_attempt_no or state.attempt_count + 1
-            else:
-                continue
+            if claimed is not None:
+                return claimed
+        return None
 
-            invoice_doc = await self._db["invoices"].find_one(
-                {"academy_id": academy_id, "invoice_id": state.invoice_id}
+    async def claim_group_siblings(
+        self,
+        *,
+        lead: DunningState,
+        now: datetime,
+        worker_id: str,
+        rejoin: bool,
+        period: str,
+        exclude_invoice_ids: Collection[str] = (),
+    ) -> list[tuple[LedgerInvoice, DunningState]]:
+        """Claim the lead's family members due now into the lead's charge group (L8).
+
+        A fresh group takes the same parent's other rungs for the same billing
+        ``period`` and the lead's rung that will charge now (never a settling debit, a capped ladder
+        or a rung still parked in another group), in invoice-id order, while the
+        comma-joined ids still fit Stripe's metadata value cap. A ``rejoin`` (a
+        retry of a group that may already have charged) takes only the members
+        still processing or technically parked under the lead's group, so the
+        retry is the same charge, never a bigger one.
+        """
+        group = lead.charge_group_id
+        if group is None:
+            return []
+        academy_id = current_academy_id()
+        base: dict[str, Any] = {
+            "academy_id": academy_id,
+            "parent_id": lead.parent_id,
+            "invoice_id": {"$nin": sorted({*exclude_invoice_ids, lead.invoice_id})},
+        }
+        technical = sorted(TECHNICAL_PARK_REASONS)
+        if rejoin:
+            query = {
+                **base,
+                "charge_group_id": group,
+                "$or": [
+                    {"status": "processing", "lease_expires_at": {"$lte": now}},
+                    {
+                        "status": "active",
+                        "next_attempt_at": None,
+                        "suppression_reason": {"$in": technical},
+                    },
+                ],
+            }
+        else:
+            same_period = [
+                str(doc["invoice_id"])
+                async for doc in self._db["invoices"].find(
+                    {"academy_id": academy_id, "parent_id": lead.parent_id, "period": period},
+                    {"invoice_id": 1},
+                )
+            ]
+            query = {
+                **base,
+                # Same month and same rung, so one notice speaks for all of them.
+                "attempt_count": lead.attempt_count,
+                "invoice_id": {
+                    "$in": sorted(set(same_period) - {*exclude_invoice_ids, lead.invoice_id})
+                },
+                "$or": [
+                    {"status": "active", "next_attempt_at": {"$lte": now}},
+                    {
+                        "status": "active",
+                        "next_attempt_at": None,
+                        "suppression_reason": {"$in": sorted(self.groupable_parked_reasons)},
+                    },
+                ],
+            }
+        used = len(lead.invoice_id)
+        siblings: list[tuple[LedgerInvoice, DunningState]] = []
+        async for state_doc in self.collection.find(query).sort([("invoice_id", ASCENDING)]):
+            invoice_id = str(state_doc["invoice_id"])
+            if not rejoin and used + 1 + len(invoice_id) > MAX_GROUP_INVOICE_IDS_CHARS:
+                break
+            claimed = await self._claim_candidate(
+                state_doc, now=now, worker_id=worker_id, new_group=group
             )
-            if not _invoice_chargeable(invoice_doc):
-                await self._store_state(state.suppress(reason="invoice_not_chargeable", now=now))
+            if claimed is None:
                 continue
-            enrollment = await self._db["student_billing_enrollments"].find_one(
+            siblings.append(claimed)
+            used += 1 + len(invoice_id)
+        return siblings
+
+    async def count_group_members(self, charge_group_id: str) -> int:
+        """States stamped with this charge group, whatever they have done since."""
+        return await self.collection.count_documents(
+            {"academy_id": current_academy_id(), "charge_group_id": charge_group_id}
+        )
+
+    async def list_group_invoices(self, charge_group_id: str) -> list[LedgerInvoice]:
+        """The invoices of one family charge, for its single notice (L8)."""
+        academy_id = current_academy_id()
+        invoice_ids = [
+            str(doc["invoice_id"])
+            async for doc in self.collection.find(
+                {"academy_id": academy_id, "charge_group_id": charge_group_id},
+                {"invoice_id": 1},
+            )
+        ]
+        if not invoice_ids:
+            return []
+        cursor = (
+            self._db["invoices"]
+            .find({"academy_id": academy_id, "invoice_id": {"$in": invoice_ids}})
+            .sort([("invoice_id", ASCENDING)])
+        )
+        return [self._invoice_from_doc(doc) async for doc in cursor]
+
+    async def _claim_candidate(
+        self,
+        state_doc: dict[str, Any],
+        *,
+        now: datetime,
+        worker_id: str,
+        new_group: str | None,
+    ) -> tuple[LedgerInvoice, DunningState] | None:
+        academy_id = current_academy_id()
+        state = self._state_from_doc(state_doc)
+        daily_recheck_due = (
+            state.suppressed_at is not None and state.suppressed_at <= now - TECHNICAL_PARK_CAP
+        )
+        capped_recheck = state.suppression_reason == TECHNICAL_FAILURE_CAPPED and daily_recheck_due
+        review_recheck = (
+            state.suppression_reason == EXISTING_CHARGE_NEEDS_REVIEW and daily_recheck_due
+        )
+        parked_for_retry_recheck = (
+            state.status == "active"
+            and state.next_attempt_at is None
+            and (
+                state.suppression_reason in self.retryable_parked_reasons
+                or capped_recheck
+                or review_recheck
+            )
+        )
+        parked_for_payment_processing = (
+            parked_for_retry_recheck and state.suppression_reason == "payment_processing"
+        )
+        if state.status == "active":
+            if state.next_attempt_at is None and not parked_for_retry_recheck:
+                return None
+            if state.next_attempt_at is not None and state.next_attempt_at > now:
+                return None
+            attempt_no = state.attempt_count + 1
+        elif state.status == "processing":
+            if state.lease_expires_at is None or state.lease_expires_at > now:
+                return None
+            attempt_no = state.processing_attempt_no or state.attempt_count + 1
+        else:
+            return None
+
+        invoice_doc = await self._db["invoices"].find_one(
+            {"academy_id": academy_id, "invoice_id": state.invoice_id}
+        )
+        if invoice_doc is None or not _invoice_chargeable(invoice_doc):
+            await self._store_state(state.suppress(reason="invoice_not_chargeable", now=now))
+            return None
+        enrollment = await self._db["student_billing_enrollments"].find_one(
+            {
+                "academy_id": academy_id,
+                "enrollment_id": str(invoice_doc.get("enrollment_id") or ""),
+            }
+        )
+        # A review park may mean we already hold the family's money, so turning
+        # autopay off must not hide it from billing-health; only paid/void clears it.
+        if not review_recheck and (
+            enrollment is None
+            or enrollment.get("autopay_enrollment_status") != AUTOPAY_ACTIVE_STATUS
+        ):
+            await self._store_state(state.suppress(reason="autopay_not_active", now=now))
+            return None
+        latest = await self._latest_payment_attempt(state.invoice_id)
+        latest_status = str(latest.get("status")) if latest else None
+        if latest_status == "succeeded":
+            await self._store_state(state.resolve(now=now))
+            return None
+        if review_recheck:
+            # Still owed and still awaiting a person: restart the daily clock, never
+            # hand it to the worker (no Stripe call, no failure counted).
+            await self._store_state(
+                state.model_copy(update={"suppressed_at": now, "updated_at": now})
+            )
+            return None
+        if latest_status == "processing":
+            parked = state.model_copy(update={"status": "processing"}).park(
+                reason="payment_processing",
+                now=now,
+            )
+            await self._store_state(parked)
+            return None
+        if parked_for_payment_processing and latest_status not in {"failed", "requires_action"}:
+            return None
+
+        # The bank debit this rung parked on came back failed: hand the failure to
+        # the worker to record, never a fresh debit (A4-2). A stale-lease re-claim
+        # keeps the code it was first claimed with.
+        settling_failure_code = state.settling_failure_code
+        if parked_for_payment_processing and latest_status == "failed" and latest:
+            settling_failure_code = await self._parked_debit_failure_code(
+                state.invoice_id, latest=latest
+            )
+            if settling_failure_code is None:
+                # A later failure of something else (a pay link) does not
+                # answer the debit this rung is waiting on.
+                return None
+        # A stale lease, a settling debit and a technical park (the charge may
+        # have gone through) stay in the group they were charged in, so a retry
+        # re-sends the same charge; a capped recheck is charged alone, as L3
+        # built it; anything else that will charge joins the worker's new group.
+        if (
+            state.status == "processing"
+            or settling_failure_code is not None
+            or state.suppression_reason in TECHNICAL_PARK_REASONS
+        ):
+            charge_group_id = state.charge_group_id
+        elif capped_recheck:
+            charge_group_id = None
+        else:
+            charge_group_id = new_group
+        lease_expires_at = now + timedelta(minutes=30)
+        claimed = state.claim(
+            attempt_no=attempt_no,
+            worker_id=worker_id,
+            now=now,
+            lease_expires_at=lease_expires_at,
+            settling_failure_code=settling_failure_code,
+            charge_group_id=charge_group_id,
+        )
+        filter_: dict[str, Any] = {
+            "academy_id": academy_id,
+            "invoice_id": state.invoice_id,
+            "status": state.status,
+        }
+        if state.status == "active":
+            filter_.update(
                 {
-                    "academy_id": academy_id,
-                    "enrollment_id": str(invoice_doc.get("enrollment_id") or ""),
+                    "attempt_count": state.attempt_count,
+                    "next_attempt_at": state.next_attempt_at,
                 }
             )
-            if (
-                enrollment is None
-                or enrollment.get("autopay_enrollment_status") != AUTOPAY_ACTIVE_STATUS
-            ):
-                await self._store_state(state.suppress(reason="autopay_not_active", now=now))
-                continue
-            latest_status = await self._latest_payment_attempt_status(state.invoice_id)
-            if latest_status == "succeeded":
-                await self._store_state(state.resolve(now=now))
-                continue
-            if latest_status == "processing":
-                parked = state.model_copy(update={"status": "processing"}).park(
-                    reason="payment_processing",
-                    now=now,
-                )
-                await self._store_state(parked)
-                continue
-            if parked_for_payment_processing and latest_status not in {"failed", "requires_action"}:
-                continue
-
-            lease_expires_at = now + timedelta(minutes=30)
-            claimed = state.claim(
-                attempt_no=attempt_no,
-                worker_id=worker_id,
-                now=now,
-                lease_expires_at=lease_expires_at,
+        else:
+            filter_.update(
+                {
+                    "processing_attempt_no": state.processing_attempt_no,
+                    "lease_expires_at": state.lease_expires_at,
+                }
             )
-            filter_: dict[str, Any] = {
-                "academy_id": academy_id,
-                "invoice_id": state.invoice_id,
-                "status": state.status,
-            }
-            if state.status == "active":
-                filter_.update(
-                    {
-                        "attempt_count": state.attempt_count,
-                        "next_attempt_at": state.next_attempt_at,
-                    }
-                )
-            else:
-                filter_.update(
-                    {
-                        "processing_attempt_no": state.processing_attempt_no,
-                        "lease_expires_at": state.lease_expires_at,
-                    }
-                )
-            result = await self.collection.update_one(
-                filter_,
-                {"$set": _mongo_doc(claimed)},
-            )
-            if getattr(result, "matched_count", 0) != 1:
-                continue
-            return self._invoice_from_doc(invoice_doc), claimed
-        return None
+        result = await self.collection.update_one(
+            filter_,
+            {"$set": _mongo_doc(claimed)},
+        )
+        if getattr(result, "matched_count", 0) != 1:
+            return None
+        return self._invoice_from_doc(invoice_doc), claimed
 
     async def finish_attempt(
         self,
@@ -494,6 +755,8 @@ class MongoDunningStateRepository(TenantScopedRepository):
                 "$or": [
                     {"status": "dunned"},
                     {"status": "active", "attempt_count": {"$gt": 0}},
+                    # A first attempt can park for review: still a person's job.
+                    {"status": "active", "suppression_reason": EXISTING_CHARGE_NEEDS_REVIEW},
                     {"status": "processing"},
                 ],
             },
@@ -543,7 +806,7 @@ class MongoDunningStateRepository(TenantScopedRepository):
             {
                 "academy_id": current_academy_id(),
                 "invoice_id": invoice_id,
-                "status": {"$in": ["active", "processing"]},
+                **ACTIVE_RETRY_FILTER,
             },
             {"_id": 1},
         )
@@ -580,8 +843,27 @@ class MongoDunningStateRepository(TenantScopedRepository):
         )
         return state
 
-    async def _latest_payment_attempt_status(self, invoice_id: str) -> str | None:
-        """Latest CHARGE outcome for this invoice, or None.
+    async def _parked_debit_failure_code(
+        self, invoice_id: str, *, latest: dict[str, Any]
+    ) -> str | None:
+        """The failure code of the debit this rung parked on: the ``autopay-failed:``
+        row of the latest ``processing`` attempt's PaymentIntent (L1 review). None
+        while that debit has not failed."""
+        academy_id = current_academy_id()
+        processing = await self._db["payment_attempts"].find_one(
+            {"academy_id": academy_id, "invoice_id": invoice_id, "status": "processing"},
+            sort=[("created_at", -1), ("attempt_id", -1)],
+        )
+        pi_id = str((processing or {}).get("stripe_payment_intent_id") or "")
+        if not pi_id:
+            return str(latest.get("failure_code") or "unknown")
+        failed = await self._db["payment_attempts"].find_one(
+            {"academy_id": academy_id, "idempotency_key": f"autopay-failed:{invoice_id}:{pi_id}"}
+        )
+        return str(failed.get("failure_code") or "unknown") if failed else None
+
+    async def _latest_payment_attempt(self, invoice_id: str) -> dict[str, Any] | None:
+        """Latest CHARGE attempt row for this invoice, or None.
 
         Pay-link mint failures (issue #426) share this collection but are not
         charge outcomes: a mint failure landing after a genuine ``succeeded``
@@ -594,7 +876,7 @@ class MongoDunningStateRepository(TenantScopedRepository):
             ),
             sort=[("created_at", -1), ("attempt_id", -1)],
         )
-        return str(doc.get("status")) if doc else None
+        return dict(doc) if doc else None
 
     async def _replace_processing_state(
         self, current: DunningState, updated: DunningState

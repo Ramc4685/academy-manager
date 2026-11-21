@@ -161,6 +161,8 @@ def test_list_shape_and_tenant(admin: TestClient, services: FakeServices) -> Non
         "matched_parent": False,
         "at_risk": True,
         "at_risk_reasons": ["payment"],
+        # One enrolled child: not a sibling family.
+        "sibling_student_ids": [],
     }
     assert body["money_view"] == "amounts"
     assert body["families"][1]["money"] is None

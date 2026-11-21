@@ -161,6 +161,13 @@ class MongoGovernanceStore:
                 }
         return None
 
+    async def academy_exists(self, academy_id: str) -> bool:
+        return bool(await self._academies.count_documents({"academy_id": academy_id}, limit=1))
+
+    async def student_exists(self, academy_id: str, student_id: str) -> bool:
+        query = {"academy_id": academy_id, "student_id": student_id}
+        return bool(await self._students.count_documents(query, limit=1))
+
     async def append_audit_log(self, audit: dict[str, Any]) -> dict[str, Any]:
         await self._audit_logs.insert_one(dict(audit))
         return self._clean(audit)

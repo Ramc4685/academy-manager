@@ -33,6 +33,8 @@ import {
   isMoneyOutcomeAllowed,
   type MoneyOutcome,
 } from "./stop-all-classes-outcome";
+import { useAcademyTimezone } from "@/components/admin/use-academy-today";
+import { academyDateISO } from "@/lib/format/academy-time";
 
 export function StopAllClassesDialog({
   studentId,
@@ -47,8 +49,9 @@ export function StopAllClassesDialog({
   onClose: () => void;
   onDone?: (result: StopAllClassesResponse) => void;
 }) {
+  const timezone = useAcademyTimezone();
   const isOwner = useIsOwner();
-  const [effectiveDate, setEffectiveDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [effectiveDate, setEffectiveDate] = useState(() => academyDateISO(timezone));
   const [reason, setReason] = useState("");
   // Issue #775: the structured half of "why". Optional, and deliberately
   // opens on "not coded" rather than pre-selecting a reason nobody chose —

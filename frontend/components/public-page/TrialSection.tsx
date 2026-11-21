@@ -17,12 +17,15 @@ export function TrialSection({
   trialsOpen,
   hasClasses,
   allFull,
+  canBook = false,
   form,
 }: {
   academyName: string;
   trialsOpen: boolean;
   hasClasses: boolean;
   allFull: boolean;
+  /** Some class offers self-bookable trial dates (L9). */
+  canBook?: boolean;
   form?: ReactNode;
 }) {
   if (!trialsOpen) {
@@ -60,7 +63,9 @@ export function TrialSection({
     ? "Leave your details and the academy will let you know when the timetable is published."
     : allFull
       ? "Tell the academy which class you want. Places are offered in the order families asked."
-      : "Pick a class and tell the academy who is coming. They will confirm a date with you.";
+      : canBook
+        ? "Pick a class and a date to book your free trial now, or ask the academy to suggest one."
+        : "Pick a class and tell the academy who is coming. They will confirm a date with you.";
 
   return (
     <section className={styles.trial} id="trial" aria-labelledby="trial-heading" data-testid="trial-section">
@@ -76,7 +81,9 @@ export function TrialSection({
               </li>
               <li>
                 <CheckIcon />
-                Nothing is booked until the academy confirms
+                {canBook
+                  ? "Book a date now or let the academy suggest one"
+                  : "Nothing is booked until the academy confirms"}
               </li>
             </ul>
           ) : null}

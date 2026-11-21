@@ -84,6 +84,11 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # billing_rules_routes.py — the merged Settings panel write
         # (GET /billing/rules stays admin).
         ("PUT", f"{_ADMIN}/billing/rules"),
+        # family_offers_routes.py — sibling discount + referral programme
+        # (GET /billing/family-offers stays admin).
+        ("PUT", f"{_ADMIN}/billing/family-offers"),
+        # referral_routes.py: approving an inquiry-only referral leads to a credit.
+        ("POST", f"{_ADMIN}/billing/referrals/{{referral_id}}/approve"),
         # (POST /enrollments/{id}/withdraw stays admin; its `credit` outcome is
         # owner-gated per action by `ensure_owner_for_withdrawal_credit`.
         # The old owner-only .../withdrawal-credit/approve route was removed.)
@@ -91,11 +96,12 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("POST", f"{_ADMIN}/payments/{{payment_id}}/discount"),
         ("PUT", f"{_ADMIN}/enrollments/{{enrollment_id}}/tuition-discount"),
         ("DELETE", f"{_ADMIN}/enrollments/{{enrollment_id}}/tuition-discount"),
+        # enrollment_billing_routes.py — "Not billed" / "Start billing".
+        ("PUT", f"{_ADMIN}/enrollments/{{enrollment_id}}/billing"),
         ("POST", f"{_ADMIN}/payments/{{payment_id}}/undo-paid"),
         # Voiding a payment changes every money report it was counted in
         # (issue #619), so it sits at the same tier as refund/discount/undo.
         ("POST", f"{_ADMIN}/payments/{{payment_id}}/void"),
-        ("GET", f"{_ADMIN}/finance/payouts"),
         ("GET", f"{_ADMIN}/finance/revenue"),
         ("GET", f"{_ADMIN}/finance/tuition-discounts"),
         ("POST", f"{_ADMIN}/billing/invoices/{{invoice_id}}/adjustments"),
@@ -142,6 +148,8 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("POST", f"{_ADMIN}/payroll/{{month}}/generate"),
         ("POST", f"{_ADMIN}/payroll/{{month}}/recompute"),
         ("GET", f"{_ADMIN}/payroll/{{month}}/export"),
+        ("GET", f"{_ADMIN}/payroll-settings"),
+        ("PUT", f"{_ADMIN}/payroll-settings"),
         # coach_pay_rate_routes.py — every route
         ("GET", f"{_ADMIN}/coaches/{{coach_id}}/pay-rates"),
         ("POST", f"{_ADMIN}/coaches/{{coach_id}}/pay-rates"),
@@ -202,6 +210,12 @@ OWNER_ONLY_ROUTE_PATHS: Final[frozenset[tuple[str, str]]] = frozenset(
         # copilot may see real spreadsheet values is the owner's call.
         ("GET", f"{_ADMIN}/ai/import-sharing"),
         ("PUT", f"{_ADMIN}/ai/import-sharing"),
+        # ai_controls_routes.py (L13): the AI caps and the coach-review switch.
+        ("GET", f"{_ADMIN}/ai/controls"),
+        ("PUT", f"{_ADMIN}/ai/controls"),
+        # class_report_routes.py: coach reports handed to the owner carry raw
+        # private report text, which only the owner may read.
+        ("GET", f"{_ADMIN}/class-reports/handoffs"),
     }
 )
 

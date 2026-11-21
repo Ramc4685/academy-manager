@@ -35,6 +35,8 @@ async def test_an_academy_with_no_public_page_key_reads_the_defaults() -> None:
         "show_availability": True,
         "price_period_default": "month",
         "trials_open": True,
+        "self_book_trials": False,
+        "trial_guest_cap": 2,
         "privacy_notice_url": None,
         "hero_photo_url": None,
         "about_text": "",

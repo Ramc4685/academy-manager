@@ -27,6 +27,8 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, ArrowUpDown, Mail } from "lucide-react";
 
+import { notBilledSuffix } from "@/components/admin/not-billed";
+import { SiblingsChip } from "@/components/admin/siblings";
 import {
   fetchBillingSetup,
   inviteBillingSetupParent,
@@ -91,6 +93,7 @@ import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { PipelineBoard } from "@/components/admin/people/pipeline-board";
 
 import { FamilyImportPanel } from "./FamilyImportPanel";
+import { QuickAddFamily } from "./QuickAddFamily";
 
 const PAGE_SIZE = 50;
 /** Bounded walk of the Billing Setup pages for the bulk invite's recipients. */
@@ -295,10 +298,15 @@ function FamiliesView() {
                 {summary?.tiles[tile.scope] ?? "—"}
               </span>
             </BigNum>
-            <p className="mt-1 text-[11px] text-rally-subtle">{tile.caption}</p>
+            <p className="mt-1 text-[11px] text-rally-subtle">
+              {tile.caption}
+              {tile.scope === "active" && notBilledSuffix(summary?.not_billed_families)}
+            </p>
           </Card>
         ))}
       </div>
+
+      <QuickAddFamily onAdded={refreshAll} />
 
       <BulkInviteNotInvited onInvited={refreshAll} />
 
@@ -744,6 +752,9 @@ function FamilyTableRow({
       </td>
       <td className="px-4 py-3">
         <ChildrenChips kids={family.children} />
+        <div className="mt-1">
+          <SiblingsChip family={family} />
+        </div>
       </td>
       <td className="px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -868,6 +879,7 @@ function FamilyPhoneRow({
             <AtRiskChip family={family} />
             {!family.has_account ? <NoAccountChip /> : null}
             <CardLogin family={family} />
+            <SiblingsChip family={family} />
           </div>
           <ChildrenChips kids={family.children} />
           {classes.length > 0 ? (

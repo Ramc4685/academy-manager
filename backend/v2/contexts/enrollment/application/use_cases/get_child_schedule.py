@@ -62,6 +62,8 @@ class ChildScheduleEntry(BaseModel):
     status: str
     coach_name: str | None = None
     source: ScheduleEntrySource = "regular"
+    #: Why a cancelled date is off ("Gym not available"); None for a class.
+    cancellation_reason: str | None = None
 
 
 class GetChildSchedule:
@@ -178,6 +180,7 @@ class GetChildSchedule:
                         end_at=occ.end_at,
                         status=occ.status,
                         coach_name=None,
+                        cancellation_reason=occ.cancellation_reason,
                     )
                 )
 
@@ -205,6 +208,7 @@ class GetChildSchedule:
                     end_at=occ.end_at,
                     status=occ.status,
                     coach_name=None,
+                    cancellation_reason=occ.cancellation_reason,
                     source=source,
                 )
             )

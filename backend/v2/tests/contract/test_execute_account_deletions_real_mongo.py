@@ -32,6 +32,8 @@ class RecordingStopAll:
 
     async def execute(self, cmd: Any) -> StopAllClassesResult:
         assert cmd.outcome == "adjustment"
+        # Regression: per-class drop emails went out minutes before erasure.
+        assert cmd.notify_family is False
         self.students.append(cmd.student_id)
         return StopAllClassesResult(student_id=cmd.student_id, results=[])
 
@@ -81,6 +83,47 @@ async def _seed(db: Any, *, guardian_active: bool = False) -> None:
             },
             {"academy_id": A, "student_id": "stu-other", "parent_id": "u9", "full_name": "Other"},
         ]
+    )
+    # A row from before parent_id: it has only parent_user_id, so the erasure must
+    # not read it back through the domain model (that needs parent_id).
+    await db["students"].insert_one(
+        {
+            "academy_id": A,
+            "student_id": "stu-leg1",
+            "parent_user_id": "u1",
+            "full_name": "Kid Two",
+        },
+        bypass_document_validation=True,
+    )
+    await db["skill_certificates"].insert_one(
+        {
+            "academy_id": A,
+            "cert_id": "cert-1",
+            "student_id": "stu-abcd",
+            "student_name": "Kid One",
+            "program_id": "prog",
+            "level_id": "L1",
+            "cert_number": "C-0001",
+            "level_name": "One",
+            "program_name": "Badminton",
+            "completed_at": NOW,
+            "issued_by": "owner",
+            "issued_at": NOW,
+            "status": "issued",
+            "share_token": "tok-1",
+            "revoke_reason": "Kid One moved clubs",
+        }
+    )
+    await db["skill_certificates"].insert_one(
+        {
+            **await db["skill_certificates"].find_one({"cert_id": "cert-1"}, {"_id": 0}),
+            "cert_id": "cert-leg",
+            "cert_number": "C-0002",
+            "student_id": "stu-leg1",
+            "student_name": "Kid Two",
+            "level_id": "L2",
+            "share_token": "tok-leg",
+        }
     )
     await db["family_contacts"].insert_one(
         {"academy_id": A, "parent_id": "u1", "contact_id": "c1", "email": "g@example.com"}
@@ -138,7 +181,7 @@ async def test_erases_the_account_and_keeps_what_the_academy_must_keep(real_db: 
     result = await job.execute(now=NOW)
 
     assert (result.completed, result.failed) == (1, 0)
-    assert stop_all.students == ["stu-abcd"]
+    assert sorted(stop_all.students) == ["stu-abcd", "stu-leg1"]
     user = await real_db["users"].find_one({"user_id": "u1"})
     assert user["display_name"] == "Deleted user" and user["status"] == "deleted"
     assert "normalized_email" not in user and user["phone"] is None
@@ -148,6 +191,13 @@ async def test_erases_the_account_and_keeps_what_the_academy_must_keep(real_db: 
     assert "date_of_birth" not in kid and "dob" not in kid and "medical_notes" not in kid
     other = await real_db["students"].find_one({"student_id": "stu-other"})
     assert other["full_name"] == "Other"
+    cert = await real_db["skill_certificates"].find_one({"cert_id": "cert-1"})
+    assert cert["student_name"] == "Student ABCD"
+    assert not {"share_token", "revoke_reason"} & cert.keys()
+    legacy = await real_db["skill_certificates"].find_one({"cert_id": "cert-leg"})
+    assert legacy["student_name"] == "Student LEG1" and "share_token" not in legacy
+    legacy_kid = await real_db["students"].find_one({"student_id": "stu-leg1"})
+    assert legacy_kid["full_name"] == "Student LEG1"
     for name in ("family_contacts", "family_notes", "crm_contacts", "email_preferences"):
         assert await real_db[name].count_documents({}) == 0, name
     message = await real_db["messages"].find_one({"message_id": "m1"})
@@ -174,9 +224,14 @@ async def test_children_stay_when_another_guardian_still_signs_in(real_db: Any) 
 
     assert (await job.execute(now=NOW)).completed == 1
 
-    assert stop_all.students == ["stu-abcd"]  # classes still dropped: billing was the parent's
+    assert sorted(stop_all.students) == [
+        "stu-abcd",
+        "stu-leg1",
+    ]  # classes still dropped: billing was the parent's
     kid = await real_db["students"].find_one({"student_id": "stu-abcd"})
     assert kid["full_name"] == "Kid One"
+    cert = await real_db["skill_certificates"].find_one({"cert_id": "cert-1"})
+    assert cert["student_name"] == "Kid One"
     assert await real_db["family_contacts"].count_documents({}) == 1
     user = await real_db["users"].find_one({"user_id": "u1"})
     assert user["display_name"] == "Deleted user"
@@ -291,7 +346,7 @@ async def test_an_academy_restore_is_refused_and_the_erasure_runs_in_every_acade
     job, stop_all, _stripe, firebase = _job(real_db)
     assert (await job.execute(now=NOW)).completed == 1
 
-    assert sorted(stop_all.students) == ["stu-abcd", "stu-b"]
+    assert sorted(stop_all.students) == ["stu-abcd", "stu-b", "stu-leg1"]
     assert (await real_db["students"].find_one({"student_id": "stu-b"}))["full_name"] != "Kid B"
     assert await real_db["family_notes"].count_documents({}) == 0
     for user_id in ("u1", "fb1"):

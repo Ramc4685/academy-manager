@@ -92,6 +92,9 @@ from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences
     ListCoachOccurrencesForDate,
     ListCoachUpcomingOccurrences,
 )
+from backend.v2.contexts.enrollment.application.use_cases.trial_guest_booking import (
+    ListTrialGuests,
+)
 from backend.v2.contexts.enrollment.domain.events import (
     StudentSessionTypeChanged,
     StudentSessionTypeChangedPayload,
@@ -193,6 +196,8 @@ class CoachComposition:
     # Occurrence-scoped roster (expected-absence flags + one-time makeup/
     # trial entries) for /coach/today.
     get_occurrence_roster: GetOccurrenceRoster | None = None
+    # L9: website guests booked on a date, for /coach/today.
+    list_trial_guests: ListTrialGuests | None = None
     # Messages inbox (UIM13)
     list_messages: object = None  # Callable[[str], Awaitable[list[Message]]]
     mark_message_read: object = None  # Callable[[str, str], Awaitable[None]]
@@ -521,18 +526,29 @@ def compose_coach(
     student_progress_comp = compose_student_progress(
         db, outbox, idempotency_store=idempotency_store
     )
+    get_roster = GetSessionRoster(enrollments=enrollments_repo, students=students_repo)
+    get_occurrence_roster = GetOccurrenceRoster(
+        get_roster=get_roster,
+        absence_notices=absence_notice_repo,
+        occurrence_roster=occurrence_roster_repo,
+        students=students_repo,
+        occurrences=occurrences_repo,
+        trial_outcomes=MongoTrialRequestRepository(db),
+        marks=attendance_repo,
+    )
     generate_daily_teaching_plan = GenerateDailyTeachingPlan(
         occurrences=ListCoachOccurrencesForDate(
             occurrences=occurrences_repo, sessions=sessions_repo
         ),
-        get_roster=GetSessionRoster(enrollments=enrollments_repo, students=students_repo),
+        get_roster=get_roster,
         teaching_focus=student_progress_comp.get_teaching_focus,
         lesson_cards=MongoLessonCardRepository(db),
         video_refs=MongoCurriculumVideoRefRepository(db),
         criteria=MongoCriterionRepository(db),
+        # The plan teaches the day's class, the same roster the register shows.
+        occurrence_roster=get_occurrence_roster,
     )
 
-    get_roster = GetSessionRoster(enrollments=enrollments_repo, students=students_repo)
     # Attendance eligibility reads the same one-time roster the coach sees (#672).
     enrollment_lookup = EnrollmentLookupAdapter(enrollments_repo, occurrence_roster_repo)
 
@@ -541,14 +557,8 @@ def compose_coach(
             occurrences=occurrences_repo, sessions=sessions_repo
         ),
         get_roster=get_roster,
-        get_occurrence_roster=GetOccurrenceRoster(
-            get_roster=get_roster,
-            absence_notices=absence_notice_repo,
-            occurrence_roster=occurrence_roster_repo,
-            students=students_repo,
-            occurrences=occurrences_repo,
-            trial_outcomes=MongoTrialRequestRepository(db),
-        ),
+        get_occurrence_roster=get_occurrence_roster,
+        list_trial_guests=ListTrialGuests(trials=MongoTrialRequestRepository(db)),
         mark_attendance=MarkAttendance(
             attendance_repo=attendance_repo,
             occurrence_lookup=EnrollmentOccurrenceLookup(occurrences_repo),

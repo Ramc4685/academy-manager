@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,7 +22,7 @@ from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopa
 from backend.v2.contexts.billing.application.use_cases.process_dunning_retries import (
     ProcessDunningRetries,
 )
-from backend.v2.contexts.billing.domain.ledger import record_delivery
+from backend.v2.contexts.billing.domain.ledger import charge_date, record_delivery
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 
@@ -33,12 +33,16 @@ def build_send_autopay_notice(
     email_port: Callable[[], InvoiceEmailAdapter | None],
     academy_repo: Any,
     frontend_url: str,
-) -> Callable[[str], Awaitable[dict[str, Any]]]:
-    async def send_autopay_notice(invoice_id: str) -> dict[str, Any]:
-        """Pre-charge notice for an autopay invoice (issue #651); marks delivery."""
-        invoice = await ledger.get_invoice(invoice_id)
-        if invoice is None:
+) -> Callable[..., Awaitable[dict[str, Any]]]:
+    async def send_autopay_notice(
+        invoice_id: str, *, family_invoice_ids: Sequence[str] = ()
+    ) -> dict[str, Any]:
+        """Pre-charge notice for an autopay invoice (issue #651); marks delivery.
+        Siblings charged together (L8) share one notice for their summed balance."""
+        invoices = [await ledger.get_invoice(i) for i in (family_invoice_ids or [invoice_id])]
+        if any(item is None for item in invoices):
             raise ValueError("invoice not found")
+        invoice = invoices[0]
         port = email_port()
         if port is None:
             raise ValueError("email delivery is not enabled")
@@ -49,22 +53,24 @@ def build_send_autopay_notice(
             parent_id=invoice.parent_id,
             invoice_id=invoice.invoice_id,
             period=invoice.period,
-            amount_cents=invoice.balance_due_cents,
+            amount_cents=sum(item.balance_due_cents for item in invoices),
             currency=invoice.currency,
-            charge_on=invoice.due_date,
+            charge_on=charge_date(invoice.due_date, invoice.autopay_charge_date),
             portal_url=f"{base}/parent/payments" if base else None,
+            invoice_ids=[item.invoice_id for item in invoices] if len(invoices) > 1 else (),
         )
-        delivered = record_delivery(
-            invoice,
-            outcome="sent",
-            now=datetime.now(UTC),
-            provider_message_id=provider_message_id,
-            # Stamped at send time so Month close and the family timeline read
-            # what was sent instead of re-deriving it from today's autopay
-            # status, which drifts (issue #692).
-            delivery_kind="autopay_notice",
-        )
-        await ledger.save_invoice(delivered)
+        for item in invoices:
+            delivered = record_delivery(
+                item,
+                outcome="sent",
+                now=datetime.now(UTC),
+                provider_message_id=provider_message_id,
+                # Stamped at send time so Month close and the family timeline read
+                # what was sent instead of re-deriving it from today's autopay
+                # status, which drifts (issue #692).
+                delivery_kind="autopay_notice",
+            )
+            await ledger.save_invoice(delivered)
         return {"invoice_id": invoice_id, "delivery_status": delivered.delivery_status}
 
     return send_autopay_notice
@@ -81,6 +87,7 @@ def build_dunning_worker(
     email_port: Callable[[], InvoiceEmailAdapter | None],
     outbox: Any,
     parent_customers: Any = None,
+    family_autopay: Any = None,
 ) -> Callable[[], ProcessDunningRetries]:
     def _dunning_worker() -> ProcessDunningRetries:
         required = ("get_default_payment_method", "create_off_session_payment_intent")
@@ -102,6 +109,7 @@ def build_dunning_worker(
             # transient Resend error is retried by the dispatcher instead of
             # being logged once and losing the parent's only warning.
             outbox=outbox,
+            family_autopay=family_autopay,
         )
 
     return _dunning_worker

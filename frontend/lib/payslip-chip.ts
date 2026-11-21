@@ -7,17 +7,14 @@ export interface PayslipChipSpec {
 }
 
 /**
- * Maps a coach's current-month payroll status (and paid_at, which still wins once
- * set) to the Chip variant/label the Payslips overview should show.
+ * Maps a coach's current-month payroll status to the Chip variant/label the
+ * Payslips overview should show.
  *
  * Before this, PayslipsPanel derived status from `paid_at` alone, so an approved
  * payslip that hadn't been paid yet was mislabelled DRAFT (#845).
  */
-export function payslipChipFor(
-  status: MonthlyPayrollStatus | undefined,
-  paidAt: string | null | undefined,
-): PayslipChipSpec {
-  if (paidAt || status === "paid") {
+export function payslipChipFor(status: MonthlyPayrollStatus | undefined): PayslipChipSpec {
+  if (status === "paid") {
     return { variant: "paid", label: "PAID" };
   }
   if (status === "approved") {

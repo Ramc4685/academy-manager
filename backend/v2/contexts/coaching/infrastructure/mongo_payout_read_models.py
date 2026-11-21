@@ -9,10 +9,10 @@ the read side of the payout flow: they turn raw ``session_occurrences``,
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime
-from decimal import Decimal
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -24,30 +24,50 @@ from backend.v2.contexts.coaching.domain.payout import (
 from backend.v2.contexts.coaching.infrastructure.mongo_coach_rate_repo import (
     coach_rate_from_mongo_doc,
 )
-from backend.v2.shared.money import round_money_minor
+from backend.v2.shared.billing_type import is_not_billed
 from backend.v2.shared.occurrences import (
     effective_occurrence_status,
     occurrence_session_id,
     optional_str,
 )
+from backend.v2.shared.time.academy_timezone import (
+    AcademyTimezoneReader,
+    academy_timezone_lookup,
+    resolve_academy_clock_timezone,
+)
 
 
-class ProjectedClassFees(Protocol):
-    """Class fee per billing month for a projection (billing owns the answer).
+class InvoicedTuitionBasis(Protocol):
+    """Invoiced tuition per ``(session_id, "YYYY-MM")`` and the owner's share rules.
 
-    A month after the academy's current billing month reads the fee that
-    month will be charged (a scheduled plan price change applied); a past
-    month reads the fee it was billed at (an applied change's flip undone);
-    the current month reads the stored fee passed in.
+    Billing owns the answer (``MongoInvoicedTuitionReadModel``). A missing key
+    means the class-month has no counted invoice.
     """
 
-    async def fees_for_periods(
+    @property
+    def amounts(self) -> Mapping[tuple[str, str], int]: ...
+
+    @property
+    def cancelled_class_share(self) -> str: ...
+
+    @property
+    def missing_invoices(self) -> str: ...
+
+    @property
+    def assistant_pay_from(self) -> str | None: ...
+
+    @property
+    def unattributed_invoices(self) -> int: ...
+
+
+class InvoicedClassTuition(Protocol):
+    async def tuition_by_class_month(
         self,
-        stored_fee_by_session: Mapping[str, int],
-        periods: Iterable[str],
         *,
-        academy_id: str | None = None,
-    ) -> dict[tuple[str, str], int]: ...
+        academy_id: str,
+        session_ids: Iterable[str],
+        months: Iterable[str],
+    ) -> InvoicedTuitionBasis: ...
 
 
 class MongoPayableOccurrenceQuery:
@@ -55,11 +75,12 @@ class MongoPayableOccurrenceQuery:
         self,
         db: AsyncIOMotorDatabase[Any],
         *,
-        class_fees: ProjectedClassFees | None = None,
+        tuition: InvoicedClassTuition,
+        academy_timezone: AcademyTimezoneReader | None = None,
     ) -> None:
         self._db = db
-        # Unset (tests, old wiring): every month reads the stored fee.
-        self._class_fees = class_fees
+        self._tuition = tuition
+        self._academy_timezone = academy_timezone or academy_timezone_lookup(db)
 
     async def list_in_period(
         self,
@@ -76,7 +97,9 @@ class MongoPayableOccurrenceQuery:
         )
         docs = [doc async for doc in cursor]
         occurrence_ids = [str(doc["occurrence_id"]) for doc in docs]
-        revenue_by_occurrence = await self._expected_revenue_by_occurrence(academy_id, docs)
+        revenue_by_occurrence, assistants_paid = await self._invoiced_share_by_occurrence(
+            academy_id, docs
+        )
         attendance_by_occurrence: dict[str, list[CoachAttendanceForPayout]] = {
             occurrence_id: [] for occurrence_id in occurrence_ids
         }
@@ -113,6 +136,13 @@ class MongoPayableOccurrenceQuery:
                 scheduled_coach_id=str(doc["scheduled_coach_id"]),
                 actual_coach_id=optional_str(doc.get("actual_coach_id")),
                 substitute_coach_id=optional_str(doc.get("substitute_coach_id")),
+                # Before the academy's assistant pay-from month, assistants are
+                # paid outside the app and get no lines (L7).
+                assistant_coach_ids=(
+                    [str(c) for c in doc.get("assistant_coach_ids") or [] if c]
+                    if str(doc["occurrence_id"]) in assistants_paid
+                    else []
+                ),
                 is_payable=bool(doc.get("is_payable", True)),
                 coach_attendance=attendance_by_occurrence.get(str(doc["occurrence_id"]), []),
                 expected_revenue_minor=revenue_by_occurrence.get(str(doc["occurrence_id"])),
@@ -120,124 +150,173 @@ class MongoPayableOccurrenceQuery:
             for doc in docs
         ]
 
-    @staticmethod
-    def _billing_month_bounds(start_at: datetime) -> tuple[datetime, datetime]:
-        month_start = start_at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        if month_start.month == 12:
-            month_end = month_start.replace(year=month_start.year + 1, month=1)
-        else:
-            month_end = month_start.replace(month=month_start.month + 1)
-        return month_start, month_end
+    async def unattributed_invoices(
+        self, academy_id: str, period_start: datetime, period_end: datetime
+    ) -> int:
+        """Counted invoices in the window's academy-local months with no class."""
+        tz = ZoneInfo(await resolve_academy_clock_timezone(self._academy_timezone, academy_id))
+        first = _as_utc(period_start).astimezone(tz)
+        last = (_as_utc(period_end) - timedelta(microseconds=1)).astimezone(tz)
+        months, (year, mon) = [], (first.year, first.month)
+        while (year, mon) <= (last.year, last.month):
+            months.append(f"{year:04d}-{mon:02d}")
+            year, mon = year + (mon == 12), mon % 12 + 1
+        basis = await self._tuition.tuition_by_class_month(
+            academy_id=academy_id, session_ids=(), months=months
+        )
+        return basis.unattributed_invoices
 
-    async def _expected_revenue_by_occurrence(
+    async def _invoiced_share_by_occurrence(
         self,
         academy_id: str,
         occurrence_docs: list[dict[str, Any]],
-    ) -> dict[str, int]:
-        """Expected revenue per occurrence = monthly session price prorated
-        across the session's non-cancelled payable occurrences in the
-        occurrence's own billing (calendar) month, then multiplied by
-        active enrollments.
+    ) -> tuple[dict[str, int], set[str]]:
+        """Each occurrence's share of its class's invoiced tuition for the month.
 
-        The proration divisor is deliberately independent of the requested
-        query window (#504): a short custom payout window must not inflate
-        the per-occurrence basis by dividing the full monthly price across
-        only the occurrences that happen to fall inside the window.
+        The month is the academy-local month (the clock that labels invoice
+        periods), so a Saturday 7pm class on Oct 31 counts in October. The
+        divisor is the class's payable occurrences in that month, independent
+        of the query window (#504): non-cancelled ones under ``ran_only`` (the
+        coach keeps the whole month when a class is cancelled), every one under
+        ``all_scheduled``. Shares are whole cents and sum exactly to the
+        month's tuition: the remainder goes one cent at a time to the earliest
+        classes.
 
-        Used as the basis for ``percent_of_revenue`` coach rates. Sessions
-        without a configured ``amount_cents`` are omitted, which surfaces
-        downstream as ``unpaid_occurrence_ids`` instead of silently paying 0.
+        A class-month with no invoices is left out (a blocking warning for a
+        percent coach downstream), unless the academy pays 0 for it.
+
+        Also returns the occurrences whose assistants are paid in the app: those
+        in or after the academy's ``assistant_pay_from`` month.
         """
-        session_ids = sorted(
-            {occurrence_session_id(doc) for doc in occurrence_docs if occurrence_session_id(doc)}
-        )
-        if not session_ids:
-            return {}
-
-        price_by_session: dict[str, int] = {}
-        session_cursor = self._db["sessions"].find(
-            {"academy_id": academy_id, "session_id": {"$in": session_ids}},
-            {"session_id": 1, "amount_cents": 1},
-        )
-        async for row in session_cursor:
-            amount = row.get("amount_cents")
-            if amount is not None:
-                price_by_session[str(row["session_id"])] = int(amount)
-
-        if not price_by_session:
-            return {}
-
-        # A future month's occurrence is paid on the fee that month will be
-        # charged, so a scheduled plan price change moves the projection; a
-        # past month keeps the fee it was billed at even after the flip job
-        # moved the stored fee; the current month keeps the stored fee.
-        # Month labels here are UTC calendar months (the existing payroll
-        # bucketing), not the academy clock: see _billing_month_bounds.
-        fee_by_session_month: dict[tuple[str, str], int] = {}
-        if self._class_fees is not None:
-            months = {
-                self._billing_month_bounds(doc["start_at"])[0].strftime("%Y-%m")
-                for doc in occurrence_docs
-                if occurrence_session_id(doc) in price_by_session
-            }
-            fee_by_session_month = await self._class_fees.fees_for_periods(
-                price_by_session, months, academy_id=academy_id
-            )
-
-        # Count the session's payable, non-cancelled occurrences in each
-        # occurrence's billing month — from the collection, NOT from the
-        # window-scoped ``occurrence_docs`` (#504).
-        month_counts: dict[tuple[str, datetime], int] = {}
+        if not occurrence_docs:
+            return {}, set()
+        tz = ZoneInfo(await resolve_academy_clock_timezone(self._academy_timezone, academy_id))
+        local_month = {
+            str(doc["occurrence_id"]): f"{_as_utc(doc['start_at']).astimezone(tz):%Y-%m}"
+            for doc in occurrence_docs
+        }
+        month_of: dict[str, tuple[str, str]] = {}
         for doc in occurrence_docs:
             session_id = occurrence_session_id(doc)
-            if session_id not in price_by_session:
+            if session_id:
+                month_of[str(doc["occurrence_id"])] = (
+                    session_id,
+                    local_month[str(doc["occurrence_id"])],
+                )
+
+        basis = await self._tuition.tuition_by_class_month(
+            academy_id=academy_id,
+            session_ids={sid for sid, _ in month_of.values()},
+            months=set(local_month.values()),
+        )
+        pay_from = basis.assistant_pay_from
+        assistants_paid = (
+            {occ for occ, month in local_month.items() if month >= pay_from} if pay_from else set()
+        )
+        share_of: dict[str, int] = {}
+        for session_id, month in sorted(set(month_of.values())):
+            tuition = basis.amounts.get((session_id, month))
+            month_start, month_end = _local_month_bounds(month, tz)
+            if tuition is None:
+                # A class whose only children are not billed has nothing to
+                # invoice: its base is $0, not a missing invoice.
+                if basis.missing_invoices != "pay_zero" and not (
+                    await self._only_not_billed_children(
+                        academy_id, session_id, month_start, month_end
+                    )
+                ):
+                    continue
+                tuition = 0
+            # The class is keyed the way ``occurrence_session_id`` keys it: a D2 term
+            # clone's occurrences name the template the invoice billed only in
+            # ``template_session_id``, so a ``session_id``-only lookup found none of
+            # them and every one read as a missing invoice.
+            query: dict[str, Any] = {
+                "academy_id": academy_id,
+                "$or": [{"session_id": session_id}, {"template_session_id": session_id}],
+                "start_at": {"$gte": month_start, "$lt": month_end},
+                "is_payable": {"$ne": False},
+            }
+            if basis.cancelled_class_share != "all_scheduled":
+                query["status"] = {"$ne": "cancelled"}
+            ids = [
+                str(row["occurrence_id"])
+                async for row in self._db["session_occurrences"].find(
+                    query,
+                    {"occurrence_id": 1, "session_id": 1, "template_session_id": 1},
+                    sort=[("start_at", 1), ("occurrence_id", 1)],
+                )
+                if occurrence_session_id(row) == session_id
+            ]
+            if not ids:
                 continue
-            month_start, month_end = self._billing_month_bounds(doc["start_at"])
-            key = (session_id, month_start)
-            if key in month_counts:
-                continue
-            month_counts[key] = await self._db["session_occurrences"].count_documents(
+            base, remainder = divmod(tuition, len(ids))
+            for index, occurrence_id in enumerate(ids):
+                share_of[occurrence_id] = base + (1 if index < remainder else 0)
+        return {
+            occurrence_id: share_of[occurrence_id]
+            for occurrence_id in month_of
+            if occurrence_id in share_of
+        }, assistants_paid
+
+    async def _only_not_billed_children(
+        self, academy_id: str, session_id: str, month_start: datetime, month_end: datetime
+    ) -> bool:
+        """True when the class has enrolled children and none was billed that month.
+
+        Active, paused and held rows count; one billed child among them keeps
+        the missing-invoice warning (the class should have been invoiced). A
+        child marked not billed after the month ended was billed that month,
+        so marking today never hides an older month's missing invoice; one
+        whose billing started after the month began was not billed that month.
+        A child who left during the month still counts; one who joined after
+        it ended does not. Imported ``NoCharge`` rows carry no mark time and
+        count every month. "Start billing" keeps ``not_billed_at``, so months
+        before the mark stay billed.
+        """
+        rows = [
+            row
+            async for row in self._db["enrollments"].find(
                 {
                     "academy_id": academy_id,
                     "session_id": session_id,
-                    "start_at": {"$gte": month_start, "$lt": month_end},
-                    "is_payable": {"$ne": False},
-                    "status": {"$ne": "cancelled"},
-                }
+                    "is_deleted": {"$ne": True},
+                    "$or": [
+                        {"status": {"$in": list(_PAYROLL_ROSTER_STATUSES)}},
+                        {"updated_at": {"$gte": month_start}},
+                    ],
+                    "created_at": {"$not": {"$gte": month_end}},
+                },
+                {"billing_type": 1, "not_billed_at": 1, "billing_started_at": 1},
             )
+        ]
 
-        enrolled_by_session: dict[str, int] = dict.fromkeys(price_by_session, 0)
-        enrollment_cursor = self._db["enrollments"].find(
-            {
-                "academy_id": academy_id,
-                "session_id": {"$in": list(price_by_session)},
-                "status": "active",
-                "is_deleted": {"$ne": True},
-            },
-            {"session_id": 1},
-        )
-        async for row in enrollment_cursor:
-            session_id = str(row["session_id"])
-            enrolled_by_session[session_id] = enrolled_by_session.get(session_id, 0) + 1
+        def not_billed_that_month(row: dict[str, Any]) -> bool:
+            if is_not_billed(row):
+                marked = row.get("not_billed_at")
+                return marked is None or _as_utc(marked) < month_end
+            started = row.get("billing_started_at")
+            if started is None or _as_utc(started) < month_start:
+                return False
+            marked = row.get("not_billed_at")
+            return marked is None or _as_utc(marked) < month_end
 
-        revenue_by_occurrence: dict[str, int] = {}
-        for doc in occurrence_docs:
-            session_id = occurrence_session_id(doc)
-            if session_id not in price_by_session:
-                continue
-            month_start, _ = self._billing_month_bounds(doc["start_at"])
-            month_count = month_counts.get((session_id, month_start), 0)
-            if month_count <= 0:
-                continue
-            fee = fee_by_session_month.get(
-                (session_id, month_start.strftime("%Y-%m")), price_by_session[session_id]
-            )
-            revenue_by_occurrence[str(doc["occurrence_id"])] = round_money_minor(
-                Decimal(fee)
-                * Decimal(enrolled_by_session.get(session_id, 0))
-                / Decimal(month_count)
-            )
-        return revenue_by_occurrence
+        return bool(rows) and all(not_billed_that_month(row) for row in rows)
+
+
+#: Enrollment statuses that put a child in a class for payroll's not-billed check.
+_PAYROLL_ROSTER_STATUSES = ("active", "paused", "held")
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _local_month_bounds(month: str, tz: ZoneInfo) -> tuple[datetime, datetime]:
+    year, mon = (int(part) for part in month.split("-"))
+    start = datetime(year, mon, 1, tzinfo=tz)
+    end = datetime(year + (mon == 12), mon % 12 + 1, 1, tzinfo=tz)
+    return start.astimezone(UTC), end.astimezone(UTC)
 
 
 class MongoCoachRateLookup:
@@ -285,8 +364,16 @@ class MonthlyCoachOccurrenceReaderAdapter:
     them to carry the ``replaced_by_actual_coach`` trace.
     """
 
-    def __init__(self, collection: Any) -> None:
+    def __init__(
+        self,
+        collection: Any,
+        *,
+        assistant_pay_from: Callable[[str], Awaitable[str | None]] | None = None,
+    ) -> None:
         self._col = collection
+        #: The academy's first month assistants are paid in the app; no
+        #: reader (or ``None``) means assistants get no payroll rows.
+        self._assistant_pay_from = assistant_pay_from
 
     async def coaches_with_occurrences(
         self,
@@ -338,4 +425,29 @@ class MonthlyCoachOccurrenceReaderAdapter:
             if scheduled and actual != scheduled and scheduled not in known:
                 displaced.add(str(scheduled))
         rows.extend(_Row(coach_id=coach_id, session_count=0) for coach_id in sorted(displaced))
-        return rows
+
+        # Assistants are paid their own line per assisted class (L7), so they
+        # need a payout period too; their assisted classes add to their count.
+        # Only from the academy's assistant pay-from month on. The window's UTC
+        # midpoint always falls inside the academy-local month it bounds.
+        pay_from = await self._assistant_pay_from(academy_id) if self._assistant_pay_from else None
+        month = f"{period_start + (period_end - period_start) / 2:%Y-%m}"
+        if pay_from is None or month < pay_from:
+            return rows
+        assisted: dict[str, int] = {}
+        cursor = self._col.find(
+            {**match, "assistant_coach_ids.0": {"$exists": True}},
+            {"scheduled_coach_id": 1, "actual_coach_id": 1, "assistant_coach_ids": 1},
+        )
+        async for doc in cursor:
+            paying = doc.get("actual_coach_id") or doc.get("scheduled_coach_id")
+            for assistant in set(doc.get("assistant_coach_ids") or []):
+                if assistant and assistant != paying:
+                    assisted[str(assistant)] = assisted.get(str(assistant), 0) + 1
+        by_coach = {row.coach_id: row for row in rows}
+        for coach_id, count in sorted(assisted.items()):
+            row = by_coach.get(coach_id)
+            by_coach[coach_id] = _Row(
+                coach_id=coach_id, session_count=(row.session_count if row else 0) + count
+            )
+        return list(by_coach.values())

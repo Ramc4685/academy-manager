@@ -62,6 +62,7 @@ from backend.v2.contexts.billing.application.use_cases.invoice_numbering import 
     mint_invoice_number,
 )
 from backend.v2.contexts.billing.domain.ledger import (
+    TUITION_DISCOUNT_SOURCE_TYPE,
     InvoiceLine,
     LedgerInvoice,
     add_line,
@@ -76,6 +77,11 @@ from backend.v2.contexts.billing.domain.proration import (
     PaidPeriodCharge,
     quote_move_proration,
     unused_paid_classes,
+)
+from backend.v2.contexts.billing.domain.sibling_discount import (
+    SIBLING_DISCOUNT_ID_PREFIX,
+    best_tuition_discount,
+    sibling_policy,
 )
 from backend.v2.contexts.billing.domain.tuition_discount import (
     TuitionDiscount,
@@ -157,6 +163,14 @@ class MoveDiscountReader(Protocol):
     """
 
     async def get_active(self, enrollment_id: str) -> TuitionDiscount | None: ...
+
+
+class MoveSiblingDecisionReader(Protocol):
+    """The recorded sibling percentage when the month was sibling-discounted,
+    else ``None`` (L9 C1). Satisfied by
+    ``mongo_monthly_billing.sibling_decision_percent_bps`` bound to the db."""
+
+    def __call__(self, *, enrollment_id: str, period: str) -> Awaitable[int | None]: ...
 
 
 class MoveChargeBasisReader(Protocol):
@@ -280,6 +294,7 @@ class ApplyEnrollmentMove:
         idempotency_store: IdempotencyStore,
         charge_basis: MoveChargeBasisReader | None = None,
         discounts: MoveDiscountReader | None = None,
+        sibling_decisions: MoveSiblingDecisionReader | None = None,
         academy_timezone: AcademyTimezoneReader | None = None,
         notice_resender: MoveNoticeResender | None = None,
         counters: Any | None = None,
@@ -291,6 +306,7 @@ class ApplyEnrollmentMove:
         self._schedules = schedules
         self._charge_basis = charge_basis
         self._discounts = discounts
+        self._sibling_decisions = sibling_decisions
         self._idempotency_store = idempotency_store
         self._academy_timezone = academy_timezone
         self._notice_resender = notice_resender
@@ -345,7 +361,7 @@ class ApplyEnrollmentMove:
                 outcome="no_invoice", effective_period=period, idempotency_key=key
             )
 
-        quote = await self._quote(cmd, period=period)
+        quote = await self._quote(cmd, period=period, invoice=invoice)
         if quote is None:
             # One of the two schedules could not be expanded for this period.
             # A zero share is indistinguishable from "no classes left", and the
@@ -453,7 +469,7 @@ class ApplyEnrollmentMove:
         return candidates[0] if candidates else None
 
     async def _quote(
-        self, cmd: ApplyEnrollmentMoveCommand, *, period: str
+        self, cmd: ApplyEnrollmentMoveCommand, *, period: str, invoice: LedgerInvoice
     ) -> MoveProrationQuote | None:
         """The move quote, or ``None`` when either side's schedule is unknown."""
         from_schedule = await self._schedules.load(session_id=cmd.from_session_id, period=period)
@@ -463,7 +479,12 @@ class ApplyEnrollmentMove:
         timezone_name = to_schedule.timezone
         billing_period = BillingPeriod.from_label(period, timezone_name=timezone_name)
         effective_at = self._effective_boundary(cmd, timezone_name=timezone_name)
-        discount = await self._active_discount(cmd.enrollment_id, billing_period)
+        discount = await self._period_discount(
+            cmd.enrollment_id,
+            billing_period,
+            invoice=invoice,
+            monthly_price_cents=from_schedule.monthly_price_cents,
+        )
         quote = quote_move_proration(
             period=billing_period,
             from_session_id=cmd.from_session_id,
@@ -548,10 +569,56 @@ class ApplyEnrollmentMove:
             else cmd.effective_at.replace(tzinfo=UTC)
         )
 
-    async def _active_discount(
+    async def _period_discount(
+        self,
+        enrollment_id: str,
+        billing_period: BillingPeriod,
+        *,
+        invoice: LedgerInvoice,
+        monthly_price_cents: int,
+    ) -> TuitionDiscount | None:
+        """The tuition discount the period's invoice was priced with.
+
+        The invoice's ``tuition_discount`` line names it: the automatic sibling
+        policy or the manual one. No such line: the month was not discounted.
+        A line without a ``source_id`` falls back to the monthly run's rule:
+        the larger of the manual policy and the recorded sibling decision, the
+        manual one on a tie (L9 C1 review).
+        """
+        lines = await self._ledger.get_lines_for_invoice(invoice.invoice_id)
+        line = next((ln for ln in lines if ln.source_type == TUITION_DISCOUNT_SOURCE_TYPE), None)
+        if line is None:
+            return None
+        if line.source_id and line.source_id.startswith(SIBLING_DISCOUNT_ID_PREFIX):
+            return await self._sibling_discount(enrollment_id, billing_period)
+        manual = await self._manual_discount(enrollment_id, billing_period)
+        if line.source_id:
+            return manual
+        sibling = await self._sibling_discount(enrollment_id, billing_period)
+        return best_tuition_discount(manual, sibling, monthly_price_cents=monthly_price_cents)
+
+    async def _sibling_discount(
         self, enrollment_id: str, billing_period: BillingPeriod
     ) -> TuitionDiscount | None:
-        """The recurring tuition discount the period's invoice was priced with."""
+        if self._sibling_decisions is None:
+            return None
+        percent_bps = await self._sibling_decisions(
+            enrollment_id=enrollment_id, period=billing_period.label
+        )
+        if percent_bps is None:
+            return None
+        return sibling_policy(
+            enrollment_id=enrollment_id,
+            student_id="",
+            period=billing_period.label,
+            percent_bps=percent_bps,
+            period_start=billing_period.start_at.date(),
+        )
+
+    async def _manual_discount(
+        self, enrollment_id: str, billing_period: BillingPeriod
+    ) -> TuitionDiscount | None:
+        """The enrollment's recurring manual discount, if it covers the period."""
         if self._discounts is None:
             return None
         policy = await self._discounts.get_active(enrollment_id)

@@ -127,7 +127,7 @@ export function inputToDays(raw: string): number[] | null {
   const parts = trimmed.split(/[,\s]+/).filter(Boolean);
   const days: number[] = [];
   for (const part of parts) {
-    if (!/^\d+$/.test(part)) return null;
+    if (!/^-?\d+$/.test(part)) return null;
     const day = Number(part);
     if (!days.includes(day)) days.push(day);
   }

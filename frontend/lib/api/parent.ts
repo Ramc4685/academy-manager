@@ -10,6 +10,8 @@ export interface ParentProfile {
   last_name: string;
   email?: string | null;
   phone: string;
+  /** A referral code carried from the academy page (L9 C2). */
+  referral_code?: string;
 }
 
 export interface ChildProfile {
@@ -203,6 +205,12 @@ export interface ParentProgressNote {
 }
 
 /** GET /parent/students/{id}/progress-journey — the "how far along" view. */
+export interface ParentJourneyMilestone {
+  kind: "skills_passed" | "levels_completed";
+  count: number;
+  reached_at: string;
+}
+
 export interface ParentProgressJourney {
   student_id: string;
   program_id: string;
@@ -239,6 +247,8 @@ export interface ParentProgressJourney {
     /** The coach's optional one-line note to the parent on this win. */
     coach_note?: string | null;
   }[];
+  /** Milestones reached (academy setting, Settings > Curriculum); empty when off. */
+  milestones?: ParentJourneyMilestone[];
   focus_skill_id: string | null;
   focus_skill_name: string | null;
   /** Finished the last level: every level is done and current_level is null. */
@@ -266,6 +276,8 @@ export interface ParentScheduleEntry {
    * one-time approved attendance. Optional for responses that predate it.
    */
   source?: ParentScheduleSource;
+  /** Why a cancelled date is off ("Gym not available"); null for a class. */
+  cancellation_reason?: string | null;
 }
 
 export type ParentScheduleSource = "regular" | "makeup" | "trial";
@@ -453,6 +465,8 @@ export function startParentInvoicePayment(
     cancel_url: string;
     /** When true, the payment also saves the method and enrolls the covered enrollment in autopay. */
     enroll_autopay: boolean;
+    /** Also pay the same student's other open invoices (the bundle a balance invoice email quoted). */
+    bundle_student_balance?: boolean;
   },
 ): Promise<{ invoice_id: string; redirect_url: string }> {
   return apiFetch(`/parent/invoices/${encodeURIComponent(invoiceId)}/pay`, {
@@ -514,11 +528,25 @@ export function listParentPauseRequests(): Promise<{
 
 export function getChildSchedule(
   studentId: string,
+  range?: { from: string; to: string },
 ): Promise<ParentScheduleResponse> {
+  const query = range
+    ? `?${new URLSearchParams({ from: range.from, to: range.to, limit: "200" })}`
+    : "";
   return apiFetch(
-    `/parent/children/${encodeURIComponent(studentId)}/schedule`,
+    `/parent/children/${encodeURIComponent(studentId)}/schedule${query}`,
     { method: "GET" },
   );
+}
+
+/** The parent's private phone-calendar subscription link (404 when off). */
+export function getCalendarFeedLink(): Promise<{ url: string }> {
+  return apiFetch("/parent/calendar-feed", { method: "GET" });
+}
+
+/** A new link; every older one stops working. */
+export function resetCalendarFeedLink(): Promise<{ url: string }> {
+  return apiFetch("/parent/calendar-feed/reset", { method: "POST" });
 }
 
 export interface ParentSelfServiceSwitches {
@@ -553,6 +581,11 @@ export interface ParentAcademy {
   self_service?: ParentSelfServiceSwitches;
   // Owner-edited plain text for manual payers; null/empty = nothing shown.
   payment_instructions?: string | null;
+  /**
+   * Last month ("YYYY-MM") whose class dates the academy published as final.
+   * null = the academy does not publish, so no "not confirmed" banner.
+   */
+  schedule_published_through?: string | null;
 }
 
 export function getParentAcademy(): Promise<ParentAcademy> {
@@ -762,6 +795,44 @@ export function listEligibleMakeupTargets(params: {
   });
 }
 
+/**
+ * #1037/#1041: one missed class one child can still request a makeup for,
+ * as the server's own eligibility rules see it. Siblings in the same class
+ * share an occurrence, so a row is keyed by student AND occurrence.
+ */
+export interface MakeupCandidateView {
+  student_id: string;
+  student_name: string;
+  occurrence_id: string;
+  session_id: string;
+  class_title: string;
+  start_at: string;
+  end_at: string;
+  has_notice: boolean;
+  expires_at: string;
+}
+
+/** #1041: a class the parent flagged that can't be made up, and why. */
+export interface IneligibleMakeupView {
+  student_id: string;
+  student_name: string;
+  occurrence_id: string;
+  class_title: string;
+  start_at: string;
+  reason: string;
+}
+
+export interface MakeupCandidatesResponse {
+  candidates: MakeupCandidateView[];
+  makeups_enabled: boolean;
+  requires_notice: boolean;
+  ineligible: IneligibleMakeupView[];
+}
+
+export function listMakeupCandidates(): Promise<MakeupCandidatesResponse> {
+  return apiFetch("/parent/makeups/candidates", { method: "GET" });
+}
+
 export type TrialRequestStudentRef = "prospective" | "existing_student";
 
 export interface TrialRequestView {
@@ -969,4 +1040,11 @@ export function updateParentChild(
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+}
+
+/** The parent's referral code and rewards (L9 C2); ``enabled: false`` while the academy has it off. */
+export type ParentReferral = components["schemas"]["ParentReferralResponse"];
+
+export function getParentReferral(): Promise<ParentReferral> {
+  return apiFetch<ParentReferral>("/parent/referral", { method: "GET" });
 }

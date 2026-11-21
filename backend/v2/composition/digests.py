@@ -17,7 +17,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -45,6 +45,9 @@ from backend.v2.contexts.communications.application.parent_digest_view import (
 from backend.v2.contexts.communications.application.unsubscribe_token import (
     UnsubscribeLinkBuilder,
 )
+from backend.v2.contexts.communications.application.use_cases.delivery_problems import (
+    GetDeliveryProblems,
+)
 from backend.v2.contexts.communications.application.use_cases.get_digest_delivery_log import (
     GetDigestDeliveryLog,
 )
@@ -56,6 +59,7 @@ from backend.v2.contexts.communications.application.use_cases.list_email_suppres
     ReleaseEmailSuppression,
 )
 from backend.v2.contexts.communications.application.use_cases.send_campaign import (
+    ProcessCampaignQueue,
     SendCampaign,
 )
 from backend.v2.contexts.communications.application.use_cases.send_coach_daily_digest import (
@@ -143,11 +147,7 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
 from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
     MongoStudentRepository,
 )
-from backend.v2.contexts.identity.application.use_cases.magic_link import IssueMagicLink
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
-from backend.v2.contexts.identity.infrastructure.mongo_magic_link_repo import (
-    MongoMagicLinkRepository,
-)
 from backend.v2.contexts.student_progress.application.use_cases.get_pathway_placement import (
     GetStudentPathwayPlacement,
     StudentPathwayPlacementRequest,
@@ -155,6 +155,7 @@ from backend.v2.contexts.student_progress.application.use_cases.get_pathway_plac
 from backend.v2.contexts.student_progress.application.use_cases.get_teaching_focus import (
     GetTeachingFocus,
 )
+from backend.v2.shared.comms.email_brand import lookup_academy_brand
 from backend.v2.shared.comms.email_theme import EmailBrand, format_money
 from backend.v2.shared.comms.sender_identity import resolve_sender
 from backend.v2.shared.config import get_settings
@@ -332,27 +333,15 @@ class _CoachDigestPlanProvider:
 
 
 class _AcademyBrandLookup:
-    """``AcademyBrandLookup`` over the academy document (fields set on the
-    admin Settings → Academy page). Validation of ``brand_color`` happens in
-    ``EmailBrand.accent`` so junk never reaches a style attribute."""
+    """``AcademyBrandLookup`` (``brand_for``) over the shared academy-document
+    mapping, so digests and campaigns carry the same brand, sender identity
+    and postal address as every other send path."""
 
     def __init__(self, academies: Any) -> None:
         self._academies = academies
 
     async def brand_for(self, academy_id: str) -> EmailBrand | None:
-        doc = await self._academies.find_by_id(academy_id)
-        if not doc:
-            return None
-        identity = resolve_sender(doc)
-        return EmailBrand(
-            academy_name=str(doc.get("display_name") or academy_id),
-            brand_color=doc.get("brand_color") or None,
-            logo_url=doc.get("logo_url") or None,
-            contact_email=doc.get("contact_email") or None,
-            contact_phone=doc.get("contact_phone") or None,
-            sender_name=identity.sender_name,
-            reply_to=identity.reply_to,
-        )
+        return await lookup_academy_brand(self._academies, academy_id)
 
 
 def _session_group_label(session: Any) -> str:
@@ -555,7 +544,6 @@ class _ParentDigestProvider:
         ledger: MongoBillingLedgerRepository,
         autopay_consents: MongoAutopayConsentRepository,
         academies: MongoAcademyRepository,
-        issue_magic_link: IssueMagicLink | None = None,
     ) -> None:
         self._students = students
         self._enrollments = enrollments
@@ -568,7 +556,6 @@ class _ParentDigestProvider:
         self._ledger = ledger
         self._autopay_consents = autopay_consents
         self._academies = academies
-        self._issue_magic_link = issue_magic_link
         # Per-run memoization (#531): academy_id is fixed for the whole send
         # run, so academy/program resolution and "today's" occurrences are
         # fetched once per (academy_id[, on_date]) and reused across every
@@ -635,13 +622,7 @@ class _ParentDigestProvider:
         whatsapp_groups = await self._whatsapp_groups(children_students)
         autopay_enabled = await self._autopay_enabled(parent_id)
         reply_to = self._reply_to(settings.sender_email, academy_doc)
-        activate_url = await self._activate_url(
-            frontend=frontend,
-            user_doc=user_doc,
-            on_portal=on_portal,
-            dues=dues,
-            parent_id=parent_id,
-        )
+        activate_url = self._activate_url(frontend, user_doc, dues)
 
         return ParentDigestView(
             parent_name=self._parent_name(user_doc),
@@ -652,13 +633,9 @@ class _ParentDigestProvider:
             dues=dues,
             autopay_enabled=autopay_enabled,
             portal_url=(f"{frontend}/parent/dashboard" if frontend else ""),
-            # Variant B activation CTA. These parents already exist — admin
-            # provisioning creates the Firebase account (MongoUserRepo
-            # `_create_firebase_user`); they simply never set a password. We mint
-            # a one-time magic link (`/auth/magic?t=`) that signs them straight
-            # in and lands them on next_path. If minting fails the value falls
-            # back to the sign-in page (`_activate_url`), so the digest never
-            # crashes on this. See `_activate_url` for the fallback contract.
+            # Variant B activation CTA: the prefilled sign-in page. These
+            # parents already exist (admin provisioning creates the account);
+            # they simply never set a password. See `_activate_url`.
             activate_url=activate_url,
             reply_to=reply_to,
             whatsapp_groups=whatsapp_groups,
@@ -958,60 +935,35 @@ class _ParentDigestProvider:
         except Exception:
             return None
 
-    async def _activate_url(
-        self,
-        *,
-        frontend: str,
-        user_doc: dict[str, Any] | None,
-        on_portal: bool,
-        dues: DuesView | None,
-        parent_id: str,
-    ) -> str:
-        """Variant B CTA target: a one-time magic link, or /login as fallback.
-
-        Only never-activated parents (Variant B, ``on_portal`` False) get the
-        activation CTA, so that is the only case worth minting a token for. The
-        link lands on the payments page when a balance is owed, else the
-        dashboard. Minting is best-effort: any failure (no issuer wired, Mongo
-        or Firebase error) degrades to the prefilled sign-in URL — a digest must
-        never crash on this.
-        """
-        fallback = self._login_url(frontend, user_doc)
-        if on_portal or not frontend or self._issue_magic_link is None:
-            return fallback
-        try:
-            academy_id = current_academy_id()
-            next_path = "/parent/payments" if dues is not None else "/parent/dashboard"
-            token = await self._issue_magic_link.execute(
-                user_id=parent_id, academy_id=academy_id, next_path=next_path
-            )
-        except Exception:
-            return fallback
-        return f"{frontend}/auth/magic?t={quote(token, safe='')}"
-
     @staticmethod
-    def _login_url(frontend: str, user_doc: dict[str, Any] | None) -> str:
-        """Sign-in deep link for a provisioned-but-never-activated parent.
+    def _activate_url(frontend: str, user_doc: dict[str, Any] | None, dues: DuesView | None) -> str:
+        """Variant B CTA target: the prefilled sign-in page, never a session link.
 
-        Email is prefilled when known so the parent can go straight to
-        "Forgot password" and receive a set-password link.
+        An emailed link that grants a session is a bearer credential and a digest
+        is forwardable mail, so the CTA only ever opens /login (OWASP / NIST
+        800-63B). ``returnTo`` lands the parent on payments when a balance is
+        owed, else the dashboard; the login page runs it through
+        ``sanitizeReturnPath`` before navigating.
         """
         if not frontend:
             return ""
+        return_to = "/parent/payments" if dues is not None else "/parent/dashboard"
+        params = {"returnTo": return_to}
         email = str((user_doc or {}).get("email") or "").strip()
-        if not email:
-            return f"{frontend}/login"
-        return f"{frontend}/login?email={quote(email, safe='')}"
+        if email:
+            # Email prefilled so the parent can go straight to "Forgot password";
+            # activate=1 tells the login page this parent has no password yet.
+            params = {"email": email, "activate": "1", **params}
+        return f"{frontend}/login?{urlencode(params)}"
 
     @staticmethod
     def _is_on_portal(user_doc: dict[str, Any] | None) -> bool:
-        # "On the portal" = the parent has an active login. The users collection
-        # has no explicit last-login field, so the most reliable available signal
-        # is a verified email — Firebase sets email_verified when the parent
-        # completes the set-password invite or signs in with Google — with a
-        # last-login/last-seen timestamp as a secondary signal if present.
-        # Admin-provisioned parents who never activated their account have
-        # neither, so they fall to Variant B (the activation CTA).
+        # "On the portal" = the parent has an active login: a verified email
+        # (Firebase sets it when the parent completes the set-password invite or
+        # signs in with Google) or `last_login_at`, which the login recorder
+        # stamps once per session (migration 0229 backfilled it).
+        # Admin-provisioned parents who never activated have neither, so they
+        # fall to Variant B (the activation CTA).
         if not user_doc:
             return False
         for key in ("email_verified", "emailVerified", "is_email_verified"):
@@ -1081,7 +1033,12 @@ def _build_email_sender(settings: Any, db: AsyncIOMotorDatabase[Any] | None = No
                 "Email delivery is enabled but no sender address resolves: set "
                 "SENDER_EMAIL (or V2_SENDER_EMAIL) or FRONTEND_URL."
             )
-        inner = ResendEmailSendPort(api_key=settings.resend_api_key, from_address=from_address)
+        inner = ResendEmailSendPort(
+            api_key=settings.resend_api_key,
+            from_address=from_address,
+            marketing_from_address=getattr(settings, "marketing_sender_email", None),
+            max_retries=int(getattr(settings, "email_send_max_retries", 0) or 0),
+        )
     else:
         inner = StubEmailSendPort()
     if db is None:
@@ -1175,7 +1132,6 @@ def compose_send_parent_daily_digest(
         ledger=MongoBillingLedgerRepository(db),
         autopay_consents=MongoAutopayConsentRepository(db),
         academies=MongoAcademyRepository(db),
-        issue_magic_link=IssueMagicLink(MongoMagicLinkRepository(db)),
     )
     return SendParentDailyDigest(
         digests=MongoParentDigestSendRepository(db),
@@ -1238,6 +1194,35 @@ def compose_send_campaign(
         unsubscribe_links=compose_unsubscribe_link_builder(settings),
         academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
         brands=_AcademyBrandLookup(MongoAcademyRepository(db)),
+        list_unsubscribe=bool(getattr(settings, "email_list_unsubscribe_enabled", False)),
+        background=bool(getattr(settings, "campaign_background_send_enabled", False)),
+        # The gated sender's own gates, read-only, so the recipient preview
+        # explains exactly who the send would refuse (#1031).
+        gates=tuple(
+            gate
+            for gate in (
+                getattr(sender, "suppressions", None),
+                getattr(sender, "preferences", None),
+                getattr(sender, "prospects", None),
+            )
+            if gate is not None
+        ),
+    )
+
+
+def compose_process_campaign_queue(
+    db: AsyncIOMotorDatabase[Any], settings: Any
+) -> ProcessCampaignQueue:
+    """The background campaign worker (L11 item 7): same gated sender, footer,
+    brand and one-click settings as ``compose_send_campaign``."""
+    return ProcessCampaignQueue(
+        campaigns=MongoCampaignRepository(db),
+        deliveries=MongoDeliveryRepository(db),
+        sender=_build_email_sender(settings, db),
+        unsubscribe_links=compose_unsubscribe_link_builder(settings),
+        academy_slugs=_AcademySlugLookup(MongoAcademyRepository(db)),
+        brands=_AcademyBrandLookup(MongoAcademyRepository(db)),
+        list_unsubscribe=bool(getattr(settings, "email_list_unsubscribe_enabled", False)),
     )
 
 
@@ -1269,3 +1254,12 @@ def compose_list_email_suppressions(db: AsyncIOMotorDatabase[Any]) -> ListEmailS
 
 def compose_release_email_suppression(db: AsyncIOMotorDatabase[Any]) -> ReleaseEmailSuppression:
     return ReleaseEmailSuppression(suppressions=MongoSuppressionRepository(db))
+
+
+def compose_delivery_problems(db: AsyncIOMotorDatabase[Any]) -> GetDeliveryProblems:
+    """The admin Delivery problems read (L11 item 3)."""
+    return GetDeliveryProblems(
+        resolver=MongoAudienceResolver(db=db),
+        suppressions=MongoSuppressionRepository(db),
+        deliveries=MongoDeliveryRepository(db),
+    )

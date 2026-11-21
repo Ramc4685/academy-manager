@@ -325,7 +325,9 @@ def test_timeline_merges_sources_newest_first_and_mutes_comms() -> None:
         by_code["invoice_voided"]["summary"]
         == "Sep 2026 invoice voided · Hannah · enrollment paused"
     )
-    assert by_code["enrollment:paused"]["summary"] == "Hannah paused · resumes Oct 1"
+    # #1052: a legacy pause event carries no review/resume date; its own
+    # effective date is never passed off as a resume date.
+    assert by_code["enrollment:paused"]["summary"] == "Hannah paused · review required"
 
 
 def test_timeline_labels_the_send_from_the_persisted_kind() -> None:
@@ -440,6 +442,7 @@ def test_view_enrollment_counts_buckets_held_and_reclaim_pending_separately() ->
         "paused": 1,
         "held": 2,
         "cancelled": 4,
+        "not_billed": 0,
     }
 
 
@@ -579,3 +582,56 @@ def test_a_complaint_is_undeliverable_for_marketing_but_still_flagged() -> None:
 
     assert view["header"]["email_delivery"]["undeliverable"] is True
     assert view["header"]["email_delivery"]["reason"] == "complaint"
+
+
+def _pause_summary(occurred_at: datetime, metadata: dict[str, str]) -> str:
+    facts = _facts(
+        events=(
+            EventFacts(
+                event_id="ev-p",
+                event_type="paused",
+                enrollment_id="e-1",
+                student_name="Hannah",
+                occurred_at=occurred_at,
+                actor_id="admin-1",
+                reason=None,
+                effective_at=occurred_at,
+                metadata=metadata,
+            ),
+        )
+    )
+    (entry,) = [e for e in build_timeline(facts, zone=ZONE) if e["code"] == "enrollment:paused"]
+    return str(entry["summary"])
+
+
+# Oct 1 2026, 8:29 PM Central = Oct 2 01:29 UTC: the #1052 production case.
+_OCT1_EVENING_CENTRAL = datetime(2026, 10, 2, 1, 29, tzinfo=UTC)
+
+
+def test_review_pause_shows_its_review_date_not_a_resume() -> None:
+    summary = _pause_summary(_OCT1_EVENING_CENTRAL, {"review_on": "2027-06-03"})
+    assert summary == "Hannah paused · review Jun 3, 2027"
+
+
+def test_fixed_date_pause_shows_the_scheduled_resume_date() -> None:
+    summary = _pause_summary(_OCT1_EVENING_CENTRAL, {"resume_on": "2026-11-01"})
+    assert summary == "Hannah paused · resumes Nov 1"
+
+
+def test_pause_dates_are_calendar_dates_never_shifted_by_timezone() -> None:
+    # A review on Oct 2 approved the evening before (Central) stays Oct 2.
+    assert _pause_summary(_OCT1_EVENING_CENTRAL, {"review_on": "2026-10-02"}) == (
+        "Hannah paused · review Oct 2"
+    )
+
+
+def test_cross_year_is_judged_in_the_academy_zone() -> None:
+    # Dec 31 8 PM Central is already Jan 1 in UTC; a Jan review is next year.
+    new_years_eve = datetime(2027, 1, 1, 2, 0, tzinfo=UTC)
+    assert _pause_summary(new_years_eve, {"resume_on": "2027-01-15"}) == (
+        "Hannah paused · resumes Jan 15, 2027"
+    )
+
+
+def test_legacy_pause_without_dates_says_review_required() -> None:
+    assert _pause_summary(_OCT1_EVENING_CENTRAL, {}) == "Hannah paused · review required"

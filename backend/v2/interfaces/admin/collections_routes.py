@@ -13,7 +13,10 @@ from typing import Any, Protocol
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from backend.v2.interfaces.admin.collections_views import AdminCollectionsView
+from backend.v2.interfaces.admin.collections_views import (
+    AdminCollectionsView,
+    AdminOverdueFamiliesView,
+)
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
 
@@ -22,6 +25,15 @@ _PERIOD_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])$"
 
 class AdminCollectionsReader(Protocol):
     async def build(self, period: str | None = None, *, debug: bool = False) -> dict[str, Any]: ...
+
+
+class OverdueFamiliesReader(Protocol):
+    async def counts(self) -> dict[str, int]: ...
+
+
+def get_overdue_families(request: Request) -> OverdueFamiliesReader:
+    reader: OverdueFamiliesReader = request.app.state.admin_overdue_families
+    return reader
 
 
 def get_admin_collections(request: Request) -> AdminCollectionsReader:
@@ -46,3 +58,15 @@ async def payments_collections(
     """
     view = await reader.build(period, debug=debug)
     return AdminCollectionsView.model_validate(view)
+
+
+@router.get("/payments/overdue-families", response_model=AdminOverdueFamiliesView)
+async def payments_overdue_families(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    reader: OverdueFamiliesReader = Depends(get_overdue_families),
+) -> AdminOverdueFamiliesView:
+    """Families past due (no autopay cover) and needing action, in ANY period."""
+    counts = await reader.counts()
+    return AdminOverdueFamiliesView(
+        past_due_count=counts["past_due"], needs_action_count=counts["needs_action"]
+    )

@@ -24,7 +24,7 @@ import {
   type CoachPayBillingUnit,
   type LoginInviteOutcome,
 } from "@/lib/api/admin";
-import { hasCoachRole } from "@/lib/admin/coach-roles";
+import { hasCoachRole, syncRolesDraft } from "@/lib/admin/coach-roles";
 import { roleLabel } from "@/lib/admin/role-label";
 import { ROLE_HINTS, planRoleChanges } from "@/lib/admin/staff-roles";
 import { assignableRoles, canManageUser } from "@/lib/auth/assignable-roles";
@@ -225,7 +225,7 @@ function CoachPayRatePanel({ coachId, isOwner }: { coachId: string; isOwner: boo
   const isPercent = billingUnit === "percent_of_revenue";
   const valueInvalid = isPercent
     ? !(Number(percent) > 0 && Number(percent) <= 100)
-    : !(Number(amount) > 0);
+    : amount.trim() === "" || !(Number(amount) >= 0);
   const repairInvalid = valueInvalid || !repairFrom || !repairUntil || !repairReason.trim();
   useReportUnsavedChanges(
     "admin-coach-pay-rate",
@@ -334,7 +334,7 @@ function CoachPayRatePanel({ coachId, isOwner }: { coachId: string; isOwner: boo
             </label>
           ) : (
             <label className="flex flex-col gap-1 text-xs font-medium text-neutral-500">
-              Amount (USD)
+              Amount (USD, 0 for a volunteer)
               <input
                 type="number"
                 min={0}
@@ -830,10 +830,12 @@ function RolesPanel({
   const [submitOk, setSubmitOk] = useState(false);
   const [confirmOwner, setConfirmOwner] = useState(false);
   const [rolesEdited, setRolesEdited] = useState(false);
-
-  useEffect(() => {
-    setSelected(user.roles.length > 0 ? user.roles : [user.role]);
-  }, [user.roles, user.role]);
+  const [syncedKey, setSyncedKey] = useState(initialRoles.join("|"));
+  const synced = syncRolesDraft(syncedKey, initialRoles, rolesEdited, selected);
+  if (synced) {
+    setSyncedKey(synced.syncedKey);
+    setSelected(synced.selected);
+  }
 
   const mutation = useMutation({
     mutationFn: async () => {

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock
 
 from backend.v2.contexts.enrollment.application.use_cases.pause_requests import (
@@ -22,7 +22,7 @@ def test_admin_dashboard_attention_empty_state(admin_client):
     r = admin_client.get("/api/v2/admin/dashboard/attention")
 
     assert r.status_code == 200, r.text
-    assert r.json() == {"items": []}
+    assert r.json() == {"items": [], "unavailable": []}
 
 
 def test_admin_dashboard_attention_aggregates_real_signals(admin_client):
@@ -106,6 +106,11 @@ def test_admin_dashboard_attention_degrades_when_one_signal_fails(admin_client):
     body = r.json()
     assert [(item["kind"], item["count"]) for item in body["items"]] == [
         ("pause_requests", 1),
+    ]
+    # L2 A0-5: the failed source is named, so the page can say "could not
+    # check" instead of letting a missing card read as nothing waiting.
+    assert body["unavailable"] == [
+        {"source": "billing_deferral_warnings", "label": "paused billing"}
     ]
 
 
@@ -193,3 +198,177 @@ def test_no_dunning_alerts_means_no_autopay_cards(admin_client):
     ids = {item["attention_id"] for item in r.json()["items"]}
     assert "autopay-failure" not in ids
     assert "dunning-exhaustion" not in ids
+    assert "autopay-stuck" not in ids
+
+
+def test_autopay_stuck_on_our_side_reaches_the_owner(admin_client):
+    """L1 A7-1: a ladder parked before any decline spends no attempt, so the
+    #774 counts never showed it."""
+    admin_client.seed["dunning_alerts"] = {"autopay_stuck": 3}
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    items = {item["attention_id"]: item for item in r.json()["items"]}
+    assert items["autopay-stuck"]["count"] == 3
+    assert "not the card" in items["autopay-stuck"]["detail"]
+    assert "operator" not in items["autopay-stuck"]["detail"]
+
+
+def test_autopay_waiting_on_stripe_setup_says_finish_setup(admin_client):
+    """L1 should-fix 8: an unfinished Stripe account is the academy's to fix."""
+    admin_client.seed["dunning_alerts"] = {"autopay_needs_stripe_setup": 2}
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    item = {i["attention_id"]: i for i in r.json()["items"]}["autopay-stuck"]
+    assert item["count"] == 2
+    assert "finish Stripe setup" in item["detail"]
+    assert "our side" not in item["detail"]
+    assert item["href"] == "/admin/billing-health"
+
+
+def test_autopay_stuck_on_our_side_does_not_point_at_billing_health(admin_client):
+    """Fix round 2: Billing health lists only Stripe setup, so a fault on our
+    side must not send the owner there."""
+    admin_client.seed["dunning_alerts"] = {"autopay_stuck": 1}
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    item = {i["attention_id"]: i for i in r.json()["items"]}["autopay-stuck"]
+    assert "Billing health" not in item["detail"]
+    assert "tries again" in item["detail"]
+    assert item["href"] == "/admin/payments"
+
+
+def test_bank_returns_needing_a_manual_look_reach_the_owner(admin_client):
+    """Fix round 2: partial or unreversible returns show in admin."""
+    admin_client.seed["dunning_alerts"] = {"bank_returns_to_review": 2}
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    item = {i["attention_id"]: i for i in r.json()["items"]}["bank-return-review"]
+    assert item["count"] == 2
+    assert item["kind"] == "bank_return_review"
+    assert "manual look" in item["detail"]
+
+
+def _overdue_reader(invoices: list[dict]):
+    """The real cross-period reader over an in-memory Mongo (L2 B2)."""
+    import asyncio
+
+    from mongomock_motor import AsyncMongoMockClient
+
+    from backend.v2.composition.overdue_families import OverdueFamiliesReader
+
+    db = AsyncMongoMockClient()["dash"]
+    if invoices:
+        asyncio.run(db["invoices"].insert_many(invoices))
+
+    async def chicago(_academy_id: str) -> str:
+        return "America/Chicago"
+
+    reader = OverdueFamiliesReader(
+        db, academy_timezone=chicago, clock=lambda: datetime(2026, 12, 6, 3, 0, tzinfo=UTC)
+    )
+
+    class _TenantScoped:
+        # The bare test app has no auth middleware to set the tenant.
+        async def counts(self):
+            from backend.v2.shared.tenancy import tenant_scope
+
+            with tenant_scope("test-academy"):
+                return await reader.counts()
+
+    return _TenantScoped()
+
+
+def _owing(invoice_id: str, parent: str, due: date, status: str = "open") -> dict:
+    return {
+        "academy_id": "test-academy",
+        "invoice_id": invoice_id,
+        "parent_id": parent,
+        "status": status,
+        "due_date": datetime(due.year, due.month, due.day, tzinfo=UTC),
+        "balance_due_cents": 5000,
+    }
+
+
+class _BrokenOverdue:
+    async def counts(self):
+        raise RuntimeError("invoices down")
+
+
+def test_overdue_card_counts_families_past_due_in_any_month(admin_client):
+    """L2 A0-0 + B2: last month's unpaid invoice counts even when this month's
+    is not yet due; drafts and not-yet-due invoices never count."""
+    admin_client.app.state.admin_overdue_families = _overdue_reader(
+        [
+            _owing("nov", "fam-1", date(2026, 11, 5)),
+            _owing("dec", "fam-1", date(2026, 12, 10)),
+            _owing("oct", "fam-2", date(2026, 10, 5)),
+            _owing("draft", "fam-3", date(2026, 11, 5), status="draft"),
+            _owing("today", "fam-4", date(2026, 12, 5)),
+        ]
+    )
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    item = next(i for i in r.json()["items"] if i["kind"] == "overdue_dues")
+    assert item["count"] == 2
+    assert item["href"] == "/admin/payments#bucket-past_due"
+
+
+def test_no_past_due_families_means_no_overdue_card(admin_client):
+    admin_client.app.state.admin_overdue_families = _overdue_reader([])
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert all(i["kind"] != "overdue_dues" for i in r.json()["items"])
+
+
+def test_unreadable_invoices_flag_overdue_as_unavailable(admin_client):
+    admin_client.app.state.admin_overdue_families = _BrokenOverdue()
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    assert {"source": "overdue_dues", "label": "overdue payments"} in r.json()["unavailable"]
+
+
+def test_overdue_families_route_returns_both_counts(admin_client):
+    admin_client.app.state.admin_overdue_families = _overdue_reader(
+        [_owing("nov", "fam-1", date(2026, 11, 5))]
+    )
+
+    r = admin_client.get("/api/v2/admin/payments/overdue-families")
+
+    assert r.status_code == 200, r.text
+    assert r.json() == {"past_due_count": 1, "needs_action_count": 1}
+
+
+def test_session_pressure_reads_the_academy_local_today(admin_client, monkeypatch):
+    """L2 A0-3: 11:30 PM in Chicago is already tomorrow in UTC."""
+    from backend.v2.interfaces.admin import academy_clock
+
+    monkeypatch.setattr(academy_clock, "_now", lambda: datetime(2026, 1, 3, 5, 30, tzinfo=UTC))
+
+    async def chicago(_academy_id: str) -> str:
+        return "America/Chicago"
+
+    admin_client.use_cases.get_academy_timezone = chicago
+    seen: list[date] = []
+
+    async def list_admin_sessions(on_date, *, window=None, coach_id=None):
+        seen.append(on_date)
+        return []
+
+    admin_client.use_cases.list_admin_sessions = list_admin_sessions
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    assert seen == [date(2026, 1, 2)]

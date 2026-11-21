@@ -57,7 +57,9 @@ class _FakeDunningRepo:
         self.prepared.append(now)
         return 1
 
-    async def claim_next_due(self, *, now: datetime, worker_id: str):
+    async def claim_next_due(self, *, now: datetime, worker_id: str, exclude_invoice_ids=(), **_):
+        if self.invoice.invoice_id in exclude_invoice_ids:
+            return None
         if self._claimed or self.state.status != "active" or self.state.next_attempt_at > now:
             return None
         self._claimed = True
@@ -133,7 +135,9 @@ class _FakeCharge:
         self.raises = raises
         self.calls: list[tuple[str, str | None]] = []
 
-    async def execute(self, invoice_id: str, retry_scope: str | None = None):
+    async def execute(
+        self, invoice_id: str, retry_scope: str | None = None, check_existing: bool = False
+    ):
         self.calls.append((invoice_id, retry_scope))
         if self.raises is not None:
             raise self.raises
@@ -158,12 +162,14 @@ class _FakeNotifier:
 class _FakeEnrollmentAutopay:
     def __init__(self, *, result: bool = True, raises: Exception | None = None) -> None:
         self.disabled: list[str] = []
+        self.statuses: list[str] = []
         self.result = result
         self.raises = raises
 
     async def set_autopay_enrollment_status(self, *, enrollment_id: str, status: str) -> bool:
         if self.raises is not None:
             raise self.raises
+        self.statuses.append(status)
         if status == "disabled":
             self.disabled.append(enrollment_id)
         return self.result
@@ -534,7 +540,11 @@ def test_every_park_reason_is_re_claimable_by_the_repository() -> None:
         MongoDunningStateRepository,
     )
 
-    stranded = _PARK_REASONS - MongoDunningStateRepository.retryable_parked_reasons
+    reclaimed = (
+        MongoDunningStateRepository.retryable_parked_reasons
+        | MongoDunningStateRepository.daily_recheck_parked_reasons
+    )
+    stranded = _PARK_REASONS - reclaimed
     assert not stranded, f"park reasons never re-claimed: {sorted(stranded)}"
 
 
@@ -546,8 +556,8 @@ class _RepeatClaimDunningRepo(_FakeDunningRepo):
     call within the same tick.
     """
 
-    async def claim_next_due(self, *, now: datetime, worker_id: str):
-        if self.state.status != "active":
+    async def claim_next_due(self, *, now: datetime, worker_id: str, exclude_invoice_ids=(), **_):
+        if self.state.status != "active" or self.invoice.invoice_id in exclude_invoice_ids:
             return None
         attempt_no = self.state.attempt_count + 1
         self.state = self.state.claim(attempt_no=attempt_no, worker_id=worker_id, now=now)
@@ -581,46 +591,294 @@ async def test_a_parked_invoice_cannot_consume_the_whole_tick() -> None:
     assert dunning.state.attempt_count == 0
 
 
-class _ReceiptNotifier(_FakeNotifier):
-    def __init__(self, *, raises: Exception | None = None) -> None:
-        super().__init__()
-        self.receipts: list[dict] = []
-        self._raises = raises
+class _QueueDunningRepo:
+    """Several states, ordered like Mongo's claim query: parked (next_attempt_at=None)
+    sorts ahead of every dated state, and exclude_invoice_ids is honoured."""
 
-    async def send_autopay_receipt(self, **kwargs) -> None:
-        if self._raises is not None:
-            raise self._raises
-        self.receipts.append(kwargs)
+    def __init__(self, *invoices: LedgerInvoice) -> None:
+        self.invoices = {inv.invoice_id: inv for inv in invoices}
+        self.states = {
+            inv.invoice_id: open_initial_dunning_state(
+                academy_id=inv.academy_id,
+                invoice_id=inv.invoice_id,
+                parent_id=inv.parent_id,
+                enrollment_id=inv.enrollment_id,
+                due_at=NOW,
+                now=NOW,
+            )
+            for inv in invoices
+        }
+
+    async def prepare_due_states(self, *, now: datetime, limit: int) -> int:
+        return 0
+
+    async def list_terminal_disable_pending(self, *, limit: int):
+        return []
+
+    async def claim_next_due(self, *, now: datetime, worker_id: str, exclude_invoice_ids=(), **_):
+        candidates = [
+            s
+            for s in self.states.values()
+            if s.status == "active"
+            and s.invoice_id not in exclude_invoice_ids
+            and (s.next_attempt_at is None or s.next_attempt_at <= now)
+        ]
+        if not candidates:
+            return None
+        head = min(
+            candidates, key=lambda s: (s.next_attempt_at is not None, s.next_attempt_at or now)
+        )
+        claimed = head.claim(attempt_no=head.attempt_count + 1, worker_id=worker_id, now=now)
+        self.states[head.invoice_id] = claimed
+        return self.invoices[head.invoice_id], claimed
+
+    async def park_attempt(self, *, state, reason: str, now):
+        self.states[state.invoice_id] = state.park(reason=reason, now=now)
+        return self.states[state.invoice_id]
+
+    async def finish_attempt(self, *, state, succeeded: bool, failure_code: str | None, now):
+        from backend.v2.contexts.billing.domain.dunning import record_dunning_attempt_result
+
+        self.states[state.invoice_id] = record_dunning_attempt_result(
+            state, succeeded=succeeded, failure_code=failure_code, now=now
+        )
+        return self.states[state.invoice_id]
+
+
+class _FailFirstCharge(_FakeCharge):
+    """Raises for one invoice (like a missing saved card), succeeds for the rest."""
+
+    def __init__(self, failing_invoice_id: str) -> None:
+        super().__init__(success=True)
+        self.failing_invoice_id = failing_invoice_id
+
+    async def execute(
+        self, invoice_id: str, retry_scope: str | None = None, check_existing: bool = False
+    ):
+        if invoice_id == self.failing_invoice_id:
+            self.calls.append((invoice_id, retry_scope))
+            raise ValueError("no_saved_payment_method: parent has no saved Stripe card")
+        return await super().execute(invoice_id, retry_scope)
 
 
 @pytest.mark.asyncio
-async def test_successful_charge_sends_a_receipt() -> None:
-    """Issue #651: the parent hears that the card was charged."""
-    invoice = _invoice()
-    notifier = _ReceiptNotifier()
+async def test_one_parked_invoice_does_not_starve_the_due_charges_behind_it() -> None:
+    """2026-11-08 regression: one charge_technical_failure park ended every tick.
+
+    The parked state (next_attempt_at=None) sorts first, so the old repeat-claim guard
+    saw "1 repeat == 1 parked" and stopped; three due autopay charges never ran.
+    """
+    invoices = [_invoice(f"inv-{n}") for n in ("blocked", "a", "b", "c")]
+    dunning = _QueueDunningRepo(*invoices)
+    blocked = dunning.states["inv-blocked"]
+    dunning.states["inv-blocked"] = blocked.claim(attempt_no=1, worker_id="earlier", now=NOW).park(
+        reason="charge_technical_failure", now=NOW
+    )
+    charge = _FailFirstCharge("inv-blocked")
+
     result = await ProcessDunningRetries(
-        dunning=_FakeDunningRepo(invoice),
+        dunning=dunning,
+        charge_invoice=charge,
+        notifier=_FakeNotifier(),
+        enrollment_autopay=_FakeEnrollmentAutopay(),
+        clock=lambda: NOW,
+    ).execute(limit=50, worker_id="worker-1")
+
+    charged = [call[0] for call in charge.calls]
+    assert charged.count("inv-blocked") == 1
+    assert sorted(set(charged) - {"inv-blocked"}) == ["inv-a", "inv-b", "inv-c"]
+    assert result.succeeded == 3
+    assert result.technical_failures == 1
+
+
+@pytest.mark.asyncio
+async def test_successful_charge_leaves_the_receipt_to_the_webhook() -> None:
+    """L1 A5-2: one receipt per payment, from payment_intent.succeeded, for every
+    method; the worker no longer sends its own (it would double the card case)."""
+    notifier = _FakeNotifier()
+
+    result = await ProcessDunningRetries(
+        dunning=_FakeDunningRepo(_invoice()),
         charge_invoice=_FakeCharge(success=True),
         notifier=notifier,
-        enrollment_autopay=_FakeEnrollmentAutopay(),
         clock=lambda: NOW,
     ).execute(limit=5, worker_id="worker-1")
 
     assert result.succeeded == 1
-    assert len(notifier.receipts) == 1
-    assert notifier.receipts[0]["invoice_id"] == invoice.invoice_id
-    assert notifier.receipts[0]["parent_id"] == invoice.parent_id
-    assert notifier.calls == []  # no failure notice for a success
+    assert notifier.calls == []
 
 
 @pytest.mark.asyncio
-async def test_receipt_failure_never_fails_the_charge() -> None:
-    invoice = _invoice()
+async def test_stripe_unavailable_parks_as_our_fault_without_telling_the_parent() -> None:
+    dunning = _FakeDunningRepo(_invoice())
+    notifier = _FakeNotifier()
+
     result = await ProcessDunningRetries(
-        dunning=_FakeDunningRepo(invoice),
-        charge_invoice=_FakeCharge(success=True),
-        notifier=_ReceiptNotifier(raises=RuntimeError("resend down")),
-        enrollment_autopay=_FakeEnrollmentAutopay(),
+        dunning=dunning,
+        charge_invoice=_FakeCharge(success=False, decline_code="stripe_unavailable"),
+        notifier=notifier,
         clock=lambda: NOW,
     ).execute(limit=5, worker_id="worker-1")
-    assert result.succeeded == 1
+
+    assert dunning.parked == ["stripe_unavailable"]
+    assert result.technical_failures == 1
+    assert result.failed == 0
+    assert dunning.state.attempt_count == 0
+    assert notifier.calls == []
+
+
+@pytest.mark.asyncio
+async def test_no_saved_payment_method_parks_and_asks_the_parent_once() -> None:
+    dunning = _FakeDunningRepo(_invoice())
+    notifier = _FakeNotifier()
+    worker = ProcessDunningRetries(
+        dunning=dunning,
+        charge_invoice=_FakeCharge(success=False, decline_code="no_saved_payment_method"),
+        notifier=notifier,
+        clock=lambda: NOW,
+    )
+
+    first = await worker.execute(limit=5, worker_id="worker-1")
+    dunning._claimed = False
+    dunning.state = dunning.state.model_copy(update={"next_attempt_at": NOW})
+    await worker.execute(limit=5, worker_id="worker-1")
+
+    assert dunning.parked == ["no_saved_payment_method"] * 2
+    assert first.technical_failures == 0
+    assert first.failed == 0
+    assert dunning.state.attempt_count == 0
+    assert len(notifier.calls) == 1
+    assert notifier.calls[0]["attempt_no"] == 0
+    assert notifier.calls[0]["failure_code"] == "no_saved_payment_method"
+    assert notifier.calls[0]["terminal"] is False
+
+
+class _SettledBankFailureRepo(_FakeDunningRepo):
+    def __init__(self, invoice: LedgerInvoice, *, code: str, attempt_count: int = 0) -> None:
+        super().__init__(invoice)
+        self.code = code
+        self.state = self.state.model_copy(
+            update={"attempt_count": attempt_count, "first_attempt_at": NOW - timedelta(days=4)}
+        )
+
+    async def claim_next_due(self, *, now: datetime, worker_id: str, exclude_invoice_ids=(), **_):
+        claimed = await super().claim_next_due(
+            now=now, worker_id=worker_id, exclude_invoice_ids=exclude_invoice_ids
+        )
+        if claimed is None:
+            return None
+        self.state = self.state.model_copy(update={"settling_failure_code": self.code})
+        return claimed[0], self.state
+
+
+@pytest.mark.asyncio
+async def test_settled_bank_failure_is_recorded_without_debiting_again() -> None:
+    dunning = _SettledBankFailureRepo(_invoice(), code="insufficient_funds")
+    charge = _FakeCharge(success=True)
+    notifier = _FakeNotifier()
+
+    result = await ProcessDunningRetries(
+        dunning=dunning,
+        charge_invoice=charge,
+        notifier=notifier,
+        clock=lambda: NOW,
+    ).execute(limit=5, worker_id="worker-1")
+
+    assert charge.calls == []
+    assert result.failed == 1
+    assert dunning.finished == [(False, "insufficient_funds", "active")]
+    assert dunning.state.next_attempt_at == NOW + timedelta(days=3)
+    notice = notifier.calls[0]
+    assert notice["bank_debit"] is True
+    assert notice["next_attempt_at"] == NOW + timedelta(days=3)
+    assert notice["failure_code"] == "insufficient_funds"
+
+
+@pytest.mark.asyncio
+async def test_closed_bank_account_pauses_autopay_instead_of_disabling_it() -> None:
+    dunning = _SettledBankFailureRepo(_invoice(), code="bank_account_closed")
+    enrollment_autopay = _FakeEnrollmentAutopay()
+    notifier = _FakeNotifier()
+
+    result = await ProcessDunningRetries(
+        dunning=dunning,
+        charge_invoice=_FakeCharge(success=True),
+        notifier=notifier,
+        enrollment_autopay=enrollment_autopay,
+        clock=lambda: NOW,
+    ).execute(limit=5, worker_id="worker-1")
+
+    assert result.dunned == 1
+    assert enrollment_autopay.statuses == ["paused"]
+    assert enrollment_autopay.disabled == []
+    assert notifier.calls[0]["terminal"] is True
+    assert notifier.calls[0]["bank_debit"] is True
+
+
+class _SiblingEnrollments:
+    """Two siblings on one parent, both autopaying from the same bank."""
+
+    def __init__(self) -> None:
+        from types import SimpleNamespace
+
+        self.rows = {
+            "enr-a": SimpleNamespace(enrollment_id="enr-a", autopay_enrollment_status="active"),
+            "enr-b": SimpleNamespace(enrollment_id="enr-b", autopay_enrollment_status="active"),
+        }
+        self.parents: list[str] = []
+
+    async def list_for_parent(self, parent_id: str) -> list:
+        self.parents.append(parent_id)
+        return list(self.rows.values())
+
+    async def set_autopay_enrollment_status(self, *, enrollment_id: str, status) -> bool:
+        self.rows[enrollment_id].autopay_enrollment_status = status
+        return True
+
+
+class _MemoryStore:
+    def __init__(self) -> None:
+        self.data: dict = {}
+        self.audit: list = []
+
+    async def get(self, key: str):
+        return self.data.get(key)
+
+    async def put(self, key: str, value) -> None:
+        self.data[key] = value
+
+    async def append(self, entry) -> None:
+        self.audit.append(entry)
+
+
+@pytest.mark.asyncio
+async def test_dead_bank_pauses_every_sibling_on_the_family() -> None:
+    """L1 B4: a bank that cannot be debited pauses the whole family, audited as
+    the system, so the sibling on the same account is not debited next."""
+    from backend.v2.contexts.billing.application.use_cases.pause_family_autopay import (
+        SYSTEM_ACTOR_ID,
+        PauseFamilyAutopay,
+        SystemFamilyAutopayPause,
+    )
+
+    dunning = _SettledBankFailureRepo(_invoice(), code="bank_account_closed")
+    siblings = _SiblingEnrollments()
+    store = _MemoryStore()
+    family = SystemFamilyAutopayPause(
+        PauseFamilyAutopay(enrollments=siblings, audit=store, idempotency=store)
+    )
+
+    result = await ProcessDunningRetries(
+        dunning=dunning,
+        charge_invoice=_FakeCharge(success=True),
+        notifier=_FakeNotifier(),
+        enrollment_autopay=_FakeEnrollmentAutopay(),
+        family_autopay=family,
+        clock=lambda: NOW,
+    ).execute(limit=5, worker_id="worker-1")
+
+    assert result.dunned == 1
+    assert result.autopay_disabled == 1
+    assert {r.autopay_enrollment_status for r in siblings.rows.values()} == {"paused"}
+    assert store.audit[0].actor_id == SYSTEM_ACTOR_ID
+    assert store.audit[0].reason == "bank_failure:bank_account_closed"

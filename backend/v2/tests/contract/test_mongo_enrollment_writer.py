@@ -151,3 +151,28 @@ async def test_mark_withdrawn_if_open_is_a_cas_that_returns_the_pre_image(db, ac
     assert legacy is not None and legacy.status == "active"
     assert await repo.mark_withdrawn_if_open("missing", withdrawal_date=when) is None
     assert await db["enrollments"].count_documents({"status": "cancelled"}) == 1
+
+
+@pytest.mark.asyncio
+async def test_update_session_only_moves_a_row_still_in_the_expected_class(db, acad) -> None:
+    """Two concurrent transfers of one row: only the first move lands (A0-8 review)."""
+    from backend.v2.contexts.enrollment.domain.errors import EnrollmentMovedConcurrently
+
+    await db["enrollments"].insert_one(
+        {
+            "academy_id": acad,
+            "enrollment_id": "enr-1",
+            "session_id": "sess-a",
+            "student_id": "stu-1",
+            "status": "active",
+        }
+    )
+    repo = MongoEnrollmentWriter(db)
+
+    await repo.update_session("enr-1", "sess-b", expected_session_id="sess-a")
+    with pytest.raises(EnrollmentMovedConcurrently):
+        await repo.update_session("enr-1", "sess-c", expected_session_id="sess-a")
+
+    doc = await db["enrollments"].find_one({"enrollment_id": "enr-1"})
+    assert doc["session_id"] == "sess-b"
+    assert [m["to_session_id"] for m in doc["move_history"]] == ["sess-b"]

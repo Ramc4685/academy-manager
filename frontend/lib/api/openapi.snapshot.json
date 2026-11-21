@@ -221,6 +221,68 @@
         "title": "AchDiscountRequest",
         "type": "object"
       },
+      "AchNoticePreviewView": {
+        "description": "``GET /admin/billing/ach-notice/preview``: the autopay date-change notice,\nrendered and never sent, with the autopay families it is meant for (L8).",
+        "properties": {
+          "html": {
+            "title": "Html",
+            "type": "string"
+          },
+          "recipients": {
+            "items": {
+              "$ref": "#/components/schemas/AchNoticeRecipientView"
+            },
+            "title": "Recipients",
+            "type": "array"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "html",
+          "recipients"
+        ],
+        "title": "AchNoticePreviewView",
+        "type": "object"
+      },
+      "AchNoticeRecipientView": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "parent_id": {
+            "title": "Parent Id",
+            "type": "string"
+          },
+          "payment_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Method"
+          }
+        },
+        "required": [
+          "parent_id"
+        ],
+        "title": "AchNoticeRecipientView",
+        "type": "object"
+      },
       "ActivateSubscriptionRequest": {
         "properties": {
           "current_period_end": {
@@ -835,6 +897,8 @@
               "overdue_dues",
               "autopay_failure",
               "dunning_exhaustion",
+              "autopay_stuck",
+              "bank_return_review",
               "pause_requests",
               "scheduled_resume_blocked",
               "scheduled_action_failed",
@@ -878,12 +942,39 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "unavailable": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AdminAttentionUnavailableView"
+            },
+            "title": "Unavailable",
+            "type": "array"
           }
         },
         "required": [
           "items"
         ],
         "title": "AdminAttentionList",
+        "type": "object"
+      },
+      "AdminAttentionUnavailableView": {
+        "description": "An attention source that could not be read: unknown, not \"nothing\".",
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "label"
+        ],
+        "title": "AdminAttentionUnavailableView",
         "type": "object"
       },
       "AdminAuditLogList": {
@@ -2136,6 +2227,28 @@
             "title": "Full Name",
             "type": "string"
           },
+          "latest_event_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Event Date"
+          },
+          "latest_event_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Event Type"
+          },
           "level": {
             "anyOf": [
               {
@@ -2146,6 +2259,11 @@
               }
             ],
             "title": "Level"
+          },
+          "not_billed": {
+            "default": false,
+            "title": "Not Billed",
+            "type": "boolean"
           },
           "parent_id": {
             "title": "Parent Id",
@@ -2342,6 +2460,14 @@
               "type": "string"
             },
             "title": "Actions",
+            "type": "array"
+          },
+          "credits": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FamilyAccountCredit"
+            },
+            "title": "Credits",
             "type": "array"
           },
           "generated_at": {
@@ -2670,6 +2796,13 @@
             ],
             "title": "Registration"
           },
+          "sibling_student_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sibling Student Ids",
+            "type": "array"
+          },
           "stage": {
             "enum": [
               "pending_cancel",
@@ -2720,6 +2853,11 @@
             "format": "date-time",
             "title": "Generated At",
             "type": "string"
+          },
+          "not_billed_families": {
+            "default": 0,
+            "title": "Not Billed Families",
+            "type": "integer"
           },
           "preset_counts": {
             "additionalProperties": {
@@ -3100,7 +3238,7 @@
         "type": "object"
       },
       "AdminInboxCountsView": {
-        "description": "How many rows each inbox queue is holding for a human right now.",
+        "description": "How many rows each decision queue is holding for a human right now.\n\nA queue whose count could not be read is absent from ``counts`` and named\nin ``unavailable`` so the page can say so instead of showing zero.",
         "properties": {
           "counts": {
             "additionalProperties": {
@@ -3112,6 +3250,14 @@
           "total": {
             "title": "Total",
             "type": "integer"
+          },
+          "unavailable": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Unavailable",
+            "type": "array"
           }
         },
         "required": [
@@ -3843,6 +3989,25 @@
         "title": "AdminOccurrenceTeachingPlanResponse",
         "type": "object"
       },
+      "AdminOverdueFamiliesView": {
+        "description": "Academy-wide family counts across every billing period (L2 B2).",
+        "properties": {
+          "needs_action_count": {
+            "title": "Needs Action Count",
+            "type": "integer"
+          },
+          "past_due_count": {
+            "title": "Past Due Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "past_due_count",
+          "needs_action_count"
+        ],
+        "title": "AdminOverdueFamiliesView",
+        "type": "object"
+      },
       "AdminPauseRequestList": {
         "properties": {
           "requests": {
@@ -4223,6 +4388,73 @@
             "title": "Discount Cents",
             "type": "integer"
           },
+          "dispute_amount_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispute Amount Cents"
+          },
+          "dispute_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispute Id"
+          },
+          "dispute_outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispute Outcome"
+          },
+          "dispute_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispute Reason"
+          },
+          "dispute_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispute Status"
+          },
+          "disputed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disputed At"
+          },
           "enrollment_id": {
             "anyOf": [
               {
@@ -4490,22 +4722,6 @@
         "title": "AdminPaymentView",
         "type": "object"
       },
-      "AdminPayoutList": {
-        "properties": {
-          "payouts": {
-            "items": {
-              "$ref": "#/components/schemas/AdminPayoutView"
-            },
-            "title": "Payouts",
-            "type": "array"
-          }
-        },
-        "required": [
-          "payouts"
-        ],
-        "title": "AdminPayoutList",
-        "type": "object"
-      },
       "AdminPayoutPayslipView": {
         "properties": {
           "lines": {
@@ -4552,7 +4768,8 @@
             "enum": [
               "scheduled",
               "substitute",
-              "actual"
+              "actual",
+              "assistant"
             ],
             "title": "Basis",
             "type": "string"
@@ -4691,6 +4908,11 @@
             ],
             "title": "Paid Amount Cents"
           },
+          "paid_amount_differs": {
+            "default": false,
+            "title": "Paid Amount Differs",
+            "type": "boolean"
+          },
           "paid_at": {
             "anyOf": [
               {
@@ -4746,6 +4968,15 @@
             "title": "Period Start",
             "type": "string"
           },
+          "revenue_basis": {
+            "default": "expected",
+            "enum": [
+              "expected",
+              "invoiced"
+            ],
+            "title": "Revenue Basis",
+            "type": "string"
+          },
           "status": {
             "enum": [
               "draft",
@@ -4772,10 +5003,15 @@
             },
             "title": "Unpaid Occurrences",
             "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
           }
         },
         "required": [
           "period_id",
+          "version",
           "coach_id",
           "period_start",
           "period_end",
@@ -4787,98 +5023,6 @@
           "generated_at"
         ],
         "title": "AdminPayoutPeriodView",
-        "type": "object"
-      },
-      "AdminPayoutView": {
-        "properties": {
-          "amount_cents": {
-            "title": "Amount Cents",
-            "type": "integer"
-          },
-          "coach_id": {
-            "title": "Coach Id",
-            "type": "string"
-          },
-          "expected_revenue_cents": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expected Revenue Cents"
-          },
-          "paid_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Paid At"
-          },
-          "payout_id": {
-            "title": "Payout Id",
-            "type": "string"
-          },
-          "period_end": {
-            "format": "date-time",
-            "title": "Period End",
-            "type": "string"
-          },
-          "period_start": {
-            "format": "date-time",
-            "title": "Period Start",
-            "type": "string"
-          },
-          "rule_label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rule Label"
-          },
-          "sessions_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sessions Count"
-          },
-          "students_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Students Count"
-          }
-        },
-        "required": [
-          "payout_id",
-          "coach_id",
-          "amount_cents",
-          "period_start",
-          "period_end",
-          "paid_at"
-        ],
-        "title": "AdminPayoutView",
         "type": "object"
       },
       "AdminPayoutWarningView": {
@@ -4910,6 +5054,8 @@
           "reason": {
             "enum": [
               "missing_session_price_for_percent_revenue",
+              "missing_invoiced_tuition_for_percent_revenue",
+              "percent_rate_on_assistant",
               "missing_rate",
               "missing_percent"
             ],
@@ -5095,6 +5241,11 @@
           "manual_enrollment_count": {
             "default": 0,
             "title": "Manual Enrollment Count",
+            "type": "integer"
+          },
+          "not_billed_enrollment_count": {
+            "default": 0,
+            "title": "Not Billed Enrollment Count",
             "type": "integer"
           },
           "period": {
@@ -6262,6 +6413,11 @@
             "title": "Monthly Fee Cents",
             "type": "integer"
           },
+          "not_billed_enrollment_count": {
+            "default": 0,
+            "title": "Not Billed Enrollment Count",
+            "type": "integer"
+          },
           "other_expenses_cents": {
             "default": 0,
             "title": "Other Expenses Cents",
@@ -6640,6 +6796,11 @@
             "title": "Location",
             "type": "string"
           },
+          "not_billed_count": {
+            "default": 0,
+            "title": "Not Billed Count",
+            "type": "integer"
+          },
           "parking_notes": {
             "anyOf": [
               {
@@ -6650,6 +6811,22 @@
               }
             ],
             "title": "Parking Notes"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "upcoming",
+                  "ended"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
           },
           "session_id": {
             "title": "Session Id",
@@ -7239,6 +7416,11 @@
               }
             ],
             "title": "Medical Notes"
+          },
+          "not_billed": {
+            "default": false,
+            "title": "Not Billed",
+            "type": "boolean"
           },
           "notes": {
             "anyOf": [
@@ -7888,6 +8070,33 @@
             ],
             "title": "Location"
           },
+          "not_billed": {
+            "default": false,
+            "title": "Not Billed",
+            "type": "boolean"
+          },
+          "not_billed_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Billed Note"
+          },
+          "not_billed_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Billed Reason"
+          },
           "payment_mode": {
             "anyOf": [
               {
@@ -8060,6 +8269,11 @@
               }
             ],
             "title": "Lifecycle As Of"
+          },
+          "not_billed": {
+            "default": false,
+            "title": "Not Billed",
+            "type": "boolean"
           },
           "parent_email": {
             "anyOf": [
@@ -8324,6 +8538,8 @@
               "no_rate_configured",
               "rate_gap",
               "missing_session_price_for_percent_revenue",
+              "missing_invoiced_tuition_for_percent_revenue",
+              "percent_rate_on_assistant",
               "attendance_override",
               "replaced_by_actual_coach",
               "unknown_unpaid_reason",
@@ -9838,6 +10054,70 @@
         "title": "AgreementAcceptanceRequest",
         "type": "object"
       },
+      "AiControlsRequest": {
+        "properties": {
+          "coach_review_narratives": {
+            "title": "Coach Review Narratives",
+            "type": "boolean"
+          },
+          "daily_call_caps": {
+            "additionalProperties": {
+              "maximum": 1000.0,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "title": "Daily Call Caps",
+            "type": "object"
+          },
+          "monthly_call_cap": {
+            "maximum": 5000.0,
+            "minimum": 0.0,
+            "title": "Monthly Call Cap",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "monthly_call_cap",
+          "daily_call_caps",
+          "coach_review_narratives"
+        ],
+        "title": "AiControlsRequest",
+        "type": "object"
+      },
+      "AiControlsView": {
+        "properties": {
+          "coach_review_narratives": {
+            "title": "Coach Review Narratives",
+            "type": "boolean"
+          },
+          "daily_call_caps": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Daily Call Caps",
+            "type": "object"
+          },
+          "features": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "monthly_call_cap": {
+            "title": "Monthly Call Cap",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "monthly_call_cap",
+          "daily_call_caps",
+          "coach_review_narratives",
+          "features"
+        ],
+        "title": "AiControlsView",
+        "type": "object"
+      },
       "AiUsageView": {
         "properties": {
           "cap": {
@@ -10444,6 +10724,11 @@
             "format": "date-time",
             "title": "Generated At",
             "type": "string"
+          },
+          "not_billed": {
+            "default": 0,
+            "title": "Not Billed",
+            "type": "integer"
           },
           "students": {
             "title": "Students",
@@ -11933,6 +12218,7 @@
             "items": {
               "$ref": "#/components/schemas/BulkAttendanceEntryRequest"
             },
+            "maxItems": 100,
             "title": "Entries",
             "type": "array"
           },
@@ -11998,11 +12284,77 @@
         "title": "BulkPayrollResultView",
         "type": "object"
       },
-      "BulkStatusBody": {
+      "BulkPlacementBody": {
         "properties": {
+          "credited_skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Credited Skill Ids",
+            "type": "array"
+          },
           "level_id": {
             "title": "Level Id",
             "type": "string"
+          },
+          "notify_parents": {
+            "default": false,
+            "title": "Notify Parents",
+            "type": "boolean"
+          },
+          "program_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Program Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "student_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Student Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "level_id",
+          "student_ids"
+        ],
+        "title": "BulkPlacementBody",
+        "type": "object"
+      },
+      "BulkStatusBody": {
+        "properties": {
+          "level_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Id"
           },
           "program_id": {
             "title": "Program Id",
@@ -12013,6 +12365,13 @@
             "type": "string"
           },
           "status": {
+            "enum": [
+              "INTRODUCED",
+              "LEARNING",
+              "PRACTICING",
+              "TEST_READY",
+              "NEEDS_REVIEW"
+            ],
             "title": "Status",
             "type": "string"
           },
@@ -12027,11 +12386,254 @@
         "required": [
           "skill_id",
           "program_id",
-          "level_id",
           "student_ids",
           "status"
         ],
         "title": "BulkStatusBody",
+        "type": "object"
+      },
+      "BulkTransferEnrollmentsRequest": {
+        "description": "A0-8: move several roster rows to one class in one request.",
+        "properties": {
+          "effective_date": {
+            "format": "date",
+            "title": "Effective Date",
+            "type": "string"
+          },
+          "enrollment_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Enrollment Ids",
+            "type": "array"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "target_session_id": {
+            "title": "Target Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_ids",
+          "target_session_id",
+          "effective_date"
+        ],
+        "title": "BulkTransferEnrollmentsRequest",
+        "type": "object"
+      },
+      "BulkTransferEnrollmentsResponse": {
+        "properties": {
+          "failed_count": {
+            "title": "Failed Count",
+            "type": "integer"
+          },
+          "moved_count": {
+            "title": "Moved Count",
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/BulkTransferRowView"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results",
+          "moved_count",
+          "failed_count"
+        ],
+        "title": "BulkTransferEnrollmentsResponse",
+        "type": "object"
+      },
+      "BulkTransferRowView": {
+        "properties": {
+          "enrollment_id": {
+            "title": "Enrollment Id",
+            "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "ok"
+        ],
+        "title": "BulkTransferRowView",
+        "type": "object"
+      },
+      "CalendarFeedLinkView": {
+        "properties": {
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "CalendarFeedLinkView",
+        "type": "object"
+      },
+      "CampaignPreviewExclusion": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "is_family_contact": {
+            "default": false,
+            "title": "Is Family Contact",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "CampaignPreviewExclusion",
+        "type": "object"
+      },
+      "CampaignPreviewRecipient": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "is_family_contact": {
+            "default": false,
+            "title": "Is Family Contact",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "CampaignPreviewRecipient",
+        "type": "object"
+      },
+      "CampaignPreviewRequest": {
+        "properties": {
+          "audience": {
+            "$ref": "#/components/schemas/SendCampaignAudience"
+          }
+        },
+        "required": [
+          "audience"
+        ],
+        "title": "CampaignPreviewRequest",
+        "type": "object"
+      },
+      "CampaignPreviewResponse": {
+        "description": "Resolved audience before a send (#1029): unique addresses, and the\nfamilies and opted-in contacts they belong to. Never an enrollment count.",
+        "properties": {
+          "audience_fingerprint": {
+            "default": "",
+            "title": "Audience Fingerprint",
+            "type": "string"
+          },
+          "contact_count": {
+            "title": "Contact Count",
+            "type": "integer"
+          },
+          "exclusions": {
+            "items": {
+              "$ref": "#/components/schemas/CampaignPreviewExclusion"
+            },
+            "title": "Exclusions",
+            "type": "array"
+          },
+          "family_count": {
+            "title": "Family Count",
+            "type": "integer"
+          },
+          "recipient_count": {
+            "title": "Recipient Count",
+            "type": "integer"
+          },
+          "recipients": {
+            "items": {
+              "$ref": "#/components/schemas/CampaignPreviewRecipient"
+            },
+            "title": "Recipients",
+            "type": "array"
+          }
+        },
+        "required": [
+          "recipient_count",
+          "family_count",
+          "contact_count"
+        ],
+        "title": "CampaignPreviewResponse",
         "type": "object"
       },
       "CancelAccountDeletionPayload": {
@@ -12138,6 +12740,18 @@
               }
             ],
             "title": "Billing Result"
+          },
+          "credit_skips": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Credit Skips",
+            "type": "object"
+          },
+          "credit_total_cents": {
+            "default": 0,
+            "title": "Credit Total Cents",
+            "type": "integer"
           },
           "credits_issued": {
             "default": 0,
@@ -12368,6 +12982,80 @@
         "title": "CheckoutStatusResponse",
         "type": "object"
       },
+      "ChildClassRecapList": {
+        "properties": {
+          "recaps": {
+            "items": {
+              "$ref": "#/components/schemas/ChildClassRecapView"
+            },
+            "title": "Recaps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "recaps"
+        ],
+        "title": "ChildClassRecapList",
+        "type": "object"
+      },
+      "ChildClassRecapView": {
+        "properties": {
+          "class_starts_at": {
+            "format": "date-time",
+            "title": "Class Starts At",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "practiced_skills": {
+            "items": {
+              "$ref": "#/components/schemas/ChildRecapSkillView"
+            },
+            "title": "Practiced Skills",
+            "type": "array"
+          },
+          "taught_skills": {
+            "items": {
+              "$ref": "#/components/schemas/ChildRecapSkillView"
+            },
+            "title": "Taught Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "class_starts_at",
+          "taught_skills",
+          "practiced_skills"
+        ],
+        "title": "ChildClassRecapView",
+        "type": "object"
+      },
+      "ChildPracticeView": {
+        "properties": {
+          "skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 30,
+            "minItems": 1,
+            "title": "Skill Ids",
+            "type": "array"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "skill_ids"
+        ],
+        "title": "ChildPracticeView",
+        "type": "object"
+      },
       "ChildProfileView": {
         "properties": {
           "date_of_birth": {
@@ -12413,6 +13101,29 @@
           }
         },
         "title": "ChildProfileView",
+        "type": "object"
+      },
+      "ChildRecapSkillView": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_id",
+          "name",
+          "passed"
+        ],
+        "title": "ChildRecapSkillView",
         "type": "object"
       },
       "ClassPublicFieldsRequest": {
@@ -12627,6 +13338,246 @@
         "title": "ClassPublicProfileView",
         "type": "object"
       },
+      "ClassRecapView": {
+        "properties": {
+          "ai_enabled": {
+            "title": "Ai Enabled",
+            "type": "boolean"
+          },
+          "can_edit": {
+            "title": "Can Edit",
+            "type": "boolean"
+          },
+          "can_resolve": {
+            "title": "Can Resolve",
+            "type": "boolean"
+          },
+          "class_starts_at": {
+            "format": "date-time",
+            "title": "Class Starts At",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "practice": {
+            "items": {
+              "$ref": "#/components/schemas/ChildPracticeView"
+            },
+            "title": "Practice",
+            "type": "array"
+          },
+          "reports": {
+            "items": {
+              "$ref": "#/components/schemas/ClassReportView"
+            },
+            "title": "Reports",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "roster": {
+            "items": {
+              "$ref": "#/components/schemas/RecapRosterView"
+            },
+            "title": "Roster",
+            "type": "array"
+          },
+          "skill_options": {
+            "items": {
+              "$ref": "#/components/schemas/RecapSkillView"
+            },
+            "title": "Skill Options",
+            "type": "array"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "taught_skills": {
+            "items": {
+              "$ref": "#/components/schemas/RecapSkillView"
+            },
+            "title": "Taught Skills",
+            "type": "array"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "class_starts_at",
+          "can_edit",
+          "can_resolve",
+          "ai_enabled",
+          "revision",
+          "source",
+          "updated_at",
+          "taught_skills",
+          "practice",
+          "roster",
+          "skill_options",
+          "reports"
+        ],
+        "title": "ClassRecapView",
+        "type": "object"
+      },
+      "ClassReportHandoffList": {
+        "properties": {
+          "reports": {
+            "items": {
+              "$ref": "#/components/schemas/ClassReportHandoffView"
+            },
+            "title": "Reports",
+            "type": "array"
+          }
+        },
+        "required": [
+          "reports"
+        ],
+        "title": "ClassReportHandoffList",
+        "type": "object"
+      },
+      "ClassReportHandoffView": {
+        "properties": {
+          "author_id": {
+            "title": "Author Id",
+            "type": "string"
+          },
+          "class_starts_at": {
+            "format": "date-time",
+            "title": "Class Starts At",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "report_id": {
+            "title": "Report Id",
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "report_id",
+          "occurrence_id",
+          "class_starts_at",
+          "author_id",
+          "text",
+          "submitted_at"
+        ],
+        "title": "ClassReportHandoffView",
+        "type": "object"
+      },
+      "ClassReportView": {
+        "properties": {
+          "ai_used": {
+            "title": "Ai Used",
+            "type": "boolean"
+          },
+          "applied_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Revision"
+          },
+          "is_mine": {
+            "title": "Is Mine",
+            "type": "boolean"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pass_claims": {
+            "items": {
+              "$ref": "#/components/schemas/PassClaimView"
+            },
+            "title": "Pass Claims",
+            "type": "array"
+          },
+          "questions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Questions",
+            "type": "array"
+          },
+          "report_id": {
+            "title": "Report Id",
+            "type": "string"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "report_id",
+          "is_mine",
+          "text",
+          "submitted_at",
+          "outcome",
+          "ai_used",
+          "questions",
+          "pass_claims",
+          "applied_revision",
+          "resolved_at"
+        ],
+        "title": "ClassReportView",
+        "type": "object"
+      },
       "ClassRiskView": {
         "properties": {
           "at_risk": {
@@ -12689,6 +13640,166 @@
           "at_risk_rate"
         ],
         "title": "ClassRiskView",
+        "type": "object"
+      },
+      "CloseAcademyDatesRequest": {
+        "description": "Academy-wide closure: every class from ``start_date`` to ``end_date``\n(academy-local, inclusive) is cancelled in one step.",
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "end_date": {
+            "format": "date",
+            "title": "End Date",
+            "type": "string"
+          },
+          "notify": {
+            "default": true,
+            "title": "Notify",
+            "type": "boolean"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "start_date": {
+            "format": "date",
+            "title": "Start Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_date",
+          "end_date",
+          "reason"
+        ],
+        "title": "CloseAcademyDatesRequest",
+        "type": "object"
+      },
+      "CloseAcademyDatesResponse": {
+        "properties": {
+          "cancelled": {
+            "default": 0,
+            "title": "Cancelled",
+            "type": "integer"
+          },
+          "credits_issued": {
+            "default": 0,
+            "title": "Credits Issued",
+            "type": "integer"
+          },
+          "dates": {
+            "items": {
+              "$ref": "#/components/schemas/ClosureDateView"
+            },
+            "title": "Dates",
+            "type": "array"
+          },
+          "families_affected": {
+            "default": 0,
+            "title": "Families Affected",
+            "type": "integer"
+          },
+          "families_notified": {
+            "default": 0,
+            "title": "Families Notified",
+            "type": "integer"
+          },
+          "notice_failed": {
+            "default": false,
+            "title": "Notice Failed",
+            "type": "boolean"
+          },
+          "skipped": {
+            "default": 0,
+            "title": "Skipped",
+            "type": "integer"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "timezone"
+        ],
+        "title": "CloseAcademyDatesResponse",
+        "type": "object"
+      },
+      "ClosureDateView": {
+        "properties": {
+          "billing_warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Billing Warning"
+          },
+          "credits_issued": {
+            "default": 0,
+            "title": "Credits Issued",
+            "type": "integer"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "session_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Title"
+          },
+          "skip_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skip Reason"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "cancelled",
+              "would_cancel",
+              "skipped"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "session_id",
+          "start_at",
+          "status"
+        ],
+        "title": "ClosureDateView",
         "type": "object"
       },
       "CoachAcademyView": {
@@ -13203,6 +14314,18 @@
       },
       "CoachRosterEntry": {
         "properties": {
+          "attendance_marked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attendance Marked At"
+          },
           "attendance_status": {
             "anyOf": [
               {
@@ -13507,6 +14630,14 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "trial_guests": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CoachTrialGuest"
+            },
+            "title": "Trial Guests",
+            "type": "array"
           }
         },
         "required": [
@@ -13678,6 +14809,51 @@
           "sessions"
         ],
         "title": "CoachTodayResponse",
+        "type": "object"
+      },
+      "CoachTrialGuest": {
+        "description": "L9: a family with no account who booked a free trial on the public page.\nThe coach sees the parent's name and the player's age only.",
+        "properties": {
+          "age": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "trial_outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "came",
+                  "no_show"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trial Outcome"
+          },
+          "trial_request_id": {
+            "title": "Trial Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trial_request_id",
+          "name"
+        ],
+        "title": "CoachTrialGuest",
         "type": "object"
       },
       "CoachTrialOutcomeBody": {
@@ -14106,10 +15282,24 @@
           "health": {
             "$ref": "#/components/schemas/BillingHealthDto"
           },
+          "payments_blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payments Blocked Reason"
+          },
           "payments_possible": {
             "default": false,
             "title": "Payments Possible",
             "type": "boolean"
+          },
+          "refund_failures": {
+            "$ref": "#/components/schemas/RefundFailuresDto"
           },
           "webhook_events": {
             "$ref": "#/components/schemas/WebhookBacklogDto"
@@ -14146,6 +15336,11 @@
             "title": "Configured",
             "type": "boolean"
           },
+          "direct_charges_supported": {
+            "default": false,
+            "title": "Direct Charges Supported",
+            "type": "boolean"
+          },
           "payouts_enabled": {
             "default": false,
             "title": "Payouts Enabled",
@@ -14169,39 +15364,6 @@
           }
         },
         "title": "ConnectedAccountReadinessDto",
-        "type": "object"
-      },
-      "ConsumeMagicLinkRequest": {
-        "properties": {
-          "token": {
-            "maxLength": 512,
-            "minLength": 1,
-            "title": "Token",
-            "type": "string"
-          }
-        },
-        "required": [
-          "token"
-        ],
-        "title": "ConsumeMagicLinkRequest",
-        "type": "object"
-      },
-      "ConsumeMagicLinkResponse": {
-        "properties": {
-          "custom_token": {
-            "title": "Custom Token",
-            "type": "string"
-          },
-          "next_path": {
-            "title": "Next Path",
-            "type": "string"
-          }
-        },
-        "required": [
-          "custom_token",
-          "next_path"
-        ],
-        "title": "ConsumeMagicLinkResponse",
         "type": "object"
       },
       "ContactPatch": {
@@ -14279,6 +15441,133 @@
           }
         },
         "title": "ContactPatch",
+        "type": "object"
+      },
+      "CopiedRosterRowView": {
+        "properties": {
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "full_name",
+          "ok"
+        ],
+        "title": "CopiedRosterRowView",
+        "type": "object"
+      },
+      "CopySessionRequest": {
+        "description": "A0-8 Copy class. Omitted schedule fields keep the source class's.",
+        "properties": {
+          "copy_roster": {
+            "default": false,
+            "title": "Copy Roster",
+            "type": "boolean"
+          },
+          "days_of_week": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Of Week"
+          },
+          "end_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Time"
+          },
+          "start_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Time"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "CopySessionRequest",
+        "type": "object"
+      },
+      "CopySessionResponse": {
+        "properties": {
+          "price_copied": {
+            "title": "Price Copied",
+            "type": "boolean"
+          },
+          "roster": {
+            "items": {
+              "$ref": "#/components/schemas/CopiedRosterRowView"
+            },
+            "title": "Roster",
+            "type": "array"
+          },
+          "session": {
+            "$ref": "#/components/schemas/AdminSessionView"
+          }
+        },
+        "required": [
+          "session",
+          "price_copied",
+          "roster"
+        ],
+        "title": "CopySessionResponse",
         "type": "object"
       },
       "CorrectAttendanceRequest": {
@@ -14573,15 +15862,9 @@
             "default": true,
             "title": "Requires Coach Recommendation",
             "type": "boolean"
-          },
-          "sequence": {
-            "minimum": 1.0,
-            "title": "Sequence",
-            "type": "integer"
           }
         },
         "required": [
-          "sequence",
           "name"
         ],
         "title": "CreateLevelBody",
@@ -15086,12 +16369,35 @@
             "title": "Name",
             "type": "string"
           },
+          "pass_rule": {
+            "default": "ONE_TAP",
+            "enum": [
+              "ONE_TAP",
+              "N_TRIES",
+              "LEAD_COACH"
+            ],
+            "title": "Pass Rule",
+            "type": "string"
+          },
           "pass_threshold_pct": {
             "default": 70.0,
             "maximum": 100.0,
             "minimum": 0.0,
             "title": "Pass Threshold Pct",
             "type": "number"
+          },
+          "pass_tries": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 2.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Tries"
           },
           "program_id": {
             "title": "Program Id",
@@ -15109,16 +16415,10 @@
             ],
             "title": "Scoring Type",
             "type": "string"
-          },
-          "sequence": {
-            "minimum": 1.0,
-            "title": "Sequence",
-            "type": "integer"
           }
         },
         "required": [
           "program_id",
-          "sequence",
           "name"
         ],
         "title": "CreateSkillBody",
@@ -15313,6 +16613,102 @@
         "title": "CreateTrialRequestRequest",
         "type": "object"
       },
+      "CreditMissedClassRequest": {
+        "description": "Credit a missed class (#1207): record a PAST date as no class.",
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "CreditMissedClassRequest",
+        "type": "object"
+      },
+      "CreditMissedClassResponse": {
+        "properties": {
+          "billing_result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Billing Result"
+          },
+          "credit_skips": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Credit Skips",
+            "type": "object"
+          },
+          "credit_total_cents": {
+            "default": 0,
+            "title": "Credit Total Cents",
+            "type": "integer"
+          },
+          "credits_issued": {
+            "default": 0,
+            "title": "Credits Issued",
+            "type": "integer"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "families": {
+            "items": {
+              "$ref": "#/components/schemas/MissedClassFamilyView"
+            },
+            "title": "Families",
+            "type": "array"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "payroll_flag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payroll Flag"
+          },
+          "schedule_changed": {
+            "default": false,
+            "title": "Schedule Changed",
+            "type": "boolean"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "start_at",
+          "dry_run"
+        ],
+        "title": "CreditMissedClassResponse",
+        "type": "object"
+      },
       "DMRequest": {
         "properties": {
           "body": {
@@ -15409,6 +16805,30 @@
           "reason"
         ],
         "title": "DeleteExpenseRequest",
+        "type": "object"
+      },
+      "DeliveryProblemsView": {
+        "properties": {
+          "failed": {
+            "items": {
+              "$ref": "#/components/schemas/FailedDeliveryView"
+            },
+            "title": "Failed",
+            "type": "array"
+          },
+          "suppressed_emails": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Suppressed Emails",
+            "type": "array"
+          }
+        },
+        "required": [
+          "suppressed_emails",
+          "failed"
+        ],
+        "title": "DeliveryProblemsView",
         "type": "object"
       },
       "DenyMakeupRequestBody": {
@@ -16216,6 +17636,84 @@
         "title": "EnrollChildRequest",
         "type": "object"
       },
+      "EnrollmentBillingView": {
+        "properties": {
+          "billing_type": {
+            "title": "Billing Type",
+            "type": "string"
+          },
+          "enrollment_id": {
+            "title": "Enrollment Id",
+            "type": "string"
+          },
+          "kept_invoice_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Kept Invoice Ids",
+            "type": "array"
+          },
+          "not_billed": {
+            "title": "Not Billed",
+            "type": "boolean"
+          },
+          "not_billed_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Billed Note"
+          },
+          "not_billed_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "owner_child",
+                  "coach_child",
+                  "scholarship",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Billed Reason"
+          },
+          "skipped_period": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skipped Period"
+          },
+          "voided_invoice_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Voided Invoice Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "not_billed",
+          "billing_type"
+        ],
+        "title": "EnrollmentBillingView",
+        "type": "object"
+      },
       "EnrollmentDeparturePolicyView": {
         "properties": {
           "delete_enrollment_requires_owner": {
@@ -16556,6 +18054,36 @@
         "title": "EnrollmentStopResultView",
         "type": "object"
       },
+      "FailedDeliveryView": {
+        "properties": {
+          "delivery_id": {
+            "title": "Delivery Id",
+            "type": "string"
+          },
+          "failed_reason": {
+            "title": "Failed Reason",
+            "type": "string"
+          },
+          "recipient_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient Email"
+          }
+        },
+        "required": [
+          "delivery_id",
+          "recipient_email",
+          "failed_reason"
+        ],
+        "title": "FailedDeliveryView",
+        "type": "object"
+      },
       "FailedPaymentRowDto": {
         "properties": {
           "attempt_count": {
@@ -16703,6 +18231,75 @@
           "without_reason"
         ],
         "title": "FamiliesLostView",
+        "type": "object"
+      },
+      "FamilyAccountCredit": {
+        "description": "One account credit on the family record (#1207).",
+        "properties": {
+          "amount_cents": {
+            "title": "Amount Cents",
+            "type": "integer"
+          },
+          "applied_invoices": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Applied Invoices",
+            "type": "array"
+          },
+          "approved_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By Name"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "credit_id": {
+            "title": "Credit Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "remaining_amount_cents": {
+            "title": "Remaining Amount Cents",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "credit_id",
+          "type",
+          "status",
+          "amount_cents",
+          "remaining_amount_cents",
+          "reason"
+        ],
+        "title": "FamilyAccountCredit",
         "type": "object"
       },
       "FamilyAllocation": {
@@ -17136,6 +18733,33 @@
             ],
             "title": "Monthly Price Cents"
           },
+          "not_billed": {
+            "default": false,
+            "title": "Not Billed",
+            "type": "boolean"
+          },
+          "not_billed_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Billed Note"
+          },
+          "not_billed_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Billed Reason"
+          },
           "override_price_cents": {
             "anyOf": [
               {
@@ -17223,6 +18847,11 @@
           },
           "cancelled": {
             "title": "Cancelled",
+            "type": "integer"
+          },
+          "not_billed": {
+            "default": 0,
+            "title": "Not Billed",
             "type": "integer"
           },
           "paused": {
@@ -17923,6 +19552,22 @@
         "title": "FamilyNoteView",
         "type": "object"
       },
+      "FamilyOffersResponse": {
+        "properties": {
+          "referral_program": {
+            "$ref": "#/components/schemas/ReferralProgramView"
+          },
+          "sibling_discount": {
+            "$ref": "#/components/schemas/SiblingDiscountView"
+          }
+        },
+        "required": [
+          "referral_program",
+          "sibling_discount"
+        ],
+        "title": "FamilyOffersResponse",
+        "type": "object"
+      },
       "FamilyParent": {
         "properties": {
           "email": {
@@ -18001,6 +19646,53 @@
           "card_on_file"
         ],
         "title": "FamilyRegistration",
+        "type": "object"
+      },
+      "FamilySiblingDiscountView": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "enrollments": {
+            "items": {
+              "$ref": "#/components/schemas/SiblingDiscountEnrollmentView"
+            },
+            "title": "Enrollments",
+            "type": "array"
+          },
+          "next_period": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SiblingDiscountPeriodView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "percent_bps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent Bps"
+          },
+          "period": {
+            "title": "Period",
+            "type": "string"
+          }
+        },
+        "required": [
+          "period",
+          "enabled",
+          "enrollments"
+        ],
+        "title": "FamilySiblingDiscountView",
         "type": "object"
       },
       "FamilyStudent": {
@@ -19163,6 +20855,17 @@
             ],
             "title": "Student Date Of Birth"
           },
+          "student_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Id"
+          },
           "student_name": {
             "title": "Student Name",
             "type": "string"
@@ -19237,6 +20940,45 @@
           "families_existing"
         ],
         "title": "ImportSummaryView",
+        "type": "object"
+      },
+      "IneligibleMakeupView": {
+        "properties": {
+          "class_title": {
+            "title": "Class Title",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "student_name",
+          "occurrence_id",
+          "class_title",
+          "start_at",
+          "reason"
+        ],
+        "title": "IneligibleMakeupView",
         "type": "object"
       },
       "InquiryConversionView": {
@@ -20504,6 +22246,96 @@
         "title": "LoginInviteResponse",
         "type": "object"
       },
+      "MakeupCandidateView": {
+        "properties": {
+          "class_title": {
+            "title": "Class Title",
+            "type": "string"
+          },
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "has_notice": {
+            "title": "Has Notice",
+            "type": "boolean"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "student_name",
+          "occurrence_id",
+          "session_id",
+          "class_title",
+          "start_at",
+          "end_at",
+          "has_notice",
+          "expires_at"
+        ],
+        "title": "MakeupCandidateView",
+        "type": "object"
+      },
+      "MakeupCandidatesResponse": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/MakeupCandidateView"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "ineligible": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/IneligibleMakeupView"
+            },
+            "title": "Ineligible",
+            "type": "array"
+          },
+          "makeups_enabled": {
+            "default": true,
+            "title": "Makeups Enabled",
+            "type": "boolean"
+          },
+          "requires_notice": {
+            "default": false,
+            "title": "Requires Notice",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "candidates"
+        ],
+        "title": "MakeupCandidatesResponse",
+        "type": "object"
+      },
       "MakeupRequestAdminRow": {
         "properties": {
           "approved_target_occurrence_id": {
@@ -21149,6 +22981,18 @@
             "title": "Amount Cents",
             "type": "integer"
           },
+          "expected_version": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
           "method": {
             "enum": [
               "bank_transfer",
@@ -21323,6 +23167,103 @@
           "is_default"
         ],
         "title": "MembershipSummaryView",
+        "type": "object"
+      },
+      "MilestoneInput": {
+        "properties": {
+          "count": {
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "skills_passed",
+              "levels_completed"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "count"
+        ],
+        "title": "MilestoneInput",
+        "type": "object"
+      },
+      "MilestoneView": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "skills_passed",
+              "levels_completed"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "since": {
+            "format": "date-time",
+            "title": "Since",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "count",
+          "since"
+        ],
+        "title": "MilestoneView",
+        "type": "object"
+      },
+      "MissedClassFamilyView": {
+        "properties": {
+          "amount_cents": {
+            "default": 0,
+            "title": "Amount Cents",
+            "type": "integer"
+          },
+          "enrollment_id": {
+            "title": "Enrollment Id",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "student_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Id"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "outcome"
+        ],
+        "title": "MissedClassFamilyView",
         "type": "object"
       },
       "ModifyUserRoleRequest": {
@@ -21804,6 +23745,27 @@
         "title": "NextSkillView",
         "type": "object"
       },
+      "NoClassDate": {
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date"
+        ],
+        "title": "NoClassDate",
+        "type": "object"
+      },
       "NoteBody": {
         "additionalProperties": false,
         "properties": {
@@ -22086,6 +24048,18 @@
             ],
             "title": "Amount Cents"
           },
+          "expected_version": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
           "reason": {
             "minLength": 1,
             "title": "Reason",
@@ -22303,6 +24277,17 @@
               }
             ],
             "title": "Payment Instructions"
+          },
+          "schedule_published_through": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Published Through"
           },
           "self_service": {
             "$ref": "#/components/schemas/ParentSelfServiceSwitchesView"
@@ -23651,6 +25636,13 @@
             "title": "First Name",
             "type": "string"
           },
+          "heard_from": {
+            "default": "",
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9_.-]*$",
+            "title": "Heard From",
+            "type": "string"
+          },
           "last_name": {
             "default": "",
             "title": "Last Name",
@@ -23659,6 +25651,13 @@
           "phone": {
             "default": "",
             "title": "Phone",
+            "type": "string"
+          },
+          "referral_code": {
+            "default": "",
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9_.-]*$",
+            "title": "Referral Code",
             "type": "string"
           }
         },
@@ -23774,8 +25773,81 @@
         "title": "ParentProgressResponse",
         "type": "object"
       },
+      "ParentReferralResponse": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "referral_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referral Code"
+          },
+          "referred_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referred Credit Cents"
+          },
+          "referrer_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referrer Credit Cents"
+          },
+          "rewards_earned": {
+            "default": 0,
+            "title": "Rewards Earned",
+            "type": "integer"
+          },
+          "share_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share Url"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "ParentReferralResponse",
+        "type": "object"
+      },
       "ParentScheduleEntryView": {
         "properties": {
+          "cancellation_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Reason"
+          },
           "coach_name": {
             "anyOf": [
               {
@@ -24540,6 +26612,39 @@
         "title": "ParentWaiverStudentView",
         "type": "object"
       },
+      "PassClaimView": {
+        "properties": {
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "skill_id"
+        ],
+        "title": "PassClaimView",
+        "type": "object"
+      },
+      "PasswordResetRequest": {
+        "properties": {
+          "email": {
+            "maxLength": 320,
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "PasswordResetRequest",
+        "type": "object"
+      },
       "PatchApplicationRequest": {
         "properties": {
           "accept_waiver": {
@@ -24650,6 +26755,11 @@
             },
             "title": "Levels",
             "type": "array"
+          },
+          "not_billed_count": {
+            "default": 0,
+            "title": "Not Billed Count",
+            "type": "integer"
           },
           "program_id": {
             "title": "Program Id",
@@ -25091,6 +27201,76 @@
           "entries"
         ],
         "title": "PayoutAuditTrailView",
+        "type": "object"
+      },
+      "PayoutPeriodWriteRequest": {
+        "description": "Optional body of approve and recompute.",
+        "properties": {
+          "expected_version": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          }
+        },
+        "title": "PayoutPeriodWriteRequest",
+        "type": "object"
+      },
+      "PayrollSettingsView": {
+        "additionalProperties": false,
+        "description": "How a percent coach's invoiced-tuition base is counted (L7).\n\nApplies to periods generated or recomputed after a change.",
+        "properties": {
+          "payroll_ach_discount_reduces_base": {
+            "title": "Payroll Ach Discount Reduces Base",
+            "type": "boolean"
+          },
+          "payroll_assistant_pay_from": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payroll Assistant Pay From"
+          },
+          "payroll_cancelled_class_share": {
+            "enum": [
+              "ran_only",
+              "all_scheduled"
+            ],
+            "title": "Payroll Cancelled Class Share",
+            "type": "string"
+          },
+          "payroll_count_checkout_first_month": {
+            "title": "Payroll Count Checkout First Month",
+            "type": "boolean"
+          },
+          "payroll_missing_invoices": {
+            "enum": [
+              "block",
+              "pay_zero"
+            ],
+            "title": "Payroll Missing Invoices",
+            "type": "string"
+          }
+        },
+        "required": [
+          "payroll_ach_discount_reduces_base",
+          "payroll_count_checkout_first_month",
+          "payroll_cancelled_class_share",
+          "payroll_missing_invoices",
+          "payroll_assistant_pay_from"
+        ],
+        "title": "PayrollSettingsView",
         "type": "object"
       },
       "PipelineBoardCardView": {
@@ -26519,6 +28699,36 @@
         "title": "ProgressNoteView",
         "type": "object"
       },
+      "ProgressSettingsView": {
+        "properties": {
+          "milestones": {
+            "items": {
+              "$ref": "#/components/schemas/MilestoneView"
+            },
+            "title": "Milestones",
+            "type": "array"
+          },
+          "milestones_enabled": {
+            "title": "Milestones Enabled",
+            "type": "boolean"
+          },
+          "share_name": {
+            "enum": [
+              "first_name",
+              "initial"
+            ],
+            "title": "Share Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "milestones_enabled",
+          "milestones",
+          "share_name"
+        ],
+        "title": "ProgressSettingsView",
+        "type": "object"
+      },
       "PublicAcademyDto": {
         "properties": {
           "brand_color": {
@@ -26773,6 +28983,62 @@
         "title": "PublicBrandDto",
         "type": "object"
       },
+      "PublicCertificateDto": {
+        "description": "A certificate a parent chose to share (L5B, ``/c/<token>``).\n\nThe minimum only: the child's first name or initial (the academy's\nchoice), the level as it was when issued, the certificate number and\nissue date, and the academy's branding. No surname, no parent, no email,\nno ids, no skills list and no program.",
+        "properties": {
+          "academy": {
+            "$ref": "#/components/schemas/PublicBrandDto"
+          },
+          "cert_number": {
+            "title": "Cert Number",
+            "type": "string"
+          },
+          "issued_on": {
+            "format": "date",
+            "title": "Issued On",
+            "type": "string"
+          },
+          "level_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Color"
+          },
+          "level_name": {
+            "title": "Level Name",
+            "type": "string"
+          },
+          "level_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Number"
+          },
+          "recipient_name": {
+            "title": "Recipient Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "academy",
+          "recipient_name",
+          "level_name",
+          "cert_number",
+          "issued_on"
+        ],
+        "title": "PublicCertificateDto",
+        "type": "object"
+      },
       "PublicClassDto": {
         "properties": {
           "age_band": {
@@ -26909,6 +29175,14 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "trial_dates": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PublicTrialDateDto"
+            },
+            "title": "Trial Dates",
+            "type": "array"
           },
           "venue_address": {
             "anyOf": [
@@ -27164,6 +29438,11 @@
             "title": "Seats Left Threshold",
             "type": "integer"
           },
+          "self_book_trials": {
+            "default": false,
+            "title": "Self Book Trials",
+            "type": "boolean"
+          },
           "show_availability": {
             "title": "Show Availability",
             "type": "boolean"
@@ -27180,6 +29459,11 @@
             ],
             "title": "Theme",
             "type": "string"
+          },
+          "trial_guest_cap": {
+            "default": 2,
+            "title": "Trial Guest Cap",
+            "type": "integer"
           },
           "trials_open": {
             "title": "Trials Open",
@@ -27296,6 +29580,26 @@
           "band"
         ],
         "title": "PublicSeatsDto",
+        "type": "object"
+      },
+      "PublicTrialDateDto": {
+        "description": "One date a family can book a free trial on (L9; only while the academy\nhas self-booked trials on). ``slot_key`` is an opaque digest, never the\noccurrence id; send it back with the trial form to book that date.",
+        "properties": {
+          "slot_key": {
+            "title": "Slot Key",
+            "type": "string"
+          },
+          "starts_at": {
+            "format": "date-time",
+            "title": "Starts At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slot_key",
+          "starts_at"
+        ],
+        "title": "PublicTrialDateDto",
         "type": "object"
       },
       "PublicTrialRequestAckDto": {
@@ -27507,6 +29811,52 @@
           "families"
         ],
         "title": "ReasonCountView",
+        "type": "object"
+      },
+      "RecapRosterView": {
+        "properties": {
+          "attendance": {
+            "title": "Attendance",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "name",
+          "attendance"
+        ],
+        "title": "RecapRosterView",
+        "type": "object"
+      },
+      "RecapSkillView": {
+        "properties": {
+          "level_name": {
+            "default": "",
+            "title": "Level Name",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_id",
+          "name"
+        ],
+        "title": "RecapSkillView",
         "type": "object"
       },
       "RecommendLevelUpBody": {
@@ -27920,6 +30270,7 @@
         "properties": {
           "attempts_count": {
             "default": 1,
+            "minimum": 1.0,
             "title": "Attempts Count",
             "type": "integer"
           },
@@ -27929,8 +30280,15 @@
             "type": "boolean"
           },
           "level_id": {
-            "title": "Level Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Id"
           },
           "mutation_id": {
             "anyOf": [
@@ -27981,10 +30339,476 @@
           }
         },
         "required": [
-          "program_id",
-          "level_id"
+          "program_id"
         ],
         "title": "RecordTestBody",
+        "type": "object"
+      },
+      "ReferralEmailPreviewResponse": {
+        "properties": {
+          "emails": {
+            "items": {
+              "$ref": "#/components/schemas/ReferralEmailView"
+            },
+            "title": "Emails",
+            "type": "array"
+          }
+        },
+        "required": [
+          "emails"
+        ],
+        "title": "ReferralEmailPreviewResponse",
+        "type": "object"
+      },
+      "ReferralEmailView": {
+        "properties": {
+          "html": {
+            "title": "Html",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "subject",
+          "html"
+        ],
+        "title": "ReferralEmailView",
+        "type": "object"
+      },
+      "ReferralListResponse": {
+        "properties": {
+          "referrals": {
+            "items": {
+              "$ref": "#/components/schemas/ReferralRowView"
+            },
+            "title": "Referrals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "referrals"
+        ],
+        "title": "ReferralListResponse",
+        "type": "object"
+      },
+      "ReferralProgramRequest": {
+        "additionalProperties": false,
+        "description": "Partial: only the keys sent change. No bounds here on purpose; the use\ncase owns them so one path names the offending field in the 422.",
+        "properties": {
+          "credit_expiry_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credit Expiry Days"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "hold_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold Days"
+          },
+          "max_rewards_per_referrer_per_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Rewards Per Referrer Per Year"
+          },
+          "referred_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referred Credit Cents"
+          },
+          "referrer_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referrer Credit Cents"
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "enum": [
+                  "first_paid_invoice",
+                  "first_paid_monthly_invoice"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger"
+          }
+        },
+        "title": "ReferralProgramRequest",
+        "type": "object"
+      },
+      "ReferralProgramView": {
+        "properties": {
+          "credit_expiry_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credit Expiry Days"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "hold_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold Days"
+          },
+          "max_rewards_per_referrer_per_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Rewards Per Referrer Per Year"
+          },
+          "referred_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referred Credit Cents"
+          },
+          "referrer_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referrer Credit Cents"
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "enum": [
+                  "first_paid_invoice",
+                  "first_paid_monthly_invoice"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "ReferralProgramView",
+        "type": "object"
+      },
+      "ReferralRowView": {
+        "properties": {
+          "attributed_at": {
+            "format": "date-time",
+            "title": "Attributed At",
+            "type": "string"
+          },
+          "competing_codes": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Competing Codes",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "grant_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grant Due At"
+          },
+          "granted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Granted At"
+          },
+          "qualified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qualified At"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unknown_code",
+                  "self_referral",
+                  "existing_family",
+                  "yearly_cap_reached"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "referral_code": {
+            "title": "Referral Code",
+            "type": "string"
+          },
+          "referral_id": {
+            "title": "Referral Id",
+            "type": "string"
+          },
+          "referred_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referred Credit Cents"
+          },
+          "referred_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referred Name"
+          },
+          "referrer_credit_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referrer Credit Cents"
+          },
+          "referrer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Referrer Name"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          },
+          "source": {
+            "enum": [
+              "contact",
+              "application"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "needs_review",
+              "pending",
+              "granted",
+              "ineligible"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "referral_id",
+          "referral_code",
+          "source",
+          "attributed_at",
+          "status",
+          "created_at"
+        ],
+        "title": "ReferralRowView",
+        "type": "object"
+      },
+      "RefundFailureDto": {
+        "properties": {
+          "amount_cents": {
+            "default": 0,
+            "title": "Amount Cents",
+            "type": "integer"
+          },
+          "currency": {
+            "default": "usd",
+            "title": "Currency",
+            "type": "string"
+          },
+          "failed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed At"
+          },
+          "parent_id": {
+            "default": "",
+            "title": "Parent Id",
+            "type": "string"
+          },
+          "payment_id": {
+            "title": "Payment Id",
+            "type": "string"
+          },
+          "reason": {
+            "default": "unknown",
+            "title": "Reason",
+            "type": "string"
+          },
+          "refund_id": {
+            "title": "Refund Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "refund_id",
+          "payment_id"
+        ],
+        "title": "RefundFailureDto",
+        "type": "object"
+      },
+      "RefundFailuresDto": {
+        "properties": {
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/RefundFailureDto"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "title": "RefundFailuresDto",
         "type": "object"
       },
       "RegisterDeviceRequest": {
@@ -28210,6 +31034,18 @@
             "title": "Acknowledge Paid Clawback",
             "type": "boolean"
           },
+          "expected_version": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
           "reason": {
             "minLength": 1,
             "title": "Reason",
@@ -28222,13 +31058,37 @@
         "title": "ReopenPayoutPeriodRequest",
         "type": "object"
       },
+      "ReorderBody": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "title": "ReorderBody",
+        "type": "object"
+      },
       "RepairCoachPayRateWindowRequest": {
         "properties": {
           "amount_cents": {
-            "default": 0,
-            "minimum": 0.0,
-            "title": "Amount Cents",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Cents"
           },
           "billing_unit": {
             "enum": [
@@ -28482,6 +31342,22 @@
         "title": "ReturnFromHoldRequest",
         "type": "object"
       },
+      "RevokeCertificateBody": {
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RevokeCertificateBody",
+        "type": "object"
+      },
       "RevokeSupportAccessPayload": {
         "properties": {
           "academy_id": {
@@ -28565,6 +31441,49 @@
         "title": "RowIssueView",
         "type": "object"
       },
+      "SaveClassRecapBody": {
+        "properties": {
+          "class_starts_at": {
+            "format": "date-time",
+            "title": "Class Starts At",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "mutation_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "practice": {
+            "items": {
+              "$ref": "#/components/schemas/ChildPracticeView"
+            },
+            "maxItems": 100,
+            "title": "Practice",
+            "type": "array"
+          },
+          "taught_skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 30,
+            "title": "Taught Skill Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "class_starts_at",
+          "mutation_id",
+          "expected_revision"
+        ],
+        "title": "SaveClassRecapBody",
+        "type": "object"
+      },
       "SchedulePriceChangeRequest": {
         "properties": {
           "effective_period": {
@@ -28591,6 +31510,44 @@
           "effective_period"
         ],
         "title": "SchedulePriceChangeRequest",
+        "type": "object"
+      },
+      "SchedulePublishRequest": {
+        "properties": {
+          "published_through": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published Through"
+          }
+        },
+        "required": [
+          "published_through"
+        ],
+        "title": "SchedulePublishRequest",
+        "type": "object"
+      },
+      "SchedulePublishView": {
+        "properties": {
+          "published_through": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published Through"
+          }
+        },
+        "title": "SchedulePublishView",
         "type": "object"
       },
       "ScheduledClassFee": {
@@ -28888,6 +31845,21 @@
             ],
             "title": "Session Id"
           },
+          "session_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Ids"
+          },
           "type": {
             "enum": [
               "academy",
@@ -28913,6 +31885,18 @@
             "minLength": 1,
             "title": "Body",
             "type": "string"
+          },
+          "expected_audience_fingerprint": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Audience Fingerprint"
           },
           "idempotency_key": {
             "anyOf": [
@@ -28956,6 +31940,11 @@
           "failed_count": {
             "title": "Failed Count",
             "type": "integer"
+          },
+          "queued": {
+            "default": false,
+            "title": "Queued",
+            "type": "boolean"
           },
           "sent_count": {
             "title": "Sent Count",
@@ -29482,10 +32471,16 @@
       "SetCoachPayRateRequest": {
         "properties": {
           "amount_cents": {
-            "default": 0,
-            "minimum": 0.0,
-            "title": "Amount Cents",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Cents"
           },
           "billing_unit": {
             "enum": [
@@ -29533,6 +32528,54 @@
           "billing_unit"
         ],
         "title": "SetCoachPayRateRequest",
+        "type": "object"
+      },
+      "SetEnrollmentBillingRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "not_billed": {
+            "title": "Not Billed",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "owner_child",
+                  "coach_child",
+                  "scholarship",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "void_open_invoices": {
+            "default": false,
+            "title": "Void Open Invoices",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "not_billed"
+        ],
+        "title": "SetEnrollmentBillingRequest",
         "type": "object"
       },
       "SetNoteVisibilityRequest": {
@@ -29792,6 +32835,244 @@
         "title": "SetupChecklistView",
         "type": "object"
       },
+      "SiblingDiscountEnrollmentView": {
+        "properties": {
+          "billing_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Billing Type"
+          },
+          "enrollment_id": {
+            "title": "Enrollment Id",
+            "type": "string"
+          },
+          "exclusion": {
+            "anyOf": [
+              {
+                "enum": [
+                  "paused",
+                  "not_active",
+                  "billing_type",
+                  "deferral",
+                  "pending_cancellation",
+                  "skip_period",
+                  "no_class_fee"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exclusion"
+          },
+          "not_billed_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Billed Reason"
+          },
+          "percent_bps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent Bps"
+          },
+          "reason": {
+            "enum": [
+              "sibling_discount",
+              "full_price_child",
+              "manual_discount_larger",
+              "already_invoiced",
+              "not_billed_this_month",
+              "only_one_child",
+              "one_class_per_child",
+              "setting_off"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "discounted",
+              "full_price",
+              "not_eligible",
+              "off"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "student_id",
+          "session_id",
+          "status",
+          "reason"
+        ],
+        "title": "SiblingDiscountEnrollmentView",
+        "type": "object"
+      },
+      "SiblingDiscountPeriodView": {
+        "properties": {
+          "enrollments": {
+            "items": {
+              "$ref": "#/components/schemas/SiblingDiscountEnrollmentView"
+            },
+            "title": "Enrollments",
+            "type": "array"
+          },
+          "period": {
+            "title": "Period",
+            "type": "string"
+          }
+        },
+        "required": [
+          "period",
+          "enrollments"
+        ],
+        "title": "SiblingDiscountPeriodView",
+        "type": "object"
+      },
+      "SiblingDiscountRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "applies_to": {
+            "anyOf": [
+              {
+                "enum": [
+                  "all_classes",
+                  "one_class_per_child"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applies To"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "full_price_child": {
+            "anyOf": [
+              {
+                "enum": [
+                  "highest_tuition",
+                  "lowest_tuition",
+                  "first_enrolled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Price Child"
+          },
+          "percent_bps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent Bps"
+          }
+        },
+        "title": "SiblingDiscountRequest",
+        "type": "object"
+      },
+      "SiblingDiscountView": {
+        "properties": {
+          "applies_to": {
+            "anyOf": [
+              {
+                "enum": [
+                  "all_classes",
+                  "one_class_per_child"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applies To"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "full_price_child": {
+            "anyOf": [
+              {
+                "enum": [
+                  "highest_tuition",
+                  "lowest_tuition",
+                  "first_enrolled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Price Child"
+          },
+          "percent_bps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent Bps"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "SiblingDiscountView",
+        "type": "object"
+      },
       "SourceConversionView": {
         "properties": {
           "conversion_rate": {
@@ -29994,6 +33275,11 @@
       },
       "StartInvoicePaymentRequest": {
         "properties": {
+          "bundle_student_balance": {
+            "default": false,
+            "title": "Bundle Student Balance",
+            "type": "boolean"
+          },
           "cancel_url": {
             "title": "Cancel Url",
             "type": "string"
@@ -30348,6 +33634,16 @@
             "title": "Delete Student Profile",
             "type": "boolean"
           },
+          "enforced": {
+            "default": false,
+            "title": "Enforced",
+            "type": "boolean"
+          },
+          "operator_note": {
+            "default": "Recorded only: nothing is deleted or redacted. A platform admin must work the checklist in docs/policy/governance-deletion-cascade.md.",
+            "title": "Operator Note",
+            "type": "string"
+          },
           "pii_handling_policy": {
             "additionalProperties": true,
             "title": "Pii Handling Policy",
@@ -30626,6 +33922,39 @@
         "title": "StudentScheduleResponse",
         "type": "object"
       },
+      "SubmitClassReportBody": {
+        "properties": {
+          "class_starts_at": {
+            "format": "date-time",
+            "title": "Class Starts At",
+            "type": "string"
+          },
+          "report_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Report Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "use_ai": {
+            "default": false,
+            "title": "Use Ai",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "class_starts_at",
+          "report_id",
+          "text"
+        ],
+        "title": "SubmitClassReportBody",
+        "type": "object"
+      },
       "SubscriptionSummary": {
         "properties": {
           "billing_status": {
@@ -30654,6 +33983,61 @@
           "cancel_at_period_end"
         ],
         "title": "SubscriptionSummary",
+        "type": "object"
+      },
+      "SuggestNoClassDatesBody": {
+        "additionalProperties": false,
+        "properties": {
+          "class_dates": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "maxItems": 62,
+            "minItems": 1,
+            "title": "Class Dates",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "class_dates"
+        ],
+        "title": "SuggestNoClassDatesBody",
+        "type": "object"
+      },
+      "SuggestNoClassDatesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "no_class": {
+            "items": {
+              "$ref": "#/components/schemas/NoClassDate"
+            },
+            "title": "No Class",
+            "type": "array"
+          },
+          "notes": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Notes",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "no_class",
+          "prompt_version"
+        ],
+        "title": "SuggestNoClassDatesResponse",
         "type": "object"
       },
       "SupportAccessGrantPayload": {
@@ -30700,6 +34084,11 @@
             "title": "Created At",
             "type": "string"
           },
+          "enforced": {
+            "default": false,
+            "title": "Enforced",
+            "type": "boolean"
+          },
           "expires_at": {
             "format": "date-time",
             "title": "Expires At",
@@ -30711,6 +34100,11 @@
           },
           "granted_by_user_id": {
             "title": "Granted By User Id",
+            "type": "string"
+          },
+          "operator_note": {
+            "default": "Recorded only: no sign-in path reads support access grants, so this grants no access.",
+            "title": "Operator Note",
             "type": "string"
           },
           "purpose": {
@@ -30819,12 +34213,22 @@
             "title": "Created At",
             "type": "string"
           },
+          "enforced": {
+            "default": false,
+            "title": "Enforced",
+            "type": "boolean"
+          },
           "impersonation_enabled": {
             "title": "Impersonation Enabled",
             "type": "boolean"
           },
           "impersonation_request_id": {
             "title": "Impersonation Request Id",
+            "type": "string"
+          },
+          "operator_note": {
+            "default": "Recorded only: impersonation is not built; no session can be issued.",
+            "title": "Operator Note",
             "type": "string"
           },
           "purpose": {
@@ -31000,9 +34404,19 @@
             "title": "Deletion Request Id",
             "type": "string"
           },
+          "enforced": {
+            "default": false,
+            "title": "Enforced",
+            "type": "boolean"
+          },
           "hard_delete_allowed": {
             "title": "Hard Delete Allowed",
             "type": "boolean"
+          },
+          "operator_note": {
+            "default": "Recorded only: nothing is deleted. A platform admin must work the checklist in docs/policy/governance-deletion-cascade.md.",
+            "title": "Operator Note",
+            "type": "string"
           },
           "reason": {
             "title": "Reason",
@@ -31124,6 +34538,11 @@
             "title": "Created At",
             "type": "string"
           },
+          "enforced": {
+            "default": false,
+            "title": "Enforced",
+            "type": "boolean"
+          },
           "export_request_id": {
             "title": "Export Request Id",
             "type": "string"
@@ -31131,6 +34550,11 @@
           "include_pii": {
             "title": "Include Pii",
             "type": "boolean"
+          },
+          "operator_note": {
+            "default": "Recorded only: no worker builds governance exports. Download the data from the tenant page export (Data export and purge).",
+            "title": "Operator Note",
+            "type": "string"
           },
           "pii_handling_policy": {
             "additionalProperties": true,
@@ -31611,6 +35035,17 @@
             ],
             "title": "Assigned Occurrence Start At"
           },
+          "contact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Id"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -31649,6 +35084,28 @@
               }
             ],
             "title": "Denial Reason"
+          },
+          "guest_age": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guest Age"
+          },
+          "guest_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guest Name"
           },
           "linked_application_id": {
             "anyOf": [
@@ -32886,6 +36343,44 @@
         "title": "UpdateEnrollmentDeparturePolicyRequest",
         "type": "object"
       },
+      "UpdateFamilyOffersRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "referral_program": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReferralProgramRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sibling_discount": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SiblingDiscountRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "UpdateFamilyOffersRequest",
+        "type": "object"
+      },
       "UpdateLevelBody": {
         "properties": {
           "color": {
@@ -32921,6 +36416,17 @@
               }
             ],
             "title": "Description"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
           },
           "name": {
             "anyOf": [
@@ -33305,6 +36811,36 @@
         "title": "UpdateProgramRequest",
         "type": "object"
       },
+      "UpdateProgressSettingsBody": {
+        "properties": {
+          "milestones": {
+            "items": {
+              "$ref": "#/components/schemas/MilestoneInput"
+            },
+            "maxItems": 20,
+            "title": "Milestones",
+            "type": "array"
+          },
+          "milestones_enabled": {
+            "title": "Milestones Enabled",
+            "type": "boolean"
+          },
+          "share_name": {
+            "enum": [
+              "first_name",
+              "initial"
+            ],
+            "title": "Share Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "milestones_enabled",
+          "share_name"
+        ],
+        "title": "UpdateProgressSettingsBody",
+        "type": "object"
+      },
       "UpdatePublicPageSettingsRequest": {
         "additionalProperties": false,
         "description": "Partial: only the keys sent are changed. ``null`` (or blank) clears\nthe privacy notice link. Switches must be real booleans.",
@@ -33445,6 +36981,17 @@
             ],
             "title": "Seats Left Threshold"
           },
+          "self_book_trials": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Self Book Trials"
+          },
           "show_availability": {
             "anyOf": [
               {
@@ -33482,6 +37029,19 @@
               }
             ],
             "title": "Theme"
+          },
+          "trial_guest_cap": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trial Guest Cap"
           },
           "trials_open": {
             "anyOf": [
@@ -33810,6 +37370,17 @@
             ],
             "title": "Description"
           },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
           "is_required": {
             "anyOf": [
               {
@@ -33832,9 +37403,27 @@
             ],
             "title": "Name"
           },
+          "pass_rule": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ONE_TAP",
+                  "N_TRIES",
+                  "LEAD_COACH"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Rule"
+          },
           "pass_threshold_pct": {
             "anyOf": [
               {
+                "maximum": 100.0,
+                "minimum": 0.0,
                 "type": "number"
               },
               {
@@ -33843,9 +37432,30 @@
             ],
             "title": "Pass Threshold Pct"
           },
+          "pass_tries": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 2.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Tries"
+          },
           "scoring_type": {
             "anyOf": [
               {
+                "enum": [
+                  "ATTEMPT_BASED",
+                  "CHECKLIST_BASED",
+                  "COACH_APPROVAL",
+                  "RALLY_COUNT",
+                  "TIME_BASED",
+                  "POINTS_BASED"
+                ],
                 "type": "string"
               },
               {
@@ -33861,8 +37471,15 @@
       "UpdateSkillStatusBody": {
         "properties": {
           "level_id": {
-            "title": "Level Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Id"
           },
           "program_id": {
             "title": "Program Id",
@@ -33881,7 +37498,6 @@
           }
         },
         "required": [
-          "level_id",
           "program_id",
           "status"
         ],
@@ -33903,8 +37519,15 @@
             "title": "Introduced At"
           },
           "level_id": {
-            "title": "Level Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Id"
           },
           "program_id": {
             "title": "Program Id",
@@ -33923,7 +37546,6 @@
           }
         },
         "required": [
-          "level_id",
           "program_id",
           "status"
         ],
@@ -34839,6 +38461,66 @@
         ]
       }
     },
+    "/api/v2/admin/ai/controls": {
+      "get": {
+        "operationId": "get_ai_controls_api_v2_admin_ai_controls_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiControlsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Ai Controls",
+        "tags": [
+          "admin.ai-controls"
+        ]
+      },
+      "put": {
+        "operationId": "put_ai_controls_api_v2_admin_ai_controls_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiControlsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiControlsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Ai Controls",
+        "tags": [
+          "admin.ai-controls"
+        ]
+      }
+    },
     "/api/v2/admin/ai/import-sharing": {
       "get": {
         "operationId": "get_import_sharing_api_v2_admin_ai_import_sharing_get",
@@ -35225,6 +38907,56 @@
         ]
       }
     },
+    "/api/v2/admin/billing/ach-notice/preview": {
+      "get": {
+        "operationId": "preview_ach_notice_api_v2_admin_billing_ach_notice_preview_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "parent_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Parent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AchNoticePreviewView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Render the autopay date-change notice (never sent)",
+        "tags": [
+          "admin.billing"
+        ]
+      }
+    },
     "/api/v2/admin/billing/connect-readiness": {
       "get": {
         "description": "Whether parent payments can physically succeed, where money lands, and\nthe single health verdict for the page header.\n\nThis is the one fatal read on Billing Health: without it there is no\nverdict, so the page shows a retry panel rather than a misleading pill.",
@@ -35286,6 +39018,66 @@
         "summary": "List Failed Payment Attempts",
         "tags": [
           "admin.billing"
+        ]
+      }
+    },
+    "/api/v2/admin/billing/family-offers": {
+      "get": {
+        "operationId": "get_family_offers_api_v2_admin_billing_family_offers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FamilyOffersResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "The referral programme and sibling discount settings",
+        "tags": [
+          "admin.family-offers"
+        ]
+      },
+      "put": {
+        "operationId": "set_family_offers_api_v2_admin_billing_family_offers_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFamilyOffersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FamilyOffersResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set the family offers (owner only, audited)",
+        "tags": [
+          "admin.family-offers"
         ]
       }
     },
@@ -36334,6 +40126,90 @@
         ]
       }
     },
+    "/api/v2/admin/billing/referrals": {
+      "get": {
+        "operationId": "list_referrals_api_v2_admin_billing_referrals_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferralListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "The academy's referrals and their state",
+        "tags": [
+          "admin.referrals"
+        ]
+      }
+    },
+    "/api/v2/admin/billing/referrals/email-preview": {
+      "get": {
+        "operationId": "preview_referral_emails_api_v2_admin_billing_referrals_email_preview_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferralEmailPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Preview the referral emails (never sent)",
+        "tags": [
+          "admin.referrals"
+        ]
+      }
+    },
+    "/api/v2/admin/billing/referrals/{referral_id}/approve": {
+      "post": {
+        "operationId": "approve_referral_api_v2_admin_billing_referrals__referral_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "referral_id",
+            "required": true,
+            "schema": {
+              "title": "Referral Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferralRowView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve a referral that came only from the website inquiry (owner only)",
+        "tags": [
+          "admin.referrals"
+        ]
+      }
+    },
     "/api/v2/admin/billing/rules": {
       "get": {
         "operationId": "get_billing_rules_api_v2_admin_billing_rules_get",
@@ -36818,6 +40694,48 @@
         ]
       }
     },
+    "/api/v2/admin/campaigns/preview": {
+      "post": {
+        "description": "Read-only: resolves the audience the send would reach; emails nobody.",
+        "operationId": "preview_email_campaign_api_v2_admin_campaigns_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CampaignPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Email Campaign",
+        "tags": [
+          "admin.comms"
+        ]
+      }
+    },
     "/api/v2/admin/class-public-profiles": {
       "get": {
         "operationId": "list_class_public_profiles_api_v2_admin_class_public_profiles_get",
@@ -36836,6 +40754,68 @@
         "summary": "List Class Public Profiles",
         "tags": [
           "admin.public-page"
+        ]
+      }
+    },
+    "/api/v2/admin/class-reports/handoffs": {
+      "get": {
+        "operationId": "list_class_report_handoffs_api_v2_admin_class_reports_handoffs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassReportHandoffList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Class Report Handoffs",
+        "tags": [
+          "admin.class-reports"
+        ]
+      }
+    },
+    "/api/v2/admin/closures": {
+      "post": {
+        "operationId": "close_academy_dates_api_v2_admin_closures_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloseAcademyDatesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloseAcademyDatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Close the academy for a date range: cancel every class date in it",
+        "tags": [
+          "admin.sessions"
         ]
       }
     },
@@ -36980,6 +40960,28 @@
         "summary": "Repair Coach Pay Rate Window",
         "tags": [
           "admin.coach-pay-rates"
+        ]
+      }
+    },
+    "/api/v2/admin/comms/delivery-problems": {
+      "get": {
+        "description": "Suppressed addresses and failed campaign sends for this academy's own\npeople only. Read-only: clearing an address stays a platform action (L11).",
+        "operationId": "get_delivery_problems_api_v2_admin_comms_delivery_problems_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryProblemsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Delivery Problems",
+        "tags": [
+          "admin.comms"
         ]
       }
     },
@@ -37396,9 +41398,69 @@
         ]
       }
     },
+    "/api/v2/admin/curriculum/progress-settings": {
+      "get": {
+        "operationId": "get_progress_settings_api_v2_admin_curriculum_progress_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressSettingsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Progress Settings",
+        "tags": [
+          "admin-pathway"
+        ]
+      },
+      "put": {
+        "operationId": "update_progress_settings_api_v2_admin_curriculum_progress_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProgressSettingsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressSettingsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Progress Settings",
+        "tags": [
+          "admin-pathway"
+        ]
+      }
+    },
     "/api/v2/admin/dashboard/attention": {
       "get": {
-        "description": "Aggregate dashboard attention signals from existing admin BFF sources.",
+        "description": "Aggregate dashboard attention signals from existing admin BFF sources.\n\nA source that fails is named in ``unavailable`` (owner rule: a count that\nfails to load is \"unavailable\", never a silent 0).",
         "operationId": "dashboard_attention_api_v2_admin_dashboard_attention_get",
         "responses": {
           "200": {
@@ -37567,6 +41629,48 @@
         ]
       }
     },
+    "/api/v2/admin/enrollments/bulk-transfer": {
+      "post": {
+        "description": "A0-8: per-row results; a refused row never blocks the others.",
+        "operationId": "bulk_transfer_enrollments_api_v2_admin_enrollments_bulk_transfer_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkTransferEnrollmentsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkTransferEnrollmentsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bulk Transfer Enrollments",
+        "tags": [
+          "admin.sessions"
+        ]
+      }
+    },
     "/api/v2/admin/enrollments/quote": {
       "post": {
         "operationId": "quote_enrollment_api_v2_admin_enrollments_quote_post",
@@ -37650,6 +41754,58 @@
         "summary": "Cancel Enrollment",
         "tags": [
           "admin.sessions"
+        ]
+      }
+    },
+    "/api/v2/admin/enrollments/{enrollment_id}/billing": {
+      "put": {
+        "operationId": "set_enrollment_billing_api_v2_admin_enrollments__enrollment_id__billing_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "enrollment_id",
+            "required": true,
+            "schema": {
+              "title": "Enrollment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetEnrollmentBillingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentBillingView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark an enrollment not billed, or start billing it (owner only, audited)",
+        "tags": [
+          "admin.enrollment-billing"
         ]
       }
     },
@@ -39433,6 +43589,49 @@
         ]
       }
     },
+    "/api/v2/admin/families/{parent_id}/sibling-discount": {
+      "get": {
+        "description": "The same decision the monthly invoice run makes, computed without writing.",
+        "operationId": "get_family_sibling_discount_api_v2_admin_families__parent_id__sibling_discount_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "parent_id",
+            "required": true,
+            "schema": {
+              "title": "Parent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FamilySiblingDiscountView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Who gets the sibling discount on this family's month (read-only)",
+        "tags": [
+          "admin.family-offers"
+        ]
+      }
+    },
     "/api/v2/admin/families/{parent_id}/timeline": {
       "get": {
         "description": "The family's unified timeline, newest first, one page at a time.",
@@ -39656,27 +43855,6 @@
           }
         },
         "summary": "Edit Expense",
-        "tags": [
-          "admin.billing"
-        ]
-      }
-    },
-    "/api/v2/admin/finance/payouts": {
-      "get": {
-        "operationId": "list_payouts_api_v2_admin_finance_payouts_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AdminPayoutList"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "List Payouts",
         "tags": [
           "admin.billing"
         ]
@@ -40209,6 +44387,58 @@
         ]
       }
     },
+    "/api/v2/admin/levels/{level_id}/skills/order": {
+      "put": {
+        "operationId": "reorder_skills_api_v2_admin_levels__level_id__skills_order_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "level_id",
+            "required": true,
+            "schema": {
+              "title": "Level Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Reorder Skills Api V2 Admin Levels  Level Id  Skills Order Put"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reorder Skills",
+        "tags": [
+          "admin-pathway"
+        ]
+      }
+    },
     "/api/v2/admin/messages": {
       "get": {
         "operationId": "list_messages_api_v2_admin_messages_get",
@@ -40400,6 +44630,48 @@
           }
         },
         "summary": "Get Pathway Dashboard",
+        "tags": [
+          "admin-progress"
+        ]
+      }
+    },
+    "/api/v2/admin/pathway/placements": {
+      "post": {
+        "description": "Place up to 50 students on one level, crediting skills they already have.\n\nEach student is placed (and audited) on its own: one refusal, such as a\nlevel-up already being approved, does not stop the rest.",
+        "operationId": "place_students_in_bulk_api_v2_admin_pathway_placements_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkPlacementBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Place Students In Bulk Api V2 Admin Pathway Placements Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Place Students In Bulk",
         "tags": [
           "admin-progress"
         ]
@@ -40895,6 +45167,28 @@
         ]
       }
     },
+    "/api/v2/admin/payments/overdue-families": {
+      "get": {
+        "description": "Families past due (no autopay cover) and needing action, in ANY period.",
+        "operationId": "payments_overdue_families_api_v2_admin_payments_overdue_families_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOverdueFamiliesView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Payments Overdue Families",
+        "tags": [
+          "admin.collections"
+        ]
+      }
+    },
     "/api/v2/admin/payments/refund": {
       "post": {
         "description": "Send an ``Idempotency-Key`` (one per refund attempt, reused on retry) so\na retry replays while a second real refund is still issued (#930). Without\nit an identical repeat inside the TTL is a 409 to confirm; a key reused for\na different refund is a 422.",
@@ -41268,6 +45562,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PayoutPeriodWriteRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -41548,6 +45859,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PayoutPeriodWriteRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -41625,6 +45953,66 @@
         "summary": "Reopen Payout Period",
         "tags": [
           "admin.payout-periods"
+        ]
+      }
+    },
+    "/api/v2/admin/payroll-settings": {
+      "get": {
+        "operationId": "get_payroll_settings_api_v2_admin_payroll_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayrollSettingsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Payroll Settings",
+        "tags": [
+          "admin.payroll"
+        ]
+      },
+      "put": {
+        "operationId": "update_payroll_settings_api_v2_admin_payroll_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayrollSettingsView"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayrollSettingsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Payroll Settings",
+        "tags": [
+          "admin.payroll"
         ]
       }
     },
@@ -42549,6 +46937,58 @@
           }
         },
         "summary": "Create Level",
+        "tags": [
+          "admin-pathway"
+        ]
+      }
+    },
+    "/api/v2/admin/programs/{program_id}/levels/order": {
+      "put": {
+        "operationId": "reorder_levels_api_v2_admin_programs__program_id__levels_order_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Reorder Levels Api V2 Admin Programs  Program Id  Levels Order Put"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reorder Levels",
         "tags": [
           "admin-pathway"
         ]
@@ -43697,6 +48137,107 @@
         ]
       }
     },
+    "/api/v2/admin/schedule/publish": {
+      "get": {
+        "operationId": "get_schedule_publish_api_v2_admin_schedule_publish_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePublishView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Schedule Publish",
+        "tags": [
+          "admin.schedule"
+        ]
+      },
+      "put": {
+        "operationId": "set_schedule_publish_api_v2_admin_schedule_publish_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchedulePublishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePublishView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Schedule Publish",
+        "tags": [
+          "admin.schedule"
+        ]
+      }
+    },
+    "/api/v2/admin/schedule/suggest-no-class-dates": {
+      "post": {
+        "operationId": "suggest_no_class_dates_api_v2_admin_schedule_suggest_no_class_dates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestNoClassDatesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuggestNoClassDatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Suggest No Class Dates",
+        "tags": [
+          "admin.schedule"
+        ]
+      }
+    },
     "/api/v2/admin/seed-lesson-cards": {
       "post": {
         "operationId": "seed_lesson_cards_route_api_v2_admin_seed_lesson_cards_post",
@@ -44108,6 +48649,42 @@
           }
         },
         "summary": "Approve Trial Request",
+        "tags": [
+          "admin.self-service-requests"
+        ]
+      }
+    },
+    "/api/v2/admin/self-service/trials/{request_id}/cancel-booking": {
+      "post": {
+        "description": "L9: staff cancel one approved website guest booking. It goes back to\nthe pending queue and the family gets the date-cancelled email.",
+        "operationId": "cancel_guest_trial_booking_api_v2_admin_self_service_trials__request_id__cancel_booking_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Guest Trial Booking",
         "tags": [
           "admin.self-service-requests"
         ]
@@ -44538,6 +49115,59 @@
         ]
       }
     },
+    "/api/v2/admin/session-occurrences/{occurrence_id}/credit-missed": {
+      "post": {
+        "description": "Same path and rule as calling the date off before class: ``dry_run``\nprices every family, the confirm cancels the date and credits them. No\nemail goes out; families see the credit on Payments.",
+        "operationId": "credit_missed_class_api_v2_admin_session_occurrences__occurrence_id__credit_missed_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreditMissedClassRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditMissedClassResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Credit a missed class: record a past date as no class (#1207)",
+        "tags": [
+          "admin.sessions"
+        ]
+      }
+    },
     "/api/v2/admin/session-occurrences/{occurrence_id}/replacement": {
       "patch": {
         "operationId": "update_session_occurrence_replacement_api_v2_admin_session_occurrences__occurrence_id__replacement_patch",
@@ -44771,7 +49401,7 @@
             }
           },
           {
-            "description": "Set to 'upcoming' to return all sessions starting from today through the next 30 days. Overrides 'date' when both are passed.",
+            "description": "'upcoming': classes with a date from the academy's today through the next 30 days. 'all': every class (active, upcoming, ended) with its phase. 'open': the same without ended classes. Overrides 'date' when both are passed.",
             "in": "query",
             "name": "window",
             "required": false,
@@ -44784,7 +49414,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Set to 'upcoming' to return all sessions starting from today through the next 30 days. Overrides 'date' when both are passed.",
+              "description": "'upcoming': classes with a date from the academy's today through the next 30 days. 'all': every class (active, upcoming, ended) with its phase. 'open': the same without ended classes. Overrides 'date' when both are passed.",
               "title": "Window"
             }
           },
@@ -45240,6 +49870,59 @@
           }
         },
         "summary": "Replace the session's assistant coaches (re-syncs future occurrences)",
+        "tags": [
+          "admin.sessions"
+        ]
+      }
+    },
+    "/api/v2/admin/sessions/{session_id}/copy": {
+      "post": {
+        "description": "A0-8: new class from this one; optionally its active students too.",
+        "operationId": "copy_session_api_v2_admin_sessions__session_id__copy_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopySessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopySessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Copy a class",
         "tags": [
           "admin.sessions"
         ]
@@ -46155,6 +50838,68 @@
           }
         },
         "summary": "Get Certificate Detail",
+        "tags": [
+          "admin-progress"
+        ]
+      }
+    },
+    "/api/v2/admin/students/{student_id}/certificates/{cert_id}/revoke": {
+      "post": {
+        "description": "Take back a certificate issued in error. The student stays on their level.",
+        "operationId": "revoke_certificate_api_v2_admin_students__student_id__certificates__cert_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "cert_id",
+            "required": true,
+            "schema": {
+              "title": "Cert Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeCertificateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Revoke Certificate Api V2 Admin Students  Student Id  Certificates  Cert Id  Revoke Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Certificate",
         "tags": [
           "admin-progress"
         ]
@@ -47756,6 +52501,44 @@
         ]
       }
     },
+    "/api/v2/calendar-feed/{token}.ics": {
+      "get": {
+        "operationId": "get_calendar_feed_api_v2_calendar_feed__token__ics_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No calendar for this link on this host."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Calendar Feed",
+        "tags": [
+          "calendar-feed"
+        ]
+      }
+    },
     "/api/v2/coach/academy": {
       "get": {
         "operationId": "get_academy_api_v2_coach_academy_get",
@@ -48191,6 +52974,201 @@
         "summary": "Correct a previously recorded attendance mark (48h grace window)",
         "tags": [
           "coach"
+        ]
+      }
+    },
+    "/api/v2/coach/occurrences/{occurrence_id}/class-recap": {
+      "get": {
+        "operationId": "get_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassRecapView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Class Recap",
+        "tags": [
+          "coach.class-recap"
+        ]
+      },
+      "put": {
+        "operationId": "save_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveClassRecapBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassRecapView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Class Recap",
+        "tags": [
+          "coach.class-recap"
+        ]
+      }
+    },
+    "/api/v2/coach/occurrences/{occurrence_id}/class-reports": {
+      "post": {
+        "operationId": "submit_class_report_api_v2_coach_occurrences__occurrence_id__class_reports_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitClassReportBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassReportView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Class Report",
+        "tags": [
+          "coach.class-recap"
+        ]
+      }
+    },
+    "/api/v2/coach/occurrences/{occurrence_id}/class-reports/{report_id}/resolve": {
+      "post": {
+        "operationId": "resolve_class_report_api_v2_coach_occurrences__occurrence_id__class_reports__report_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassReportView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Class Report",
+        "tags": [
+          "coach.class-recap"
         ]
       }
     },
@@ -50208,47 +55186,6 @@
         "summary": "Healthz"
       }
     },
-    "/api/v2/magic-link/consume": {
-      "post": {
-        "operationId": "consume_magic_link_api_v2_magic_link_consume_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConsumeMagicLinkRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsumeMagicLinkResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Consume Magic Link",
-        "tags": [
-          "magic-link"
-        ]
-      }
-    },
     "/api/v2/me": {
       "get": {
         "operationId": "me_api_v2_me_get",
@@ -50764,6 +55701,48 @@
         "summary": "Create a Stripe customer portal session",
         "tags": [
           "parent.payments"
+        ]
+      }
+    },
+    "/api/v2/parent/calendar-feed": {
+      "get": {
+        "operationId": "get_calendar_feed_link_api_v2_parent_calendar_feed_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarFeedLinkView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Calendar Feed Link",
+        "tags": [
+          "parent.calendar-feed"
+        ]
+      }
+    },
+    "/api/v2/parent/calendar-feed/reset": {
+      "post": {
+        "operationId": "reset_calendar_feed_link_api_v2_parent_calendar_feed_reset_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarFeedLinkView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Reset Calendar Feed Link",
+        "tags": [
+          "parent.calendar-feed"
         ]
       }
     },
@@ -51496,6 +56475,28 @@
         ]
       }
     },
+    "/api/v2/parent/makeups/candidates": {
+      "get": {
+        "description": "#1037/#1041: each child's missed classes the server would accept a\nmakeup request for now, under the academy's current policy.",
+        "operationId": "list_makeup_candidates_api_v2_parent_makeups_candidates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MakeupCandidatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Makeup Candidates",
+        "tags": [
+          "parent.makeup_requests"
+        ]
+      }
+    },
     "/api/v2/parent/makeups/eligible-targets": {
       "get": {
         "operationId": "list_eligible_makeup_targets_api_v2_parent_makeups_eligible_targets_get",
@@ -52042,6 +57043,27 @@
         ]
       }
     },
+    "/api/v2/parent/referral": {
+      "get": {
+        "operationId": "get_referral_api_v2_parent_referral_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentReferralResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "The current parent's referral code and rewards earned",
+        "tags": [
+          "parent.referral"
+        ]
+      }
+    },
     "/api/v2/parent/sessions/available": {
       "get": {
         "operationId": "list_available_sessions_api_v2_parent_sessions_available_get",
@@ -52153,6 +57175,150 @@
         "summary": "Get Certificate Detail",
         "tags": [
           "parent-progress"
+        ]
+      }
+    },
+    "/api/v2/parent/students/{student_id}/certificates/{cert_id}/share": {
+      "delete": {
+        "description": "Turn the public link off; the old link stops working at once (idempotent).",
+        "operationId": "unshare_certificate_api_v2_parent_students__student_id__certificates__cert_id__share_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "cert_id",
+            "required": true,
+            "schema": {
+              "title": "Cert Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Unshare Certificate Api V2 Parent Students  Student Id  Certificates  Cert Id  Share Delete"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unshare Certificate",
+        "tags": [
+          "parent-progress"
+        ]
+      },
+      "post": {
+        "description": "Turn on a public link for the child's certificate (idempotent).",
+        "operationId": "share_certificate_api_v2_parent_students__student_id__certificates__cert_id__share_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "cert_id",
+            "required": true,
+            "schema": {
+              "title": "Cert Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Share Certificate Api V2 Parent Students  Student Id  Certificates  Cert Id  Share Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Share Certificate",
+        "tags": [
+          "parent-progress"
+        ]
+      }
+    },
+    "/api/v2/parent/students/{student_id}/class-recaps": {
+      "get": {
+        "operationId": "list_child_class_recaps_api_v2_parent_students__student_id__class_recaps_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChildClassRecapList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Child Class Recaps",
+        "tags": [
+          "parent-class-recap"
         ]
       }
     },
@@ -52781,6 +57947,40 @@
         "summary": "Stripe webhook receiver (signature-verified, idempotent on event id)",
         "tags": [
           "parent.webhook"
+        ]
+      }
+    },
+    "/api/v2/password-reset": {
+      "post": {
+        "operationId": "request_password_reset_api_v2_password_reset_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Password Reset",
+        "tags": [
+          "password-reset"
         ]
       }
     },
@@ -54782,6 +59982,51 @@
         ]
       }
     },
+    "/api/v2/public/certificates/{token}": {
+      "get": {
+        "operationId": "get_shared_certificate_api_v2_public_certificates__token__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicCertificateDto"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No shared certificate for this link on this host."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Shared Certificate",
+        "tags": [
+          "public"
+        ]
+      }
+    },
     "/api/v2/public/trial-requests": {
       "post": {
         "operationId": "submit_trial_request_api_v2_public_trial_requests_post",
@@ -54800,7 +60045,7 @@
             "description": "No published academy page on this host."
           },
           "409": {
-            "description": "Trials are switched off (Public.TrialsClosed)."
+            "description": "Trials are switched off (Public.TrialsClosed), or the chosen trial date is no longer open (Public.SlotUnavailable)."
           },
           "413": {
             "description": "Request body too large."

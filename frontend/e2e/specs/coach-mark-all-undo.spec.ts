@@ -213,10 +213,10 @@ test.describe("Coach mark-rest-present undo window", () => {
       "aria-pressed",
       "false",
     );
-    // Nothing is left for a BATCH — the two skipped rows take an individual
-    // tap if they turn up — which is the same disabled state #672 leaves
-    // behind for a row the server named ineligible.
-    await expect(bulkButton).toContainText("All marked");
+    // Nothing is left for a BATCH, but the expected-absence row still owes
+    // a decision, so the button says so instead of "All marked" (#1040).
+    // The held seat cannot be marked and is not owed one.
+    await expect(bulkButton).toContainText("Mark the rest one by one");
     await expect(bulkButton).toBeDisabled();
   });
 });

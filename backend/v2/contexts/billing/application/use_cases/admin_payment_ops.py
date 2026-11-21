@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import date
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -53,6 +53,12 @@ class GenerateMonthlyPaymentsResult(BaseModel):
     # Keys an operator reviewed and accepted, which this run left alone (#599).
     skipped_reviewed: int = 0
     skipped_details: list[MonthlyGenerationSkippedDetail] = Field(default_factory=list)
+    # #1033: the notify-on-mint pass's own result, so the scheduler counts it
+    # the same way it counts the sweep (which selects only undelivered
+    # invoices, so nothing is counted twice). ``mint_send_failed``: the whole
+    # pass raised. Kept out of serialisation: it is scheduler bookkeeping.
+    mint_send: Any = Field(default=None, exclude=True)
+    mint_send_failed: bool = False
 
 
 class MarkPaymentPaidCommand(BaseModel):
@@ -141,7 +147,7 @@ class GenerateMonthlyPayments:
         result = await self._payments.generate_monthly_payments(cmd.period)
         if self._notify_minted is not None and result.created > 0:
             try:
-                await self._notify_minted(cmd.period)
+                outcome = await self._notify_minted(cmd.period)
             except Exception:
                 # Generation is the money-critical half and has already
                 # committed. A failed send leaves every invoice
@@ -152,6 +158,8 @@ class GenerateMonthlyPayments:
                     # NB: not "created" — that is a reserved LogRecord field.
                     extra={"period": cmd.period, "invoices_created": result.created},
                 )
+                return result.model_copy(update={"mint_send_failed": True})
+            return result.model_copy(update={"mint_send": outcome})
         return result
 
 

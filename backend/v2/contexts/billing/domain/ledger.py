@@ -60,6 +60,10 @@ class LedgerInvoice(BaseModel):
     refunded_cents: int = Field(default=0, ge=0)
     currency: str = Field(default="usd", min_length=3, max_length=3)
     due_date: date
+    # The day autopay first charges this invoice (L8). Only the monthly
+    # generator stamps it; None means "on the due date" (see ``charge_date``),
+    # so a creation path that forgets charges on the due date, never not at all.
+    autopay_charge_date: date | None = None
     # Human-facing invoice number, e.g. "BLNO-202606-001". Minted once at invoice-creation
     # time via MongoBillingCounterRepository (atomic per academy+month counter) — see
     # format_invoice_number() below. None for invoices created before Slice D (not
@@ -75,6 +79,11 @@ class LedgerInvoice(BaseModel):
     source_id: str | None = None
     # delivery tracking (separate axis from financial status)
     delivery_status: Literal["not_sent", "sent", "delivery_failed"] = "not_sent"
+    # #1035: a monthly invoice minted at net $0 over positive tuition (a full
+    # waiver, or credit covering it) that the send pass should still deliver
+    # with "No payment required". Stamped only at mint, so $0 invoices from
+    # before the change are never swept up and emailed by surprise.
+    zero_net_notice: bool = False
     sent_at: datetime | None = None
     last_sent_at: datetime | None = None
     # Resend provider message id from the most recent successful send. Lets the
@@ -103,6 +112,11 @@ class LedgerInvoice(BaseModel):
     version: int = Field(default=0, ge=0)
     created_at: datetime
     updated_at: datetime
+
+
+def charge_date(due_date: date, autopay_charge_date: date | None) -> date:
+    """The day autopay charges an invoice: its stamp, else its due date (L8)."""
+    return autopay_charge_date or due_date
 
 
 class InvoiceLine(BaseModel):
@@ -173,6 +187,8 @@ class PaymentAllocation(BaseModel):
     invoice_id: str
     amount_cents: int = Field(ge=0)
     created_at: datetime
+    #: The handle ``reverse_payment_allocation`` reverses by; None on pre-0130 rows.
+    idempotency_key: str | None = None
 
 
 class LedgerAllocationResult(BaseModel):

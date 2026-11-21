@@ -139,6 +139,18 @@ export async function stubParentProfile(
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, body);
   });
+  await stubParentReferral(page);
+}
+
+/** The profile page's referral card (L9 C2); off unless a spec says otherwise. */
+export async function stubParentReferral(
+  page: Page,
+  body: Record<string, unknown> = { enabled: false, referral_code: null, rewards_earned: 0 }
+): Promise<void> {
+  await page.route("**/api/v2/parent/referral", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, body);
+  });
 }
 
 /**
@@ -166,6 +178,62 @@ export async function stubNurtureSequence(page: Page): Promise<void> {
 }
 
 /**
+ * Settings > Billing rules renders the Family offers and Referrals cards; a
+ * catch-all `{}` for the offers read leaves it without `sibling_discount` /
+ * `referral_program`.
+ */
+export async function stubFamilyOffers(page: Page): Promise<void> {
+  await page.route("**/api/v2/admin/billing/family-offers", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      sibling_discount: { enabled: false },
+      referral_program: { enabled: false },
+    });
+  });
+  // The Referrals card under it (L9 C2).
+  await page.route("**/api/v2/admin/billing/referrals", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { referrals: [] });
+  });
+  await page.route("**/api/v2/admin/billing/referrals/email-preview", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { emails: [] });
+  });
+}
+
+/**
+ * The student page and the family billing page read the sibling discount
+ * badge. Defaults to switched off, so neither page shows a badge; register it
+ * after any admin catch-all so this body wins.
+ */
+export async function stubFamilySiblingDiscount(page: Page, body?: unknown): Promise<void> {
+  await page.route("**/api/v2/admin/families/*/sibling-discount*", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(
+      route,
+      body ?? {
+        period: "2026-09",
+        enabled: false,
+        percent_bps: null,
+        enrollments: [],
+        next_period: null,
+      },
+    );
+  });
+}
+
+/**
+ * Settings > Curriculum renders the Milestones card (L5B): off and empty, as a
+ * new academy starts.
+ */
+export async function stubProgressSettings(page: Page): Promise<void> {
+  await page.route("**/api/v2/admin/curriculum/progress-settings", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, { milestones_enabled: false, milestones: [], share_name: "first_name" });
+  });
+}
+
+/**
  * The parent waivers page and the admin waivers page both render an AI video
  * consent lane; unstubbed, their reads 502 and fail clean-console specs.
  */
@@ -183,6 +251,24 @@ export async function stubAiVideoConsent(page: Page): Promise<void> {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { children: [] });
   });
+}
+
+/**
+ * The admin messages page resolves the email campaign audience on load
+ * (`POST /admin/campaigns/preview`, #1029). Unstubbed it 502s against the dev
+ * server and trips the clean-console assertion on any spec mounting the page.
+ */
+export async function stubCampaignPreview(page: Page): Promise<void> {
+  await page.route("**/api/v2/admin/campaigns/preview", (route) =>
+    fulfillJson(route, {
+      recipient_count: 0,
+      family_count: 0,
+      contact_count: 0,
+      recipients: [],
+      exclusions: [],
+      audience_fingerprint: "fp-empty",
+    })
+  );
 }
 
 export async function stubParentMessages(

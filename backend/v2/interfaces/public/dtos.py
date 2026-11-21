@@ -9,7 +9,7 @@ recursively and fails on such a field name.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -38,6 +38,15 @@ class PublicSeatsDto(BaseModel):
     seats_left: int | None = None
 
 
+class PublicTrialDateDto(BaseModel):
+    """One date a family can book a free trial on (L9; only while the academy
+    has self-booked trials on). ``slot_key`` is an opaque digest, never the
+    occurrence id; send it back with the trial form to book that date."""
+
+    slot_key: str
+    starts_at: datetime
+
+
 class PublicClassDto(BaseModel):
     #: Opaque id; not the internal class id and not reversible to it.
     public_id: str
@@ -58,6 +67,8 @@ class PublicClassDto(BaseModel):
     price: PublicPriceDto | None = None
     #: Null when the academy hides availability.
     seats: PublicSeatsDto | None = None
+    #: The next bookable trial dates; empty unless self-booked trials are on.
+    trial_dates: list[PublicTrialDateDto] = []
 
 
 class PublicProgramDto(BaseModel):
@@ -196,6 +207,40 @@ class PublicTrialFormRequest(BaseModel):
     marketing_opt_in: bool = False
     #: Honeypot. Hidden from people and assistive technology; a bot fills it.
     website: str | None = None
+    #: L9: a ``trial_dates[].slot_key`` from the page to book that date. An
+    #: unknown key is treated as absent (a plain request).
+    slot_key: str | None = None
+    #: Cloudflare Turnstile token, checked only when booking a date.
+    turnstile_token: str | None = None
+    #: L9 A6-10 attribution: the "how did you hear about us" choice and the
+    #: landing URL's UTM tags. Kept only when short and plain
+    #: (``[A-Za-z0-9_.-]``, at most 80 characters); anything else is dropped.
+    heard_from: str | None = None
+    utm_source: str | None = None
+    utm_medium: str | None = None
+    utm_campaign: str | None = None
+    #: L9 C2: the ``?ref=`` code from a family's shared link (same rule).
+    referral_code: str | None = None
+
+
+class PublicCertificateDto(BaseModel):
+    """A certificate a parent chose to share (L5B, ``/c/<token>``).
+
+    The minimum only: the child's first name or initial (the academy's
+    choice), the level as it was when issued, the certificate number and
+    issue date, and the academy's branding. No surname, no parent, no email,
+    no ids, no skills list and no program.
+    """
+
+    academy: PublicBrandDto
+    recipient_name: str
+    level_name: str
+    #: From the issue-time snapshot; null on certificates issued before it existed.
+    level_number: int | None = None
+    level_color: str | None = None
+    cert_number: str
+    #: The academy-local date it was issued.
+    issued_on: date
 
 
 #: Every model the public persona can serialise, for the no-leak test.
@@ -203,6 +248,7 @@ PUBLIC_RESPONSE_MODELS: tuple[type[BaseModel], ...] = (
     PublicAcademyPageDto,
     PublicAcademyNotPublishedDto,
     PublicTrialRequestAckDto,
+    PublicCertificateDto,
 )
 
 #: Every request body the public persona accepts, for the no-leak test's

@@ -13,15 +13,16 @@ Design notes:
   ``sent``, so a re-run (daily tick, catch-up run, lease handover) does not
   re-email anyone who already received their invoice.
 * **Failures retry on the next tick for free.** A send that fails leaves the
-  invoice at ``delivery_failed``, which the same query still selects
-  tomorrow.
+  invoice at ``delivery_failed``, which the same query still selects on the
+  next run (the next day's run; only a crashed pass retries hourly).
 * **Autopay enrollments get a pre-charge notice, not a pay link.** Their
   invoice gets charged by the dunning/autopay worker; emailing "here is your
   bill, pay here" alongside an automatic charge invites a double payment.
   Instead (issue #651) they receive "X will be charged on <due date>" through
   ``notify_autopay``; when that hook is unwired they are skipped as before.
   Eligibility mirrors the charge path exactly
-  (``autopay_enrollment_status == "active"``).
+  (``autopay_enrollment_status == "active"``). Siblings charged on the same
+  day are one family charge (L8), so they get one notice naming them all.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
-from backend.v2.contexts.billing.domain.ledger import LedgerInvoice
+from backend.v2.contexts.billing.domain.ledger import LedgerInvoice, charge_date
 
 log = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ class SendGeneratedInvoices:
         ledger: UndeliveredInvoiceReader,
         autopay: AutopayStatusReader | None = None,
         send: Callable[[str], Awaitable[object]],
-        notify_autopay: Callable[[str], Awaitable[object]] | None = None,
+        notify_autopay: Callable[..., Awaitable[object]] | None = None,
     ) -> None:
         self._ledger = ledger
         self._autopay = autopay
@@ -100,28 +101,24 @@ class SendGeneratedInvoices:
         skipped_autopay = 0
         autopay_notified = 0
 
+        families: dict[tuple[str, object], list[str]] = {}
         for invoice in invoices:
             if await self._is_autopaying(invoice):
                 if self._notify_autopay is None:
                     skipped_autopay += 1
                     continue
-                try:
-                    await self._notify_autopay(invoice.invoice_id)
-                except Exception:
-                    email_failed += 1
-                    log.exception(
-                        "autopay_notice_email_failed",
-                        extra={"invoice_id": invoice.invoice_id, "period": period},
-                    )
-                    continue
-                autopay_notified += 1
+                key = (
+                    invoice.parent_id,
+                    charge_date(invoice.due_date, invoice.autopay_charge_date),
+                )
+                families.setdefault(key, []).append(invoice.invoice_id)
                 continue
             try:
                 await self._send(invoice.invoice_id)
             except Exception:
                 # One bad invoice must not stop the rest of the academy's
                 # billing run. The invoice keeps its current delivery_status,
-                # so the next daily tick re-selects and retries it.
+                # so the next run re-selects and retries it.
                 email_failed += 1
                 log.exception(
                     "generated_invoice_email_failed",
@@ -129,6 +126,23 @@ class SendGeneratedInvoices:
                 )
                 continue
             emailed += 1
+
+        notify = self._notify_autopay
+        for invoice_ids in families.values():
+            assert notify is not None  # families fill only when the hook is wired
+            try:
+                if len(invoice_ids) > 1:
+                    await notify(invoice_ids[0], family_invoice_ids=invoice_ids)
+                else:
+                    await notify(invoice_ids[0])
+            except Exception:
+                email_failed += len(invoice_ids)
+                log.exception(
+                    "autopay_notice_email_failed",
+                    extra={"invoice_ids": invoice_ids, "period": period},
+                )
+                continue
+            autopay_notified += len(invoice_ids)
 
         truncated = len(invoices) >= limit
         if truncated:
@@ -155,7 +169,9 @@ class SendGeneratedInvoices:
         receiving an invoice they were also charged for is recoverable; a
         parent silently receiving nothing is the bug this fixes.
         """
-        if self._autopay is None or not invoice.enrollment_id:
+        # Autopay never charges a $0 balance (a fully waived month, #1035), so
+        # a "will be charged" notice would be false: email the invoice instead.
+        if self._autopay is None or not invoice.enrollment_id or invoice.balance_due_cents <= 0:
             return False
         try:
             status = await self._autopay.get_autopay_enrollment_status(

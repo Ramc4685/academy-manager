@@ -160,6 +160,7 @@ export interface AttendanceRiskView {
   byCoach: RiskRow[];
   students: number;
   atRisk: number;
+  notBilled: number;
 }
 
 const NO_COACH = "No coach assigned";
@@ -202,7 +203,13 @@ export function normalizeAttendanceRisk(raw: unknown): AttendanceRiskView | null
       share: conversionText(row.at_risk_rate as number | null | undefined),
     };
   });
-  return { byClass, byCoach, students: count(data.students), atRisk: count(data.at_risk) };
+  return {
+    byClass,
+    byCoach,
+    students: count(data.students),
+    atRisk: count(data.at_risk),
+    notBilled: count(data.not_billed),
+  };
 }
 
 export function studentsText(n: number): string {

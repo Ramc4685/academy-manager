@@ -30,6 +30,9 @@ from backend.v2.contexts.enrollment.application.use_cases.public_catalog import 
     PublicCatalog,
     PublicClassView,
 )
+from backend.v2.contexts.enrollment.application.use_cases.trial_guest_booking import (
+    BookableTrialDate,
+)
 from backend.v2.contexts.identity.application.public_academy_profile import (
     PublicAcademyProfile,
 )
@@ -48,6 +51,7 @@ from backend.v2.interfaces.public.dtos import (
     PublicPriceDto,
     PublicProgramDto,
     PublicSeatsDto,
+    PublicTrialDateDto,
     PublicVenueDto,
 )
 from backend.v2.shared.tenancy.context import tenant_scope
@@ -92,6 +96,13 @@ async def get_public_academy_page(request: Request, response: Response) -> Any:
             few_seats_threshold=settings.seats_left_threshold,
             default_venue_address=profile.default_venue_address,
         )
+        trial_dates = (
+            await public_page.list_trial_dates.execute(
+                str(academy_id), guest_cap=settings.trial_guest_cap
+            )
+            if settings.self_book_trials and settings.trials_open
+            else {}
+        )
         shown = [p for p in settings.coach_profiles if p.shown]
         names = (
             await public_page.profile_coach_names.display_names(
@@ -100,7 +111,7 @@ async def get_public_academy_page(request: Request, response: Response) -> Any:
             if shown
             else {}
         )
-    return _page(profile, catalog, _coaches(shown, names))
+    return _page(profile, catalog, _coaches(shown, names), trial_dates)
 
 
 def _coaches(shown: list[CoachProfile], names: dict[str, str]) -> list[PublicCoachDto]:
@@ -127,9 +138,16 @@ def _brand(profile: PublicAcademyProfile) -> PublicBrandDto:
 
 
 def _page(
-    profile: PublicAcademyProfile, catalog: PublicCatalog, coaches: list[PublicCoachDto]
+    profile: PublicAcademyProfile,
+    catalog: PublicCatalog,
+    coaches: list[PublicCoachDto],
+    trial_dates: dict[str, list[BookableTrialDate]],
 ) -> PublicAcademyPageDto:
     settings = profile.settings
+
+    def _class(view: PublicClassView) -> PublicClassDto:
+        return _class_dto(view, trial_dates.get(view.public_id, []))
+
     return PublicAcademyPageDto(
         academy=PublicAcademyDto(
             **_brand(profile).model_dump(),
@@ -176,7 +194,7 @@ def _age_band(band: Any) -> PublicAgeBandDto | None:
     return PublicAgeBandDto(min_age=band.min_age, max_age=band.max_age)
 
 
-def _class(view: PublicClassView) -> PublicClassDto:
+def _class_dto(view: PublicClassView, dates: list[BookableTrialDate]) -> PublicClassDto:
     return PublicClassDto(
         public_id=view.public_id,
         title=view.title,
@@ -201,4 +219,5 @@ def _class(view: PublicClassView) -> PublicClassDto:
             if view.seats
             else None
         ),
+        trial_dates=[PublicTrialDateDto(slot_key=d.slot_key, starts_at=d.start_at) for d in dates],
     )

@@ -27,6 +27,15 @@ it is best-effort and logged — a mail outage or a billing hiccup must never
 report "could not cancel" for a class that is, in fact, cancelled. The
 lifecycle event per enrolled student carries ``billing_result`` so an admin
 can see when billing did not follow.
+
+Credit a missed class (#1207) runs through THIS use case with ``missed=True``:
+a PAST date the academy found out about too late. Only the precheck differs
+(``assert_missed_class_creditable``: the date has passed, nobody was marked
+present). Everything after the commit point is the call-off path, so the
+credits match a pre-class call-off to the cent and are idempotent per date by
+the same credit source. A frozen payout period does not refuse it — the
+families are owed the money either way — it flags payroll for a hand fix.
+``preview_missed`` prices the same date without writing anything.
 """
 
 from __future__ import annotations
@@ -43,24 +52,33 @@ from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentQuery,
     MakeupPolicyLookup,
     MakeupReopener,
+    OccurrenceAttendanceCheck,
     OccurrenceBillingSync,
     OccurrenceCancellationNotifier,
     OccurrenceRosterPurge,
     PayoutPeriodLock,
     SessionOccurrenceRepository,
     SessionQuery,
+    TrialGuestCancellationNotifier,
     TrialReopener,
 )
 from backend.v2.contexts.enrollment.domain.errors import (
+    MissedClassScheduleChanged,
     OccurrenceAlreadyCancelled,
     OccurrenceNotFound,
     PayoutPeriodFrozen,
 )
 from backend.v2.contexts.enrollment.domain.events import EnrollmentLifecycleEvent
-from backend.v2.contexts.enrollment.domain.models import ACTIVE_OR_PAUSED, SessionOccurrence
+from backend.v2.contexts.enrollment.domain.models import (
+    ACTIVE_OR_PAUSED,
+    Session,
+    SessionOccurrence,
+)
 from backend.v2.contexts.enrollment.domain.occurrence_cancellation import (
+    assert_missed_class_creditable,
     assert_occurrence_cancellable,
 )
+from backend.v2.contexts.enrollment.domain.self_service import TrialRequest
 from backend.v2.shared.ids import new_ulid
 
 log = logging.getLogger(__name__)
@@ -92,6 +110,12 @@ class CancelSessionOccurrenceCommand(BaseModel):
     #: ``False`` records the cancellation without emailing families/coach —
     #: for a date the academy has already announced by other means.
     notify: bool = True
+    #: Academy closures (``CloseAcademyDates``) cancel many dates and send ONE
+    #: summary per family, so they skip this date's family/staff email and
+    #: read the audience off the result instead. Trial guests are still told.
+    defer_family_notice: bool = False
+    #: #1207: a PAST date recorded as no class ("credit a missed class").
+    missed: bool = False
 
 
 class CancelSessionOccurrenceResult(BaseModel):
@@ -103,8 +127,41 @@ class CancelSessionOccurrenceResult(BaseModel):
     makeups_reopened: int = 0
     trials_reopened: int = 0
     credits_issued: int = 0
+    #: What the date credited in total, and skip reason → families (#1207).
+    credit_total_cents: int = 0
+    credit_skips: dict[str, int] = Field(default_factory=dict)
     billing_result: str | None = None
     notified: bool = False
+    #: The notice inputs a deferred caller needs to tell the families itself.
+    one_time_student_ids: tuple[str, ...] = ()
+    credited_student_ids: tuple[str, ...] = ()
+    billing_warning: str | None = None
+    #: #1207: set when the coach's payout period is frozen; payroll needs a hand fix.
+    payroll_flag: str | None = None
+
+
+class MissedClassFamily(BaseModel):
+    model_config = {"frozen": True}
+
+    enrollment_id: str
+    student_id: str | None = None
+    amount_cents: int = 0
+    outcome: str  # would_credit | already_credited | skipped:<reason>
+
+
+class MissedClassPreview(BaseModel):
+    """What crediting a missed date would do, priced by billing, written nowhere."""
+
+    model_config = {"frozen": True}
+
+    occurrence: SessionOccurrence
+    families: tuple[MissedClassFamily, ...] = ()
+    credit_total_cents: int = 0
+    credit_skips: dict[str, int] = Field(default_factory=dict)
+    payroll_flag: str | None = None
+    #: Billing never laid out this date (the schedule was edited after it):
+    #: confirming is refused, so the families are credited by hand.
+    schedule_changed: bool = False
 
 
 class CancelSessionOccurrence:
@@ -121,7 +178,9 @@ class CancelSessionOccurrence:
         makeup_policies: MakeupPolicyLookup | None = None,
         billing_sync: OccurrenceBillingSync | None = None,
         notifier: OccurrenceCancellationNotifier | None = None,
+        guest_notifier: TrialGuestCancellationNotifier | None = None,
         payout_lock: PayoutPeriodLock | None = None,
+        attendance: OccurrenceAttendanceCheck | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._occurrences = occurrences
@@ -134,22 +193,124 @@ class CancelSessionOccurrence:
         self._makeup_policies = makeup_policies
         self._billing = billing_sync
         self._notifier = notifier
+        self._guest_notifier = guest_notifier
         self._payout_lock = payout_lock
+        self._attendance = attendance
         self._now = clock
 
-    async def execute(self, cmd: CancelSessionOccurrenceCommand) -> CancelSessionOccurrenceResult:
-        now = self._now()
-        occurrence = await self._occurrences.get(cmd.occurrence_id)
+    async def check_cancellable(self, occurrence_id: str) -> None:
+        """Every refusal ``execute`` makes before its commit point, writing
+        nothing: an academy closure's preview uses it."""
+        await self._precheck(occurrence_id, self._now())
+
+    async def _precheck(
+        self, occurrence_id: str, now: datetime, *, missed: bool = False
+    ) -> tuple[SessionOccurrence, Session | None, str, str | None]:
+        """``(occurrence, session, session_id, payroll_flag)`` or the refusal."""
+        occurrence = await self._occurrences.get(occurrence_id)
         if occurrence is None:
-            raise OccurrenceNotFound("no such class date", occurrence_id=cmd.occurrence_id)
+            raise OccurrenceNotFound("no such class date", occurrence_id=occurrence_id)
         session_id = occurrence.template_session_id or occurrence.session_id
         session = await self._sessions.get(session_id)
+        if missed:
+            assert_missed_class_creditable(
+                occurrence,
+                session=session,
+                now=now,
+                present_count=await self._present_count(occurrence_id),
+            )
+            return occurrence, session, session_id, await self._payroll_flag(occurrence)
         assert_occurrence_cancellable(occurrence, session=session, now=now)
         # #787: cancelling clears ``is_payable``, which an approved/paid
         # payout period will never re-read. Refuse before the CAS commit
         # point rather than leave payroll silently disagreeing with the
         # schedule.
         await self._assert_payout_window_open(occurrence)
+        return occurrence, session, session_id, None
+
+    async def _present_count(self, occurrence_id: str) -> int | None:
+        if self._attendance is None:
+            return None
+        return await self._attendance.present_count(occurrence_id)
+
+    async def _payroll_flag(self, occurrence: SessionOccurrence) -> str | None:
+        """The frozen payout status for a missed date, or ``None`` when payroll
+        will simply stop paying it on its next run."""
+        if self._payout_lock is None:
+            return None
+        lead = occurrence.actual_coach_id or occurrence.scheduled_coach_id
+        # Assistants are paid their own lines for the date, so their periods count too.
+        coaches = _distinct([c for c in (lead, *occurrence.assistant_coach_ids) if c])
+        statuses = [
+            # A draft counts too: it was computed while the date was still payable.
+            await self._payout_lock.locked_status_for(
+                coach_id=coach_id, at=occurrence.start_at, include_draft=True
+            )
+            for coach_id in coaches
+        ]
+        # A frozen (approved/paid) period needs a hand fix; prefer it over a draft.
+        frozen = [s for s in statuses if s and s != "draft"]
+        return frozen[0] if frozen else ("draft" if "draft" in statuses else None)
+
+    async def _quote(self, occurrence: SessionOccurrence, session_id: str) -> dict[str, Any]:
+        if self._billing is None:
+            raise RuntimeError("occurrence billing sync is not wired")
+        return await self._billing.apply(
+            occurrence_id=occurrence.occurrence_id,
+            session_id=session_id,
+            start_at=occurrence.start_at,
+            reason="",
+            actor_id=None,
+            dry_run=True,
+        )
+
+    async def preview_missed(self, occurrence_id: str) -> MissedClassPreview:
+        """Price crediting a missed date for every family, writing nothing (#1207)."""
+        occurrence, _, session_id, payroll_flag = await self._precheck(
+            occurrence_id, self._now(), missed=True
+        )
+        quote = await self._quote(occurrence, session_id)
+        students = {
+            row.enrollment_id: row.student_id
+            for row in await self._enrollments.for_session_in_statuses(
+                session_id, sorted(_AFFECTED_STATUSES)
+            )
+        }
+        return MissedClassPreview(
+            occurrence=occurrence,
+            families=tuple(
+                MissedClassFamily(
+                    enrollment_id=str(f["enrollment_id"]),
+                    student_id=students.get(str(f["enrollment_id"])),
+                    amount_cents=int(f.get("amount_cents") or 0),
+                    outcome=str(f.get("outcome") or ""),
+                )
+                for f in quote.get("families") or []
+            ),
+            credit_total_cents=int(quote.get("credited_cents") or 0),
+            credit_skips=dict(quote.get("skip_counts") or {}),
+            payroll_flag=_payroll_flag_text(payroll_flag),
+            schedule_changed=quote.get("schedule_matched") is False,
+        )
+
+    async def execute(self, cmd: CancelSessionOccurrenceCommand) -> CancelSessionOccurrenceResult:
+        now = self._now()
+        occurrence, session, session_id, payroll_flag = await self._precheck(
+            cmd.occurrence_id, now, missed=cmd.missed
+        )
+        if cmd.missed and self._billing is not None:
+            # Refuse before the commit point: cancelling a date billing cannot
+            # price would mark it No class and credit nobody (#1207 review).
+            if (await self._quote(occurrence, session_id)).get("schedule_matched") is False:
+                raise MissedClassScheduleChanged(
+                    "the class schedule changed since this date; credit families by hand",
+                    occurrence_id=cmd.occurrence_id,
+                )
+        if payroll_flag:
+            log.warning(
+                "enrollment.missed_class_payroll_frozen",
+                extra={"occurrence_id": cmd.occurrence_id, "payout_status": payroll_flag},
+            )
 
         cancelled = await self._occurrences.cancel_scheduled(
             occurrence_id=cmd.occurrence_id,
@@ -166,13 +327,16 @@ class CancelSessionOccurrence:
                     "this class date is already cancelled",
                     occurrence_id=cmd.occurrence_id,
                 )
-            assert_occurrence_cancellable(latest or occurrence, session=session, now=now)
+            if not cmd.missed:
+                assert_occurrence_cancellable(latest or occurrence, session=session, now=now)
             raise OccurrenceNotFound("no such class date", occurrence_id=cmd.occurrence_id)
 
         # --- past the commit point: everything below is best-effort -------
         removed_entries = await self._purge_roster(cmd.occurrence_id)
         makeups_reopened = await self._reopen_makeups(cmd.occurrence_id, now=now)
-        trial_student_ids = await self._reopen_trials(cmd.occurrence_id)
+        reopened_trials = await self._reopen_trials(cmd.occurrence_id)
+        trial_student_ids = [t.student_id for t in reopened_trials if t.student_id]
+        guests = [t for t in reopened_trials if t.contact_id]
         # Make-up and trial students hold a one-time seat and no enrollment on
         # this session, so the roster audience never reaches them. Their seat
         # has just been deleted; telling them is the whole point (#671).
@@ -203,10 +367,11 @@ class CancelSessionOccurrence:
                 now=now,
                 billing_result=billing_result,
                 credit_id=str(credit) if credit else None,
+                payroll_flag=payroll_flag,
             )
 
         notified = False
-        if cmd.notify:
+        if cmd.notify and not cmd.defer_family_notice:
             notified = await self._notify(
                 cancelled,
                 session_id=session_id,
@@ -216,15 +381,32 @@ class CancelSessionOccurrence:
                 billing_warning=_billing_warning(billing_result),
             )
 
+        if cmd.notify and guests and self._guest_notifier is not None:
+            try:
+                await self._guest_notifier.trial_date_cancelled(
+                    trials=guests, start_at=cancelled.start_at, reason=cmd.reason
+                )
+            except Exception:
+                log.exception(
+                    "enrollment.trial_guest_cancel_notify_failed",
+                    extra={"occurrence_id": cmd.occurrence_id},
+                )
+
         return CancelSessionOccurrenceResult(
             occurrence=cancelled,
             affected_enrollment_ids=tuple(row.enrollment_id for row in rows),
             roster_entries_removed=len(removed_entries),
             makeups_reopened=makeups_reopened,
-            trials_reopened=len(trial_student_ids),
+            trials_reopened=len(reopened_trials),
             credits_issued=sum(1 for value in credits.values() if value),
+            credit_total_cents=int(billing.get("credited_cents") or 0),
+            credit_skips=dict(billing.get("skip_counts") or {}),
             billing_result=billing_result,
             notified=notified,
+            one_time_student_ids=tuple(one_time_student_ids),
+            credited_student_ids=tuple(credited_student_ids),
+            billing_warning=_billing_warning(billing_result),
+            payroll_flag=_payroll_flag_text(payroll_flag),
         )
 
     async def _assert_payout_window_open(self, occurrence: SessionOccurrence) -> None:
@@ -291,7 +473,7 @@ class CancelSessionOccurrence:
                 log.exception("enrollment.makeup_policy_read_failed")
         return now + timedelta(days=max(days, 1))
 
-    async def _reopen_trials(self, occurrence_id: str) -> list[str]:
+    async def _reopen_trials(self, occurrence_id: str) -> list[TrialRequest]:
         """Trials assigned to the cancelled date, back to pending (#671).
 
         Without this a trial stays ``approved`` against a class that will not
@@ -349,9 +531,19 @@ class CancelSessionOccurrence:
         now: datetime,
         billing_result: str | None,
         credit_id: str | None,
+        payroll_flag: str | None = None,
     ) -> None:
         if self._events is None:
             return
+        metadata = {
+            "occurrence_id": occurrence.occurrence_id,
+            "start_at": occurrence.start_at.isoformat(),
+        }
+        if cmd.missed:
+            metadata["missed_class"] = "true"
+        if payroll_flag:
+            # Durable trace that payroll was frozen and needs a hand fix (#1207).
+            metadata["payroll_flag"] = payroll_flag
         try:
             await self._events.record(
                 EnrollmentLifecycleEvent(
@@ -368,10 +560,7 @@ class CancelSessionOccurrence:
                     billing_policy="cancelled_date_credited",
                     billing_result=billing_result,
                     credit_id=credit_id,
-                    metadata={
-                        "occurrence_id": occurrence.occurrence_id,
-                        "start_at": occurrence.start_at.isoformat(),
-                    },
+                    metadata=metadata,
                 )
             )
         except Exception:
@@ -435,6 +624,20 @@ def _billing_warning(billing_result: str | None) -> str | None:
     if billing_result is None:
         return None
     return _BILLING_FAILURES.get(billing_result)
+
+
+def _payroll_flag_text(status: str | None) -> str | None:
+    if not status:
+        return None
+    if status == "draft":
+        return (
+            "A coach's payout for this period is a draft that still counts this date. "
+            "Recompute that coach's draft payout before approving it."
+        )
+    return (
+        f"A coach's payout period for this date is already {status}, so payroll will not "
+        "pick this change up. Adjust the coach's pay for this date by hand."
+    )
 
 
 def _distinct(values: list[str]) -> list[str]:

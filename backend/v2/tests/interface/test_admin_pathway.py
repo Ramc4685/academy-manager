@@ -553,11 +553,13 @@ def test_add_skill_accepts_the_payload_the_admin_ui_sends():
 
     assert r.status_code == 201, r.text
     cmd = create.execute.await_args.args[0]
-    assert (cmd.level_id, cmd.program_id, cmd.sequence) == ("level-1", "prog-1", 3)
+    # An old client's sequence is ignored; the server numbers the skill.
+    assert (cmd.level_id, cmd.program_id) == ("level-1", "prog-1")
+    assert not hasattr(cmd, "sequence")
     assert cmd.scoring_type == "COACH_APPROVAL"
 
 
-def test_add_skill_without_program_id_and_sequence_is_422():
+def test_add_skill_without_program_id_is_422():
     create = SimpleNamespace(execute=AsyncMock())
     client = TestClient(_build_real_router_app(curriculum=SimpleNamespace(create_skill=create)))
 
@@ -568,8 +570,7 @@ def test_add_skill_without_program_id_and_sequence_is_422():
 
     assert r.status_code == 422, r.text
     missing = {tuple(e["loc"]) for e in r.json()["detail"]}
-    assert ("body", "program_id") in missing
-    assert ("body", "sequence") in missing
+    assert missing == {("body", "program_id")}
     create.execute.assert_not_awaited()
 
 
@@ -654,3 +655,76 @@ def test_real_router_seed_badminton_409s_for_non_badminton_academy():
     assert r.status_code == 409, r.text
     assert "badminton" in r.json()["detail"].lower()
     seed.execute.assert_not_awaited()
+
+
+def _retire_app(
+    *, curriculum: Any, on_level: list[str], pending: bool = False, pending_into: int = 0
+) -> TestClient:
+    checks = SimpleNamespace(
+        active_student_ids=AsyncMock(return_value=on_level),
+        pending_level_ups_into=AsyncMock(return_value=pending_into),
+        held_back_by=AsyncMock(return_value=["a"]),
+        recheck_students=AsyncMock(return_value=1),
+        has_pending_level_ups=AsyncMock(return_value=pending),
+    )
+    app = _build_real_router_app(curriculum=curriculum)
+    app.dependency_overrides[get_admin_use_cases] = lambda: SimpleNamespace(
+        curriculum=curriculum,
+        student_progress=SimpleNamespace(curriculum_change_checks=checks),
+    )
+    return TestClient(app)
+
+
+def test_retiring_a_level_with_students_on_it_is_409_and_writes_nothing():
+    update = SimpleNamespace(execute=AsyncMock())
+    client = _retire_app(curriculum=SimpleNamespace(update_level=update), on_level=["a", "b"])
+
+    r = client.put("/api/v2/admin/levels/level-1", json={"is_active": False})
+
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["active_students"] == 2
+    update.execute.assert_not_awaited()
+
+
+def test_retiring_a_level_a_pending_level_up_targets_is_409():
+    """Else the 18:30 auto-approve would place students on the retired level."""
+    update = SimpleNamespace(execute=AsyncMock())
+    client = _retire_app(
+        curriculum=SimpleNamespace(update_level=update), on_level=[], pending_into=2
+    )
+
+    r = client.put("/api/v2/admin/levels/level-1", json={"is_active": False})
+
+    assert r.status_code == 409, r.text
+    assert "level-ups" in r.text
+    update.execute.assert_not_awaited()
+
+
+def test_retiring_a_skill_reports_students_and_queued_level_ups():
+    update = SimpleNamespace(execute=AsyncMock(return_value=_make_skill()))
+    client = _retire_app(curriculum=SimpleNamespace(update_skill=update), on_level=["a"])
+
+    r = client.put("/api/v2/admin/skills/skill-1", json={"is_active": False})
+
+    assert r.status_code == 200, r.text
+    assert (r.json()["active_students"], r.json()["level_ups_queued"]) == (1, 1)
+    assert update.execute.await_args.args[0].is_active is False
+
+
+def test_reordering_levels_waits_for_pending_level_ups():
+    reorder = SimpleNamespace(execute=AsyncMock(return_value=["l2", "l1"]))
+    blocked = _retire_app(
+        curriculum=SimpleNamespace(reorder_levels=reorder), on_level=[], pending=True
+    )
+    assert (
+        blocked.put(
+            "/api/v2/admin/programs/prog-1/levels/order", json={"ids": ["l2", "l1"]}
+        ).status_code
+        == 409
+    )
+    reorder.execute.assert_not_awaited()
+
+    free = _retire_app(curriculum=SimpleNamespace(reorder_levels=reorder), on_level=[])
+    r = free.put("/api/v2/admin/programs/prog-1/levels/order", json={"ids": ["l2", "l1"]})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ids": ["l2", "l1"]}

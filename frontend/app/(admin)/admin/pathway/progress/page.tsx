@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   getAdminPathwayProgress,
@@ -13,6 +13,9 @@ import {
 import { getActiveAcademyId } from "@/lib/api/client";
 import { buildStudentProgressHref } from "@/lib/navigation/admin-student-progress-return";
 import { Card } from "@/components/ds/card";
+import { Button } from "@/components/ds/button";
+import { BulkPlacementModal } from "@/components/admin/curriculum/bulk-placement-modal";
+import { MAX_BULK_PLACEMENT, visibleSelection } from "@/lib/admin/bulk-placement";
 
 const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
 
@@ -33,6 +36,9 @@ export default function AdminPathwayProgressPage() {
   const academyId = getActiveAcademyId() ?? "";
   const [selectedProgramId, setSelectedProgramId] = useState("");
   const [nextAction, setNextAction] = useState<ProgressNextAction | "">("");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [placing, setPlacing] = useState(false);
+  const queryClient = useQueryClient();
 
   const { data: programs, isLoading: programsLoading, isError: programsError } = useQuery({
     queryKey: ["admin", "programs", academyId],
@@ -73,6 +79,8 @@ export default function AdminPathwayProgressPage() {
   }
 
   const progressRows = rows ?? [];
+  const visibleIds = progressRows.map((row) => row.student_id);
+  const placeable = visibleSelection(selected, visibleIds);
 
   return (
     <section data-testid="admin-pathway-progress" className="space-y-6">
@@ -89,7 +97,10 @@ export default function AdminPathwayProgressPage() {
             <span className="mb-1 block text-xs font-medium text-neutral-600">Program</span>
             <select
               value={selectedProgramId}
-              onChange={(event) => setSelectedProgramId(event.target.value)}
+              onChange={(event) => {
+                setSelectedProgramId(event.target.value);
+                setSelected([]);
+              }}
               className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
               disabled={programsLoading || programList.length === 0}
             >
@@ -109,7 +120,11 @@ export default function AdminPathwayProgressPage() {
             <span className="mb-1 block text-xs font-medium text-neutral-600">Next action</span>
             <select
               value={nextAction}
-              onChange={(event) => setNextAction(event.target.value as ProgressNextAction | "")}
+              onChange={(event) => {
+                setNextAction(event.target.value as ProgressNextAction | "");
+                // A selection from the old view must not reach a bulk placement.
+                setSelected([]);
+              }}
               className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
             >
               <option value="">All actions</option>
@@ -134,7 +149,33 @@ export default function AdminPathwayProgressPage() {
       ) : (
         <>
           <SummaryTiles rows={progressRows} />
-          <ProgressTable rows={progressRows} />
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              size="sm"
+              disabled={placeable.length === 0 || placeable.length > MAX_BULK_PLACEMENT}
+              onClick={() => setPlacing(true)}
+            >
+              Place selected ({placeable.length})
+            </Button>
+            {placeable.length > MAX_BULK_PLACEMENT && (
+              <span className="text-xs text-red-700">
+                Pick at most {MAX_BULK_PLACEMENT} students at a time.
+              </span>
+            )}
+          </div>
+          <ProgressTable rows={progressRows} selected={selected} onSelect={setSelected} />
+          <BulkPlacementModal
+            key={placing ? "open" : "closed"}
+            open={placing}
+            programId={selectedProgramId}
+            studentIds={selected}
+            visibleIds={visibleIds}
+            onClose={() => setPlacing(false)}
+            onPlaced={() => {
+              setSelected([]);
+              void queryClient.invalidateQueries({ queryKey: ["admin", "pathway-progress"] });
+            }}
+          />
         </>
       )}
     </section>
@@ -169,13 +210,33 @@ function StatTile({ label, value }: { label: string; value: number }) {
   );
 }
 
-function ProgressTable({ rows }: { rows: StudentProgressOverview[] }) {
+function ProgressTable({
+  rows,
+  selected,
+  onSelect,
+}: {
+  rows: StudentProgressOverview[];
+  selected: string[];
+  onSelect: (ids: string[]) => void;
+}) {
+  const allIds = rows.map((row) => row.student_id);
+  const allSelected = allIds.length > 0 && allIds.every((id) => selected.includes(id));
+  const toggle = (id: string) =>
+    onSelect(selected.includes(id) ? selected.filter((s) => s !== id) : [...selected, id]);
   return (
     <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-neutral-200 text-sm">
           <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
             <tr>
+              <th className="w-10 px-4 py-3">
+                <input
+                  type="checkbox"
+                  aria-label="Select all students"
+                  checked={allSelected}
+                  onChange={() => onSelect(allSelected ? [] : allIds)}
+                />
+              </th>
               <th className="px-4 py-3 text-left font-semibold">Student</th>
               <th className="px-4 py-3 text-left font-semibold">Level</th>
               <th className="px-4 py-3 text-left font-semibold">Required</th>
@@ -194,6 +255,14 @@ function ProgressTable({ rows }: { rows: StudentProgressOverview[] }) {
               });
               return (
                 <tr key={row.student_id} className="hover:bg-neutral-50">
+                  <td className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${row.student_name}`}
+                      checked={selected.includes(row.student_id)}
+                      onChange={() => toggle(row.student_id)}
+                    />
+                  </td>
                   <td className="px-4 py-3">
                     <Link
                       href={detailHref as Parameters<typeof Link>[0]["href"]}

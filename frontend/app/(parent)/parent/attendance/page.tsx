@@ -2,7 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { listParentAttendance } from "@/lib/api/parent";
+import { getParentAcademy, listParentAttendance } from "@/lib/api/parent";
+import { formatAcademyDateTime } from "@/lib/format/academy-time";
 
 function statusPill(status: string): { bg: string; color: string } {
   switch (status) {
@@ -27,6 +28,12 @@ export default function ParentAttendancePage() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["parent", "attendance"],
     queryFn: listParentAttendance,
+  });
+
+  // marked_at arrives as naive UTC; show it in the academy's timezone, not the browser's.
+  const { data: academy } = useQuery({
+    queryKey: ["parent", "academy"],
+    queryFn: getParentAcademy,
   });
 
   const records = data?.records ?? [];
@@ -129,7 +136,7 @@ export default function ParentAttendancePage() {
                     className="mt-2 text-xs"
                     style={{ color: "var(--rally-muted)" }}
                   >
-                    {new Date(record.marked_at).toLocaleString()}
+                    {formatAcademyDateTime(record.marked_at, academy?.timezone)}
                   </p>
                 </div>
               </li>

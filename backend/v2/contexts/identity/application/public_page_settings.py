@@ -23,6 +23,7 @@ from backend.v2.contexts.identity.domain.errors import InvalidPublicPageSettings
 from backend.v2.contexts.identity.domain.public_page import (
     DEFAULT_SEATS_LEFT_THRESHOLD,
     MAX_SEATS_LEFT_THRESHOLD,
+    MAX_TRIAL_GUEST_CAP,
     PUBLIC_PAGE_FIELD,
     CoachProfile,
     PublicPageSettings,
@@ -34,6 +35,7 @@ log = logging.getLogger(__name__)
 __all__ = [
     "DEFAULT_SEATS_LEFT_THRESHOLD",
     "MAX_SEATS_LEFT_THRESHOLD",
+    "MAX_TRIAL_GUEST_CAP",
     "CoachProfile",
     "CoachRoster",
     "GetPublicPageAddress",

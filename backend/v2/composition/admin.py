@@ -17,6 +17,7 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.v2.composition.absence_notifications import compose_absence_notifier
 from backend.v2.composition.academy_links import academy_frontend_base_url_lookup
+from backend.v2.composition.ach_schedule_notice import build_ach_notice_preview
 from backend.v2.composition.admin_registration_review import (
     AdminRegistrationReview,
     compose_registration_decline_refunds,
@@ -34,6 +35,7 @@ from backend.v2.composition.autopay_comms import (
     build_send_autopay_notice,
 )
 from backend.v2.composition.billing_setup_roster import BillingSetupRosterAdapter
+from backend.v2.composition.collections import parent_payments_link
 from backend.v2.composition.connected_account_adapters import (
     ConnectedAccountGatewayDisabler,
     ConnectedAccountGatewayReader,
@@ -56,12 +58,14 @@ from backend.v2.composition.event_handlers import (
     install_dispute_notifier,
     install_dunning_notifier,
 )
+from backend.v2.composition.families import compose_system_family_autopay_pause
 from backend.v2.composition.invoice_contact_copies import build_invoice_contact_copies
 from backend.v2.composition.invoice_naming import (
     build_invoice_naming_resolver,
     find_invoice_by_id_or_number,
 )
 from backend.v2.composition.lifecycle_billing import (
+    build_add_invoice_line,
     build_autopay_status_gateway,
     build_void_billing_invoice,
     compose_enrollment_billing_sync,
@@ -69,7 +73,7 @@ from backend.v2.composition.lifecycle_billing import (
     compose_withdrawal_decision,
 )
 from backend.v2.composition.manual_invoice import create_manual_invoice
-from backend.v2.composition.occurrence_cancellation import compose_cancel_session_occurrence
+from backend.v2.composition.occurrence_cancellation import compose_occurrence_cancellations
 from backend.v2.composition.pathway import (
     compose_curriculum,
     compose_student_progress,
@@ -88,6 +92,7 @@ from backend.v2.composition.scheduled_cancellations import (
     compose_process_scheduled_cancellation_actions,
 )
 from backend.v2.composition.session_announcements import compose_announcements
+from backend.v2.composition.started_occurrences import insert_started_today, occurrence_fields
 from backend.v2.composition.student_autopay import compose_get_admin_student
 from backend.v2.composition.waiver_receipt_email import compose_waiver_receipt_notifier
 from backend.v2.contexts.billing.application.admin_money import (
@@ -99,6 +104,7 @@ from backend.v2.contexts.billing.application.admin_money import (
 )
 from backend.v2.contexts.billing.application.admin_payment_settlement import (
     SETTLED_STATUSES,
+    dispute_fields,
     settle_matching_rows,
     settlement_method,
 )
@@ -106,6 +112,7 @@ from backend.v2.contexts.billing.application.charge_admin_invoice import (
     attempt_regex,
     charge_invoice_as_admin,
 )
+from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
 from backend.v2.contexts.billing.application.checkout_paid_period import (
     CheckoutPaidPeriodResolver,
 )
@@ -126,7 +133,6 @@ from backend.v2.contexts.billing.application.refund_idempotency import (
 )
 from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
-    AddInvoiceLineCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
@@ -156,7 +162,6 @@ from backend.v2.contexts.billing.application.use_cases.finance import (  # FINAN
     DeleteExpense,
     EditExpense,
     MongoExpenseRepository,
-    MongoPayoutRepository,
     MongoTuitionDiscountSummaryQuery,
     RecordExpense,
 )
@@ -215,6 +220,9 @@ from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import 
     make_revenue_by_category_report,
     make_session_economics_report,
 )
+from backend.v2.contexts.billing.infrastructure.invoiced_tuition_read_model import (
+    MongoInvoicedTuitionReadModel,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_academy_billing_region import (
     MongoAcademyBillingRegionReader,
 )
@@ -250,7 +258,6 @@ from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
 )
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     MongoClassFeeResolver,
-    MongoProjectedClassFees,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_product_repo import (
     MongoProductRepository,
@@ -303,6 +310,7 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_lesson_card_repo import
 from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
     MongoCurriculumVideoRefRepository,
 )
+from backend.v2.contexts.enrollment.application.ports import OCCURRENCE_WINDOW
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
     RecordAbsenceNoticeForStudent,
 )
@@ -312,6 +320,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     UpdateAdminStudent,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
+    BulkTransferEnrollments,
     CancelEnrollment,
     CancelSession,
     CreateSession,
@@ -326,6 +335,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     TransferEnrollment,
     WithdrawEnrollment,
 )
+from backend.v2.contexts.enrollment.application.use_cases.copy_session import CopySession
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
 )
@@ -355,10 +365,12 @@ from backend.v2.contexts.enrollment.application.use_cases.self_cancel import (
 )
 from backend.v2.contexts.enrollment.application.use_cases.self_service_policies import (
     GetSelfServicePolicy,
+    SetSchedulePublishedThrough,
     UpdateSelfServicePolicy,
 )
 from backend.v2.contexts.enrollment.application.use_cases.trial_requests import (
     ApproveTrialRequest,
+    CancelGuestTrialBooking,
     DenyTrialRequest,
     LinkTrialConversion,
     ListTrialRequestsForAdmin,
@@ -406,6 +418,7 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
     admin_session_projection_fields,
     dedupe_session_series_rows,
+    session_phase,
     session_series_signature,
     session_start_sort_key,
     synthesize_recurring_session_docs,
@@ -574,6 +587,7 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_re
     MongoStudentSkillProgressRepository,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases
+from backend.v2.shared.billing_type import NOT_BILLED_ENROLLMENT_FILTER, is_not_billed
 from backend.v2.shared.comms import CommsService, MongoMessageRepository
 from backend.v2.shared.comms.email_brand import AcademyEmailBrands
 from backend.v2.shared.comms.phone_country import academy_calling_code_lookup
@@ -587,6 +601,7 @@ from backend.v2.shared.tenancy import (
     TenantContextUnset,
     current_academy_id,
     current_tenant_origins,
+    tenant_scope,
 )
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 from backend.v2.shared.time import (
@@ -696,6 +711,26 @@ class _StudentLoginProvisionerAdapter:
 
 
 log = logging.getLogger(__name__)
+
+
+class AcademyPortalUrlAdapter:
+    """Resolves the academy's own portal origin for emailed auth links.
+
+    ADR-0007 resolves the tenant from the request host's first label, so an
+    invite or reset link must point at `<slug>.<apex>` rather than the
+    deployment's generic `frontend_url` — otherwise the parent lands on the
+    wrong tenant (or a host that resolves to no tenant at all). Same rewrite
+    the invoice and digest emails already use.
+    """
+
+    def __init__(self, academies: Any, *, frontend_url: str | None) -> None:
+        self._academies = academies
+        self._frontend_url = frontend_url
+
+    async def get_academy_portal_url(self, academy_id: str) -> str | None:
+        doc = await self._academies.find_by_id(academy_id)
+        slug = str(doc.get("slug") or "") if doc else ""
+        return academy_frontend_url(frontend_url=self._frontend_url, academy_slug=slug) or None
 
 
 def compose_admin(
@@ -938,6 +973,7 @@ def compose_admin(
         enrollments=enrollments_r,
         sessions=sessions_r,
         occurrence_roster=occurrence_roster_repo,
+        guests=MongoTrialRequestRepository(db),
     )
     deny_makeup_request = DenyMakeupRequest(makeups=makeup_requests_repo)
     list_self_cancellations_for_admin = ListSelfCancellationsForAdmin(
@@ -976,6 +1012,7 @@ def compose_admin(
         occurrence_roster=occurrence_roster_repo,
     )
     deny_trial_request = DenyTrialRequest(trials=trial_requests_repo)
+    cancel_guest_trial_booking = CancelGuestTrialBooking(trials=trial_requests_repo)
     link_trial_conversion = LinkTrialConversion(trials=trial_requests_repo)
     connected_accounts_repo = MongoConnectedAccountRepository(db)
     credits_repo = MongoCreditLedgerRepository(db)
@@ -1013,16 +1050,16 @@ def compose_admin(
         idempotency_store=idempotency_store,
     )
 
-    async def _notify_minted_invoices(period: str) -> None:
+    async def _notify_minted_invoices(period: str) -> object:
         """Deliver what the run just minted, in the same run (issue #659).
 
         ``send_generated_invoices`` is bound later in this same function; this
         body only runs at request time, long after it exists. It owns the
         autopay split — non-autopay families get the invoice and a pay link,
-        autopay families get the pre-charge notice — so nothing here needs to
-        know the difference.
+        autopay families get the pre-charge notice. Returns the outcome so the
+        ops digest counts these sends (#1033).
         """
-        await send_generated_invoices(period)
+        return await send_generated_invoices(period)
 
     generate_monthly_payments = GenerateMonthlyPayments(
         payments=payments_repo,
@@ -1076,13 +1113,23 @@ def compose_admin(
 
     # Finance (# FINANCE)
     expenses_repo = MongoExpenseRepository(db)
-    payouts_repo = MongoPayoutRepository(db, academy_timezone=academy_timezone_lookup(db))
     payout_periods_repo = MongoPayoutPeriodRepository(db)
+    payable_occurrences = MongoPayableOccurrenceQuery(db, tuition=MongoInvoicedTuitionReadModel(db))
     coach_payout_calculator = FinancePayoutCalculator(
         ComputeCoachPayout(
-            occurrences=MongoPayableOccurrenceQuery(db, class_fees=MongoProjectedClassFees(db)),
+            occurrences=payable_occurrences,
             rates=MongoCoachRateLookup(db),
+            invoice_gaps=payable_occurrences,
         )
+    )
+
+    async def _assistant_pay_from(academy_id: str) -> str | None:
+        # The academy the payroll query names, not the ambient request tenant.
+        with tenant_scope(academy_id):
+            return (await billing_settings_repo.get()).payroll_assistant_pay_from
+
+    monthly_coach_reader = MonthlyCoachOccurrenceReaderAdapter(
+        db["session_occurrences"], assistant_pay_from=_assistant_pay_from
     )
     payout_audit_log = MongoPayoutAuditLogRepository(db)
     # #787: generation, approval and payment are money-moving transitions and
@@ -1224,7 +1271,7 @@ def compose_admin(
     async def deactivate_billing_product(product_id: str) -> None:
         await product_repo.deactivate_product(product_id)
 
-    def _invoice_email_port() -> InvoiceEmailAdapter | None:
+    def _invoice_email_port(pay_page_url: str | None = None) -> InvoiceEmailAdapter | None:
         if not (settings.email_delivery_enabled and settings.resend_api_key):
             return None
         return InvoiceEmailAdapter(
@@ -1243,6 +1290,8 @@ def compose_admin(
             ),
             self_service_policies=self_service_policy_repo,
             contact_copies=build_invoice_contact_copies(db, sender=_email_sender),
+            pay_page_url=pay_page_url,
+            pay_link=parent_payments_link(db),
         )
 
     async def send_billing_invoice(invoice_id: str) -> dict[str, Any]:
@@ -1256,7 +1305,7 @@ def compose_admin(
         result = await SendInvoice(
             ledger=billing_ledger_repo,
             stripe=invoice_stripe,
-            email=_invoice_email_port(),
+            email=_invoice_email_port(pay_page_url=f"{frontend_url}/parent/payments"),
             connected_accounts=connected_accounts_repo,
             settings=billing_settings_repo,
             # Issue #738: an autopay family gets the pre-charge notice, not a
@@ -1494,6 +1543,7 @@ def compose_admin(
         parent_customers=parent_customers_repo,
         email_port=_invoice_email_port,
         outbox=outbox,
+        family_autopay=compose_system_family_autopay_pause(db),
     )
 
     # ---- Failed autopay reads (#235). The Billing Health plumbing wiring
@@ -1544,33 +1594,12 @@ def compose_admin(
             raise ValueError("invoice not found")
         return await billing_ledger_repo.list_payment_attempts(invoice_id)
 
-    async def add_invoice_line(
-        *,
-        invoice_id: str,
-        description: str,
-        line_type: str,
-        quantity: int,
-        unit_amount_cents: int,
-        product_id: str | None,
-    ) -> dict[str, Any]:
-        result = await AddInvoiceLine(
-            ledger=billing_ledger_repo,
-            counters=billing_counters_repo,
-            settings=billing_settings_repo,
-        ).execute(
-            AddInvoiceLineCommand(
-                invoice_id=invoice_id,
-                description=description,
-                line_type=line_type,
-                quantity=quantity,
-                unit_amount_cents=unit_amount_cents,
-                product_id=product_id,
-            )
-        )
-        return {
-            "line": result.line.model_dump(mode="python"),
-            "invoice": result.invoice.model_dump(mode="python"),
-        }
+    add_invoice_line = build_add_invoice_line(
+        ledger=billing_ledger_repo,
+        counters=billing_counters_repo,
+        settings=billing_settings_repo,
+        audit=billing_audit_log,
+    )
 
     async def remove_invoice_line(*, invoice_id: str, line_id: str) -> None:
         await RemoveInvoiceLine(ledger=billing_ledger_repo).execute(
@@ -1959,29 +1988,12 @@ def compose_admin(
         ) -> None:
             await users_r.record_login_invite(user_id, academy_id=academy_id, sent_at=sent_at)
 
-    class _AcademyPortalUrlAdapter:
-        """Resolves the academy's own portal origin for invite links.
-
-        ADR-0007 resolves the tenant from the request host's first label, so
-        an invite must point at `<slug>.<apex>` rather than the deployment's
-        generic `frontend_url` — otherwise the parent lands on the wrong
-        tenant (or a host that resolves to no tenant at all). Same rewrite
-        the invoice and digest emails already use.
-        """
-
-        async def get_academy_portal_url(self, academy_id: str) -> str | None:
-            doc = await academy_repo.find_by_id(academy_id)
-            slug = str(doc.get("slug") or "") if doc else ""
-            return (
-                academy_frontend_url(frontend_url=settings.frontend_url, academy_slug=slug) or None
-            )
-
     send_login_invite = SendLoginInvite(
         users=_MembershipAwareLoginInviteRecorder(),
         links=get_firebase_admin_adapter(),
         sender=LoginInviteEmailAdapter(sender=_email_sender, academies=academy_repo),
         academies=academy_repo,
-        portals=_AcademyPortalUrlAdapter(),
+        portals=AcademyPortalUrlAdapter(academy_repo, frontend_url=settings.frontend_url),
         brands=AcademyEmailBrands(academy_repo),
     )
     # #436: an admin email edit clears Firebase's `email_verified`, so the
@@ -2053,7 +2065,7 @@ def compose_admin(
         async def get_customer(
             self, parent_id: str, *, academy_id: str
         ) -> ParentBillingCustomerSnapshot | None:
-            doc = await self._customers.get_academy_customer(parent_id=parent_id)
+            doc = await self._customers.get_display_customer(parent_id=parent_id)
             return self._snapshot(doc) if doc else None
 
     class _BillingSetupAutopayAdapter:
@@ -2164,7 +2176,7 @@ def compose_admin(
     send_add_card_reminder = SendAddCardReminder(
         contacts=_BillingSetupParentContactAdapter(users_r),
         links=_BillingSetupCardSetupLinkAdapter(),
-        sender=AddCardReminderEmailAdapter(sender=_email_sender),
+        sender=AddCardReminderEmailAdapter(sender=_email_sender, academies=academy_repo),
         academies=academy_repo,
         return_url_for=_billing_setup_return_url,
         brands=AcademyEmailBrands(academy_repo),
@@ -2185,12 +2197,15 @@ def compose_admin(
             # count it. Filtering on a bare "active" made a class full of holds
             # advertise open spots, and the resulting Add silently reclaimed the
             # longest-held child's seat.
-            enrolled_count = await enrollments_r.collection.count_documents(
-                {
-                    "academy_id": request_academy_id,
-                    "session_id": session_id,
-                    "status": {"$in": sorted(SEAT_HOLDING)},
-                }
+            seats = {
+                "academy_id": request_academy_id,
+                "session_id": session_id,
+                "status": {"$in": sorted(SEAT_HOLDING)},
+            }
+            enrolled_count = await enrollments_r.collection.count_documents(seats)
+            # Not-billed children still take a seat; the list notes how many.
+            not_billed_count = await enrollments_r.collection.count_documents(
+                {**seats, **NOT_BILLED_ENROLLMENT_FILTER}
             )
             waitlist_count = await waitlist.collection.count_documents(
                 {
@@ -2212,6 +2227,7 @@ def compose_admin(
                     else str(doc.get("status") or "scheduled"),
                     "coach_id": str(doc.get("coach_id") or ""),
                     "enrolled_count": enrolled_count,
+                    "not_billed_count": not_billed_count,
                     "waitlist_count": waitlist_count,
                     "days_of_week": list(doc.get("days_of_week") or []),
                     "start_time": doc.get("start_time"),
@@ -2288,7 +2304,7 @@ def compose_admin(
         if not target_days:
             return []
         local_start = datetime.now(UTC).astimezone(tz).date()
-        local_end = (datetime.now(UTC) + timedelta(days=60)).astimezone(tz).date()
+        local_end = (datetime.now(UTC) + OCCURRENCE_WINDOW).astimezone(tz).date()
         start_time = time.fromisoformat(session.start_time)
         end_time = time.fromisoformat(session.end_time)
         rows: list[dict[str, Any]] = []
@@ -2581,13 +2597,14 @@ def compose_admin(
     async def maintain_session_occurrences(session) -> None:
         from backend.v2.shared.tenancy import current_academy_id
 
-        candidates = _series_occurrence_candidates(session, await _session_zone(session))
+        zone_name = await _session_zone(session)
+        candidates = _series_occurrence_candidates(session, zone_name)
         session_is_cancelled = session.status == "cancelled"
         if not candidates and not session_is_cancelled:
             return
         academy_id = current_academy_id()
         now = datetime.now(UTC)
-        window_end = now + timedelta(days=60, hours=23, minutes=59, seconds=59)
+        window_end = now + OCCURRENCE_WINDOW + timedelta(hours=23, minutes=59, seconds=59)
         # Normal maintenance only reconciles the 60-day materialisation window.
         # A cancel has to reach EVERY future occurrence, including any dated row
         # materialised beyond that window, so drop the upper bound (#467).
@@ -2655,6 +2672,9 @@ def compose_admin(
             # whose occurrence is cancelled, so nothing renders unmarkable.
 
         for row in candidates:
+            if row["start_at"] < now:
+                await insert_started_today(db, academy_id, session.session_id, row, zone_name, now)
+                continue
             existing_doc = existing.get(str(row["occurrence_id"]))
             if existing_doc is not None and not await _is_clean_future_occurrence(
                 existing_doc, now=now
@@ -2663,19 +2683,7 @@ def compose_admin(
             await db["session_occurrences"].update_one(
                 {"academy_id": academy_id, "occurrence_id": row["occurrence_id"]},
                 {
-                    "$set": {
-                        "session_id": row["session_id"],
-                        "template_session_id": row["template_session_id"],
-                        "start_at": row["start_at"],
-                        "end_at": row["end_at"],
-                        "status": row["status"],
-                        "scheduled_coach_id": row["scheduled_coach_id"],
-                        "actual_coach_id": None,
-                        "substitute_coach_id": None,
-                        "assistant_coach_ids": row["assistant_coach_ids"],
-                        "is_billable": True,
-                        "is_payable": True,
-                    },
+                    "$set": occurrence_fields(row),
                     "$setOnInsert": {
                         "academy_id": academy_id,
                         "occurrence_id": row["occurrence_id"],
@@ -2687,97 +2695,81 @@ def compose_admin(
     async def list_admin_sessions(
         on_date: date | None, *, window: str | None = None, coach_id: str | None = None
     ):
-        # window="upcoming" returns all dated sessions from now through +30d.
-        # Used by the transfer-enrollment dropdown so the user can pick any
-        # upcoming session, not just today's.
-        # Legacy templates may carry no `timezone`; expand in the tenant's zone.
+        # window="upcoming": classes with a date in the next 30 days (default
+        # list, transfer dropdown). window="all": every class with its phase;
+        # window="open": the same minus ended classes (waitlist and its badge).
+        # A date is the ACADEMY-LOCAL day, never the UTC day (L2 A0-3).
         fallback_timezone = await session_tz(request_academy_id())
-        if window == "upcoming":
-            now = datetime.now(UTC)
-            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            end = start + timedelta(
-                days=30,
-                hours=23,
-                minutes=59,
-                seconds=59,
-                microseconds=999999,
-            )
-            v2_cursor = sessions_r._find_many(
-                _dated_session_range_filter(start, end),
-                sort=[("start_at", 1)],
-            )
-            upcoming_docs = [doc async for doc in v2_cursor]
-            template_cursor = sessions_r._find_many(
-                _recurring_template_filter(),
-            )
-            template_docs = [doc async for doc in template_cursor]
-            upcoming_docs.extend(
+        zone = ZoneInfo(resolve_session_timezone(None, fallback_timezone))
+        local_today = datetime.now(UTC).astimezone(zone).date()
+        phases: dict[str, str] = {}
+        by_phase = window in {"all", "open"}
+        if by_phase:
+            docs = [d async for d in sessions_r._find_many(_NOT_CANCELLED_SESSION)]
+            templates = [d for d in docs if d.get("days_of_week")]
+            # A dated class without both instants cannot be placed or listed.
+            all_docs = [
+                d
+                for d in docs
+                if not d.get("days_of_week") and d.get("start_at") and d.get("end_at")
+            ]
+            all_docs.extend(
                 synthesize_recurring_session_docs(
-                    template_docs,
-                    range_start=start,
-                    range_end=end,
+                    templates,
+                    range_start=datetime(2000, 1, 1, tzinfo=UTC),
+                    range_end=datetime.now(UTC) + timedelta(days=730),
                     first_per_template=True,
                     fallback_timezone=fallback_timezone,
                 )
             )
-            upcoming_docs.sort(key=session_start_sort_key)
-            rows = await _build_admin_session_rows(upcoming_docs)
-            rows = dedupe_session_series_rows(rows, fallback_timezone=fallback_timezone)
-            if coach_id:
-                rows = [
-                    r
-                    for r in rows
-                    if (r.get("coach_id") if isinstance(r, dict) else getattr(r, "coach_id", None))
-                    == coach_id
+            phases = {
+                str(d.get("session_id") or d.get("_id")): session_phase(d, local_today, zone)
+                for d in all_docs
+            }
+            if window == "open":
+                # Skip ended classes before the per-row seat counts below.
+                all_docs = [
+                    d
+                    for d in all_docs
+                    if phases[str(d.get("session_id") or d.get("_id"))] != "ended"
                 ]
-            return rows
-
-        if on_date is None:
-            on_date = datetime.now(UTC).date()
-        start = datetime.combine(on_date, time.min, tzinfo=UTC)
-        end = datetime.combine(on_date, time.max, tzinfo=UTC)
-
-        # Query both v2 sessions (start_at field) and legacy recurring templates
-        # (days_of_week field). The two schemas coexist during migration.
-        all_docs: list[dict[str, Any]] = []
-
-        # v2 schema: individual session instances with start_at/end_at
-        v2_cursor = sessions_r._find_many(
-            _dated_session_range_filter(start, end),
-            sort=[("start_at", 1)],
-        )
-        async for doc in v2_cursor:
-            all_docs.append(doc)
-
-        legacy_cursor = sessions_r._find_many(
-            _recurring_template_filter(),
-        )
-        template_docs = [doc async for doc in legacy_cursor]
-        all_docs.extend(
-            synthesize_recurring_session_docs(
-                template_docs,
-                range_start=start,
-                range_end=end,
-                local_start_date=on_date,
-                local_end_date=on_date,
-                filter_by_utc_range=False,
-                fallback_timezone=fallback_timezone,
+        else:
+            on_date = local_today if window == "upcoming" or on_date is None else on_date
+            last_date = on_date + timedelta(days=30 if window == "upcoming" else 0)
+            start = datetime.combine(on_date, time.min, tzinfo=zone).astimezone(UTC)
+            end = datetime.combine(last_date, time.max, tzinfo=zone).astimezone(UTC)
+            v2_cursor = sessions_r._find_many(
+                _dated_session_range_filter(start, end), sort=[("start_at", 1)]
             )
-        )
+            all_docs = [doc async for doc in v2_cursor]
+            template_docs = [d async for d in sessions_r._find_many(_recurring_template_filter())]
+            all_docs.extend(
+                synthesize_recurring_session_docs(
+                    template_docs,
+                    range_start=start,
+                    range_end=end,
+                    first_per_template=window == "upcoming",
+                    local_start_date=on_date,
+                    local_end_date=last_date,
+                    filter_by_utc_range=False,
+                    fallback_timezone=fallback_timezone,
+                )
+            )
         all_docs.sort(key=session_start_sort_key)
-
         rows = await _build_admin_session_rows(all_docs)
-        rows = dedupe_session_series_rows(rows, fallback_timezone=fallback_timezone)
+        for row in rows:
+            row["phase"] = phases.get(row["session_id"])
+        if not by_phase:
+            # all/open list one row per class doc (one per template), so the
+            # termless, dateless series signature would only hide real classes.
+            rows = dedupe_session_series_rows(rows, fallback_timezone=fallback_timezone)
         if coach_id:
-            rows = [
-                r
-                for r in rows
-                if (r.get("coach_id") if isinstance(r, dict) else getattr(r, "coach_id", None))
-                == coach_id
-            ]
+            rows = [r for r in rows if r.get("coach_id") == coach_id]
         return rows
 
     async def list_admin_enrollments_for_session(session_id: str):
+        # The request's tenant, not the compose-time primary academy (L2).
+        academy_id = current_academy_id()
         # Paused rows stay on the roster (PAUSED chip + Resume). Hiding them
         # left a student who blocked "Add to roster" invisible everywhere
         # (#641). held / reclaim_pending are the #697 successors of paused and
@@ -2818,6 +2810,28 @@ def compose_admin(
                 name = str(parent_doc.get("display_name") or "").strip()
                 if name:
                     parent_name_by_id[str(parent_doc.get("user_id"))] = name
+        # L2 A0-12: each row's latest lifecycle event in one read; the roster
+        # used to call the history endpoint once per student.
+        latest_event_by_id: dict[str, dict[str, Any]] = {}
+        async for ev in db.enrollment_events.aggregate(
+            [
+                {
+                    "$match": {
+                        "academy_id": academy_id,
+                        "enrollment_id": {"$in": [e.enrollment_id for e in active]},
+                    }
+                },
+                {"$sort": {"occurred_at": -1, "event_id": -1}},
+                {
+                    "$group": {
+                        "_id": "$enrollment_id",
+                        "t": {"$first": "$event_type"},
+                        "d": {"$first": "$effective_at"},
+                    }
+                },
+            ]
+        ):
+            latest_event_by_id[str(ev["_id"])] = ev
         default_program_id: str | None = None
         try:
             default_program = await curriculum.resolve_default_program.execute()
@@ -2882,6 +2896,12 @@ def compose_admin(
                     "level": student_doc.get("level"),
                     **placement_fields,
                     "dues_status": dues_status_by_id.get(e.student_id, "current"),
+                    "not_billed": is_not_billed(doc),
+                    "latest_event_type": latest_event_by_id.get(e.enrollment_id, {}).get("t"),
+                    "latest_event_date": str(
+                        latest_event_by_id.get(e.enrollment_id, {}).get("d") or ""
+                    )[:10]
+                    or None,
                 }
             )
         return out
@@ -3089,8 +3109,6 @@ def compose_admin(
         return await _enrich_parent_names(rows)
 
     async def list_payments_recent(fetch_cap: int = 200, *, include_voided: bool = False):
-        from backend.v2.shared.tenancy import current_academy_id
-
         fetch_cap = max(1, min(int(fetch_cap), 1000))
         request_academy_id = current_academy_id()
         invoice_rows: list[dict[str, Any]] = []
@@ -3261,6 +3279,7 @@ def compose_admin(
                     "void_reason": doc.get("void_reason"),
                     "voided_at": doc.get("voided_at"),
                     "voided_by": doc.get("voided_by"),
+                    **dispute_fields(doc),
                     "created_at": doc["created_at"],
                     "paid_at": doc.get("paid_at"),
                 }
@@ -3407,8 +3426,6 @@ def compose_admin(
         }
 
     async def list_payment_feed(limit: int = 20) -> list[dict[str, Any]]:
-        from backend.v2.shared.tenancy import current_academy_id
-
         request_academy_id = current_academy_id()
         limit = max(1, min(int(limit), 100))
 
@@ -3452,8 +3469,6 @@ def compose_admin(
         return await _enrich_parent_names(rows[:limit])
 
     async def list_last_payment_by_family() -> list[dict[str, Any]]:
-        from backend.v2.shared.tenancy import current_academy_id
-
         request_academy_id = current_academy_id()
         latest: dict[str, dict[str, Any]] = {}
 
@@ -3499,7 +3514,18 @@ def compose_admin(
         reason = reason.strip()
         if not reason:
             raise ValueError("reason is required")
-        checkout = await stripe.retrieve_checkout_session(stripe_checkout_session_id)
+        academy_id = request_academy_id()  # the request's academy, as the route below
+        # A direct charge's session lives on the academy's connected account
+        # (#983); the house academy reads the platform. The account comes from
+        # this academy's own route, never from the request; every row written
+        # below records that account (None = platform) so refunds route right.
+        route = await resolve_charge_route(
+            connected_accounts=connected_accounts_repo,
+            settings=billing_settings_repo,
+            context="admin_reconcile_stripe_billing",
+        )
+        on_account, account = route.on_account_kwargs(), route.connected_account_id
+        checkout = await stripe.retrieve_checkout_session(stripe_checkout_session_id, **on_account)
         metadata = checkout.get("metadata") if isinstance(checkout.get("metadata"), dict) else {}
         metadata = metadata or {}
         checkout_academy_id = metadata.get("academy_id")
@@ -3532,12 +3558,11 @@ def compose_admin(
         payment_status = str(checkout.get("payment_status") or "")
         checkout_status = str(checkout.get("status") or "")
         if not stripe_payment_intent_id and stripe_invoice_id:
-            invoice = await stripe.retrieve_invoice(stripe_invoice_id)
+            invoice = await stripe.retrieve_invoice(stripe_invoice_id, **on_account)
             stripe_payment_intent_id = str(invoice.get("payment_intent") or "")
         if customer_id:
             await parent_customers_repo.set_stripe_customer_id(
-                parent_id=parent_id,
-                stripe_customer_id=customer_id,
+                parent_id=parent_id, stripe_customer_id=customer_id, stripe_account_id=account
             )
 
         app_subscription_id = str(
@@ -3558,6 +3583,7 @@ def compose_admin(
                         "enrollment_id": enrollment_id,
                         "session_id": str(enrollment.get("session_id") or ""),
                         "stripe_subscription_id": stripe_subscription_id,
+                        "stripe_account_id": account,
                         "status": "active" if payment_status == "paid" else "incomplete",
                         "payment_mode": "monthly",
                         "updated_at": now,
@@ -3633,6 +3659,7 @@ def compose_admin(
                                 "stripe_subscription_id": stripe_subscription_id or None,
                                 "stripe_invoice_id": stripe_invoice_id or None,
                                 "stripe_payment_intent_id": stripe_payment_intent_id or None,
+                                "stripe_account_id": account,
                                 "amount_received_cents": amount_total or final_amount,
                                 "paid_amount_cents": amount_total or final_amount,
                                 "balance_due_cents": 0,
@@ -4212,6 +4239,7 @@ def compose_admin(
         deactivate_billing_product=deactivate_billing_product,
         self_service_policy=get_self_service_policy,
         update_self_service_policy=update_self_service_policy,
+        set_schedule_published_through=SetSchedulePublishedThrough(self_service_policy_repo),
         list_makeup_requests_for_admin=list_makeup_requests_for_admin,
         approve_makeup_request=approve_makeup_request,
         deny_makeup_request=deny_makeup_request,
@@ -4221,6 +4249,7 @@ def compose_admin(
         list_trial_requests_for_admin=list_trial_requests_for_admin,
         approve_trial_request=approve_trial_request,
         deny_trial_request=deny_trial_request,
+        cancel_guest_trial_booking=cancel_guest_trial_booking,
         list_self_cancellations_for_admin=list_self_cancellations_for_admin,
         get_platform_charge_fallback=get_platform_charge_fallback,
         get_invoice_schedule=get_invoice_schedule,
@@ -4239,16 +4268,15 @@ def compose_admin(
         edit_expense=edit_expense,
         delete_expense=delete_expense,
         expenses=expenses_repo,
-        payouts=payouts_repo,
         revenue_query=revenue_query,
         payout_periods=payout_periods_repo,
         list_monthly_payroll=ListMonthlyPayroll(
-            reader=MonthlyCoachOccurrenceReaderAdapter(db["session_occurrences"]),
+            reader=monthly_coach_reader,
             periods=payout_periods_repo,
             calculator=coach_payout_calculator,
         ),
         bulk_generate_payroll=BulkGeneratePayroll(
-            reader=MonthlyCoachOccurrenceReaderAdapter(db["session_occurrences"]),
+            reader=monthly_coach_reader,
             periods=payout_periods_repo,
             generate=generate_payout_period,
         ),
@@ -4271,6 +4299,9 @@ def compose_admin(
         get_admin_session=get_admin_session,
         maintain_session_occurrences=maintain_session_occurrences,
         preview_welcome_email=notifiers.welcome.preview,
+        preview_ach_notice=build_ach_notice_preview(
+            db, academies=academy_repo, users=users_r, frontend_url=settings.frontend_url
+        ),
         set_session_assistants=compose_set_session_assistants(
             sessions=sessions_w,
             occurrences=occurrences_r,
@@ -4280,7 +4311,7 @@ def compose_admin(
         ),
         list_session_occurrences=list_session_occurrences,
         get_session_occurrence=occurrences_r.get,
-        cancel_session_occurrence=compose_cancel_session_occurrence(db, notifier=notifiers.roster),
+        **compose_occurrence_cancellations(db, notifiers.roster, maintain_session_occurrences),
         generate_daily_teaching_plan=generate_daily_teaching_plan,
         get_coach_engagement_stats=get_coach_engagement_stats,
         update_session_occurrence_coach=update_session_occurrence_coach,
@@ -4306,6 +4337,14 @@ def compose_admin(
         get_projected_income=make_projected_income_report(db),
         list_enrollment_events=make_list_enrollment_events(db),
         comms=comms,
+        bulk_transfer_enrollments=BulkTransferEnrollments(transfer=transfer_enrollment),
+        copy_session=CopySession(
+            sessions=sessions_w,
+            create_session=create_session,
+            enrollments=enrollments_r,
+            students=students_r,
+            roster_add=edit_roster_add,
+        ),
         session_announcements=compose_announcements(db, settings, comms=comms, users=users_r),
         send_campaign=send_campaign,
         list_admin_waivers=list_admin_waivers,

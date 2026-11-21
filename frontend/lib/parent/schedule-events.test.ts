@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { ParentScheduleEntry } from "@/lib/api/parent";
 import {
   CANCELLED_EVENT_COLOR,
+  isMonthPublished,
+  noClassReason,
   scheduleEntryToEvent,
   scheduleSourceLabel,
 } from "./schedule-events";
@@ -38,8 +40,30 @@ describe("scheduleEntryToEvent (#671)", () => {
       color: "#2563eb",
     });
 
-    expect(event.title).toBe("Cancelled — Ana — Thursday 6:00 PM Beginner");
+    expect(event.title).toBe("No class (Class cancelled) — Ana — Thursday 6:00 PM Beginner");
     expect(event.color).toBe(CANCELLED_EVENT_COLOR);
+  });
+
+  it("shows the academy's reason for a no-class day", () => {
+    const event = scheduleEntryToEvent(
+      entry({ status: "cancelled", cancellation_reason: "Gym not available" }),
+      { childName: "Ana", color: "#2563eb" },
+    );
+    expect(event.title).toBe("No class (Gym not available) — Ana — Thursday 6:00 PM Beginner");
+  });
+});
+
+describe("noClassReason / isMonthPublished", () => {
+  it("turns the whole-session code into words", () => {
+    expect(noClassReason({ cancellation_reason: "session_cancelled" })).toBe("Class cancelled");
+    expect(noClassReason({ cancellation_reason: null })).toBe("Class cancelled");
+    expect(noClassReason({ cancellation_reason: " Holiday " })).toBe("Holiday");
+  });
+
+  it("treats every month as final when the academy never publishes", () => {
+    expect(isMonthPublished("2027-01", null)).toBe(true);
+    expect(isMonthPublished("2026-12", "2026-12")).toBe(true);
+    expect(isMonthPublished("2027-01", "2026-12")).toBe(false);
   });
 });
 

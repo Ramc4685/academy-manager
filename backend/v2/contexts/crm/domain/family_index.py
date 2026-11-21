@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-from backend.v2.contexts.crm.domain.family_stage import FamilyStage
+from backend.v2.contexts.crm.domain.family_stage import ENROLLED_STAGES, FamilyStage
 from backend.v2.shared.names import full_name_key
 
 #: Fewest query digits that are treated as a phone number (spec §3.2:
@@ -42,6 +42,9 @@ class FamilyChild:
     #: Sessions the child holds a seat in, and their titles (same order).
     session_ids: tuple[str, ...] = ()
     session_titles: tuple[str, ...] = ()
+    #: Every live class is not billed (owner's or coach's child, scholarship):
+    #: shown with the family but left out of the scope-tile headcounts.
+    not_billed: bool = False
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,13 @@ class FamilyRecord:
     #: family, such as one a CSV import created, has no users document to
     #: carry a phone). Matched by the duplicate check, never displayed.
     legacy_phones: tuple[str, ...] = ()
+
+    @property
+    def sibling_student_ids(self) -> tuple[str, ...]:
+        """The enrolled children (active, held or paused) when there are two
+        or more, else empty. Independent of billing: it marks the family."""
+        enrolled = tuple(c.student_id for c in self.children if c.lifecycle in ENROLLED_STAGES)
+        return enrolled if len(enrolled) >= 2 else ()
 
     @property
     def sort_key(self) -> tuple[str, str]:

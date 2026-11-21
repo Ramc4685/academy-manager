@@ -1,6 +1,6 @@
 """Public token-authenticated unsubscribe routes (#555).
 
-POST-only, for the reason ``magic_link_routes`` already documents: e-mail
+POST-only: e-mail
 security scanners and link-preview bots issue GET prefetches, so a GET that
 mutated preferences would let a corporate mail scanner unsubscribe families
 automatically. The emailed link points at a frontend page carrying the token in
@@ -93,7 +93,7 @@ def _resolver(request: Request) -> ResolveUnsubscribeToken:
 
 
 def _resolve(request: Request, token: str) -> tuple[str, str]:
-    # Same contract as ``magic_link_routes``: in SaaS mode an unresolved tenant
+    # In SaaS mode an unresolved tenant
     # is a client error, never a pass. The middleware computes this from the
     # request host, and the emailed link is built on the academy's own
     # subdomain (``UnsubscribeLinkBuilder``), so a request that cannot be
@@ -149,6 +149,32 @@ async def confirm_unsubscribe(
         digests_opted_out=saved.digests_opted_out,
         notifications_opted_out=saved.notifications_opted_out,
     )
+
+
+@router.post("/one-click", include_in_schema=False)
+async def one_click_unsubscribe(
+    request: Request, token: str = Query(alias="t", min_length=1, max_length=1024)
+) -> dict[str, bool]:
+    """RFC 8058 one-click (L11 item 8): the mailbox provider POSTs
+    ``List-Unsubscribe=One-Click`` here from a campaign's ``List-Unsubscribe``
+    header. Campaigns only — the header rides campaign mail — and the other
+    choices are left as they are. POST-only, like every mutation here, so a
+    prefetching scanner cannot trigger it. The body is not inspected: the
+    signed token is the authority, and some providers send it empty."""
+    academy_id, user_id = _resolve(request, token)
+    with tenant_scope(academy_id):
+        current = await request.app.state.get_email_preferences.execute(user_id)
+        set_preferences: SetEmailPreferences = request.app.state.set_email_preferences
+        await set_preferences.execute(
+            SetEmailPreferencesCommand(
+                user_id=user_id,
+                campaigns_opted_out=True,
+                digests_opted_out=current.digests_opted_out,
+                notifications_opted_out=None,
+                source="link",
+            )
+        )
+    return {"ok": True}
 
 
 # --- prospect (lead) unsubscribe: backend-rendered ---------------------------

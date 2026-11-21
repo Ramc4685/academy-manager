@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, tzinfo
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.views import (
@@ -16,10 +18,69 @@ from backend.v2.interfaces.admin.views import (
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_owner
+from backend.v2.shared.time.academy_timezone import resolve_academy_clock_timezone
 
-log = logging.getLogger(__name__)
+#: Spreadsheet role per line basis, shared with the period export.
+PAYROLL_ROLE_LABELS = {"substitute": "Replacement", "assistant": "Assistant"}
 
 router = APIRouter(tags=["admin.payroll"])
+
+
+class PayrollSettingsView(BaseModel):
+    """How a percent coach's invoiced-tuition base is counted (L7).
+
+    Applies to periods generated or recomputed after a change.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    payroll_ach_discount_reduces_base: bool
+    payroll_count_checkout_first_month: bool
+    payroll_cancelled_class_share: Literal["ran_only", "all_scheduled"]
+    payroll_missing_invoices: Literal["block", "pay_zero"]
+    #: First month (YYYY-MM) assistants are paid in the app; null = never.
+    payroll_assistant_pay_from: str | None = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+@router.get("/payroll-settings", response_model=PayrollSettingsView)
+async def get_payroll_settings(
+    _claims: AuthClaims = Depends(require_owner()),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> PayrollSettingsView:
+    uc = use_cases.get_payroll_settings
+    if uc is None:
+        raise HTTPException(status_code=503, detail="Payroll settings not configured")
+    return PayrollSettingsView(**await uc.execute())
+
+
+@router.put("/payroll-settings", response_model=PayrollSettingsView)
+async def update_payroll_settings(
+    body: PayrollSettingsView,
+    claims: AuthClaims = Depends(require_owner()),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> PayrollSettingsView:
+    uc = use_cases.update_payroll_settings
+    current_uc = use_cases.get_payroll_settings
+    if uc is None or current_uc is None:
+        raise HTTPException(status_code=503, detail="Payroll settings not configured")
+    pay_from = body.payroll_assistant_pay_from
+    # Back-dating would re-price closed months; an unchanged older value still saves.
+    if pay_from is not None and pay_from != (await current_uc.execute()).get(
+        "payroll_assistant_pay_from"
+    ):
+        zone = await resolve_academy_clock_timezone(
+            _academy_timezone_reader(use_cases), claims.academy_id
+        )
+        this_month = datetime.now(ZoneInfo(zone)).strftime("%Y-%m")
+        if pay_from < this_month:
+            raise HTTPException(
+                status_code=422,
+                detail=f"payroll_assistant_pay_from cannot be earlier than {this_month}",
+            )
+    saved = await uc.execute(
+        academy_id=claims.academy_id, actor_id=claims.user_id, values=body.model_dump()
+    )
+    return PayrollSettingsView(**saved)
 
 
 def _month_window(month: str, tz: tzinfo = UTC) -> tuple[datetime, datetime]:
@@ -44,16 +105,19 @@ def _month_window(month: str, tz: tzinfo = UTC) -> tuple[datetime, datetime]:
 async def _academy_month_window(
     month: str, *, academy_id: str, use_cases: AdminUseCases
 ) -> tuple[datetime, datetime]:
-    tz: tzinfo = UTC
-    get_academy = getattr(use_cases, "get_academy_use_case", None)
-    if get_academy is not None:
-        try:
-            academy = await get_academy.execute(academy_id)
-            if academy.timezone:
-                tz = ZoneInfo(academy.timezone)
-        except (KeyError, ValueError):
-            log.warning("Invalid academy timezone for %s; defaulting to UTC", academy_id)
-    return _month_window(month, tz)
+    """The academy-local month, on the same clock the pay base buckets invoices by."""
+
+    zone = await resolve_academy_clock_timezone(_academy_timezone_reader(use_cases), academy_id)
+    return _month_window(month, ZoneInfo(zone))
+
+
+def _academy_timezone_reader(
+    use_cases: AdminUseCases,
+) -> Callable[[str], Awaitable[str | None]]:
+    async def academy_timezone(aid: str) -> str | None:
+        return (await use_cases.get_academy_use_case.execute(aid)).timezone
+
+    return academy_timezone
 
 
 @router.get("/payroll/{month}", response_model=AdminMonthlyPayrollView)
@@ -180,7 +244,7 @@ async def export_monthly_payroll_xlsx(
             ws.append(
                 [
                     line.occurrence_id,
-                    "Replacement" if line.basis == "substitute" else "Scheduled",
+                    PAYROLL_ROLE_LABELS.get(line.basis, "Scheduled"),
                     line.amount_minor / 100,
                     "",
                     "",

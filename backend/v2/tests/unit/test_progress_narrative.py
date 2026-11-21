@@ -16,6 +16,7 @@ import pytest
 from backend.v2.composition.ai import PlatformAiEntitlement
 from backend.v2.composition.ai_narratives import AcademyCoachReviewSwitch, _StudentNarrativeFacts
 from backend.v2.composition.evening_wins import _ParentWinsProvider
+from backend.v2.contexts.ai.application.json_answer import LINK_LIKE
 from backend.v2.contexts.ai.application.use_cases.draft_progress_narrative import (
     DraftProgressNarrative,
     ProgressNarrativeInput,
@@ -216,12 +217,34 @@ async def test_a_malformed_answer_is_still_recorded_then_502():
         json.dumps({"text": "word " * 71, "skills_mentioned": []}),
         # extra key
         '{"text": "Great day.", "skills_mentioned": [], "mood": "x"}',
+        # link-like tokens (coach review can be off, so nothing may auto-link)
+        '{"text": "Great day, see www.drills.example for more.", "skills_mentioned": []}',
+        '{"text": "Great day, ask coach@academy.example.", "skills_mentioned": []}',
+        '{"text": "Great day, practice at drills.example tonight.", "skills_mentioned": []}',
         "",
     ],
 )
 def test_parse_refuses_invented_numbers_skills_length_and_shape(raw: str):
     with pytest.raises(AiProviderError):
         parse_narrative(raw, INPUT)
+
+
+def test_an_ellipsis_is_not_a_link():
+    assert not LINK_LIKE.search("Great day...and more drills next week.")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Practice videos at blno.com this week.",
+        "Practice videos at blno.COM this week.",
+        "Practice videos at Blno.Com this week.",
+        "Practice videos at bit.Ly this week.",
+        "Strong footwork.Next we work on serves.",  # refused: safety over this false positive
+    ],
+)
+def test_a_domain_in_any_case_is_a_link(text: str):
+    assert LINK_LIKE.search(text)
 
 
 def test_parse_strips_a_json_fence_and_collapses_whitespace():

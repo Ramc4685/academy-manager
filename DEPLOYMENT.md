@@ -29,7 +29,8 @@ CORS_ORIGINS=https://academy.example.com
 STRIPE_API_KEY=sk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 # Required when a separate Connect-scoped webhook endpoint is configured for
-# connected-account events such as account.updated and capability.updated.
+# connected-account events (account.updated, capability.updated, and the
+# direct-charge payment events listed in docs/runbooks/stripe-direct-charges.md).
 STRIPE_CONNECT_WEBHOOK_SECRET=whsec_...
 SCHEDULER_TZ=America/Chicago
 RESEND_API_KEY=re_...
@@ -96,7 +97,7 @@ The following variables were introduced in Phase 5 and must be set in production
 |---|---|---|
 | `STRIPE_API_KEY` | Yes | Stripe secret key (`sk_live_...` or `sk_test_...`). Without this, all billing endpoints return 503. |
 | `STRIPE_WEBHOOK_SECRET` | Yes | Stripe webhook signing secret (`whsec_...`). Without this, `POST /api/v2/parent/webhooks/stripe` returns 503 and all Stripe payment confirmations are silently dropped. |
-| `STRIPE_CONNECT_WEBHOOK_SECRET` | Required for Connect | Signing secret for the Connect-scoped Stripe webhook endpoint that receives connected-account events (`account.updated`, `capability.updated`). Keep `STRIPE_WEBHOOK_SECRET` for account-level billing events. |
+| `STRIPE_CONNECT_WEBHOOK_SECRET` | Required for Connect | Signing secret for the Connect-scoped Stripe webhook endpoint that receives connected-account events (`account.updated`, `capability.updated`, and the direct-charge payment events listed in `docs/runbooks/stripe-direct-charges.md`). Keep `STRIPE_WEBHOOK_SECRET` for account-level billing events. |
 | `SCHEDULER_TZ` | No | IANA timezone for scheduled billing jobs. The backend default is `UTC`; production sets `America/Chicago` in `backend/fly.toml`. |
 
 Set these on Fly with:
@@ -309,6 +310,12 @@ deploy performs lives in `scripts/ops/`:
 | Fly secret (`courtmastr-academy-api`) | `SENTRY_DSN` | Enables Sentry error tracking and Sentry Logs in the API. Set in prod. |
 | Fly secret | `OPS_ALERT_EMAIL` | Recipient of the 07:00 daily ops digest. Set in prod. |
 | Fly secret | `RESEND_WEBHOOK_SECRET` | Verifies Resend bounce/complaint webhooks at `/api/v2/webhooks/resend`. Set in prod. |
+| Fly secret | `UNSUBSCRIBE_TOKEN_SECRET` | Signs unsubscribe links. Without it, or without `RESEND_WEBHOOK_SECRET`, prod warns at boot and on `/api/v2/healthz`. |
+| Fly env | `V2_EMAIL_SEND_MAX_RETRIES` | Optional, default 0. Retries after a Resend rate-limit 429 (not a quota 429) or a keyed 5xx. |
+| Fly env | `V2_MARKETING_SENDER_EMAIL` | Optional. From address for campaigns (verified domain). An invalid value is ignored with an error log. |
+| Fly env | `V2_EMAIL_LIST_UNSUBSCRIBE_ENABLED` | Optional, default false. One-click `List-Unsubscribe` and postal address on campaigns. |
+| Fly env | `V2_PUSH_EXTRA_EVENTS` | Optional, default empty. Comma list of opt-in push events: `direct_message`, `academy_broadcast`, `class_announcement`. |
+| Fly env | `V2_CAMPAIGN_BACKGROUND_SEND_ENABLED` | Optional, default false. Campaigns queue and send from a resumable 1-minute background job. Set `V2_EMAIL_SEND_MAX_RETRIES>=2` before enabling. Not a kill switch: already-queued campaigns always drain. |
 | Fly env (optional) | `V2_SENTRY_CRON_JOBS` | Comma-separated scheduler job ids that send Sentry Crons check-ins. Default `generate_monthly_invoices`. |
 | GitHub repo secret | `SENTRY_AUTH_TOKEN` | Lets the deploy workflow create the Sentry release `courtmastr-fastapi@<sha>` (org `blno-badmintion`). Token scopes: `project:releases`, `org:read`. Missing token skips the step; events then fall back to `FLY_IMAGE_REF` as the release. |
 | GitHub repo variable | `NEXT_PUBLIC_SENTRY_DSN` | Browser-side Sentry DSN for the Next.js app; the `deploy-frontend` job forwards it (with `NEXT_PUBLIC_APP_ENV=production` and `NEXT_PUBLIC_SENTRY_RELEASE=courtmastr-frontend@<sha>`) into the Worker build, where it is baked in. Unset (current) means the frontend only logs to the console; the deploy step prints a `::notice::` saying which state it built. Use a separate Sentry project or the same DSN with `environment` set; either way do not reuse it server-side. |

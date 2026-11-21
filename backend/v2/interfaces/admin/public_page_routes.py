@@ -49,6 +49,7 @@ from backend.v2.contexts.enrollment.application.use_cases.programs import (
 )
 from backend.v2.contexts.identity.application.public_page_settings import (
     MAX_SEATS_LEFT_THRESHOLD,
+    MAX_TRIAL_GUEST_CAP,
     GetPublicPageAddress,
     GetPublicPageSettings,
     PublicPageSettings,
@@ -272,6 +273,8 @@ class PublicPageSettingsView(BaseModel):
     show_availability: bool
     price_period_default: PricePeriod
     trials_open: bool
+    self_book_trials: bool = False
+    trial_guest_cap: int = 2
     privacy_notice_url: str | None = None
     hero_photo_url: str | None = None
     about_text: str = ""
@@ -298,6 +301,8 @@ class UpdatePublicPageSettingsRequest(BaseModel):
     show_availability: StrictBool | None = None
     price_period_default: PricePeriod | None = None
     trials_open: StrictBool | None = None
+    self_book_trials: StrictBool | None = None
+    trial_guest_cap: int | None = Field(default=None, ge=1, le=MAX_TRIAL_GUEST_CAP, strict=True)
     privacy_notice_url: str | None = Field(default=None, max_length=2048)
     #: ``null`` removes the hero photo. Photos come from
     #: ``POST /admin/academy/media`` (``purpose`` hero, gallery or coach).

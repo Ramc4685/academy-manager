@@ -12,7 +12,11 @@ from backend.v2.contexts.ai.application.ports import (
     DailyCapSource,
     MonthlyCapSource,
 )
-from backend.v2.contexts.ai.domain.errors import AiDailyCapReached, AiMonthlyCapReached
+from backend.v2.contexts.ai.domain.errors import (
+    AiDailyCapReached,
+    AiMonthlyCapReached,
+    AiProviderError,
+)
 from backend.v2.contexts.ai.domain.models import AiCallRecord, LlmResult
 
 #: Calls per academy per UTC month when the academy document sets no cap.
@@ -80,7 +84,9 @@ class RecordAiCall:
         result: LlmResult,
         approver: str | None,
     ) -> AiCallRecord:
-        """Write the audit row. Never refuses: the tokens are already spent."""
+        """Write the audit row. Never refuses to record: the tokens are already
+        spent. A truncated answer is recorded first, then refused with its own
+        message instead of the parser's generic "could not be read"."""
         record = AiCallRecord(
             feature=feature,
             prompt_version=prompt_version,
@@ -88,8 +94,13 @@ class RecordAiCall:
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
             cost_cents=result.cost_cents,
+            cost_microcents=result.cost_microcents,
             approver=approver,
             created_at=self._clock(),
         )
         await self._calls.record(record)
+        if result.truncated:
+            raise AiProviderError(
+                "the model's answer was cut off before it finished", reason="truncated"
+            )
         return record

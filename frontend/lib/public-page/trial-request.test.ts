@@ -7,6 +7,7 @@ import {
   submitTrialRequest,
   trialClassOptions,
   trialRequestBody,
+  utmFromSearch,
   validateTrialForm,
   type TrialFormValues,
 } from "./trial-request";
@@ -80,9 +81,62 @@ describe("trialRequestBody", () => {
       contact_about_request: true,
       marketing_opt_in: true,
       website: "",
+      slot_key: null,
+      turnstile_token: null,
+      heard_from: null,
     });
     expect(Object.keys(body)).not.toContain("child_name");
     expect(Object.keys(body)).not.toContain("academy_id");
+  });
+});
+
+describe("self-booking body (L9)", () => {
+  it("sends the slot, its Turnstile token, heard-from and UTM tags", () => {
+    const body = trialRequestBody({
+      ...VALID,
+      slot_key: "t_abc",
+      turnstile_token: "tok",
+      heard_from: "friend",
+      utm: utmFromSearch(
+        "?utm_source=facebook&utm_campaign=fall&gclid=x&class=c_open&ref=QZ7KX4MP",
+      ),
+    });
+    expect(body).toMatchObject({
+      slot_key: "t_abc",
+      turnstile_token: "tok",
+      heard_from: "friend",
+      utm_source: "facebook",
+      utm_campaign: "fall",
+      referral_code: "QZ7KX4MP",
+    });
+    expect(body).not.toHaveProperty("gclid");
+    // A malformed code is dropped rather than rejected by the server.
+    expect(utmFromSearch("?ref=bad%20code!")).toEqual({});
+  });
+
+  it("never sends a Turnstile token without a slot", () => {
+    expect(trialRequestBody({ ...VALID, turnstile_token: "tok" }).turnstile_token).toBeNull();
+  });
+
+  it("maps a filled date to an error on the date field", () => {
+    const result = classifyTrialResponse(409, {
+      error: { code: "Public.SlotUnavailable", message: "That date has just filled up." },
+    });
+    expect(result).toEqual({
+      kind: "invalid",
+      fields: { slot_key: "That date has just filled up." },
+      message: null,
+    });
+  });
+
+  it("offers a class's bookable dates under their slot keys", () => {
+    const [option] = trialClassOptions([
+      cls({
+        timezone: "America/Chicago",
+        trial_dates: [{ slot_key: "t_1", starts_at: "2026-11-21T15:00:00Z" }],
+      }),
+    ]);
+    expect(option.dates).toEqual([{ value: "t_1", label: "Saturday, November 21 at 9:00 AM" }]);
   });
 });
 

@@ -2,7 +2,9 @@ import type { AdminPaymentStatus, AdminPaymentView } from "@/lib/api/admin";
 import type { ChipVariant } from "@/components/ds/chip";
 import { INVOICE_STATUS_FILTER_OPTIONS, invoiceStatusChip } from "@/lib/billing-status";
 
-export { formatCents } from "@/lib/money";
+import { formatCents } from "@/lib/money";
+
+export { formatCents };
 
 export function formatDate(value: string): string {
   return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
@@ -221,3 +223,22 @@ export const PAGE_SIZE = 50;
  */
 export const STATUS_FILTER_OPTIONS: readonly { value: string; label: string }[] =
   INVOICE_STATUS_FILTER_OPTIONS;
+
+/**
+ * A Stripe dispute (chargeback) on this payment (#980), or null. The academy
+ * answers it in its own Stripe dashboard; the list only has to show it.
+ */
+export function disputeLabel(payment: AdminPaymentView): string | null {
+  if (!payment.dispute_id) return null;
+  const words = (code: string | null | undefined) => (code ?? "").replaceAll("_", " ").trim();
+  const amount = formatCents(payment.dispute_amount_cents ?? payment.amount_cents);
+  // warning_closed: an inquiry that closed without becoming a chargeback.
+  const outcome = payment.dispute_outcome === "warning_closed" ? "Inquiry closed" : null;
+  const head = outcome
+    ? `${outcome} ${amount}`
+    : payment.dispute_outcome
+      ? `Dispute ${words(payment.dispute_outcome)} ${amount}`
+      : `Disputed ${amount}`;
+  const status = payment.dispute_outcome ? "" : words(payment.dispute_status);
+  return [head, words(payment.dispute_reason), status].filter(Boolean).join(" · ");
+}

@@ -10,27 +10,43 @@ the legacy adapter keeps shrinking toward deletion.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from datetime import UTC, date, datetime, time, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 from zoneinfo import ZoneInfo
 
+from bson import ObjectId
+from pydantic import ValidationError
 from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     GenerateMonthlyPaymentsResult,
     MonthlyGenerationSkippedDetail,
 )
+from backend.v2.contexts.billing.application.use_cases.apply_enrollment_move import (
+    MoveDiscountReader,
+)
+from backend.v2.contexts.billing.application.use_cases.family_offers import SIBLING_BOUNDS
 from backend.v2.contexts.billing.application.use_cases.invoice_numbering import (
     mint_invoice_number,
 )
-from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
+from backend.v2.contexts.billing.domain.billing_settings import (
+    BillingSettings,
+    SiblingAppliesTo,
+    SiblingDiscount,
+    SiblingFullPriceChild,
+)
 from backend.v2.contexts.billing.domain.ledger import (
     ACCOUNT_CREDIT_SOURCE_TYPE,
+    TUITION_DISCOUNT_SOURCE_TYPE,
     InvoiceLine,
     LedgerInvoice,
 )
 from backend.v2.contexts.billing.domain.models import AppliedCreditState
-from backend.v2.contexts.billing.domain.plan_price_change import stored_class_fee_cents
+from backend.v2.contexts.billing.domain.plan_price_change import (
+    next_period,
+    stored_class_fee_cents,
+)
 from backend.v2.contexts.billing.domain.proration import (
     BILLABLE_CLASSES_PER_MONTH,
     MOVE_SOURCE_TYPE,
@@ -42,6 +58,14 @@ from backend.v2.contexts.billing.domain.proration import (
     schedule_signature,
     snapshot_charge_denominator,
     snapshot_classes_charged,
+)
+from backend.v2.contexts.billing.domain.sibling_discount import (
+    SIBLING_DISCOUNT_ID_PREFIX,
+    FamilyEnrollment,
+    best_tuition_discount,
+    full_price_student,
+    is_sibling_discounted,
+    sibling_policy,
 )
 from backend.v2.contexts.billing.domain.tuition_discount import (
     TuitionDiscount,
@@ -58,6 +82,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo impo
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     class_fee_cents_for_period,
 )
+from backend.v2.shared.billing_type import is_not_billed
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.observability.ops_alerts import capture_message
 from backend.v2.shared.tenancy import current_academy_id
@@ -85,8 +110,6 @@ MONTHLY_KEY_STATUS_REPAIR_FAILED = "repair_failed"
 #: be skipped (#651), so ``active`` is the one status that is invoiced.
 MONTHLY_RUN_ENROLLMENT_STATUSES: tuple[str, ...] = ("active", "paused")
 MONTHLY_INVOICED_ENROLLMENT_STATUS = "active"
-#: ``billing_type`` values the monthly run invoices (missing reads "standard").
-MONTHLY_INVOICED_BILLING_TYPES: frozenset[str] = frozenset({"", "standard", "monthly", "manual"})
 MONTHLY_KEY_STATUS_REVIEWED = "reviewed"
 
 
@@ -158,6 +181,7 @@ class MongoMonthlyBillingGenerator:
         # every invoice in a run shares one grace window even if the run
         # straddles midnight or an admin edits the setting mid-run.
         self._invoice_due_days = BillingSettings.default("").invoice_due_days
+        self._autopay_charge_offset_days: int | None = None
 
     async def _load_academy_timezone(self) -> str | None:
         """The academy's wall clock, resolved once per generation run.
@@ -168,32 +192,33 @@ class MongoMonthlyBillingGenerator:
         skip below would be off by a month. Unreadable/unset degrades to UTC,
         matching ``self_cancel._end_of_month`` and ``period_of``.
         """
-        try:
-            doc = await self._db["academies"].find_one({"academy_id": current_academy_id()})
-        except Exception:
-            logging.getLogger(__name__).warning(
-                "monthly_generation_academy_timezone_unreadable; using UTC",
-                exc_info=True,
-            )
-            return None
-        return str((doc or {}).get("timezone") or "") or None
+        return await _academy_timezone(self._db)
 
-    async def _load_invoice_due_days(self) -> int:
-        """Read this academy's grace window, falling back to the model default.
+    async def _load_schedule(self, on: date) -> tuple[int, int | None]:
+        """This academy's ``(invoice_due_days, autopay_charge_offset_days)`` as of
+        ``on`` (a dated schedule change applies from its day), falling back to
+        the model defaults.
 
         Settings are advisory for generation: a missing or unreadable
         billing_settings doc must never block the monthly run, so any failure
         degrades to the default rather than raising.
         """
         try:
-            settings = await MongoBillingSettingsRepository(self._db).get()
+            settings = await MongoBillingSettingsRepository(self._db).get(on=on)
         except Exception:
             logging.getLogger(__name__).warning(
                 "monthly_generation_billing_settings_unreadable; using default due days",
                 exc_info=True,
             )
-            return BillingSettings.default("").invoice_due_days
-        return settings.invoice_due_days
+            # A silent default on the 1st would date a whole month of invoices
+            # on the wrong schedule (L8 review), so page someone.
+            capture_message(
+                f"Monthly generation could not read billing settings for {on}; "
+                "invoices use the default due days and no autopay charge date",
+                level="error",
+            )
+            settings = BillingSettings.default("")
+        return settings.invoice_due_days, settings.autopay_charge_offset_days
 
     @staticmethod
     def _monthly_invoice_id(enrollment_id: str, period: str) -> str:
@@ -215,44 +240,37 @@ class MongoMonthlyBillingGenerator:
             return value[:10]
         return None
 
-    async def _active_billing_deferral_detail(
+    def _skip_detail(
         self,
+        skip: tuple[str, Any],
         *,
-        academy_id: str,
         enrollment: dict[str, object],
         student_doc: dict[str, object] | None,
         period: str,
-        today: date,
-    ) -> MonthlyGenerationSkippedDetail | None:
-        enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
-        cursor = self._db["enrollment_billing_deferrals"].find(
-            {
-                "academy_id": academy_id,
-                "enrollment_id": enrollment_id,
-                "status": "active",
-                "billing_period": period,
-            },
-            sort=[("created_at", -1)],
-            limit=10,
-        )
-        today_text = today.isoformat()
-        async for doc in cursor:
-            resume_on = self._date_str(doc.get("resume_on"))
-            if resume_on is not None and resume_on <= today_text:
-                continue
-            review_on = self._date_str(doc.get("review_on"))
-            if review_on is not None and review_on <= today_text:
-                continue
-            expires_on = self._date_str(doc.get("expires_on"))
-            if expires_on is not None and expires_on < today_text:
-                continue
+    ) -> MonthlyGenerationSkippedDetail:
+        """The run's skip detail for a ``monthly_skip_reason`` result."""
+        reason, value = skip
+        if reason == "deferral":
             return self._skipped_detail_from_deferral(
+                enrollment=enrollment, student_doc=student_doc, period=period, deferral=value
+            )
+        if reason == "paused":
+            # Issue #651: a paused enrollment is never invoiced, deferral row or
+            # not. A deferral explains the skip when present; otherwise the
+            # status itself is the reason.
+            return self._paused_status_detail(
+                enrollment=enrollment, student_doc=student_doc, period=period
+            )
+        if reason == "pending_cancellation":
+            return self._pending_cancellation_detail(
                 enrollment=enrollment,
                 student_doc=student_doc,
                 period=period,
-                deferral=doc,
+                pending_period=value,
             )
-        return None
+        return self._legacy_skip_period_detail(
+            enrollment=enrollment, student_doc=student_doc, period=period
+        )
 
     def _skipped_detail_from_deferral(
         self,
@@ -427,10 +445,15 @@ class MongoMonthlyBillingGenerator:
         # dunning ladder's first autopay attempt fires on the due date, even
         # when a period is generated late or backfilled by an admin.
         due_date = now.date() + timedelta(days=self._invoice_due_days)
+        # Stamped only when the academy charges ahead of the due date (L8);
+        # unstamped invoices charge on the due date.
+        offset = self._autopay_charge_offset_days
+        autopay_charge_date = None if offset is None else now.date() + timedelta(days=offset)
         invoice_number = await self._mint_invoice_number(
             ledger_repo=ledger_repo, invoice_id=invoice_id, academy_id=academy_id, period=period
         )
 
+        net_cents = total_cents if total_cents is not None else max(gross_cents - discount_cents, 0)
         invoice = LedgerInvoice(
             invoice_id=invoice_id,
             invoice_number=invoice_number,
@@ -442,14 +465,12 @@ class MongoMonthlyBillingGenerator:
             status="open",
             subtotal_cents=gross_cents,
             discount_cents=discount_cents,
-            total_cents=total_cents
-            if total_cents is not None
-            else max(gross_cents - discount_cents, 0),
-            balance_due_cents=total_cents
-            if total_cents is not None
-            else max(gross_cents - discount_cents, 0),
+            total_cents=net_cents,
+            balance_due_cents=net_cents,
+            zero_net_notice=net_cents == 0 and gross_cents > 0,
             currency="usd",
             due_date=due_date,
+            autopay_charge_date=autopay_charge_date,
             created_at=now,
             updated_at=now,
         )
@@ -761,25 +782,9 @@ class MongoMonthlyBillingGenerator:
         enrollment_id: str,
         period: str,
     ) -> str | None:
-        invoice_doc = await self._db["invoices"].find_one(
-            {
-                "academy_id": current_academy_id(),
-                "enrollment_id": enrollment_id,
-                "period": period,
-                "is_deleted": {"$ne": True},
-                "status": {"$ne": "void"},
-                # A mid-period move adjustment (issue #669) carries the same
-                # (enrollment_id, period) but is NOT the month's tuition
-                # invoice. It is created later, so newest-first would hand it
-                # back here and the recovery pass would mark the period
-                # complete with the tuition invoice still missing.
-                "source_type": {"$ne": MOVE_SOURCE_TYPE},
-            },
-            sort=[("created_at", -1), ("invoice_id", -1)],
+        return await _existing_period_invoice_id(
+            self._db, enrollment_id=enrollment_id, period=period
         )
-        if invoice_doc is None:
-            return None
-        return str(invoice_doc.get("invoice_id") or "")
 
     async def _upsert_complete_monthly_invoice_key(
         self,
@@ -1057,7 +1062,10 @@ class MongoMonthlyBillingGenerator:
 
     async def generate_monthly_payments(self, period: str) -> GenerateMonthlyPaymentsResult:
         academy_id = current_academy_id()
-        self._invoice_due_days = await self._load_invoice_due_days()
+        (
+            self._invoice_due_days,
+            self._autopay_charge_offset_days,
+        ) = await self._load_schedule(self._clock().date())
         academy_timezone = await self._load_academy_timezone() or "UTC"
         cursor = self._db["enrollments"].find(
             {
@@ -1084,60 +1092,22 @@ class MongoMonthlyBillingGenerator:
             student_doc = await self._db["students"].find_one(
                 {"academy_id": academy_id, "student_id": student_id}
             )
-            deferral_detail = await self._active_billing_deferral_detail(
-                academy_id=academy_id,
+            skip = await monthly_skip_reason(
+                self._db,
                 enrollment=enrollment,
-                student_doc=student_doc,
                 period=period,
                 today=now.date(),
+                academy_timezone=academy_timezone,
             )
-            if deferral_detail is not None:
-                skipped_paused += 1
-                skipped_details.append(deferral_detail)
-                continue
-            if str(enrollment.get("status") or "") == "paused":
-                # Issue #651: a paused enrollment is never invoiced, deferral
-                # row or not. A deferral (above) explains the skip when present;
-                # otherwise the status itself is the reason.
+            if skip is not None:
                 skipped_paused += 1
                 skipped_details.append(
-                    self._paused_status_detail(
-                        enrollment=enrollment, student_doc=student_doc, period=period
+                    self._skip_detail(
+                        skip, enrollment=enrollment, student_doc=student_doc, period=period
                     )
                 )
                 continue
-            pending_cancellation_at = _coerce_datetime(enrollment.get("pending_cancellation_at"))
-            if pending_cancellation_at is not None:
-                # Issue #675 follow-up: an ``end_of_period`` self-cancel leaves
-                # the row ``active`` until the hourly worker flips it at month
-                # end, and the generation cron can run first (03:00 UTC vs a
-                # Chicago 04:59:59 run_at). Without this the family is minted —
-                # and emailed — an invoice for the month they cancelled, which
-                # the worker then voids hours later.
-                pending_period = _local_period_label(pending_cancellation_at, academy_timezone)
-                if period > pending_period:
-                    skipped_paused += 1
-                    skipped_details.append(
-                        self._pending_cancellation_detail(
-                            enrollment=enrollment,
-                            student_doc=student_doc,
-                            period=period,
-                            pending_period=pending_period,
-                        )
-                    )
-                    continue
-            if period in set(enrollment.get("skip_periods") or []):
-                skipped_paused += 1
-                skipped_details.append(
-                    self._legacy_skip_period_detail(
-                        enrollment=enrollment,
-                        student_doc=student_doc,
-                        period=period,
-                    )
-                )
-                continue
-            billing_type = str(enrollment.get("billing_type") or "standard").lower()
-            if billing_type not in MONTHLY_INVOICED_BILLING_TYPES:
+            if is_not_billed(enrollment):
                 skipped_no_charge += 1
                 continue
             existing = await self._repo._find_one(
@@ -1170,13 +1140,7 @@ class MongoMonthlyBillingGenerator:
             if gross_amount_cents <= 0:
                 skipped_no_charge += 1
                 continue
-            parent_id = str(
-                enrollment.get("parent_id")
-                or enrollment.get("parent_user_id")
-                or (student_doc or {}).get("parent_id")
-                or (student_doc or {}).get("parent_user_id")
-                or ""
-            )
+            parent_id = resolved_parent_id(enrollment, student_doc)
             if not parent_id:
                 skipped_no_charge += 1
                 continue
@@ -1629,12 +1593,23 @@ async def resolve_monthly_charge(
     billing_period = BillingPeriod.from_label(period, timezone_name=timezone_name)
     occurrences = await repo._occurrences_for_session(session_doc, billing_period)
 
-    policy = await repo._discounts.get_active(enrollment_id)
-    mdc = (
-        monthly_discount_cents(policy, monthly_price_cents=amount_cents)
-        if policy is not None and _policy_applies(policy, billing_period)
-        else 0
+    sibling = await resolve_sibling_discount(
+        repo._db,
+        enrollment=enrollment,
+        period=period,
+        period_start=billing_period.start_at.date(),
+        now=now,
     )
+    # A single TuitionDiscount keeps the ACH base, proration, snapshots and
+    # recompute unchanged.
+    policy = await weighed_tuition_discount(
+        repo._discounts,
+        enrollment_id=enrollment_id,
+        billing_period=billing_period,
+        sibling=sibling,
+        monthly_price_cents=amount_cents,
+    )
+    mdc = monthly_discount_cents(policy, monthly_price_cents=amount_cents) if policy else 0
 
     # Not a first-month enrollment → full monthly tuition.
     #
@@ -1730,6 +1705,718 @@ async def resolve_monthly_charge(
         policy if mdc > 0 else None,
         _tuition_line_description(period, snapshot),
     )
+
+
+#: Insert-once record of each enrollment-month's sibling decision (migration 0237).
+SIBLING_DECISIONS_COLLECTION = "sibling_discount_decisions"
+_STUDENT_PARENT_FIELDS = ("parent_id", "parent_user_id")
+#: identity's ``PARENT_REFERENCE_FIELDS`` (billing may not import identity).
+_USER_REFERENCE_FIELDS = ("user_id", "firebase_uid", "auth_uid")
+
+
+async def _academy_timezone(db: Any) -> str | None:
+    """The academy's IANA zone, or ``None`` when unset or unreadable."""
+    try:
+        doc = await db["academies"].find_one({"academy_id": current_academy_id()})
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "monthly_generation_academy_timezone_unreadable; using UTC",
+            exc_info=True,
+        )
+        return None
+    return str((doc or {}).get("timezone") or "") or None
+
+
+async def _active_billing_deferral(
+    db: Any, *, academy_id: str, enrollment_id: str, period: str, today: date
+) -> dict[str, Any] | None:
+    cursor = db["enrollment_billing_deferrals"].find(
+        {
+            "academy_id": academy_id,
+            "enrollment_id": enrollment_id,
+            "status": "active",
+            "billing_period": period,
+        },
+        sort=[("created_at", -1)],
+        limit=10,
+    )
+    today_text = today.isoformat()
+    date_str = MongoMonthlyBillingGenerator._date_str
+    async for doc in cursor:
+        resume_on = date_str(doc.get("resume_on"))
+        if resume_on is not None and resume_on <= today_text:
+            continue
+        review_on = date_str(doc.get("review_on"))
+        if review_on is not None and review_on <= today_text:
+            continue
+        expires_on = date_str(doc.get("expires_on"))
+        if expires_on is not None and expires_on < today_text:
+            continue
+        return dict(doc)
+    return None
+
+
+async def monthly_skip_reason(
+    db: Any,
+    *,
+    enrollment: Mapping[str, Any],
+    period: str,
+    today: date,
+    academy_timezone: str,
+) -> tuple[str, Any] | None:
+    """Why the monthly run does not invoice this enrollment for ``period``, or
+    ``None``: ``("deferral", row)``, ``("paused", None)``,
+    ``("pending_cancellation", its period)`` or ``("skip_period", None)``.
+
+    The one predicate for the run and the sibling family, so the family is
+    built from exactly the enrollments the run bills (L9 C1 review).
+    """
+    enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
+    deferral = await _active_billing_deferral(
+        db,
+        academy_id=current_academy_id(),
+        enrollment_id=enrollment_id,
+        period=period,
+        today=today,
+    )
+    if deferral is not None:
+        return ("deferral", deferral)
+    if str(enrollment.get("status") or "") == "paused":
+        return ("paused", None)
+    pending_cancellation_at = _coerce_datetime(enrollment.get("pending_cancellation_at"))
+    if pending_cancellation_at is not None:
+        # Issue #675 follow-up: an ``end_of_period`` self-cancel leaves the row
+        # ``active`` until the hourly worker flips it at month end, and the
+        # generation cron can run first (03:00 UTC vs a Chicago 04:59:59
+        # run_at). Without this the family is minted — and emailed — an invoice
+        # for the month they cancelled, which the worker then voids hours later.
+        pending_period = _local_period_label(pending_cancellation_at, academy_timezone)
+        if period > pending_period:
+            return ("pending_cancellation", pending_period)
+    if period in set(enrollment.get("skip_periods") or []):
+        return ("skip_period", None)
+    # "Start billing" after "Not billed": the months in between stay unbilled
+    # even when a past period is generated again. A row with no mark time
+    # (imported NoCharge) was never billed before the restart.
+    started_at = _coerce_datetime(enrollment.get("billing_started_at"))
+    if started_at is not None and period <= _local_period_label(started_at, academy_timezone):
+        marked_at = _coerce_datetime(enrollment.get("not_billed_at"))
+        if marked_at is None or period >= _local_period_label(marked_at, academy_timezone):
+            return ("skip_period", None)
+    return None
+
+
+async def _existing_period_invoice_id(db: Any, *, enrollment_id: str, period: str) -> str | None:
+    """The month's tuition invoice under any id (monthly, "Bill this month",
+    checkout first month), or ``None``. Void invoices do not count."""
+    invoice_doc = await db["invoices"].find_one(
+        {
+            "academy_id": current_academy_id(),
+            "enrollment_id": enrollment_id,
+            "period": period,
+            "is_deleted": {"$ne": True},
+            "status": {"$ne": "void"},
+            # A mid-period move adjustment (issue #669) carries the same
+            # (enrollment_id, period) but is NOT the month's tuition invoice.
+            # It is created later, so newest-first would hand it back here and
+            # the recovery pass would mark the period complete with the tuition
+            # invoice still missing.
+            "source_type": {"$ne": MOVE_SOURCE_TYPE},
+        },
+        sort=[("created_at", -1), ("invoice_id", -1)],
+    )
+    if invoice_doc is None:
+        return None
+    return str(invoice_doc.get("invoice_id") or "")
+
+
+def resolved_parent_id(enrollment: Mapping[str, Any], student: Mapping[str, Any] | None) -> str:
+    """The family key, resolved exactly as the monthly run resolves it."""
+    return str(
+        enrollment.get("parent_id")
+        or enrollment.get("parent_user_id")
+        or (student or {}).get("parent_id")
+        or (student or {}).get("parent_user_id")
+        or ""
+    )
+
+
+async def _parent_aliases(db: Any, parent_id: str) -> frozenset[str]:
+    """Every id the parent's ``users`` document answers to, plus ``parent_id``.
+
+    Mirrors identity's ``resolve_parent_aliases``: one equality question per
+    field and then ``_id``, never an ``$or`` across fields (#894).
+    """
+    projection = {"user_id": 1, "firebase_uid": 1, "auth_uid": 1}
+    doc = None
+    for field_name in _USER_REFERENCE_FIELDS:
+        doc = await db["users"].find_one({field_name: parent_id}, projection, sort=[("_id", 1)])
+        if doc is not None:
+            break
+    if doc is None:
+        by_id: list[Any] = [parent_id]
+        if ObjectId.is_valid(parent_id):
+            by_id.append(ObjectId(parent_id))
+        doc = await db["users"].find_one({"_id": {"$in": by_id}}, projection, sort=[("_id", 1)])
+    values = [parent_id]
+    if doc is not None:
+        values += [doc.get(name) for name in (*_USER_REFERENCE_FIELDS, "_id")]
+    return frozenset(str(value) for value in values if value)
+
+
+async def resolve_sibling_discount(
+    db: Any,
+    *,
+    enrollment: Mapping[str, Any],
+    period: str,
+    period_start: date,
+    now: datetime,
+) -> TuitionDiscount | None:
+    """The automatic sibling policy for this enrollment-month, or ``None`` (L9 C1).
+
+    Only this enrollment's row is ever written, the first time its month is
+    priced, and every later pricing (retries, orphan recovery, "Bill this
+    month") reuses it, even after the setting or the family changes.
+
+    Without a row, the month is decided against the family's fixed points:
+
+    1. Already billed under any non-void tuition invoice (the run's own
+       lookup): no row and no discount, so an invoice is never repriced.
+    2. A sibling is already decided at full price: billed with no row, or a
+       row naming its own child as the full-price child that is billed or
+       still in the family (it will reuse that row). That child is the
+       full-price child, so this one is discounted.
+    3. Otherwise the owner's rule picks the full-price child among the
+       children with no decided enrollment, each weighed on all of its
+       enrollments in the family.
+
+    So a month keeps exactly one full-price child whatever the run order or a
+    mid-run setting change, except when a full-price child with a row but no
+    invoice leaves the family after a sibling was decided against it.
+    Switched off with no row on record: ``None`` and nothing written.
+    """
+    enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
+    decision, outcome = await decide_sibling_discount(
+        db, enrollment=enrollment, period=period, now=now
+    )
+    if decision is None:
+        return None
+    if outcome == "new":
+        decisions = db[SIBLING_DECISIONS_COLLECTION]
+        try:
+            await decisions.insert_one(dict(decision))
+        except DuplicateKeyError:
+            decision = await decisions.find_one(
+                {
+                    "academy_id": decision["academy_id"],
+                    "enrollment_id": enrollment_id,
+                    "period": period,
+                }
+            )
+            if decision is None:  # pragma: no cover - the unique key just refused us
+                raise
+    frozen_bps = _frozen_percent_bps(decision)
+    if frozen_bps is None:
+        return None
+    return sibling_policy(
+        enrollment_id=enrollment_id,
+        student_id=str(enrollment.get("student_id") or ""),
+        period=period,
+        percent_bps=frozen_bps,
+        period_start=period_start,
+    )
+
+
+SiblingDecisionOutcome = Literal["recorded", "new", "invoiced", "off"]
+
+
+async def weighed_tuition_discount(
+    discounts: MoveDiscountReader,
+    *,
+    enrollment_id: str,
+    billing_period: BillingPeriod,
+    sibling: TuitionDiscount | None,
+    monthly_price_cents: int,
+) -> TuitionDiscount | None:
+    """The month's one tuition discount: the manual policy in effect for the
+    period or the sibling one, whichever is larger (manual wins a tie). The
+    monthly run prices with it and the admin badge previews with it."""
+    manual = await discounts.get_active(enrollment_id)
+    if manual is not None and not _policy_applies(manual, billing_period):
+        manual = None
+    return best_tuition_discount(manual, sibling, monthly_price_cents=monthly_price_cents)
+
+
+async def decide_sibling_discount(
+    db: Any, *, enrollment: Mapping[str, Any], period: str, now: datetime, page: bool = True
+) -> tuple[dict[str, Any] | None, SiblingDecisionOutcome]:
+    """This enrollment-month's sibling decision, read-only: ``(row, outcome)``.
+
+    ``recorded``: the row on file. ``new``: the row the run would record now
+    (``resolve_sibling_discount`` inserts it; the admin badge only shows it).
+    ``invoiced`` / ``off``: no row and no discount, because the month is
+    already billed or the setting is off. Rules: ``resolve_sibling_discount``.
+    ``page=False`` keeps an unreadable setting out of Sentry (badge reads).
+    """
+    academy_id = current_academy_id()
+    enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
+    student_id = str(enrollment.get("student_id") or "")
+    key = {"academy_id": academy_id, "enrollment_id": enrollment_id, "period": period}
+    decisions = db[SIBLING_DECISIONS_COLLECTION]
+    decision = await decisions.find_one(key)
+    if decision is not None:
+        return dict(decision), "recorded"
+    if await _existing_period_invoice_id(db, enrollment_id=enrollment_id, period=period):
+        return None, "invoiced"
+    offer = await _sibling_offer(db, academy_id, page=page)
+    if offer is None:
+        return None, "off"
+    percent_bps, full_price_child, applies_to = offer
+    parent_id, family, relatives = await _sibling_family(
+        db, enrollment=enrollment, period=period, today=now.date()
+    )
+    in_family = {row.enrollment_id for row in family}
+    decided: set[str] = set()  # children (student ids), not enrollments
+    paid_full: set[str] = set()
+    for member_id, member_student in relatives:
+        if member_id == enrollment_id:
+            continue
+        row = await decisions.find_one({**key, "enrollment_id": member_id})
+        invoiced = await _existing_period_invoice_id(db, enrollment_id=member_id, period=period)
+        # A row with no invoice still binds while its enrollment stays in the
+        # family: it will reuse that row when billed. Once it leaves, ignore it.
+        if not invoiced and (row is None or member_id not in in_family):
+            continue
+        decided.add(member_student)
+        if row is None or (
+            not row.get("discounted") and row.get("full_price_student_id") == member_student
+        ):
+            paid_full.add(member_student)
+    own = next((row for row in family if row.enrollment_id == enrollment_id), None)
+    full_price = ""
+    if own is not None and paid_full:
+        full_price = own.student_id if own.student_id in paid_full else min(paid_full)
+    elif own is not None:
+        # Whole children only: excluding one of a child's enrollments would
+        # change that child's tuition total or first start under the rule.
+        undecided = [row for row in family if row.student_id not in decided]
+        full_price = full_price_student(undecided, full_price_child=full_price_child) or ""
+    discounted = own is not None and is_sibling_discounted(
+        family, own, full_price=full_price, applies_to=applies_to
+    )
+    decision = {
+        **key,
+        "student_id": student_id,
+        "parent_id": parent_id,
+        "discounted": discounted,
+        "percent_bps": percent_bps if discounted else None,
+        "full_price_student_id": full_price,
+        "full_price_child": full_price_child,
+        "applies_to": applies_to,
+        "family_enrollment_ids": sorted(row.enrollment_id for row in family),
+        "decided_at": now,
+    }
+    return decision, "new"
+
+
+async def preview_family_sibling_discount(
+    db: Any,
+    *,
+    parent_id: str,
+    now: datetime,
+    discounts: MoveDiscountReader,
+) -> dict[str, Any]:
+    """Who gets the sibling discount on this family's invoices for the
+    academy's current month, and for the next month. Read-only: it runs the
+    same ``decide_sibling_discount`` and ``best_tuition_discount`` the monthly
+    run prices with and writes nothing, so the admin badge cannot disagree
+    with the invoice.
+
+    Per active or paused enrollment: ``status`` is ``discounted``,
+    ``full_price``, ``not_eligible`` or ``off``, with ``reason`` and the
+    sibling ``percent_bps`` when one was decided. A ``not_billed_this_month``
+    row names its ``exclusion`` (``_family_exclusion``) and, for
+    ``billing_type``, the enrollment's ``billing_type``. ``next_period``
+    previews the month after when a row is ``already_invoiced`` (else
+    ``None``), so a month invoiced before the setting went on still says what
+    happens next.
+    """
+    academy_id = current_academy_id()
+    academy_timezone = await _academy_timezone(db) or "UTC"
+    period = _local_period_label(now, academy_timezone)
+    offer = await _sibling_offer(db, academy_id, page=False)
+    aliases = await _parent_aliases(db, parent_id)
+    students = await _family_students(db, academy_id=academy_id, aliases=aliases)
+    enrollments: list[Mapping[str, Any]] = []
+    cursor = db["enrollments"].find(
+        {
+            "academy_id": academy_id,
+            "student_id": {"$in": sorted(sid for sid in students if sid)},
+            "status": {"$in": list(MONTHLY_RUN_ENROLLMENT_STATUSES)},
+        },
+        sort=[("student_id", 1), ("enrollment_id", 1)],
+    )
+    async for row in cursor:
+        if resolved_parent_id(row, students.get(str(row.get("student_id") or ""))) in aliases:
+            enrollments.append(row)
+    student_of = {
+        str(row.get("enrollment_id") or row.get("_id")): str(row.get("student_id") or "")
+        for row in enrollments
+    }
+
+    async def rows_for(month: str) -> list[dict[str, Any]]:
+        return [
+            await _sibling_preview_row(
+                db,
+                enrollment=enrollment,
+                period=month,
+                now=now,
+                discounts=discounts,
+                student_of=student_of,
+                enabled=offer is not None,
+                academy_timezone=academy_timezone,
+            )
+            for enrollment in enrollments
+        ]
+
+    current = await rows_for(period)
+    # Only a month already invoiced needs next month to say what happens.
+    ahead = offer is not None and any(row["reason"] == "already_invoiced" for row in current)
+    following = next_period(period)
+    return {
+        "period": period,
+        "enabled": offer is not None,
+        "percent_bps": offer[0] if offer else None,
+        "enrollments": current,
+        "next_period": (
+            {"period": following, "enrollments": await rows_for(following)} if ahead else None
+        ),
+    }
+
+
+async def _sibling_preview_row(
+    db: Any,
+    *,
+    enrollment: Mapping[str, Any],
+    period: str,
+    now: datetime,
+    discounts: MoveDiscountReader,
+    student_of: Mapping[str, str],
+    enabled: bool,
+    academy_timezone: str,
+) -> dict[str, Any]:
+    status, reason, percent_bps = await _sibling_preview_status(
+        db,
+        enrollment=enrollment,
+        period=period,
+        now=now,
+        discounts=discounts,
+        student_of=student_of,
+        enabled=enabled,
+    )
+    exclusion: str | None = None
+    if reason == "not_billed_this_month":
+        exclusion, _ = await _family_exclusion(
+            db, enrollment, period=period, today=now.date(), academy_timezone=academy_timezone
+        )
+    return {
+        "enrollment_id": str(enrollment.get("enrollment_id") or enrollment.get("_id")),
+        "student_id": str(enrollment.get("student_id") or ""),
+        "session_id": str(enrollment.get("session_id") or ""),
+        "status": status,
+        "reason": reason,
+        "percent_bps": percent_bps,
+        "exclusion": exclusion,
+        "billing_type": (
+            str(enrollment.get("billing_type") or "") if exclusion == "billing_type" else None
+        ),
+        # Why the owner marked it not billed (the badge says "not billed (Owner's child)").
+        "not_billed_reason": (
+            str(enrollment.get("not_billed_reason") or "") or None
+            if exclusion == "billing_type"
+            else None
+        ),
+    }
+
+
+async def _sibling_preview_status(
+    db: Any,
+    *,
+    enrollment: Mapping[str, Any],
+    period: str,
+    now: datetime,
+    discounts: MoveDiscountReader,
+    student_of: Mapping[str, str],
+    enabled: bool,
+) -> tuple[str, str, int | None]:
+    enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
+    student_id = str(enrollment.get("student_id") or "")
+    decision, _ = await decide_sibling_discount(
+        db, enrollment=enrollment, period=period, now=now, page=False
+    )
+    if decision is None:
+        # Invoiced with no row and the setting off reads "off": it was never on.
+        if not enabled:
+            return "off", "setting_off", None
+        return "not_eligible", "already_invoiced", None
+    percent_bps = decision.get("percent_bps")
+    if decision.get("discounted") and _valid_percent_bps(percent_bps):
+        invoice_id = await _existing_period_invoice_id(
+            db, enrollment_id=enrollment_id, period=period
+        )
+        session_doc = (
+            await db["sessions"].find_one(
+                {
+                    "academy_id": current_academy_id(),
+                    "session_id": str(enrollment.get("session_id") or ""),
+                }
+            )
+            or {}
+        )
+        amount_cents = await class_fee_cents_for_period(db, session_doc, period)
+        billing_period = BillingPeriod.from_label(
+            period,
+            timezone_name=await resolve_session_doc_timezone(
+                academy_timezone_lookup(db), session_doc
+            ),
+        )
+        sibling = sibling_policy(
+            enrollment_id=enrollment_id,
+            student_id=student_id,
+            period=period,
+            percent_bps=percent_bps,
+            period_start=billing_period.start_at.date(),
+        )
+        if invoice_id:
+            # Billed: the invoice's tuition_discount line names the policy it
+            # was priced with (the rule apply_enrollment_move follows).
+            line = await db["invoice_lines"].find_one(
+                {
+                    "academy_id": current_academy_id(),
+                    "invoice_id": invoice_id,
+                    "source_type": TUITION_DISCOUNT_SOURCE_TYPE,
+                }
+            )
+            if line is None:
+                return "not_eligible", "already_invoiced", None
+            source_id = str(line.get("source_id") or "")
+            if source_id.startswith(SIBLING_DISCOUNT_ID_PREFIX):
+                return "discounted", "sibling_discount", percent_bps
+            if source_id:
+                return "not_eligible", "manual_discount_larger", percent_bps
+        # Not billed yet, or a line with no source_id: weigh as the run does.
+        best = await weighed_tuition_discount(
+            discounts,
+            enrollment_id=enrollment_id,
+            billing_period=billing_period,
+            sibling=sibling,
+            monthly_price_cents=amount_cents,
+        )
+        if best is sibling:
+            return "discounted", "sibling_discount", percent_bps
+        return "not_eligible", "manual_discount_larger", percent_bps
+    family = [str(eid) for eid in decision.get("family_enrollment_ids") or []]
+    if enrollment_id not in family:
+        return "not_eligible", "not_billed_this_month", None
+    # Children with an enrollment still active or paused; an ended one is not a sibling.
+    if len({student_of[eid] for eid in family if eid in student_of}) < 2:
+        return "not_eligible", "only_one_child", None
+    if decision.get("full_price_student_id") == student_id:
+        return "full_price", "full_price_child", None
+    return "not_eligible", "one_class_per_child", None
+
+
+async def sibling_decision_percent_bps(db: Any, *, enrollment_id: str, period: str) -> int | None:
+    """The recorded sibling percentage for an enrollment-month, if it was discounted."""
+    decision = await db[SIBLING_DECISIONS_COLLECTION].find_one(
+        {"academy_id": current_academy_id(), "enrollment_id": enrollment_id, "period": period}
+    )
+    return None if decision is None else _frozen_percent_bps(decision)
+
+
+def _valid_percent_bps(value: Any) -> TypeGuard[int]:
+    low, high = SIBLING_BOUNDS["percent_bps"]
+    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
+
+
+def _frozen_percent_bps(decision: Mapping[str, Any]) -> int | None:
+    """A discounted row's percentage, or ``None``. A hand-edited percentage out
+    of range is paged and prices the month undiscounted rather than failing it."""
+    if not decision.get("discounted"):
+        return None
+    value = decision.get("percent_bps")
+    if _valid_percent_bps(value):
+        return value
+    logging.getLogger(__name__).warning("sibling_decision_invalid_percent")
+    capture_message(
+        "A sibling discount decision has an invalid percentage; "
+        "that month was priced without the sibling discount",
+        level="error",
+    )
+    return None
+
+
+async def _sibling_offer(
+    db: Any, academy_id: str, *, page: bool = True
+) -> tuple[int, SiblingFullPriceChild, SiblingAppliesTo] | None:
+    """``(percent_bps, full_price_child, applies_to)`` when the sibling block is
+    switched on and valid, else ``None``.
+
+    Reads the block alone, so a bad value elsewhere in the settings document
+    cannot block the monthly run. A block switched on but unreadable, missing a
+    value or with a percentage out of range (only a hand edit can store one;
+    the API refuses it) is paged and applies no discount.
+    """
+    doc = await db["billing_settings"].find_one({"academy_id": academy_id}, {"sibling_discount": 1})
+    try:
+        offer = SiblingDiscount.model_validate((doc or {}).get("sibling_discount") or {})
+        if not offer.enabled:
+            return None
+        percent_bps, full_price_child, applies_to = (
+            offer.percent_bps,
+            offer.full_price_child,
+            offer.applies_to,
+        )
+        if (
+            _valid_percent_bps(percent_bps)
+            and full_price_child is not None
+            and applies_to is not None
+        ):
+            return percent_bps, full_price_child, applies_to
+        logging.getLogger(__name__).warning("sibling_discount_incomplete")
+    except ValidationError:
+        logging.getLogger(__name__).warning("sibling_discount_unreadable", exc_info=True)
+    if not page:
+        return None
+    # Generating without it would overcharge every sibling family, so page.
+    capture_message(
+        "Monthly generation could not read the sibling discount setting; "
+        "no sibling discount was applied and no decision recorded",
+        level="error",
+    )
+    return None
+
+
+async def _family_students(db: Any, *, academy_id: str, aliases: frozenset[str]) -> dict[str, Any]:
+    """The parent's students by ``student_id``, found through either parent field."""
+    students: dict[str, Any] = {}
+    for field_name in _STUDENT_PARENT_FIELDS:
+        cursor = db["students"].find(
+            {"academy_id": academy_id, field_name: {"$in": sorted(aliases)}}
+        )
+        async for doc in cursor:
+            students[str(doc.get("student_id") or "")] = doc
+    return students
+
+
+async def _sibling_family(
+    db: Any, *, enrollment: Mapping[str, Any], period: str, today: date
+) -> tuple[str, list[FamilyEnrollment], list[tuple[str, str]]]:
+    """``(parent_id, family, relatives)`` for this enrollment's parent, under
+    any of the parent's ids.
+
+    ``family`` is the enrollments the run bills this period, with the run's
+    filters: active, a monthly-invoiced billing type, not skipped by
+    ``monthly_skip_reason``, and a class fee for the period. ``relatives`` is
+    every enrollment of the same children whatever its status, as
+    ``(enrollment_id, student_id)``: a month already billed counts even if the
+    enrollment is paused or ended since.
+
+    shortcut: children are found through the students' ``parent_id`` /
+    ``parent_user_id`` (both indexed, 0010 and 0237) plus this enrollment's own
+    student, so a child linked to the parent only by ``enrollment.parent_id``
+    or ``parent_user_id`` is missed (no index there). Index and widen the
+    lookup if such rows ever appear.
+    """
+    academy_id = current_academy_id()
+    own_student_id = str(enrollment.get("student_id") or "")
+    own_student = await db["students"].find_one(
+        {"academy_id": academy_id, "student_id": own_student_id}
+    )
+    parent_id = resolved_parent_id(enrollment, own_student)
+    if not parent_id:
+        return "", [], []
+    aliases = await _parent_aliases(db, parent_id)
+    students = {
+        own_student_id: own_student,
+        **await _family_students(db, academy_id=academy_id, aliases=aliases),
+    }
+    academy_timezone = await _academy_timezone(db) or "UTC"
+    family: list[FamilyEnrollment] = []
+    relatives: list[tuple[str, str]] = []
+    cursor = db["enrollments"].find(
+        {"academy_id": academy_id, "student_id": {"$in": sorted(sid for sid in students if sid)}}
+    )
+    async for row in cursor:
+        student_id = str(row.get("student_id") or "")
+        if resolved_parent_id(row, students.get(student_id)) not in aliases:
+            continue
+        relatives.append((str(row.get("enrollment_id") or row.get("_id")), student_id))
+        exclusion, fee = await _family_exclusion(
+            db, row, period=period, today=today, academy_timezone=academy_timezone
+        )
+        if exclusion is not None:
+            continue
+        family.append(
+            FamilyEnrollment(
+                enrollment_id=str(row.get("enrollment_id") or row.get("_id")),
+                student_id=student_id,
+                list_fee_cents=fee,
+                enrolled_at=_coerce_datetime(
+                    row.get("billing_start_at") or row.get("enrolled_at") or row.get("created_at")
+                ),
+            )
+        )
+    return parent_id, family, relatives
+
+
+#: Why an active or paused enrollment is not in the sibling family for a
+#: month (the run does not invoice it): ``_family_exclusion``'s answers.
+SiblingExclusion = Literal[
+    "paused",
+    "not_active",
+    "billing_type",
+    "deferral",
+    "pending_cancellation",
+    "skip_period",
+    "no_class_fee",
+]
+
+#: ``monthly_skip_reason``'s answers for an active row (its ``paused`` needs a
+#: paused row, which the status check already answered).
+_SKIP_EXCLUSIONS: dict[str, SiblingExclusion] = {
+    "deferral": "deferral",
+    "pending_cancellation": "pending_cancellation",
+    "skip_period": "skip_period",
+}
+
+
+async def _family_exclusion(
+    db: Any, row: Mapping[str, Any], *, period: str, today: date, academy_timezone: str
+) -> tuple[SiblingExclusion | None, int]:
+    """``(None, class fee)`` when the enrollment is in ``period``'s sibling
+    family, else ``(why not, 0)``: active, a monthly-invoiced
+    ``billing_type``, no ``monthly_skip_reason``, a class fee, in the order
+    ``_sibling_family`` always checked them (the run checks the skip first;
+    membership is the same, only the reported reason differs when both
+    apply). The one predicate the sibling family and the badge share."""
+    status = str(row.get("status") or "")
+    if status != MONTHLY_INVOICED_ENROLLMENT_STATUS:
+        return ("paused" if status == "paused" else "not_active"), 0
+    if is_not_billed(row):
+        return "billing_type", 0
+    skip = await monthly_skip_reason(
+        db, enrollment=row, period=period, today=today, academy_timezone=academy_timezone
+    )
+    if skip is not None:
+        return _SKIP_EXCLUSIONS.get(skip[0], "not_active"), 0
+    session = await db["sessions"].find_one(
+        {"academy_id": current_academy_id(), "session_id": str(row.get("session_id") or "")}
+    )
+    fee = await class_fee_cents_for_period(db, session or {}, period)
+    if fee <= 0:
+        return "no_class_fee", 0
+    return None, fee
 
 
 def _policy_applies(policy: TuitionDiscount, billing_period: BillingPeriod) -> bool:

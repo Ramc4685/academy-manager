@@ -45,6 +45,16 @@ export interface PublicClass {
   price: PublicPrice | null;
   /** Null when the academy hides availability. */
   seats: PublicSeats | null;
+  /**
+   * Dates a family can book a free trial on themselves (L9). Empty unless the
+   * academy has self-booked trials on; `slot_key` is an opaque token.
+   */
+  trial_dates?: PublicTrialDate[];
+}
+
+export interface PublicTrialDate {
+  slot_key: string;
+  starts_at: string;
 }
 
 export interface PublicProgram {

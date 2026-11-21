@@ -10,6 +10,7 @@ from pymongo.errors import DuplicateKeyError
 from backend.v2.main import (
     _due_periods,
     _lifespan,
+    _monthly_generation_retry_reason,
     _previous_period,
     _run_monthly_invoice_generation,
     _scheduler_academy_ids,
@@ -19,10 +20,13 @@ from backend.v2.shared.tenancy.context import current_academy_id
 
 class _FakeAcademyRepo:
     def __init__(self, docs: list[dict[str, object]]) -> None:
-        self._ids = [str(doc.get("academy_id") or "") for doc in docs]
+        self._rows = [
+            (str(doc.get("academy_id") or ""), doc.get("status") or None)  # type: ignore[misc]
+            for doc in docs
+        ]
 
-    async def list_ids(self) -> list[str]:
-        return self._ids
+    async def list_ids_with_status(self) -> list[tuple[str, str | None]]:
+        return self._rows  # type: ignore[return-value]
 
 
 @pytest.mark.asyncio
@@ -40,6 +44,81 @@ async def test_scheduler_academy_ids_are_unique_and_include_default() -> None:
         "academy-a",
         "academy-b",
         "default-academy",
+    ]
+
+
+_LIFECYCLE = [
+    {"academy_id": "active", "status": "active"},
+    {"academy_id": "legacy-no-status"},
+    {"academy_id": "provisioning", "status": "provisioning"},
+    {"academy_id": "suspended", "status": "suspended"},
+    {"academy_id": "cancelled", "status": "cancelled"},
+    {"academy_id": "unknown", "status": "archived-someday"},
+]
+
+
+@pytest.mark.asyncio
+async def test_suspended_and_cancelled_tenants_are_skipped_everything_else_runs() -> None:
+    """L13: a denylist, so a missing or unknown status never stops billing."""
+    ids = await _scheduler_academy_ids(_FakeAcademyRepo(_LIFECYCLE), "")
+
+    assert ids == ["active", "legacy-no-status", "provisioning", "unknown"]
+
+
+@pytest.mark.asyncio
+async def test_include_suspended_keeps_every_tenant_for_inbound_truth_jobs() -> None:
+    ids = await _scheduler_academy_ids(_FakeAcademyRepo(_LIFECYCLE), "", include_suspended=True)
+
+    assert ids == [doc["academy_id"] for doc in _LIFECYCLE]
+
+
+@pytest.mark.asyncio
+async def test_a_suspended_fallback_academy_is_not_re_added() -> None:
+    academies = _FakeAcademyRepo([{"academy_id": "primary", "status": "suspended"}])
+
+    assert await _scheduler_academy_ids(academies, "primary") == []
+
+
+@pytest.mark.asyncio
+async def test_an_absent_fallback_academy_is_still_added() -> None:
+    academies = _FakeAcademyRepo([{"academy_id": "other", "status": "active"}])
+
+    assert await _scheduler_academy_ids(academies, "primary") == ["other", "primary"]
+
+
+def test_only_the_inbound_truth_jobs_include_suspended_tenants() -> None:
+    """The webhook drain and PaymentIntent reconcile keep suspended tenants so
+    money Stripe already moved lands in the ledger; nothing else may."""
+    import backend.v2.main as main_module
+
+    source = inspect.getsource(main_module)
+    assert source.count("include_suspended=True") == 2
+    for job in ("process_stripe_webhook_events", "reconcile_stripe_payment_intents"):
+        call = re.search(
+            rf'_run_isolated_per_academy\(\s*"{job}",\s*await _scheduler_academy_ids\((.*?)\),\s*_',
+            source,
+            re.S,
+        )
+        assert call is not None and "include_suspended=True" in call.group(1)
+
+
+@pytest.mark.asyncio
+async def test_academy_repo_reports_status_per_academy() -> None:
+    import mongomock_motor
+
+    from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
+        MongoAcademyRepository,
+    )
+
+    db = mongomock_motor.AsyncMongoMockClient()["test"]
+
+    await db["academies"].insert_many(
+        [{"academy_id": "a", "status": "suspended"}, {"academy_id": "b"}, {"academy_id": ""}]
+    )
+
+    assert await MongoAcademyRepository(db).list_ids_with_status() == [
+        ("a", "suspended"),
+        ("b", None),
     ]
 
 
@@ -70,6 +149,29 @@ def test_scheduler_registers_dunning_retry_job() -> None:
 
     assert "_process_dunning_retries" in source
     assert 'id="process_dunning_retries"' in source
+
+
+@pytest.mark.parametrize(
+    ("job", "minute", "crontab"),
+    [
+        ("_process_dunning_retries", "minute=5,", "5 * * * *"),
+        ("_reconcile_stripe_payment_intents", 'minute="*/10",', "*/10 * * * *"),
+        ("_process_stalled_hold_reclaims", 'minute="*/15",', "*/15 * * * *"),
+    ],
+)
+def test_money_timers_run_on_the_wall_clock(job: str, minute: str, crontab: str) -> None:
+    """G:jobs_data_infra:3: an interval job's timer restarts at every boot, so
+    each deploy pushed the next autopay charge out by up to an hour."""
+    from backend.v2.main import SCHEDULED_JOB_MONITORS
+
+    source = inspect.getsource(_lifespan)
+    registration = source.split(f"scheduler.add_job(\n        {job},", 1)[1].split(")", 1)[0]
+    assert '"cron"' in registration
+    assert minute in registration
+    assert SCHEDULED_JOB_MONITORS[job.lstrip("_")]["schedule"] == {
+        "type": "crontab",
+        "value": crontab,
+    }
 
 
 def test_scheduler_registers_monthly_invoice_generation_job() -> None:
@@ -119,8 +221,9 @@ def test_scheduler_job_tables_cover_every_registered_job() -> None:
     registered = set(re.findall(r'id="(\w+)"', source))
 
     assert (
-        len(registered) == 26
-    )  # +level-ups, +evening wins, +report cards, +account deletions, +3 trial nudges, +nurture
+        len(registered) == 29
+    )  # +level-ups, +evening wins, +report cards, +account deletions, +3 trial nudges, +nurture,
+    # +owner alert resend (L9), +referrals (L9 C2), +campaign queue (L11)
     assert registered == set(JOB_STALE_AFTER)
     assert registered == set(SCHEDULED_JOB_MONITORS)
     # Every leased wrapper names a registered job, so a typo cannot leave a
@@ -794,6 +897,79 @@ async def test_generation_without_a_send_pass_behaves_as_before() -> None:
 
     assert totals["created"] == 3
     assert totals["invoices_emailed"] == 0
+
+
+# --- G:jobs_data_infra:2: a failed run retries hourly, not tomorrow ---------
+
+
+async def _one_run(generate, send=None):
+    db = _FakeDb()
+    _seed_history(db, "academy-a", "2026-08")
+    return await _run_monthly_invoice_generation(
+        db=db,
+        academy_ids=["academy-a"],
+        get_billing_settings=_settings_getter({"academy-a": _FakeSettings(1)}),
+        generate=generate,
+        now=datetime(2026, 9, 1, 3, 0),
+        send_invoices=send,
+    )
+
+
+async def _ok(period: str) -> _FakeResult:
+    return _FakeResult(created=1)
+
+
+@pytest.mark.asyncio
+async def test_a_clean_run_needs_no_retry() -> None:
+    async def _send(period: str) -> dict[str, int]:
+        return {"emailed": 1}
+
+    assert _monthly_generation_retry_reason(await _one_run(_ok, _send)) is None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_generation_needs_a_retry() -> None:
+    async def _boom(period: str) -> _FakeResult:
+        raise RuntimeError("mongo blip")
+
+    reason = _monthly_generation_retry_reason(await _one_run(_boom))
+    assert reason == "generation_failed=1"
+
+
+@pytest.mark.asyncio
+async def test_a_partial_generation_needs_a_retry() -> None:
+    async def _partial(period: str) -> _FakeResult:
+        return _FakeResult(created=3, failed_repair=1)
+
+    assert _monthly_generation_retry_reason(await _one_run(_partial)) == "partial_run_count=1"
+
+
+@pytest.mark.asyncio
+async def test_a_crashed_email_pass_needs_a_retry_but_single_failed_emails_do_not() -> None:
+    # A failed email is already recorded as delivery_failed and re-sent by the next
+    # run's send pass; retrying for it hourly could re-send an autopay notice.
+    async def _some_failed(period: str) -> dict[str, int]:
+        return {"emailed": 1, "email_failed": 2}
+
+    async def _send_down(period: str) -> dict[str, int]:
+        raise RuntimeError("resend is down")
+
+    assert _monthly_generation_retry_reason(await _one_run(_ok, _some_failed)) is None
+    assert (
+        _monthly_generation_retry_reason(await _one_run(_ok, _send_down))
+        == "invoice_email_pass_failed=1"
+    )
+
+
+def test_the_invoice_job_fails_the_academy_run_when_it_needs_a_retry() -> None:
+    """Without the raise, run_daily_at_local_time marks the local day done and
+    a 03:00 blip pushes invoices (and every due date) to the next day."""
+    source = inspect.getsource(_lifespan)
+    body = source.split("async def _generate_monthly_invoices_body", 1)[1].split(
+        "await _run_local_daily(", 1
+    )[0]
+    assert "_monthly_generation_retry_reason(academy_totals)" in body
+    assert "raise RuntimeError(" in body
 
 
 # --- Row 24: no phantom ``default-academy`` tenant in multi-academy mode ------

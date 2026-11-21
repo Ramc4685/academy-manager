@@ -43,11 +43,13 @@ from backend.v2.contexts.enrollment.domain.lifecycle import (
 )
 from backend.v2.contexts.enrollment.domain.models import (
     DROPPED_SPELLINGS,
+    LIVE,
     NON_TERMINAL,
     SEAT_HOLDING,
     TERMINAL,
     Student,
 )
+from backend.v2.shared.billing_type import is_not_billed
 from backend.v2.shared.profile.completeness import CHILD_REQUIRED, ChildFacts, child_gaps
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
@@ -71,13 +73,10 @@ class _ActiveSessions:
 #: two summary mappers cannot drift on what "no rows" means.
 _NEVER_ENROLLED: Final[PersonLifecycleState] = PersonLifecycleState(state="never_enrolled")
 
-#: How far back the at_risk window looks for scheduled occurrences. A class
-#: that has not run in four months tells us nothing about this month's
-#: attendance, and an unbounded scan would grow with the academy's history.
+#: How far back the at_risk read looks for recorded marks. A mark from four
+#: months ago tells us nothing about this month, and an unbounded scan would
+#: grow with the academy's history.
 _AT_RISK_LOOKBACK_DAYS: Final[int] = 120
-
-#: "No attendance in the last three scheduled dates" (#773 / audit §3).
-_AT_RISK_OCCURRENCES: Final[int] = 3
 
 #: How far back ``attendance_rate`` / ``last_seen_at`` look, measured on the
 #: date the class ran (``session_occurrences.start_at``), not on when the mark
@@ -288,6 +287,10 @@ class MongoStudentRepository(TenantScopedRepository):
         )
         return enrollment is not None
 
+    async def exists(self, student_id: str) -> bool:
+        """This academy has the student; ``student_id`` only, never a raw ``_id``."""
+        return await self._count({"student_id": student_id}) > 0
+
     async def get_by_id(self, student_id: str) -> Student | None:
         doc = await self._find_one(self._id_filter(student_id))
         return self._to_domain(doc) if doc else None
@@ -310,17 +313,19 @@ class MongoStudentRepository(TenantScopedRepository):
             students.append(self._to_domain(doc))
         return students
 
-    async def anonymise(self, student_id: str, *, now: datetime) -> None:
+    async def anonymise(self, student_id: str, *, now: datetime) -> str:
         """Strip a child's personal details after the parent's account deletion.
 
         The row stays (as "Student 4F2A") so attendance, progress and payroll
         history keep resolving; nothing that identifies the child survives.
+        Returns that placeholder name.
         """
+        label = f"Student {student_id[-4:].upper()}"
         await self._update_one(
             {"student_id": student_id},
             {
                 "$set": {
-                    "full_name": f"Student {student_id[-4:].upper()}",
+                    "full_name": label,
                     "anonymised_at": now,
                     "updated_at": now,
                 },
@@ -342,6 +347,7 @@ class MongoStudentRepository(TenantScopedRepository):
                 ),
             },
         )
+        return label
 
     async def get_parent_user_doc(self, parent_id: str) -> dict[str, Any] | None:
         # Raw parent ``users`` doc (tenant-scoped), used by the parent daily
@@ -1064,10 +1070,14 @@ class MongoStudentRepository(TenantScopedRepository):
             },
         )
         lifecycle_counts: dict[str, int] = {}
+        # Not-billed children keep their lifecycle label but are not headcount:
+        # counted once under ``not_billed`` instead of their state.
+        not_billed = await self.not_billed_student_ids(academy_id, candidate_ids)
         for row in rows:
             state = lifecycles.get(str(row["student_id"]), _NEVER_ENROLLED)
             row["lifecycle"] = state
-            lifecycle_counts[state.state] = lifecycle_counts.get(state.state, 0) + 1
+            key = "not_billed" if str(row["student_id"]) in not_billed else state.state
+            lifecycle_counts[key] = lifecycle_counts.get(key, 0) + 1
         wanted = set(lifecycle) & PERSON_LIFECYCLES
         if wanted:
             rows = [
@@ -1112,7 +1122,7 @@ class MongoStudentRepository(TenantScopedRepository):
                     parent_name=row.get("parent_name"),  # type: ignore[arg-type]
                     parent_email=row.get("parent_email"),  # type: ignore[arg-type]
                     lifecycle=row.get("lifecycle"),  # type: ignore[arg-type]
-                )
+                ).model_copy(update={"not_billed": student_id in not_billed})
             )
 
         next_cursor = None
@@ -1256,6 +1266,9 @@ class MongoStudentRepository(TenantScopedRepository):
                 or enrollment.get("stripe_subscription_status")
             ),
             amount_cents=self._enrollment_session_amount_cents(enrollment, session),
+            not_billed=is_not_billed(enrollment),
+            not_billed_reason=self._optional_str(enrollment.get("not_billed_reason")),
+            not_billed_note=self._optional_str(enrollment.get("not_billed_note")),
         )
 
     async def _sessions_by_id(
@@ -1982,12 +1995,42 @@ class MongoStudentRepository(TenantScopedRepository):
                 return None
         return None
 
+    async def not_billed_student_ids(
+        self, academy_id: str, student_ids: list[str] | None = None
+    ) -> set[str]:
+        """Students whose every live class (active, paused, held) is not billed.
+
+        Left out of headcounts; a child with one billed class still counts.
+        ``None`` asks for every student in the academy. One query.
+        """
+        if student_ids is not None and not student_ids:
+            return set()
+        query: dict[str, object] = {
+            "academy_id": academy_id,
+            "status": {"$in": sorted(LIVE)},
+            "is_deleted": {"$ne": True},
+        }
+        if student_ids is not None:
+            query["student_id"] = {"$in": student_ids}
+        billed: set[str] = set()
+        unbilled: set[str] = set()
+        async for doc in self._db["enrollments"].find(query, {"student_id": 1, "billing_type": 1}):
+            student_id = str(doc.get("student_id") or "")
+            if student_id:
+                (unbilled if is_not_billed(doc) else billed).add(student_id)
+        return unbilled - billed
+
     async def _enrollment_rows_by_student(
         self,
         academy_id: str,
         student_ids: list[str],
-    ) -> tuple[dict[str, list[LifecycleEnrollment]], dict[str, set[str]]]:
-        """Every enrollment row for these students, plus their live session ids.
+    ) -> tuple[
+        dict[str, list[LifecycleEnrollment]],
+        dict[str, set[str]],
+        dict[tuple[str, str], datetime | None],
+    ]:
+        """Every enrollment row for these students, their live session ids, and
+        when each live seat began (``created_at``), keyed (student, session).
 
         ONE query however many students are asked for — the directory calls
         this for the whole academy before paginating, so a per-student fan-out
@@ -1995,9 +2038,10 @@ class MongoStudentRepository(TenantScopedRepository):
         otherwise invites.
         """
         if not student_ids:
-            return {}, {}
+            return {}, {}, {}
         rows: dict[str, list[LifecycleEnrollment]] = {}
         live_sessions: dict[str, set[str]] = {}
+        live_since: dict[tuple[str, str], datetime | None] = {}
         cursor = self._db["enrollments"].find(
             {"academy_id": academy_id, "student_id": {"$in": student_ids}},
             projection={
@@ -2020,58 +2064,83 @@ class MongoStudentRepository(TenantScopedRepository):
                 continue
             rows.setdefault(student_id, []).append(self._lifecycle_row(doc))
             if doc.get("status") in SEAT_HOLDING and doc.get("session_id"):
-                live_sessions.setdefault(student_id, set()).add(str(doc["session_id"]))
-        return rows, live_sessions
+                session_id = str(doc["session_id"])
+                live_sessions.setdefault(student_id, set()).add(session_id)
+                created = doc.get("created_at")
+                live_since[(student_id, session_id)] = (
+                    self._as_utc(created) if isinstance(created, datetime) else None
+                )
+        return rows, live_sessions, live_since
 
-    async def _at_risk_cutoffs(
+    async def _recent_marks(
         self,
         academy_id: str,
-        live_sessions: dict[str, set[str]],
-    ) -> dict[str, datetime]:
-        """Start of the "last three scheduled dates" window, per student.
+        live_since: dict[tuple[str, str], datetime | None],
+    ) -> dict[str, tuple[str, ...]]:
+        """Recorded marks per student on their live classes, newest class first.
 
-        A student with no cutoff (a brand-new class with fewer than three past
-        occurrences) is never called at_risk — crying wolf over every student
-        in a session that has run twice would make the state worthless.
-
-        A student in two classes gets the EARLIER of the two windows: the
-        forgiving reading, so attending one of their classes clears the flag.
+        Only marks for an occurrence on or after the seat began count, so a
+        child added today (or one whose old seat was replaced) starts clean.
+        A class nobody marked has no row here, so it never reads as an
+        absence (owner rule, 2026-11-15). Voided marks (#554) never count.
         """
-        session_ids = sorted({sid for sids in live_sessions.values() for sid in sids})
-        if not session_ids:
+        if not live_since:
             return {}
-        now = datetime.now(UTC)
-        cursor = self._db["session_occurrences"].aggregate(
+        student_ids = sorted({student_id for student_id, _ in live_since})
+        session_ids = sorted({session_id for _, session_id in live_since})
+        since = datetime.now(UTC) - timedelta(days=_AT_RISK_LOOKBACK_DAYS)
+        cursor = self._db["attendance"].aggregate(
             [
                 {
                     "$match": {
                         "academy_id": academy_id,
-                        "session_id": {"$in": session_ids},
-                        "status": {"$ne": "cancelled"},
-                        "start_at": {
-                            "$lte": now,
-                            "$gte": now - timedelta(days=_AT_RISK_LOOKBACK_DAYS),
-                        },
+                        "student_id": {"$in": student_ids},
+                        "status": {"$ne": _VOIDED_ATTENDANCE_STATUS},
+                        # Bound the rows before the per-row $lookup.
+                        "marked_at": {"$gte": since},
                     }
                 },
-                {"$sort": {"start_at": -1}},
-                {"$group": {"_id": "$session_id", "starts": {"$push": "$start_at"}}},
-                {"$project": {"starts": {"$slice": ["$starts", _AT_RISK_OCCURRENCES]}}},
+                {
+                    "$lookup": {
+                        "from": "session_occurrences",
+                        "localField": "occurrence_id",
+                        "foreignField": "occurrence_id",
+                        "as": "occurrence",
+                    }
+                },
+                {"$unwind": "$occurrence"},
+                {
+                    # Occurrence ids are only unique per academy (#849).
+                    "$match": {
+                        "occurrence.academy_id": academy_id,
+                        "occurrence.session_id": {"$in": session_ids},
+                        "occurrence.status": {"$ne": "cancelled"},
+                        "occurrence.start_at": {"$gte": since},
+                    }
+                },
+                {"$sort": {"occurrence.start_at": -1}},
+                {
+                    "$project": {
+                        "student_id": 1,
+                        "status": 1,
+                        "session_id": "$occurrence.session_id",
+                        "start_at": "$occurrence.start_at",
+                    }
+                },
             ]
         )
-        per_session: dict[str, datetime] = {}
+        marks: dict[str, list[str]] = {}
         async for row in cursor:
-            starts = [s for s in row.get("starts") or [] if isinstance(s, datetime)]
-            if len(starts) < _AT_RISK_OCCURRENCES:
+            key = (str(row.get("student_id") or ""), str(row.get("session_id") or ""))
+            if key not in live_since:
                 continue
-            per_session[str(row["_id"])] = self._as_utc(min(starts))
-
-        cutoffs: dict[str, datetime] = {}
-        for student_id, sids in live_sessions.items():
-            windows = [per_session[sid] for sid in sids if sid in per_session]
-            if windows:
-                cutoffs[student_id] = min(windows)
-        return cutoffs
+            seat_began = live_since[key]
+            start_at = row.get("start_at")
+            if seat_began is not None and isinstance(start_at, datetime):
+                if self._as_utc(start_at) < seat_began:
+                    continue
+            marks.setdefault(key[0], []).append(str(row.get("status") or ""))
+        return {student_id: tuple(statuses) for student_id, statuses in marks.items()}
 
     async def _lifecycle_states(
         self,
@@ -2096,14 +2165,16 @@ class MongoStudentRepository(TenantScopedRepository):
         """Lifecycle per student plus their live (seat-holding) session ids."""
         if not student_ids:
             return {}, {}
-        rows, live_sessions = await self._enrollment_rows_by_student(academy_id, student_ids)
-        cutoffs = await self._at_risk_cutoffs(academy_id, live_sessions)
+        rows, live_sessions, live_since = await self._enrollment_rows_by_student(
+            academy_id, student_ids
+        )
+        marks = await self._recent_marks(academy_id, live_since)
         last_seen = last_seen_by_student or {}
         states = {
             student_id: derive_lifecycle(
                 rows.get(student_id, []),
                 last_seen_at=last_seen.get(student_id),
-                at_risk_cutoff=cutoffs.get(student_id),
+                recent_marks=marks.get(student_id, ()),
             )
             for student_id in student_ids
         }
@@ -2133,11 +2204,13 @@ class MongoStudentRepository(TenantScopedRepository):
                 for sid, att in attendance.items()
             },
         )
+        not_billed = await self.not_billed_student_ids(academy_id, ids)
         return {
             sid: StudentLifecycleSnapshot(
                 state=state.state,
                 as_of=state.as_of,
                 live_session_ids=tuple(sorted(live_sessions.get(sid, ()))),
+                not_billed=sid in not_billed,
             )
             for sid, state in states.items()
         }

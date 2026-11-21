@@ -54,6 +54,8 @@ ACTIVE_LEVEL_UP_STATUSES = frozenset({"RECOMMENDED", "APPROVING", "REJECTING"})
 
 LevelProgressStatus = Literal["active", "completed", "withdrawn"]
 
+CertificateStatus = Literal["issued", "revoked"]
+
 ProgressNextAction = Literal[
     "place_in_level",
     "continue_practice",
@@ -99,6 +101,12 @@ class StudentSkillProgress(BaseModel):
     last_updated_by: str
     #: Optional one-line coach message to the parent about this mastery.
     coach_note: str | None = None
+    #: Taps toward an ``N_TRIES`` skill. Written only by ``$inc``
+    #: (``increment_tries``), never by ``upsert``, so a stale read cannot reset it.
+    tries: int = 0
+    #: A placement credit the owner chose not to announce: the evening wins
+    #: email skips it. Any real pass clears it.
+    silent: bool = False
 
 
 class TestAttempt(BaseModel):
@@ -166,6 +174,18 @@ class SkillCertificate(BaseModel):
     completed_at: datetime
     issued_by: str
     issued_at: datetime
+    #: A revoked certificate stays on file for the admin; every other read skips it.
+    status: CertificateStatus = "issued"
+    revoked_at: datetime | None = None
+    revoked_by: str | None = None
+    revoke_reason: str | None = None
+    #: Snapshot taken at issue, so a later curriculum edit cannot rewrite an
+    #: issued certificate. None on rows issued before the snapshot existed.
+    skill_names: list[str] | None = None
+    level_number: int | None = None
+    level_color: str | None = None
+    #: Public share link (the share page lands separately); unset on revoke.
+    share_token: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +283,9 @@ class SkillBoardStudentRef(BaseModel):
     student_name: str
     # Only the pathway dashboard fills this: its row actions message the family.
     parent_id: str | None = None
+    #: Only the pathway dashboard fills this: a not-billed child keeps its skill
+    #: rows but is left out of the level headcounts.
+    not_billed: bool = False
 
 
 class SkillBoardCell(BaseModel):
@@ -273,6 +296,7 @@ class SkillBoardCell(BaseModel):
     status: SkillStatus = "NOT_STARTED"
     last_updated_at: datetime | None = None
     coach_note: str | None = None
+    tries: int = 0
 
 
 class SkillBoardSkill(BaseModel):
@@ -286,6 +310,8 @@ class SkillBoardSkill(BaseModel):
     is_required: bool
     #: Observable criterion descriptions, in display order: the coach's quick-tags.
     criteria: list[str] = Field(default_factory=list)
+    pass_rule: str = "ONE_TAP"
+    pass_tries: int | None = None
 
 
 class SkillBoardStudentRow(BaseModel):

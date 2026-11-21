@@ -25,6 +25,7 @@ import {
   PRICE_PERIOD_LABEL,
   listableClasses,
   parseSeatsThreshold,
+  TRIAL_GUEST_CAP_MAX,
   programOptions,
   publicPagePayload,
   toPublicPageForm,
@@ -215,6 +216,36 @@ function PageSettingsCard() {
           checked={form.trials_open}
           onChange={(checked) => setForm((prev) => ({ ...prev, trials_open: checked }))}
         />
+        <Toggle
+          testId="public-page-self-book-trials"
+          label="Let families book a trial date"
+          hint="Shows the next three open dates per class; families book one at once and get a confirmation email."
+          checked={form.self_book_trials}
+          onChange={(checked) => setForm((prev) => ({ ...prev, self_book_trials: checked }))}
+        />
+        <label className="flex min-h-12 items-center justify-between gap-4 rounded-md border border-rally-line px-4 py-2 text-sm font-medium text-rally-ink">
+          <span>
+            Trial guests per class date
+            <span className="block text-xs font-normal text-rally-subtle">
+              1 to 5, and never more than the free seats.
+            </span>
+          </span>
+          <select
+            data-testid="public-page-trial-guest-cap"
+            value={form.trial_guest_cap}
+            disabled={!form.self_book_trials}
+            onChange={(event) =>
+              setForm((prev) => ({ ...prev, trial_guest_cap: Number(event.target.value) }))
+            }
+            className={SELECT_CLASS}
+          >
+            {Array.from({ length: TRIAL_GUEST_CAP_MAX }, (_, i) => i + 1).map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="flex min-h-12 items-center justify-between gap-4 rounded-md border border-rally-line px-4 text-sm font-medium text-rally-ink">
           <span>
             Price period

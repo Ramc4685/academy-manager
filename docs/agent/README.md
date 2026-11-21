@@ -4,6 +4,7 @@ Focused rule files for AI coding agents working in `academy-manager`.
 
 Start at the root `AGENTS.md`, then read the focused file for the task:
 
+- `agent-roles.md`
 - `architecture-rules.md`
 - `backend-api-rules.md`
 - `codex-prompting.md`

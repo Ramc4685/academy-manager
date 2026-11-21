@@ -15,9 +15,10 @@ export const queryKeys = {
     todayPlan: (date: string) => ["coach", "today-plan", date] as const,
     skillBoard: (sessionId: string, programId?: string) =>
       ["coach", "skill-board", sessionId, programId ?? "default"] as const,
-    pendingNarratives: (date: string) => ["coach", "narratives", "pending", date] as const,
-    studentNarrative: (studentId: string, date: string) =>
-      ["coach", "narratives", "student", studentId, date] as const,
+    pendingNarratives: (date?: string) =>
+      ["coach", "narratives", "pending", date ?? "tonight"] as const,
+    studentNarrative: (studentId: string, date?: string) =>
+      ["coach", "narratives", "student", studentId, date ?? "tonight"] as const,
     schedule: () => ["coach", "schedule"] as const,
     profile: () => ["coach", "profile"] as const,
     academy: () => ["coach", "academy"] as const,
@@ -38,6 +39,12 @@ export const queryKeys = {
     // localStorage exclusion off it so proration/pricing never lands on disk.
     billingMovePreview: (enrollmentId: string, toSessionTypeId: string) =>
       ["coach", "billing-enrollments", "preview", enrollmentId, toSessionTypeId] as const,
+  },
+  // Not under "coach": coach.* is persisted to localStorage for offline use,
+  // and a recap carries private after-class report text (persistence.ts).
+  classRecap: {
+    occurrence: (occurrenceId: string) => ["class-recap", occurrenceId] as const,
+    handoffs: () => ["class-recap", "handoffs"] as const,
   },
   admin: {
     all: ["admin"] as const,
@@ -84,6 +91,9 @@ export const queryKeys = {
     // AI status (B1): hides the paid AI buttons while AI is off.
     familyBilling: (parentId: string) =>
       ["admin", "families", parentId, "billing"] as const,
+    // Under familyBilling so the billing page's refresh after any write refetches it.
+    familySiblingDiscount: (parentId: string) =>
+      ["admin", "families", parentId, "billing", "sibling-discount"] as const,
     familyRecord: (familyId: string) =>
       ["admin", "families", familyId, "record"] as const,
     // People CRM Phase 5: the unified family timeline (paged).
@@ -114,9 +124,10 @@ export const queryKeys = {
     collectionsAll: () => ["admin", "payments", "collections"] as const,
     collections: (period: string) =>
       ["admin", "payments", "collections", period] as const,
+    // Under collectionsAll so recording a payment refreshes it too.
+    overdueFamilies: () => ["admin", "payments", "collections", "overdue-families"] as const,
     invoiceDetail: (invoiceId: string) =>
       ["admin", "billing", "invoice", invoiceId] as const,
-    payouts: () => ["admin", "finance", "payouts"] as const,
     expenses: () => ["admin", "finance", "expenses"] as const,
     revenue: () => ["admin", "finance", "revenue"] as const,
     enrollmentFunnel: (period?: string) =>
@@ -139,13 +150,20 @@ export const queryKeys = {
     attention: () => ["admin", "dashboard", "attention"] as const,
     setupChecklist: () => ["admin", "dashboard", "setup-checklist"] as const,
     inboxCounts: () => ["admin", "inbox", "counts"] as const,
+    campaignPreview: (audience: unknown) => ["admin", "campaigns", "preview", audience] as const,
     academy: () => ["admin", "academy"] as const,
     fees: () => ["admin", "academy", "fees"] as const,
     invoiceSchedule: () => ["admin", "billing", "invoice-schedule"] as const,
     billingRules: () => ["admin", "billing", "rules"] as const,
+    familyOffers: () => ["admin", "billing", "family-offers"] as const,
+    referrals: () => ["admin", "billing", "referrals"] as const,
+    referralEmailPreview: () => ["admin", "billing", "referrals", "email-preview"] as const,
+    payrollSettings: () => ["admin", "payroll-settings"] as const,
+    progressSettings: () => ["admin", "progress-settings"] as const,
     notifications: () => ["admin", "academy", "notifications"] as const,
     // Shared with slice B1's AI status card: both read the same key.
     aiImportSharing: () => ["admin", "ai", "import-sharing"] as const,
+    aiControls: () => ["admin", "ai", "controls"] as const,
     aiStatus: () => ["admin", "ai", "status"] as const,
     publicPage: () => ["admin", "academy", "public-page"] as const,
     programs: () => ["admin", "programs"] as const,
@@ -174,6 +192,7 @@ export const queryKeys = {
     lessonCards: (programId: string) =>
       ["admin", "pathway", programId, "lesson-cards"] as const,
     coachDigestLog: () => ["admin", "comms", "digests", "log"] as const,
+    deliveryProblems: () => ["admin", "comms", "delivery-problems"] as const,
     reconciliationRuns: () =>
       ["admin", "billing", "reconciliation-runs"] as const,
     failedAttempts: () => ["admin", "billing", "failed-attempts"] as const,
@@ -219,6 +238,7 @@ export const queryKeys = {
     all: ["parent"] as const,
     absences: () => ["parent", "absences"] as const,
     makeups: () => ["parent", "makeups"] as const,
+    makeupCandidates: () => ["parent", "makeups", "candidates"] as const,
     makeupTargets: (studentId: string, missedOccurrenceId: string) =>
       ["parent", "makeups", "targets", studentId, missedOccurrenceId] as const,
     trials: () => ["parent", "trials"] as const,
@@ -228,11 +248,13 @@ export const queryKeys = {
     children: () => ["parent", "children"] as const,
     progressJourney: (studentId: string) =>
       ["parent", "progress-journey", studentId] as const,
+    classRecaps: (studentId: string) => ["parent", "class-recaps", studentId] as const,
     cancellationPreview: (enrollmentId: string) =>
       ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,
     messages: () => ["parent", "messages"] as const,
     calendar: () => ["parent", "calendar"] as const,
     profile: () => ["parent", "profile"] as const,
+    referral: () => ["parent", "referral"] as const,
     emailPreferences: () => ["parent", "email-preferences"] as const,
     aiVideoConsent: () => ["parent", "waivers", "ai-video-consent"] as const,
   },

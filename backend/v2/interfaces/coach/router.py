@@ -15,6 +15,7 @@ from .ai_narrative_routes import router as ai_narrative_router
 from .ai_technique_routes import router as ai_technique_router
 from .announcement_routes import router as announcement_router
 from .attendance_routes import router as attendance_router
+from .class_recap_routes import router as class_recap_router
 from .dashboard_routes import router as dashboard_router
 from .feedback_routes import router as feedback_router
 from .messages_routes import router as messages_router
@@ -43,4 +44,5 @@ router.include_router(messages_router)
 router.include_router(announcement_router)
 router.include_router(trial_outcome_router)
 router.include_router(ai_technique_router)
+router.include_router(class_recap_router)
 router.include_router(ai_narrative_router)

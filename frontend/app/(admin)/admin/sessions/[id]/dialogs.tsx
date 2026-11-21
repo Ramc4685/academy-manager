@@ -7,14 +7,14 @@ import {
   createEnrollment,
   deleteEnrollment,
   listAdminSessions,
-  listAdminStudents,
-  pauseEnrollment,
   previewWithdrawalCredit,
   quoteAdminEnrollment,
+  bulkTransferEnrollments,
   transferEnrollment,
   withdrawEnrollment,
   type AdminEnrollmentQuote,
   type AdminEnrollmentView,
+  type BulkTransferEnrollmentsResponse,
   type AdminSessionView,
   type AdminStudentView,
   type AdminUserView,
@@ -37,11 +37,12 @@ import {
 import type { ApiError } from "@/lib/api/client";
 
 import { useIsOwner } from "@/components/admin/owner-context";
+import { StudentSearchPicker } from "@/components/admin/student-search-picker";
 import { DEPARTURE_ACTION_DESCRIPTION } from "@/components/admin/enrollment/departure-actions";
 import { Button } from "@/components/ds/button";
 import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/components/ds/dialog-chrome";
 
-import { dateInputValueFromOffset, formatCents, formatShortDateTime, inputClass, todayDateInput } from "./format";
+import { formatCents, formatShortDateTime, inputClass, todayDateInput } from "./format";
 
 export function AddToRosterDialog({
   open,
@@ -81,12 +82,6 @@ export function AddToRosterDialog({
     setForm(prefill ?? { student_id: "", parent_id: "", full_name: "" });
   }, [open, prefill]);
   const [error, setError] = useState<string | null>(null);
-  const studentsQuery = useQuery({
-    queryKey: queryKeys.admin.students(),
-    queryFn: listAdminStudents,
-    enabled: open,
-  });
-  const students = studentsQuery.data?.students ?? [];
   const quoteQuery = useQuery<AdminEnrollmentQuote>({
     queryKey: ["admin", "enrollment-quote", sessionId, form.student_id],
     queryFn: () => quoteAdminEnrollment({ session_id: sessionId, student_id: form.student_id }),
@@ -129,53 +124,21 @@ export function AddToRosterDialog({
         </p>
       )}
       <form onSubmit={handleSubmit} className="space-y-3">
-        {students.length > 0 ? (
-          <Field label="Student" required>
-            <StudentSelect
-              students={students}
-              value={form.student_id}
-              onChange={(student) =>
-                setForm({
-                  student_id: student.student_id,
-                  parent_id: student.parent_id,
-                  full_name: student.full_name,
-                })
-              }
-            />
-          </Field>
-        ) : (
-          <>
-            <Field label="Full name" required>
-              <input
-                type="text"
-                required
-                value={form.full_name}
-                onChange={(e) => setForm((f) => ({ ...f, full_name: e.target.value }))}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="Student reference" required>
-              <input
-                type="text"
-                required
-                value={form.student_id}
-                onChange={(e) => setForm((f) => ({ ...f, student_id: e.target.value }))}
-                className={inputClass}
-                placeholder={studentsQuery.isLoading ? "Loading students…" : "Student reference"}
-              />
-            </Field>
-            <Field label="Parent reference" required>
-              <input
-                type="text"
-                required
-                value={form.parent_id}
-                onChange={(e) => setForm((f) => ({ ...f, parent_id: e.target.value }))}
-                className={inputClass}
-                placeholder="Parent reference"
-              />
-            </Field>
-          </>
-        )}
+        <Field label="Student" required>
+          <StudentSearchPicker
+            enabled={open}
+            value={form.student_id}
+            selected={form.student_id ? form : undefined}
+            selectClassName={inputClass}
+            onChange={(student) =>
+              setForm({
+                student_id: student.student_id,
+                parent_id: student.parent_id,
+                full_name: student.full_name,
+              })
+            }
+          />
+        </Field>
         <DialogActions>
           <Button variant="secondary" size="sm" type="button" onClick={() => onOpenChange(false)}>
             Cancel
@@ -189,161 +152,39 @@ export function AddToRosterDialog({
   );
 }
 
-export function PauseEnrollmentDialog({
-  enrollment,
-  onClose,
-  onPaused,
-}: {
-  enrollment: AdminEnrollmentView | null;
-  onClose: () => void;
-  onPaused: () => void;
-}) {
-  const [effectiveDate, setEffectiveDate] = useState(todayDateInput());
-  const [billingAction, setBillingAction] = useState<"resume" | "review">("review");
-  const [resumeOn, setResumeOn] = useState(dateInputValueFromOffset(30));
-  const [reviewOn, setReviewOn] = useState(dateInputValueFromOffset(14));
-  const [reason, setReason] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const mutation = useMutation({
-    mutationFn: () =>
-      pauseEnrollment(enrollment!.enrollment_id, {
-        effective_date: effectiveDate,
-        resume_on: billingAction === "resume" ? resumeOn : null,
-        review_on: billingAction === "review" ? reviewOn : null,
-        reason: reason || undefined,
-      }),
-    onSuccess: () => {
-      setEffectiveDate(todayDateInput());
-      setBillingAction("review");
-      setResumeOn(dateInputValueFromOffset(30));
-      setReviewOn(dateInputValueFromOffset(14));
-      setReason("");
-      setError(null);
-      onPaused();
-    },
-    onError: (err: Error) => setError(err.message ?? "Could not pause enrollment."),
-  });
-
-  return (
-    <RallyDialog
-      open={enrollment !== null}
-      onOpenChange={(open) => !open && onClose()}
-      title="Pause enrollment"
-      description={
-        enrollment
-          ? `Pause ${enrollment.full_name}, release the seat, and move them to the waitlist.`
-          : ""
-      }
-      overline="Lifecycle"
-    >
-      {error && <DialogError message={error} />}
-      <form
-        className="space-y-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          mutation.mutate();
-        }}
-      >
-        <Field label="Effective date" required>
-          <input
-            type="date"
-            required
-            value={effectiveDate}
-            onChange={(event) => setEffectiveDate(event.target.value)}
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Billing follow-up" required>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <label className="flex items-center gap-2 rounded border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800">
-              <input
-                type="radio"
-                name="pause-billing-action"
-                checked={billingAction === "review"}
-                onChange={() => setBillingAction("review")}
-              />
-              Review before billing resumes
-            </label>
-            <label className="flex items-center gap-2 rounded border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800">
-              <input
-                type="radio"
-                name="pause-billing-action"
-                checked={billingAction === "resume"}
-                onChange={() => setBillingAction("resume")}
-              />
-              Resume automatically
-            </label>
-          </div>
-        </Field>
-        {billingAction === "review" ? (
-          <Field label="Review date" required>
-            <input
-              type="date"
-              required
-              value={reviewOn}
-              onChange={(event) => setReviewOn(event.target.value)}
-              className={inputClass}
-            />
-          </Field>
-        ) : (
-          <Field label="Resume date" required>
-            <input
-              type="date"
-              required
-              value={resumeOn}
-              onChange={(event) => setResumeOn(event.target.value)}
-              className={inputClass}
-            />
-          </Field>
-        )}
-        <p className="text-xs text-rally-subtle">
-          Pausing releases the seat and creates a billing deferral that stays visible until the
-          review or resume rule is handled.
-        </p>
-        <p className="text-xs text-rally-subtle">{DEPARTURE_ACTION_DESCRIPTION.pause}</p>
-        <Field label="Reason">
-          <textarea
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            rows={3}
-            className={inputClass}
-          />
-        </Field>
-        <DialogActions>
-          <Button variant="secondary" size="sm" type="button" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            type="submit"
-            disabled={
-              !effectiveDate ||
-              (billingAction === "review" ? !reviewOn : !resumeOn) ||
-              mutation.isPending
-            }
-          >
-            {mutation.isPending ? "Pausing..." : "Pause"}
-          </Button>
-        </DialogActions>
-      </form>
-    </RallyDialog>
-  );
+/** A0-8: "Ana could not move: Target session full" lines for a bulk result. */
+export function bulkTransferFailures(
+  result: BulkTransferEnrollmentsResponse,
+  enrollments: Pick<AdminEnrollmentView, "enrollment_id" | "full_name">[],
+): string[] {
+  const names = new Map(enrollments.map((e) => [e.enrollment_id, e.full_name]));
+  return result.results
+    .filter((row) => !row.ok)
+    .map(
+      (row) =>
+        `${names.get(row.enrollment_id) ?? "A student"} could not move: ${row.message ?? "refused"}`,
+    );
 }
 
+/** Transfer one roster row, or several at once (A0-8) to the same class. */
 export function TransferEnrollmentDialog({
-  enrollment,
+  enrollments,
   currentSessionId,
   currentSessionTitle,
   onClose,
   onMoved,
 }: {
-  enrollment: AdminEnrollmentView | null;
+  enrollments: AdminEnrollmentView[];
   currentSessionId: string;
   currentSessionTitle: string;
   onClose: () => void;
-  onMoved: () => void;
+  /** `close` is false when some rows of a bulk move were refused: the roster
+   * refreshes but the dialog stays open to say which ones and why. */
+  onMoved: (close: boolean) => void;
 }) {
+  const open = enrollments.length > 0;
+  const bulk = enrollments.length > 1;
+  const [failures, setFailures] = useState<string[]>([]);
   const [targetSessionId, setTargetSessionId] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(todayDateInput());
   const [reason, setReason] = useState("");
@@ -354,7 +195,7 @@ export function TransferEnrollmentDialog({
   const sessionsQuery = useQuery({
     queryKey: ["admin", "sessions", "upcoming"] as const,
     queryFn: () => listAdminSessions(undefined, { window: "upcoming" }),
-    enabled: enrollment !== null,
+    enabled: open,
   });
   // Dedupe by title: each weekly class shows up many times across the
   // window (one per dated instance); show one row per distinct class
@@ -381,31 +222,86 @@ export function TransferEnrollmentDialog({
     );
   })();
   const mutation = useMutation({
-    mutationFn: () =>
-      transferEnrollment(enrollment!.enrollment_id, {
+    mutationFn: async (): Promise<string[]> => {
+      const payload = {
         target_session_id: targetSessionId,
         effective_date: effectiveDate,
         reason: reason || undefined,
-      }),
-    onSuccess: () => {
+      };
+      if (!bulk) {
+        await transferEnrollment(enrollments[0].enrollment_id, payload);
+        return [];
+      }
+      const result = await bulkTransferEnrollments({
+        ...payload,
+        enrollment_ids: enrollments.map((e) => e.enrollment_id),
+      });
+      return bulkTransferFailures(result, enrollments);
+    },
+    onSuccess: (refused) => {
+      setError(null);
+      setFailures(refused);
+      if (refused.length > 0) {
+        onMoved(false);
+        return;
+      }
       setTargetSessionId("");
       setEffectiveDate(todayDateInput());
       setReason("");
-      setError(null);
-      onMoved();
+      onMoved(true);
     },
     onError: (err: Error) => setError(err.message ?? "Failed to move enrollment."),
   });
 
   return (
     <RallyDialog
-      open={enrollment !== null}
-      onOpenChange={(open) => !open && onClose()}
-      title="Transfer enrollment"
-      description={enrollment ? `Transfer ${enrollment.full_name} to another session.` : ""}
+      open={open}
+      onOpenChange={(next) => {
+        if (next) return;
+        setFailures([]);
+        onClose();
+      }}
+      title={bulk ? `Transfer ${enrollments.length} students` : "Transfer enrollment"}
+      description={
+        bulk
+          ? `Transfer ${enrollments.map((e) => e.full_name).join(", ")} to another session.`
+          : open
+            ? `Transfer ${enrollments[0].full_name} to another session.`
+            : ""
+      }
       overline="Transfer"
     >
       {error && <DialogError message={error} />}
+      {failures.length > 0 && (
+        <div
+          role="alert"
+          data-testid="bulk-transfer-failures"
+          className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+        >
+          <p className="font-semibold">The others moved. Check these students:</p>
+          <ul className="mt-1 list-disc pl-5">
+            {failures.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {failures.length > 0 ? (
+        // The moved rows are gone from this class: resubmitting would move them again.
+        <DialogActions>
+          <Button
+            variant="primary"
+            size="sm"
+            type="button"
+            onClick={() => {
+              setFailures([]);
+              onClose();
+            }}
+          >
+            Done
+          </Button>
+        </DialogActions>
+      ) : (
       <form
         className="space-y-3"
         onSubmit={(event) => {
@@ -445,7 +341,15 @@ export function TransferEnrollmentDialog({
         </p>
         <p className="text-xs text-rally-subtle">{DEPARTURE_ACTION_DESCRIPTION.transfer}</p>
         <DialogActions>
-          <Button variant="secondary" size="sm" type="button" onClick={onClose}>
+          <Button
+            variant="secondary"
+            size="sm"
+            type="button"
+            onClick={() => {
+              setFailures([]);
+              onClose();
+            }}
+          >
             Cancel
           </Button>
           <Button
@@ -463,6 +367,7 @@ export function TransferEnrollmentDialog({
           </Button>
         </DialogActions>
       </form>
+      )}
     </RallyDialog>
   );
 }
@@ -839,35 +744,6 @@ export function RemoveEnrollmentDialog({
         </DialogActions>
       </form>
     </RallyDialog>
-  );
-}
-
-export function StudentSelect({
-  students,
-  value,
-  onChange,
-}: {
-  students: AdminStudentView[];
-  value: string;
-  onChange: (student: AdminStudentView) => void;
-}) {
-  return (
-    <select
-      required
-      value={value}
-      onChange={(e) => {
-        const selected = students.find((s) => s.student_id === e.target.value);
-        if (selected) onChange(selected);
-      }}
-      className={inputClass}
-    >
-      <option value="">Select student</option>
-      {students.map((student) => (
-        <option key={student.student_id} value={student.student_id}>
-          {student.full_name}
-        </option>
-      ))}
-    </select>
   );
 }
 

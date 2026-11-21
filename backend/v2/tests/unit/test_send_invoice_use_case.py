@@ -23,6 +23,13 @@ DUE = date(2026, 6, 30)
 FIRST_SEND = datetime(2026, 6, 13, 9, 0, 0, tzinfo=UTC)  # earlier than NOW
 
 
+def _key_base(idempotency_key: str) -> str:
+    """The deterministic part of a pay-link key, minus its per-attempt suffix."""
+    base, sep, attempt = idempotency_key.rpartition(":attempt-")
+    assert sep and attempt, idempotency_key
+    return base
+
+
 def _invoice(
     invoice_id: str = "inv-1",
     status: str = "open",
@@ -203,6 +210,7 @@ async def test_send_draft_invoice_finalizes_then_records_delivery_after_email() 
             "balance_due_cents": 10_000,
             "currency": "usd",
             "checkout_url": None,
+            "bundled": False,
         }
     ]
 
@@ -409,7 +417,7 @@ async def test_checkout_is_a_direct_charge_on_the_ready_connected_account() -> N
     # as a platform destination charge.
     assert call["stripe_account"] == "acct_ready_1"
     assert "connected_account_id" not in call
-    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:acct:acct_ready_1"
+    assert _key_base(call["idempotency_key"]) == "invoice-checkout:inv-1:10000:acct:acct_ready_1"
 
 
 async def test_checkout_refused_when_connected_account_not_ready() -> None:
@@ -465,7 +473,10 @@ async def test_execute_with_enroll_autopay_requests_saved_payment_method() -> No
     assert call["autopay_enrollment_ids"] == ["enroll-1"]
     # A distinct idempotency key: an earlier one-time pay link for the same
     # balance must not be replayed without the saved-payment-method params.
-    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:autopay-optin:acct:acct_ready_1"
+    assert (
+        _key_base(call["idempotency_key"])
+        == "invoice-checkout:inv-1:10000:autopay-optin:acct:acct_ready_1"
+    )
     # Direct-charge routing is unchanged by the opt-in flag.
     assert call["stripe_account"] == "acct_ready_1"
 
@@ -506,7 +517,7 @@ async def test_execute_default_keeps_gateway_call_unchanged() -> None:
     call = stripe.calls[0]
     assert "save_payment_method_for_autopay" not in call
     assert "autopay_enrollment_ids" not in call
-    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:acct:acct_ready_1"
+    assert _key_base(call["idempotency_key"]) == "invoice-checkout:inv-1:10000:acct:acct_ready_1"
 
 
 async def test_email_failure_records_delivery_failed_without_sent_at() -> None:
@@ -545,7 +556,7 @@ async def test_platform_fallback_enabled_mints_pay_link_with_platform_charge() -
     call = stripe.calls[0]
     assert "stripe_account" not in call
     assert "connected_account_id" not in call
-    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000"
+    assert _key_base(call["idempotency_key"]) == "invoice-checkout:inv-1:10000"
 
 
 async def test_platform_fallback_disabled_still_blocks_when_account_not_ready() -> None:
@@ -637,7 +648,7 @@ async def test_bundle_student_balance_noop_when_only_one_payable_invoice() -> No
     assert call["amount_cents"] == 10_000
     assert call["metadata"]["invoice_id"] == "inv-1"
     assert call["metadata"]["source"] == "invoice_pay_link"
-    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:acct:acct_ready_1"
+    assert _key_base(call["idempotency_key"]) == "invoice-checkout:inv-1:10000:acct:acct_ready_1"
 
 
 async def test_bundle_student_balance_excludes_other_students_invoices() -> None:
@@ -1326,7 +1337,7 @@ async def test_pay_link_default_fee_keeps_the_call_byte_identical() -> None:
     assert call["stripe_account"] == "acct_ready_1"
     assert "application_fee_cents" not in call
     assert "application_fee_cents" not in call["metadata"]
-    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:acct:acct_ready_1"
+    assert _key_base(call["idempotency_key"]) == "invoice-checkout:inv-1:10000:acct:acct_ready_1"
 
 
 async def test_pay_link_sends_the_academy_fee_and_scopes_the_idempotency_key() -> None:
@@ -1339,4 +1350,127 @@ async def test_pay_link_sends_the_academy_fee_and_scopes_the_idempotency_key() -
     # checkout.session.completed has no application_fee_amount; the webhook
     # records the fee from this metadata key instead.
     assert call["metadata"]["application_fee_cents"] == "125"
-    assert call["idempotency_key"] == "invoice-checkout:inv-1:10000:fee125:acct:acct_ready_1"
+    assert (
+        _key_base(call["idempotency_key"])
+        == "invoice-checkout:inv-1:10000:fee125:acct:acct_ready_1"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-attempt idempotency key: a later click must never get the first session
+# back. Stripe replays a key's response for 24h, so a fixed key handed a parent
+# the email pass's session (dead once expired or completed), or rejected the
+# click outright because its success_url differed.
+# ---------------------------------------------------------------------------
+
+
+async def test_each_pay_attempt_mints_a_fresh_checkout_session() -> None:
+    from backend.v2.contexts.billing.infrastructure.fake_stripe_gateway import (
+        FakeStripeGateway,
+    )
+
+    stripe = FakeStripeGateway()  # replays a repeated key like real Stripe
+    repo = FakeLedgerRepository(invoices=[_invoice(status="open", balance_due_cents=10_000)])
+
+    def uc(success_url: str) -> SendInvoice:
+        return SendInvoice(
+            ledger=repo,
+            stripe=stripe,
+            email=None,
+            connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+            success_url=success_url,
+            clock=lambda: NOW,
+        )
+
+    # The monthly email pass, then the parent's click from the emailed link.
+    emailed = await uc("https://blno.example.com/parent/payments?invoice=paid").execute("inv-1")
+    clicked = await uc(
+        "https://blno.example.com/parent/payments?invoice=paid"
+        "&checkout_session_id={CHECKOUT_SESSION_ID}"
+    ).execute("inv-1")
+
+    first, second = stripe.invoice_checkouts
+    assert first["idempotency_key"] != second["idempotency_key"]
+    assert _key_base(first["idempotency_key"]) == _key_base(second["idempotency_key"])
+    assert emailed.checkout_url != clicked.checkout_url
+    # The hold follows the session the parent is actually on.
+    held = await repo.get_invoice("inv-1")
+    assert held is not None
+    assert held.checkout_hold_session_id == second["checkout_id"]
+
+
+async def test_bundled_send_tells_the_email_its_link_must_pay_the_balance() -> None:
+    """The email quotes the summed balance, so its app link starts the balance checkout."""
+    repo = FakeLedgerRepository(
+        invoices=[
+            _invoice(invoice_id="inv-1", status="open", balance_due_cents=7_000),
+            _invoice(invoice_id="inv-2", status="open", balance_due_cents=7_000),
+        ]
+    )
+    email = FakeInvoiceEmail()
+    uc = SendInvoice(
+        ledger=repo,
+        stripe=FakeInvoiceStripe(),
+        email=email,
+        connected_accounts=_FakeConnectedAccounts(_StubConnectedAccount(ready=True)),  # type: ignore[arg-type]
+        clock=lambda: NOW,
+    )
+
+    await uc.execute("inv-1", bundle_student_balance=True)
+    await uc.execute("inv-1")  # the parent's own single-invoice pay
+
+    assert email.calls[0]["bundled"] is True
+    assert email.calls[0]["balance_due_cents"] == 14_000
+    assert email.calls[1]["bundled"] is False
+
+
+# ---------------------------------------------------------------------------
+# #1035: a fully offset draft is a real invoice; a blank draft is not
+# ---------------------------------------------------------------------------
+
+
+def _draft_line(line_type: str, amount: int) -> InvoiceLine:
+    return InvoiceLine(
+        line_id=f"line-{line_type}",
+        academy_id="acad-1",
+        invoice_id="inv-1",
+        line_type=line_type,
+        description=line_type,
+        quantity=1,
+        unit_amount_cents=amount,
+        amount_cents=amount,
+        created_at=FIRST_SEND,
+    )
+
+
+async def test_fully_waived_draft_is_sent_with_zero_balance() -> None:
+    # The hand-billed shape (BillEnrollmentPeriod): tuition + waiver lines net
+    # the header to a $0 subtotal, exactly like a blank draft's header.
+    waived = _invoice(status="draft", balance_due_cents=0).model_copy(
+        update={"subtotal_cents": 0, "total_cents": 0}
+    )
+    repo = FakeLedgerRepository(invoices=[waived])
+    await repo.save_line(_draft_line("tuition", 10_000))
+    await repo.save_line(_draft_line("discount", -10_000))
+    email = FakeInvoiceEmail()
+
+    result = await _uc(repo, email=email).execute("inv-1")
+
+    assert result.invoice.status == "open"
+    assert result.invoice.delivery_status == "sent"
+    assert email.calls[0]["balance_due_cents"] == 0
+    assert email.calls[0]["checkout_url"] is None
+
+
+async def test_blank_draft_is_still_refused() -> None:
+    from backend.v2.contexts.billing.application.use_cases.send_invoice import (
+        EmptyInvoiceNotSendable,
+    )
+
+    blank = _invoice(status="draft", balance_due_cents=0).model_copy(
+        update={"subtotal_cents": 0, "total_cents": 0}
+    )
+    repo = FakeLedgerRepository(invoices=[blank])
+
+    with pytest.raises(EmptyInvoiceNotSendable):
+        await _uc(repo, email=FakeInvoiceEmail()).execute("inv-1")

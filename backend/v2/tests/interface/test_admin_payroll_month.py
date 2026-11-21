@@ -106,7 +106,6 @@ def _minimal_admin_use_cases(
         edit_expense=mock,  # type: ignore[arg-type]
         delete_expense=mock,  # type: ignore[arg-type]
         expenses=mock,  # type: ignore[arg-type]
-        payouts=mock,  # type: ignore[arg-type]
         revenue_query=mock,  # type: ignore[arg-type]
         list_admin_sessions=mock,
         list_session_occurrences=mock,

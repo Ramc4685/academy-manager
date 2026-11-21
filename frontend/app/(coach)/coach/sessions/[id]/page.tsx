@@ -19,6 +19,7 @@ import {
   type ProgressNote,
 } from "@/lib/api/coach";
 import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
+import { ClassRecapPanel } from "@/components/coach/ClassRecapPanel";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
 import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
 import { TrialOutcomeControl } from "@/components/coach/trial-outcome-control";
@@ -27,7 +28,14 @@ import { formatCents } from "@/lib/money";
 import { queueMark, queuedMarksFor, type QueuedMark } from "@/lib/offline/attendance-queue";
 import { isBulkMarkEligible } from "@/lib/coach/bulk-eligibility";
 import { BulkMarkUndoWindow } from "@/lib/coach/bulk-mark-undo";
-import { markProgress } from "@/lib/coach/marking";
+import {
+  correctionWindowClosed,
+  isRecordedMark,
+  markingNotOpenYet,
+  withoutUnconfirmedMark,
+  markProgress,
+} from "@/lib/coach/marking";
+import { useCoachSurface } from "@/components/coach/coach-surface-context";
 import { onSync, syncNow } from "@/lib/offline/sync";
 import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 import { queryKeys } from "@/lib/query/keys";
@@ -53,7 +61,19 @@ interface PageProps {
   searchParams: Promise<{ date?: string }>;
 }
 
-type MarkStatus = "present" | "absent";
+type MarkStatus = AttendanceStatus;
+
+/** No HTTP status: the request never got an answer (weak signal, timeout). */
+function isTransportError(err: unknown): boolean {
+  return typeof (err as { status?: unknown }).status !== "number";
+}
+
+/** The recorded mark, or null when there is none or an admin voided it. */
+function recordedMark(student: CoachRosterEntry): MarkStatus | null {
+  return isRecordedMark(student.attendance_status)
+    ? (student.attendance_status as MarkStatus)
+    : null;
+}
 
 interface OptimisticEntry {
   student_id: string;
@@ -79,6 +99,8 @@ const ATTENDANCE_ERROR_MESSAGES: Record<string, string> = {
   "Coaching.SessionCancelled": "This session occurrence was cancelled.",
   "Coaching.CorrectionWindowExpired":
     "This mark is older than 48 hours, so it can only be changed by an admin.",
+  "Coaching.MarkVoided": "An admin voided this mark, so only an admin can change it.",
+  "Coaching.OccurrenceNotStarted": "This class hasn't started yet. Mark it once it begins.",
   "Coaching.AttendanceNotFound":
     "No recorded mark was found to change. Refresh and try again.",
 };
@@ -117,6 +139,8 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   // them for assistants), so they are not rendered at all. They may write
   // notes but never share them with parents.
   const assistant = useIsAssistantCoach();
+  // Admins covering a class have no correction window (#632).
+  const { supervisor } = useCoachSurface();
 
   const date = dateParam ?? todayISO();
   const { data: today, isLoading, isError, dataUpdatedAt } = useQuery({
@@ -135,6 +159,45 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   const roster: CoachRosterEntry[] = session?.roster ?? [];
   const sessionId = session?.session_id ?? decodedId;
   const occurrenceId = session?.occurrence_id ?? decodedId;
+
+  // Write saved marks into the cached Today so a trip back to Today (or a
+  // reopen of this class) shows them at once, instead of the 5-minute-fresh
+  // copy from before the save (#1039). No refetch: the service worker's
+  // stale-while-revalidate would hand back that same stale copy.
+  const patchTodayMarks = useCallback(
+    (marks: { student_id: string; status: AttendanceStatus }[]) => {
+      const byStudent = new Map(marks.map((m) => [m.student_id, m.status]));
+      const markedAt = new Date().toISOString();
+      const key = queryKeys.coach.today(date);
+      queryClient.setQueryData<typeof today>(key, (prev) =>
+        prev
+          ? {
+              ...prev,
+              sessions: prev.sessions.map((s) =>
+                s.occurrence_id !== occurrenceId
+                  ? s
+                  : {
+                      ...s,
+                      roster: s.roster.map((r) =>
+                        byStudent.has(r.student_id)
+                          ? {
+                              ...r,
+                              attendance_status: byStudent.get(r.student_id),
+                              attendance_marked_at: r.attendance_marked_at ?? markedAt,
+                            }
+                          : r,
+                      ),
+                    },
+              ),
+            }
+          : prev,
+        // A local patch is not a refetch: keep dataUpdatedAt so state keyed
+        // to the roster version (the 422 ineligible set) survives it.
+        { updatedAt: queryClient.getQueryState(key)?.dataUpdatedAt },
+      );
+    },
+    [queryClient, date, occurrenceId],
+  );
 
   const [localMarks, setLocalMarks] = useState<Record<string, OptimisticEntry>>(
     {},
@@ -159,6 +222,13 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   // Why the last "Mark all present" was refused as a whole (#672): the bulk
   // endpoint saves nothing when any row is ineligible, so name the rows.
   const [bulkError, setBulkError] = useState<string | null>(null);
+  // Re-check the time gates (class opens at T-60, 48h correction window)
+  // while the screen stays open, without a reload.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(id);
+  }, []);
   // The students that 422 named. Kept apart from the banner and from row
   // errors: the retry must leave exactly these rows out, and keep leaving
   // them out after the banner clears, until the roster is refetched
@@ -190,6 +260,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
    * the composer open, which is right for the surface it is on.
    */
   const [announcementsOpen, setAnnouncementsOpen] = useState(false);
+  const [recapOpen, setRecapOpen] = useState(false);
 
   const progressNotesKey = queryKeys.coach.progressNotes(sessionId);
   const { data: notesData } = useQuery({
@@ -277,6 +348,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             pending: false,
           },
         }));
+        if (payload.status) patchTodayMarks([{ student_id, status: payload.status }]);
         // No invalidation here: replaying N marks would fire N refetches that
         // cancel each other. The `finished` branch above refetches once, and
         // the local state already shows the mark as saved.
@@ -293,7 +365,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
         }));
       }
     });
-  }, [sessionOccurrenceId, date, queryClient, hydrateQueued]);
+  }, [sessionOccurrenceId, date, queryClient, hydrateQueued, patchTodayMarks]);
 
   const noteMutation = useMutation({
     mutationFn: ({
@@ -350,6 +422,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
         },
       }));
       clearIneligible(res.student_id);
+      patchTodayMarks([{ student_id: res.student_id, status: res.status }]);
       void queryClient.invalidateQueries({ queryKey: queryKeys.coach.today(date) });
     },
     onError: (err: unknown, vars) => {
@@ -399,8 +472,15 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
         },
       }));
       clearIneligible(res.student_id);
+      patchTodayMarks([{ student_id: res.student_id, status: res.status }]);
     },
     onError: (err: unknown, vars) => {
+      // Connected but no answer (gym wifi): keep the mark on this phone and
+      // let the sync send it, exactly as if we were offline.
+      if (isTransportError(err)) {
+        void queueLocally(vars.student_id, vars.status);
+        return;
+      }
       setLocalMarks((m) => ({
         ...m,
         [vars.student_id]: {
@@ -451,8 +531,20 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
         }
         return next;
       });
+      patchTodayMarks(res.results);
     },
     onError: (err: unknown, studentIds) => {
+      if (isTransportError(err)) {
+        // No answer: queue each mark so nothing is lost (the sync's per-mark
+        // replay converges even if the batch did reach the server).
+        setLocalMarks((m) => {
+          const next = { ...m };
+          for (const student_id of studentIds) delete next[student_id];
+          return next;
+        });
+        queueAll(studentIds);
+        return;
+      }
       const conflict = (err as { status?: number }).status === 409;
       // 422 = the server refused the whole batch because some rows are not
       // eligible today (#672). Name them, flag their rows, and leave the
@@ -514,7 +606,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
 
   /** A mark the server already holds (optimistic-confirmed or hydrated). */
   const hasServerMark = (student: CoachRosterEntry): boolean =>
-    Boolean(localMarks[student.student_id]?.status) || Boolean(student.attendance_status);
+    Boolean(localMarks[student.student_id]?.status) || recordedMark(student) !== null;
 
   const unmarkedStudentIds = roster
     .filter(
@@ -529,6 +621,8 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
         // of the retry; the row keeps its own explanation. Other rows' own
         // errors (a failed single tap) never shrink the retry.
         !ineligibleIds.has(student.student_id) &&
+        // A voided row is the admin's to change; the server refuses it.
+        student.attendance_status !== "voided" &&
         // #866: and the two lifecycle facts the roster already shows — an
         // ON HOLD seat, a parent's absence notice — so the count stops
         // promising a number the server would refuse (or a parent already
@@ -566,12 +660,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
         session_title: session?.title,
       });
       setQueuedMarks((prev) => ({ ...prev, [student_id]: { status, mutation_id: m.mutation_id } }));
-      setLocalMarks((m2) => {
-        if (!m2[student_id]?.error) return m2;
-        const next = { ...m2 };
-        delete next[student_id];
-        return next;
-      });
+      setLocalMarks((m2) => withoutUnconfirmedMark(m2, student_id));
     } catch {
       setLocalMarks((m) => ({
         ...m,
@@ -599,8 +688,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
       });
       return;
     }
-    const existing =
-      localMarks[student.student_id]?.status ?? student.attendance_status ?? null;
+    const existing = localMarks[student.student_id]?.status ?? recordedMark(student);
     if (existing === status) return; // already recorded as this
     if (!online) {
       // Corrections are not replayable by the queue; the row is disabled.
@@ -628,6 +716,10 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
       bulkAttendanceMutation.mutate(studentIds);
       return;
     }
+    queueAll(studentIds);
+  }
+
+  function queueAll(studentIds: string[]): void {
     setQueueingAll(true);
     void (async () => {
       try {
@@ -686,6 +778,8 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   }
 
   const markAllPending = bulkAttendanceMutation.isPending || queueingAll;
+  // A future class cannot be marked (the server refuses it too).
+  const notOpenYet = markingNotOpenYet(session.start_at, now);
 
   return (
     <section data-testid="session-detail">
@@ -736,6 +830,17 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             </p>
           )}
         </div>
+      )}
+
+      {notOpenYet && (
+        <p
+          data-testid="marking-not-open"
+          role="status"
+          className="mb-4 rounded-md border p-3 text-sm"
+          style={{ borderColor: "var(--rally-line)", color: "var(--rally-muted)" }}
+        >
+          This class hasn&apos;t started yet. Attendance opens an hour before it begins.
+        </p>
       )}
 
       {/* Attendance roster */}
@@ -790,6 +895,9 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
                 queued={queuedMarks[student.student_id]}
                 pendingPresent={pendingBulkSet.has(student.student_id)}
                 online={online}
+                supervisor={supervisor}
+                notOpenYet={notOpenYet}
+                now={now}
                 noteOpen={noteOpen === student.student_id}
                 noteText={noteTexts[student.student_id] ?? ""}
                 noteShare={noteShare[student.student_id] ?? false}
@@ -824,7 +932,66 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             ))}
           </ul>
         )}
+        {(session.trial_guests ?? []).length > 0 ? (
+          <div className="mt-4" data-testid="trial-guests">
+            <h3 className="text-sm font-semibold" style={{ color: "var(--rally-ink)" }}>
+              Trial guests (booked on the website)
+            </h3>
+            <ul className="mt-2 space-y-2">
+              {(session.trial_guests ?? []).map((guest) => (
+                <li
+                  key={guest.trial_request_id}
+                  className="rounded-md border p-3"
+                  style={{ borderColor: "var(--rally-line)" }}
+                  data-testid={`trial-guest-${guest.trial_request_id}`}
+                >
+                  <p className="text-sm font-medium" style={{ color: "var(--rally-ink)" }}>
+                    {guest.name}
+                    {guest.age ? (
+                      <span style={{ color: "var(--rally-muted)" }}> · player age {guest.age}</span>
+                    ) : null}
+                  </p>
+                  <TrialOutcomeControl
+                    requestId={guest.trial_request_id}
+                    studentName={`${guest.name}'s player`}
+                    outcome={guest.trial_outcome}
+                  />
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </section>
+
+      {/* Collapsed and fetched on open, so it reads the roster's latest marks. */}
+      {!notOpenYet && online && (
+        <section className="mt-6">
+          <h2 className="mb-2">
+            <button
+              type="button"
+              data-testid="class-recap-toggle"
+              aria-expanded={recapOpen}
+              aria-controls="coach-class-recap"
+              onClick={() => setRecapOpen((open) => !open)}
+              className="min-h-touch w-full rounded-lg border px-3 text-left text-sm font-semibold uppercase tracking-wide"
+              style={{ color: "var(--rally-muted)", borderColor: "var(--rally-line)" }}
+            >
+              Class recap
+              <span aria-hidden="true" className="float-right font-normal">
+                {recapOpen ? "−" : "+"}
+              </span>
+            </button>
+          </h2>
+          {recapOpen && (
+            <div id="coach-class-recap">
+              <ClassRecapPanel
+                occurrenceId={session.occurrence_id}
+                skillsHref={`/coach/sessions/${encodeURIComponent(session.occurrence_id)}/skills?date=${encodeURIComponent(date)}`}
+              />
+            </div>
+          )}
+        </section>
+      )}
 
       {/*
         Announcements are SESSION-scoped, but this route's id may be an
@@ -917,15 +1084,20 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               ) : (
                 <button
                   data-testid="mark-all-present"
-                  disabled={markAllPending || unmarkedStudentIds.length === 0}
+                  disabled={markAllPending || unmarkedStudentIds.length === 0 || notOpenYet}
                   onClick={handleMarkAll}
                   className="min-h-[44px] w-full rounded-md bg-status-green-800 px-4 text-sm font-semibold text-white transition-colors hover:opacity-90 disabled:opacity-50"
                 >
                   {markAllPending
                     ? "Marking…"
-                    : unmarkedStudentIds.length === 0
-                      ? "All marked"
-                      : `Mark rest present (${unmarkedStudentIds.length})`}
+                    : notOpenYet
+                      ? "Opens when class starts"
+                      : unmarkedStudentIds.length === 0
+                        ? // #1040: no bulk candidates is not the same as done.
+                          progress.complete
+                          ? "All marked"
+                          : "Mark the rest one by one"
+                        : `Mark rest present (${unmarkedStudentIds.length})`}
                 </button>
               )}
             </div>
@@ -979,6 +1151,9 @@ function RosterRow({
   queued,
   pendingPresent,
   online,
+  supervisor,
+  notOpenYet,
+  now,
   noteOpen,
   noteText,
   noteShare,
@@ -1001,6 +1176,11 @@ function RosterRow({
   /** In a held "Mark rest present" batch: shown as pending, not as saved (#846). */
   pendingPresent: boolean;
   online: boolean;
+  /** Admin/owner covering the class: no 48h correction window. */
+  supervisor: boolean;
+  /** The class starts more than an hour from now: nothing can be marked yet. */
+  notOpenYet: boolean;
+  now: Date;
   noteOpen: boolean;
   noteText: string;
   noteShare: boolean;
@@ -1024,14 +1204,28 @@ function RosterRow({
   // A local entry with status=null is a failed attempt; fall through to the
   // server-hydrated mark so an "already recorded" conflict still shows what
   // is recorded instead of blanking the row (#638).
-  const marked = local?.status ?? queued?.status ?? student.attendance_status ?? null;
-  const savedOnServer = Boolean(local?.status) || Boolean(student.attendance_status);
+  const marked = local?.status ?? queued?.status ?? recordedMark(student);
+  const savedOnServer = Boolean(local?.status) || recordedMark(student) !== null;
+  // An admin voided this mark: it reads as unmarked and only an admin may
+  // change it (the server refuses the coach, #554).
+  const voided = !local?.status && student.attendance_status === "voided";
+  // Past the coach's 48h correction window: say so instead of failing on tap.
+  const windowClosed =
+    !supervisor &&
+    !local?.status &&
+    recordedMark(student) !== null &&
+    correctionWindowClosed(student.attendance_marked_at, now);
   // Offline, only first marks can be queued: a saved mark would need a
   // correction, which the queue cannot replay (docs/offline-policy.md).
   // A row in a held batch is frozen until the window closes: the one control
   // that applies to it is Undo, in the bar (#846).
   const markDisabled =
-    Boolean(local?.pending) || pendingPresent || (!online && savedOnServer);
+    Boolean(local?.pending) ||
+    pendingPresent ||
+    (!online && savedOnServer) ||
+    voided ||
+    windowClosed ||
+    notOpenYet;
   const passportParams = new URLSearchParams({
     from_session: sessionId,
     student_name: student.full_name,
@@ -1058,6 +1252,7 @@ function RosterRow({
             {student.full_name}
           </p>
           {student.expected_absence && <Chip variant="pending" label="EXPECTED ABSENCE" />}
+          {voided && <Chip variant="closing" label="VOIDED" />}
           {student.entry_source === "makeup" && <Chip variant="makeup" label="MAKE-UP" />}
           {student.entry_source === "trial" && <Chip variant="waitlist" label="TRIAL" />}
           {/* Issue #773: at most ONE lifecycle chip per row. The coach already
@@ -1176,6 +1371,30 @@ function RosterRow({
                 "Absent"
               )}
             </button>
+            {/* Late: a narrower third choice so Present/Absent keep their width. */}
+            <button
+              data-testid={`mark-${student.student_id}-late`}
+              disabled={markDisabled}
+              aria-pressed={marked === "late"}
+              onClick={() => onMark("late")}
+              className={SECONDARY_BUTTON_BASE}
+              style={
+                marked === "late"
+                  ? {
+                      // amber-800 on white: 7.1:1.
+                      background: "#92400e",
+                      borderColor: "#92400e",
+                      color: "#fff",
+                      fontWeight: 700,
+                    }
+                  : {
+                      borderColor: "var(--rally-muted)",
+                      color: "var(--rally-muted)",
+                    }
+              }
+            >
+              Late
+            </button>
           </div>
           <div className="flex shrink-0 gap-1.5">
             <Link
@@ -1220,6 +1439,18 @@ function RosterRow({
           studentName={student.full_name}
           outcome={student.trial_outcome}
         />
+      )}
+
+      {(voided || windowClosed) && !local?.error && (
+        <p
+          data-testid={`mark-locked-${student.student_id}`}
+          className="mt-1.5 text-xs"
+          style={{ color: "var(--rally-muted)" }}
+        >
+          {voided
+            ? "An admin voided this mark. Ask an admin to change it."
+            : "Marked over 48 hours ago. Ask an admin to change it."}
+        </p>
       )}
 
       {local?.error && (

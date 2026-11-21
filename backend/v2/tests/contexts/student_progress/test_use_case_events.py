@@ -43,6 +43,7 @@ from backend.v2.contexts.student_progress.domain.models import (
     TestAttempt as StudentTestAttempt,
 )
 from backend.v2.shared.tenancy import tenant_scope
+from backend.v2.tests.fixtures.certificate_fakes import SequentialCertNumbers
 
 
 class _AlwaysEnrolled:
@@ -50,6 +51,9 @@ class _AlwaysEnrolled:
     exercised in test_level_up_lifecycle.py; the coach route 404s first)."""
 
     async def has_active_or_paused_enrollment(self, student_id: str) -> bool:
+        return True
+
+    async def student_exists(self, student_id: str) -> bool:
         return True
 
     async def students_with_active_or_paused_enrollment(self, student_ids: list[str]) -> set[str]:
@@ -105,6 +109,12 @@ class _LevelProgressRepo:
             update={"status": "completed", "completed_at": completed_at}
         )
 
+    async def withdraw(self, progress_id: str, ended_at: object) -> None:
+        row = self.rows[progress_id]
+        self.rows[progress_id] = row.model_copy(
+            update={"status": "withdrawn", "completed_at": ended_at}
+        )
+
     async def list_for_student(self, student_id: str) -> list[StudentLevelProgress]:
         return [row for row in self.rows.values() if row.student_id == student_id]
 
@@ -119,6 +129,27 @@ class _SkillProgressRepo:
     async def upsert(self, skill_progress: StudentSkillProgress) -> StudentSkillProgress:
         self.rows[(skill_progress.student_id, skill_progress.skill_id)] = skill_progress
         return skill_progress
+
+    async def insert_if_missing(self, skill_progress: StudentSkillProgress) -> bool:
+        # Mirrors $setOnInsert: an existing row is never overwritten.
+        key = (skill_progress.student_id, skill_progress.skill_id)
+        if key in self.rows:
+            return False
+        self.rows[key] = skill_progress
+        return True
+
+    async def set_status_unless_passed(
+        self, student_id, skill_id, status, *, at, by, introduced_at=None
+    ):
+        # Mirrors the Mongo filter: never over a PASSED row.
+        row = self.rows.get((student_id, skill_id))
+        if row is None or row.status == "PASSED":
+            return False
+        update = {"status": status, "last_updated_at": at, "last_updated_by": by}
+        if introduced_at:
+            update["introduced_at"] = introduced_at
+        self.rows[(student_id, skill_id)] = row.model_copy(update=update)
+        return True
 
     async def get(self, student_id: str, skill_id: str) -> StudentSkillProgress | None:
         return self.rows.get((student_id, skill_id))
@@ -255,12 +286,14 @@ class _SkillLookup:
             "level-1": [
                 SimpleNamespace(
                     skill_id="skill-1",
+                    level_id="level-1",
                     is_required=True,
                     pass_threshold_pct=70.0,
                     coach_override_allowed=False,
                 ),
                 SimpleNamespace(
                     skill_id="skill-2",
+                    level_id="level-1",
                     is_required=True,
                     pass_threshold_pct=70.0,
                     coach_override_allowed=False,
@@ -269,6 +302,7 @@ class _SkillLookup:
             "level-2": [
                 SimpleNamespace(
                     skill_id="skill-3",
+                    level_id="level-2",
                     is_required=True,
                     pass_threshold_pct=70.0,
                     coach_override_allowed=False,
@@ -276,8 +310,12 @@ class _SkillLookup:
             ],
         }
         self.levels = {
-            "level-1": SimpleNamespace(level_id="level-1", sequence=1),
-            "level-2": SimpleNamespace(level_id="level-2", sequence=2),
+            "level-1": SimpleNamespace(
+                level_id="level-1", sequence=1, program_id="program-1", is_active=True
+            ),
+            "level-2": SimpleNamespace(
+                level_id="level-2", sequence=2, program_id="program-1", is_active=True
+            ),
         }
 
     async def get_skill(self, skill_id: str) -> object | None:
@@ -298,6 +336,9 @@ class _SkillLookup:
             if level.sequence == current_sequence + 1:
                 return level
         return None
+
+    async def list_levels_for_program(self, program_id: str) -> list[object]:
+        return [lvl for lvl in self.levels.values() if lvl.program_id == program_id]
 
 
 _NOW = datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
@@ -341,6 +382,8 @@ async def test_place_student_emits_student_placed_event() -> None:
         level_progress=level_progress,
         skill_progress=skill_progress,
         skill_lookup=_SkillLookup(),
+        recommendations=_RecommendationRepo(),
+        enrollment_lookup=_AlwaysEnrolled(),
         outbox=outbox,
     )
 
@@ -376,6 +419,7 @@ async def test_update_skill_status_emits_status_updated_event() -> None:
     use_case = UpdateSkillStatus(
         level_progress=level_progress,
         skill_progress=skill_progress,
+        skill_lookup=_SkillLookup(),
         outbox=outbox,
     )
 
@@ -421,6 +465,7 @@ async def test_record_test_attempt_emits_attempt_event_even_when_not_passed() ->
     with tenant_scope("academy-1"):
         result = await use_case.execute(
             RecordTestAttemptCommand(
+                can_sign_off=True,
                 student_id="student-1",
                 skill_id="skill-1",
                 level_id="level-1",
@@ -466,6 +511,7 @@ async def test_record_test_attempt_emits_pass_and_completion_events_when_level_c
     with tenant_scope("academy-1"):
         result = await use_case.execute(
             RecordTestAttemptCommand(
+                can_sign_off=True,
                 student_id="student-1",
                 skill_id="skill-1",
                 level_id="level-1",
@@ -555,6 +601,7 @@ async def test_review_level_up_approve_emits_leveled_up_and_certificate_events()
         level_progress=level_progress,
         skill_progress=skill_progress,
         certificates=certs,
+        cert_numbers=SequentialCertNumbers(),
         skill_lookup=_SkillLookup(),
         enrollment_lookup=_AlwaysEnrolled(),
         outbox=outbox,
@@ -569,7 +616,6 @@ async def test_review_level_up_approve_emits_leveled_up_and_certificate_events()
                 student_name="Student One",
                 level_name="Level One",
                 program_name="Program One",
-                level_sequence=1,
             )
         )
 
@@ -621,6 +667,7 @@ async def test_review_level_up_replayed_approve_is_rejected_without_side_effects
         level_progress=level_progress,
         skill_progress=skill_progress,
         certificates=certs,
+        cert_numbers=SequentialCertNumbers(),
         skill_lookup=_SkillLookup(),
         enrollment_lookup=_AlwaysEnrolled(),
         outbox=outbox,
@@ -632,7 +679,6 @@ async def test_review_level_up_replayed_approve_is_rejected_without_side_effects
         student_name="Student One",
         level_name="Level One",
         program_name="Program One",
-        level_sequence=1,
     )
 
     with tenant_scope("academy-1"):
@@ -677,7 +723,6 @@ def _approve_command(rec_id: str = "rec-1") -> ReviewLevelUpCommand:
         student_name="Student One",
         level_name="Level One",
         program_name="Program One",
-        level_sequence=1,
     )
 
 
@@ -702,6 +747,7 @@ def _review_use_case(
         level_progress=level_progress,
         skill_progress=skill_progress,
         certificates=certs,
+        cert_numbers=SequentialCertNumbers(),
         skill_lookup=_SkillLookup(),
         enrollment_lookup=_AlwaysEnrolled(),
         outbox=outbox,
@@ -872,6 +918,7 @@ async def test_lost_review_race_reports_the_post_claim_status() -> None:
         level_progress=level_progress,
         skill_progress=skill_progress,
         certificates=certs,
+        cert_numbers=SequentialCertNumbers(),
         skill_lookup=_SkillLookup(),
         enrollment_lookup=_RejectsFirst(),
     )

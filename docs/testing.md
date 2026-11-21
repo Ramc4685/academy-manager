@@ -4,8 +4,9 @@ This is the maintained testing guide for CourtMastr Academy Manager. Keep this
 file current when test commands, local stack behavior, staging setup, or CI
 expectations change.
 
-For task status and handoffs, keep using `test_result.md` as the index and
-`docs/test-results/active/` as the per-task ledger directory.
+The `test_result.md` / `docs/test-results/active/` ledger below is optional.
+Use it only when a separate testing agent needs shared written state; otherwise
+record verification in the PR and final response.
 
 ## Quick Decision Guide
 
@@ -18,7 +19,7 @@ For task status and handoffs, keep using `test_result.md` as the index and
 | Broad launch or "all user-facing" confidence | Production-scale local audit |
 | Before pushing | `scripts/dev/pre-push-checks.sh` |
 
-## Test Result Ledger
+## Test Result Ledger (optional)
 
 At the start of a task:
 
@@ -208,18 +209,20 @@ scripts/dev/pre-push-checks.sh --full   # force E2E
 ```
 
 The script is change-aware and fail-fast (PR #477): it classifies the
-outgoing diff and runs only the tier that matches. The full 3,600-test
-backend suite and all frontend suites remain the enforced CI merge gate —
-the required **CI Gate** status check on `main` — so the local hook is a
-fast first filter, not the last line of defense.
+outgoing diff and runs only the tier that matches. It never runs the full
+backend suite unless asked (`PREPUSH_FULL=1` or `--full`). The full
+~9,400-test backend suite and all frontend suites remain the enforced CI merge
+gate — the required **CI Gate** status check on `main`, about 7 minutes — so
+the local hook is a fast first filter, not the last line of defense.
+Full-suite failures surface in CI rather than at push time. Pytest runs with
+4 xdist workers (`PREPUSH_PYTEST_WORKERS` overrides).
 
 | Tier | Triggered by | What runs |
 | --- | --- | --- |
 | docs-only | only `docs/`, `*.md`, issue templates changed | nothing — push completes in seconds |
-| backend-only | only `backend/` changed, no high-risk paths | `ruff format --check` / `ruff check --force-exclude` on changed `v2/*.py` files; `pytest` on changed test files + `v2/tests/structural` |
-| frontend-only | only `frontend/` changed, no high-risk paths | node unit tests, `pnpm typecheck`, `eslint --no-warn-ignored` on changed files |
-| broad | high-risk paths (auth, tenancy, billing/Stripe/payments, migrations, `.github/workflows/`, `scripts/`, deploy/infra, lockfiles) or mixed backend+frontend | full backend suite + all frontend static checks (the pre-#477 behavior) |
-| `--full` | flag | broad tier plus E2E |
+| focused | `backend/` and/or `frontend/` changed, no high-risk paths | backend: `ruff format --check` / `ruff check --force-exclude` on changed `v2/*.py` files, `pytest` on tests mapped to the changed modules + `v2/tests/structural`; frontend: node + vitest unit tests, `pnpm typecheck`, `eslint --no-warn-ignored` on changed files |
+| broad | a high-risk path prefix: `backend/v2/` billing, tenancy, auth, migrations, composition, `main.py`, webhook and billing/payment/invoice/tenant routes, `load_auth_claims.py`; `frontend/` `lib/auth/`, `lib/api/auth-*`, `app/api/`, `middleware.ts`; `.github/workflows/`, `scripts/`, Dockerfiles, compose files, `fly.toml`, requirements, `package.json`, lockfiles | the focused checks plus whole-tree `ruff`, `lint-imports`, mypy at the frozen baseline, and full `pnpm lint` when `frontend/` changed. No full backend suite. |
+| `--full` | flag | full backend suite, all frontend checks, E2E |
 
 E2E also runs automatically when `frontend/e2e/` files changed. Checks are
 fail-fast: the first failure stops the run.

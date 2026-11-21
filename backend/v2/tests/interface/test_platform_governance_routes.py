@@ -129,6 +129,10 @@ def test_platform_admin_can_create_list_and_check_governance_request_status(
     assert tenant_deletion.status_code == 200, tenant_deletion.text
     assert student_deletion.status_code == 200, student_deletion.text
     assert export.json()["status"] == "queued"
+    # Governance honesty: every response says nothing was carried out.
+    for response in (export, tenant_deletion, student_deletion):
+        assert response.json()["enforced"] is False
+        assert response.json()["operator_note"].startswith("Recorded only")
     assert tenant_deletion.json()["hard_delete_allowed"] is False
     assert student_deletion.json()["delete_student_profile"] is False
     assert listed.status_code == 200, listed.text
@@ -161,6 +165,8 @@ def test_platform_admin_can_grant_and_revoke_support_access(
 
     assert created.status_code == 200, created.text
     assert created.json()["status"] == "active"
+    assert created.json()["enforced"] is False  # no auth path reads grants yet
+    assert "grants no access" in created.json()["operator_note"]
     assert revoked.status_code == 200, revoked.text
     assert revoked.json()["status"] == "revoked"
 

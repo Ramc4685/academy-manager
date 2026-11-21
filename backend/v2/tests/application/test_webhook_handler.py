@@ -8,7 +8,7 @@ which use real Stripe fixture JSON).
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -414,6 +414,7 @@ class FakeBillingLedger:
         self.payment_keys: dict[str, str] = {}
         self.allocations: list[dict[str, Any]] = []
         self.allocation_keys: set[str] = set()
+        self.reversals: dict[str, dict[str, Any]] = {}
         self.payment_attempts: dict[str, dict[str, Any]] = {}
         self.fail_allocate = False
         self.fail_next_invoice_refund = False
@@ -615,14 +616,71 @@ class FakeBillingLedger:
             update={
                 "refunded_cents": refunded_cents,
                 "status": status,
+                "unapplied_amount_cents": self._unapplied(payment_id, refunded_cents),
                 "updated_at": updated_at,
             }
         )
         self.payments[payment_id] = updated
         return updated
 
+    async def apply_payment_return(
+        self,
+        payment_id: str,
+        *,
+        amount_cents: int,
+        source_key: str | None,
+        updated_at: Any,
+    ) -> tuple[LedgerPayment, bool]:
+        """Mirrors the Mongo repo: cumulative charge refunds merge, keyed sources add once."""
+        payment = self.payments[payment_id]
+        sources = self.__dict__.setdefault("return_sources", {}).setdefault(payment_id, {})
+        if source_key is not None and source_key in sources:
+            return payment, False
+        keyed = sum(sources.values())
+        before = payment.refunded_cents
+        if source_key is None:
+            refunded = min(payment.amount_cents, max(before - keyed, amount_cents) + keyed)
+        else:
+            refunded = min(payment.amount_cents, before + amount_cents)
+            sources[source_key] = amount_cents
+        if refunded == before:
+            return payment, False
+        status = "refunded" if refunded >= payment.amount_cents else "partially_refunded"
+        updated = await self.mark_payment_refunded(
+            payment_id, refunded_cents=refunded, status=status, updated_at=updated_at
+        )
+        return updated, True
+
+    def _unapplied(self, payment_id: str, refunded_cents: int) -> int:
+        """Mongo's rule: amount less refunded less still-allocated, never negative."""
+        allocated = sum(
+            a["amount_cents"] for a in self.allocations if a["payment_id"] == payment_id
+        )
+        return max(0, self.payments[payment_id].amount_cents - refunded_cents - allocated)
+
+    async def list_reversals_for_payment(self, payment_id: str) -> list[dict[str, Any]]:
+        return [r for r in self.reversals.values() if r["payment_id"] == payment_id]
+
+    async def repair_after_reversal(
+        self, *, reversal_idempotency_key: str, reason: str, reversed_at: datetime
+    ) -> None:
+        reversal = self.reversals.get(reversal_idempotency_key)
+        if reversal is None:
+            return
+        invoice = self.invoices[reversal["invoice_id"]]
+        self.invoices[invoice.invoice_id] = invoice.model_copy(
+            update={"status": "open", "balance_due_cents": invoice.total_cents}
+        )
+
     async def list_allocations_for_payment(self, payment_id: str) -> list[dict[str, Any]]:
-        return [a for a in self.allocations if a["payment_id"] == payment_id]
+        # Real rows carry an allocation_id; the reversal key is built from it.
+        return [
+            {"allocation_id": f"alloc:{a.get('idempotency_key')}", **a}
+            if a.get("idempotency_key")
+            else a
+            for a in self.allocations
+            if a["payment_id"] == payment_id
+        ]
 
     async def apply_invoice_refund(self, *, invoice_id: str, amount_cents: int) -> LedgerInvoice:
         if self.fail_next_invoice_refund:
@@ -651,6 +709,9 @@ class FakeBillingLedger:
         return_code: str | None,
         reversed_at: datetime,
     ) -> dict[str, Any] | None:
+        # Same idempotency as the Mongo repo: one reversal row per reversal key.
+        if reversal_idempotency_key in self.reversals:
+            return self.reversals[reversal_idempotency_key]
         for allocation in list(self.allocations):
             if allocation["idempotency_key"] != allocation_idempotency_key:
                 continue
@@ -666,9 +727,14 @@ class FakeBillingLedger:
                 }
             )
             self.payments[payment.payment_id] = payment.model_copy(
-                update={"unapplied_amount_cents": 0, "updated_at": reversed_at}
+                update={
+                    "unapplied_amount_cents": self._unapplied(
+                        payment.payment_id, payment.refunded_cents
+                    ),
+                    "updated_at": reversed_at,
+                }
             )
-            return {
+            reversal = {
                 "payment_id": payment.payment_id,
                 "invoice_id": invoice.invoice_id,
                 "amount_cents": allocation["amount_cents"],
@@ -676,6 +742,8 @@ class FakeBillingLedger:
                 "return_code": return_code,
                 "idempotency_key": reversal_idempotency_key,
             }
+            self.reversals[reversal_idempotency_key] = reversal
+            return reversal
         return None
 
 
@@ -1725,6 +1793,41 @@ async def test_autopay_ach_processing_cross_tenant_invoice_is_quarantined() -> N
 
 
 @pytest.mark.asyncio
+async def test_family_charge_naming_another_academys_invoice_is_quarantined_whole() -> None:
+    """L8: one foreign invoice in a family charge's metadata quarantines the
+    event before anything is written, so this academy's sibling is not paid by it."""
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-own"))
+    ledger.invoices["inv-other"] = _ledger_invoice(invoice_id="inv-other", academy_id="other-acad")
+    uc = _build(FakePaymentRepo(), billing_ledger=ledger)
+    body = json.dumps(
+        {
+            "id": "evt_family_foreign",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_family_foreign",
+                    "amount": 20_000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_ids": "inv-other,inv-own",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "charge_group_id": "grp-1",
+                    },
+                }
+            },
+        }
+    ).encode()
+
+    res = await uc.execute(body, "test_signature")
+
+    assert res["status"] == "quarantined"
+    assert ledger.payments == {}
+    assert ledger.allocations == []
+
+
+@pytest.mark.asyncio
 async def test_autopay_payment_intent_parent_metadata_mismatch_is_quarantined() -> None:
     repo = FakePaymentRepo()
     ledger = FakeBillingLedger(_ledger_invoice(parent_id="parent-from-invoice"))
@@ -1968,7 +2071,9 @@ async def test_autopay_ach_return_after_paid_reopens_invoice_and_records_return_
 
 
 @pytest.mark.asyncio
-async def test_autopay_ach_return_replay_emits_missing_refund_event_after_ledger_mutation() -> None:
+async def test_autopay_ach_return_replay_after_a_mid_reversal_failure_converges() -> None:
+    """L1 B1: the payment is marked refunded LAST, so a replay after any failed
+    step finishes the reversal instead of seeing 'refunded' and stopping."""
     repo = FakePaymentRepo()
     ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-ach-return-replay"))
     dedup = FakeDedup()
@@ -2012,30 +2117,177 @@ async def test_autopay_ach_return_replay_emits_missing_refund_event_after_ledger
 
     await uc.accept(succeeded, "test_signature")
     assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
-    await ledger.mark_payment_refunded(
-        "ledger-pay-autopay:pi_ach_return_replay",
-        refunded_cents=10000,
-        status="refunded",
-        updated_at=datetime.now(UTC),
-    )
-    await ledger.reverse_payment_allocation(
-        allocation_idempotency_key="autopay-alloc:pi_ach_return_replay",
-        reversal_idempotency_key="ach-return:pi_ach_return_replay:10000:R01",
-        reason="ach_return",
-        return_code="R01",
-        reversed_at=datetime.now(UTC),
-    )
 
-    await uc.accept(returned_without_details, "test_signature")
-    res = await uc.process_next(processor_id="test-worker")
+    real_reverse = ledger.reverse_payment_allocation
+    calls = {"n": 0}
 
-    assert res["processed"] is True
+    async def flaky_reverse(**kwargs: Any) -> dict[str, Any] | None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("mongo blip")
+        return await real_reverse(**kwargs)
+
+    ledger.reverse_payment_allocation = flaky_reverse  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        await uc.execute(returned_without_details, "test_signature")
+    payment = ledger.payments["ledger-pay-autopay:pi_ach_return_replay"]
+    assert payment.status == "succeeded"
+
+    # The drain retries a failed event; a fresh id stands in for that retry.
+    retry = returned_without_details.replace(
+        b"evt_ach_return_replay_refund", b"evt_ach_return_replay_refund_retry"
+    )
+    await uc.execute(retry, "test_signature")
+
+    payment = ledger.payments["ledger-pay-autopay:pi_ach_return_replay"]
+    invoice = ledger.invoices["inv-ach-return-replay"]
+    assert payment.status == "refunded"
+    assert invoice.status == "open"
+    assert invoice.balance_due_cents == 10000
+    # Should-fix 6: the reopened invoice gets a fresh due date, so no late fee yet.
+    assert invoice.due_date == datetime.now(UTC).date() + timedelta(days=5)
     refund_events = [event for event in outbox.events if event.name == "Billing.PaymentRefunded"]
     assert len(refund_events) == 1
     assert refund_events[0].event_id == (
         "billing-payment-refunded:ach-return:pi_ach_return_replay:10000:R01"
     )
     assert refund_events[0].payload.reason == "other"
+
+
+@pytest.mark.asyncio
+async def test_return_replay_after_the_refund_mark_failed_converges_to_refunded() -> None:
+    """Reversals delete the allocations, so a replay after every reversal ran but
+    before the refunded mark sees none: it must still finish, not park."""
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-mark-fails"))
+    outbox = FakeOutbox()
+    uc = _build(repo, dedup=FakeDedup(), billing_ledger=ledger, outbox=outbox)
+    succeeded = json.dumps(
+        {
+            "id": "evt_mark_fails_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_mark_fails",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-mark-fails",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                        "funding_type_source": "server_payment_method",
+                    },
+                }
+            },
+        }
+    ).encode()
+    returned = json.dumps(
+        {
+            "id": "evt_mark_fails_refund",
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_mark_fails",
+                    "payment_intent": "pi_mark_fails",
+                    "amount_refunded": 10000,
+                    "failure_code": "R01",
+                }
+            },
+        }
+    ).encode()
+    await uc.accept(succeeded, "test_signature")
+    assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+
+    real_mark = ledger.mark_payment_refunded
+    calls = {"n": 0}
+
+    async def flaky_mark(*args: Any, **kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("mongo blip")
+        return await real_mark(*args, **kwargs)
+
+    ledger.mark_payment_refunded = flaky_mark  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        await uc.execute(returned, "test_signature")
+    assert ledger.allocations == []  # the reversal ran and deleted it
+
+    await uc.execute(
+        returned.replace(b"evt_mark_fails_refund", b"evt_mark_fails_refund_retry"),
+        "test_signature",
+    )
+
+    assert ledger.payments["ledger-pay-autopay:pi_mark_fails"].status == "refunded"
+    assert ledger.invoices["inv-mark-fails"].status == "open"
+    assert not any(
+        a["failure_code"] == "unreconciled_payment_return" for a in ledger.payment_attempts.values()
+    )
+
+
+@pytest.mark.asyncio
+async def test_return_on_a_legacy_unkeyed_allocation_is_not_marked_refunded() -> None:
+    """Security review: nothing reversible means the payment must not read
+    "refunded" while the invoice still reads paid, and the parent is not told
+    an invoice reopened. Ops reconciles by hand."""
+    repo = FakePaymentRepo()
+    ledger = FakeBillingLedger(_ledger_invoice(invoice_id="inv-legacy-return"))
+    outbox = FakeOutbox()
+    uc = _build(repo, dedup=FakeDedup(), billing_ledger=ledger, outbox=outbox)
+    succeeded = json.dumps(
+        {
+            "id": "evt_legacy_return_succeeded",
+            "type": "payment_intent.succeeded",
+            "data": {
+                "object": {
+                    "id": "pi_legacy_return",
+                    "amount": 10000,
+                    "currency": "usd",
+                    "metadata": {
+                        "academy_id": "acad",
+                        "invoice_id": "inv-legacy-return",
+                        "parent_id": "parent-from-invoice",
+                        "source": "autopay",
+                        "funding_type": "us_bank_account",
+                        "funding_type_source": "server_payment_method",
+                    },
+                }
+            },
+        }
+    ).encode()
+    returned = json.dumps(
+        {
+            "id": "evt_legacy_return_refund",
+            "type": "charge.refunded",
+            "data": {
+                "object": {
+                    "id": "ch_legacy_return",
+                    "payment_intent": "pi_legacy_return",
+                    "amount_refunded": 10000,
+                    "failure_code": "R01",
+                }
+            },
+        }
+    ).encode()
+    await uc.accept(succeeded, "test_signature")
+    assert (await uc.process_next(processor_id="test-worker"))["processed"] is True
+    for allocation in ledger.allocations:
+        allocation.pop("idempotency_key", None)  # written before allocations had keys
+
+    await uc.execute(returned, "test_signature")
+
+    payment = ledger.payments["ledger-pay-autopay:pi_legacy_return"]
+    assert payment.status == "succeeded"
+    assert ledger.invoices["inv-legacy-return"].status == "paid"
+    names = {event.name for event in outbox.events}
+    assert "Billing.PaymentRefunded" not in names
+    assert not any(
+        event.event_id.startswith("dunning-notice:payment-returned:") for event in outbox.events
+    )
+    assert [a["failure_code"] for a in ledger.payment_attempts.values()][-1] == (
+        "unreconciled_payment_return"
+    )
 
 
 @pytest.mark.asyncio
@@ -2518,6 +2770,67 @@ async def test_balance_checkout_completed_allocates_across_all_invoice_ids() -> 
             "idempotency_key": "invoice-checkout-alloc:cs_balance:inv-balance-2",
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_late_bank_return_on_a_balance_checkout_reopens_every_invoice_it_paid() -> None:
+    """L1 B3: one balance checkout settled two invoices; a late bank return takes
+    both back through the payment's own allocations, with a notice per invoice."""
+    repo = FakePaymentRepo()
+    first = _ledger_invoice(
+        invoice_id="inv-bal-r1", parent_id="parent-bal", balance_due_cents=4_000
+    )
+    second = _ledger_invoice(
+        invoice_id="inv-bal-r2", parent_id="parent-bal", balance_due_cents=6_000
+    )
+    ledger = FakeBillingLedger(first)
+    ledger.invoices[second.invoice_id] = second
+    outbox = FakeOutbox()
+    uc = _build(repo, billing_ledger=ledger, outbox=outbox)
+    checkout = {
+        "id": "evt_bal_r_checkout",
+        "type": "checkout.session.completed",
+        "data": {
+            "object": {
+                "id": "cs_bal_r",
+                "payment_status": "paid",
+                "payment_intent": "pi_bal_r",
+                "amount_total": 10_000,
+                "currency": "usd",
+                "metadata": {
+                    "academy_id": "acad",
+                    "parent_id": "parent-bal",
+                    "invoice_ids": "inv-bal-r1,inv-bal-r2",
+                    "type": "balance_payment",
+                },
+            }
+        },
+    }
+    returned = {
+        "id": "evt_bal_r_return",
+        "type": "charge.refunded",
+        "data": {
+            "object": {
+                "id": "ch_bal_r",
+                "payment_intent": "pi_bal_r",
+                "amount_refunded": 10_000,
+                "failure_code": "insufficient_funds",
+                "payment_method_details": {"type": "us_bank_account"},
+            }
+        },
+    }
+
+    await uc.execute(json.dumps(checkout).encode(), "test_signature")
+    await uc.execute(json.dumps(returned).encode(), "test_signature")
+
+    assert ledger.invoices["inv-bal-r1"].status == "open"
+    assert ledger.invoices["inv-bal-r2"].status == "open"
+    assert ledger.payments["ledger-pay-cs:cs_bal_r"].status == "refunded"
+    # One notice per returned payment, naming both invoices and their sum (L8).
+    notices = [e for e in outbox.events if e.name == "Billing.DunningNoticeRequested"]
+    assert [
+        (n.payload.invoice_id, n.payload.balance_due_cents, n.payload.invoice_ids) for n in notices
+    ] == [("inv-bal-r1", 10_000, ("inv-bal-r1", "inv-bal-r2"))]
 
 
 @pytest.mark.asyncio
@@ -5323,3 +5636,154 @@ async def test_quarantined_unmarked_event_never_reaches_payment_or_ledger_writes
     }
     assert repo.by_id == {}
     assert outbox.events == []
+
+
+class _BlockingCustomers(FakeParentStripeCustomers):
+    def __init__(self) -> None:
+        super().__init__()
+        self.blocked: list[tuple[str, str]] = []
+        self.customers: list[str | None] = []
+
+    async def flag_payment_method_blocked(
+        self, *, payment_method_id: str, reason: str, at, stripe_customer_id=None
+    ):
+        self.blocked.append((payment_method_id, reason))
+        self.customers.append(stripe_customer_id)
+        return 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "obj", "expected"),
+    [
+        (
+            "mandate.updated",
+            {"id": "mandate_1", "status": "inactive", "payment_method": "pm_bank"},
+            [("pm_bank", "mandate_inactive")],
+        ),
+        (
+            "mandate.updated",
+            {"id": "mandate_1", "status": "active", "payment_method": "pm_bank"},
+            [],
+        ),
+        (
+            "payment_method.automatically_updated",
+            {
+                "id": "pm_bank",
+                "type": "us_bank_account",
+                "us_bank_account": {
+                    "status_details": {"blocked": {"reason": "bank_account_closed"}}
+                },
+            },
+            [("pm_bank", "bank_blocked:bank_account_closed")],
+        ),
+        (
+            "payment_method.automatically_updated",
+            {"id": "pm_card", "type": "card", "card": {"last4": "4242"}},
+            [],
+        ),
+    ],
+)
+async def test_unusable_bank_method_is_flagged(event_type: str, obj: dict, expected: list) -> None:
+    """L1 A4-8: a revoked mandate or a blocked bank is never debited again."""
+    customers = _BlockingCustomers()
+    uc = _build(FakePaymentRepo(), parent_customers=customers)
+    body = json.dumps(
+        {"id": f"evt_{event_type}", "type": event_type, "livemode": True, "data": {"object": obj}}
+    ).encode()
+
+    await uc.execute(body, "test_signature")
+
+    assert customers.blocked == expected
+
+
+@pytest.mark.asyncio
+async def test_unusable_method_also_matches_its_stripe_customer() -> None:
+    """L8: platform charges use Stripe's live default, which a Portal change can
+    move off the stored id; the method's customer is matched as well."""
+    customers = _BlockingCustomers()
+    stripe = FakeStripeGateway()
+    stripe.payment_methods["pm_new"] = {"id": "pm_new", "customer": "cus_portal"}
+    uc = _build(FakePaymentRepo(), parent_customers=customers, stripe=stripe)
+    blocked_bank = {
+        "id": "pm_live",
+        "customer": "cus_live",
+        "type": "us_bank_account",
+        "us_bank_account": {"status_details": {"blocked": {"reason": "bank_account_closed"}}},
+    }
+    for event_type, obj in (
+        ("payment_method.automatically_updated", blocked_bank),
+        ("mandate.updated", {"id": "mandate_1", "status": "inactive", "payment_method": "pm_new"}),
+    ):
+        body = json.dumps(
+            {
+                "id": f"evt_{event_type}",
+                "type": event_type,
+                "livemode": True,
+                "data": {"object": obj},
+            }
+        ).encode()
+        await uc.execute(body, "test_signature")
+
+    assert customers.customers == ["cus_live", "cus_portal"]
+
+
+@pytest.mark.asyncio
+async def test_reopened_due_date_counts_from_the_academy_local_date() -> None:
+    """Fix round 2: 9pm in Chicago is already tomorrow in UTC; the due date is local."""
+
+    async def chicago(_academy_id: str) -> str:
+        return "America/Chicago"
+
+    late_evening = datetime(2026, 11, 16, 3, 0, tzinfo=UTC)
+    uc = SimpleNamespace(_now=lambda: late_evening, _academy_timezone=chicago)
+
+    assert await HandleWebhookEvent._academy_today(uc, "acad") == date(2026, 11, 15)  # type: ignore[arg-type]
+    uc._academy_timezone = None
+    assert await HandleWebhookEvent._academy_today(uc, "acad") == date(2026, 11, 16)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Issue #983: invoice / subscription hydration reads the event's account
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "object_id", "reads_attr"),
+    [
+        ("invoice.paid", "in_connect", "retrieved_invoices"),
+        ("customer.subscription.updated", "sub_connect", "retrieved_subscriptions"),
+    ],
+)
+async def test_hydration_reads_invoice_and_subscription_on_the_events_account(
+    event_type: str, object_id: str, reads_attr: str
+) -> None:
+    stripe = FakeStripeGateway()
+    stripe.register_object(object_id, stripe_account="acct_b")
+    uc = _build_ingest_handler(FakeDedup())
+    uc._stripe = stripe
+    event = {
+        "id": "evt_h",
+        "type": event_type,
+        "account": "acct_b",
+        "data": {"object": {"id": object_id}},
+    }
+
+    await uc._hydrate_current_stripe_object(event_type, event)
+
+    assert getattr(stripe, reads_attr) == [(object_id, "acct_b")]
+
+
+@pytest.mark.asyncio
+async def test_fake_gateway_refuses_a_platform_read_of_a_connected_invoice() -> None:
+    """Mirrors Stripe's resource_missing, so a dropped account kwarg fails tests."""
+    from backend.v2.contexts.billing.application.ports import StripeResourceNotFound
+
+    stripe = FakeStripeGateway()
+    stripe.register_object("in_connect", stripe_account="acct_b")
+
+    with pytest.raises(StripeResourceNotFound):
+        await stripe.retrieve_invoice("in_connect")
+    with pytest.raises(StripeResourceNotFound):
+        await stripe.retrieve_subscription("in_connect")

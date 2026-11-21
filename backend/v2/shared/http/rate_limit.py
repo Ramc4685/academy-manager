@@ -24,10 +24,9 @@ _PUBLIC_WRITE_PATHS = {
     ("POST", "/api/v2/register/parent"),
     ("POST", "/api/v2/register/parent/verification-email"),
     ("POST", "/api/v2/parent/onboarding/start"),
-    # Unauthenticated one-time-token consume: token entropy makes brute force
-    # infeasible, but unlimited anonymous POSTs would let one client hammer
-    # Mongo and the Firebase Admin API (issue #546).
-    ("POST", "/api/v2/magic-link/consume"),
+    # Anonymous "forgot password": mails a reset link; per-mailbox cooldown in
+    # the use case, this caps one client spraying many addresses.
+    ("POST", "/api/v2/password-reset"),
     # Anonymous public trial request (public tenant page, Lane B4). Tighter
     # per-IP window in _PATH_LIMIT_OVERRIDES, plus a per-host ceiling below.
     ("POST", "/api/v2/public/trial-requests"),
@@ -56,6 +55,7 @@ _PATH_LIMIT_OVERRIDES: dict[tuple[str, str], tuple[int, int]] = {
     ("POST", "/api/v2/admin/imports/families/preview"): (10, 60),
     ("POST", "/api/v2/admin/imports/families/commit"): (10, 60),
     ("POST", "/api/v2/admin/imports/families/map-columns"): (10, 60),
+    ("POST", "/api/v2/admin/schedule/suggest-no-class-dates"): (10, 60),
 }
 
 # Second, per-HOST ceiling for anonymous writes that land on one academy
@@ -67,6 +67,18 @@ _PATH_LIMIT_OVERRIDES: dict[tuple[str, str], tuple[int, int]] = {
 # client rotating Host headers still meets its own per-IP limit first.
 _PER_HOST_LIMITS: dict[tuple[str, str], tuple[int, int]] = {
     ("POST", "/api/v2/public/trial-requests"): (100, 600),
+}
+
+# Anonymous GETs whose last path segment is a secret (L5B certificate share
+# links): one (limit, window) and ONE bucket per client for the whole prefix,
+# so a client walking tokens shares a single budget instead of one per token.
+_PREFIX_LIMITS: dict[tuple[str, str], tuple[int, int]] = {
+    ("GET", "/api/v2/public/certificates/"): (60, 60),
+    # iPhones poll from the phone, but Google and Outlook fetch every
+    # subscribed feed from a small shared IP pool, so this per-IP ceiling is
+    # high. Guessing stays hopeless: each link carries a 32-char HMAC.
+    # shortcut: one fixed ceiling; allowlist provider ranges if 429s appear.
+    ("GET", "/api/v2/calendar-feed/"): (600, 60),
 }
 
 _PROXY_AUTH_HEADER = "x-cm-proxy-auth"
@@ -101,7 +113,7 @@ def _is_stripe_session_path(method: str, path: str) -> bool:
     )
 
 
-def _request_host(request: Request) -> str:
+def request_host(request: Request) -> str:
     """The host the tenant resolver reads, lower-cased, port and trailing dot dropped."""
     raw = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
     host = raw.split(",")[0].strip().lower()
@@ -158,13 +170,13 @@ class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
 
         now = self._clock()
         self._evict_expired(now)
-        path = request.url.path
+        path = self._prefix_for(request) or request.url.path
         retry_after = self._hit((self._client_key(request), path), limit, window_seconds, now)
         if retry_after is None:
             host_limit = _PER_HOST_LIMITS.get((request.method.upper(), path))
             if host_limit is not None:
                 retry_after = self._hit(
-                    ("host:" + _request_host(request), path), host_limit[0], host_limit[1], now
+                    ("host:" + request_host(request), path), host_limit[0], host_limit[1], now
                 )
         self._evict_over_capacity()
         if retry_after is None:
@@ -196,7 +208,18 @@ class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
             return None
         return max(1, ceil(window_seconds - elapsed))
 
+    @staticmethod
+    def _prefix_for(request: Request) -> str | None:
+        method = request.method.upper()
+        for prefix_method, prefix in _PREFIX_LIMITS:
+            if method == prefix_method and request.url.path.startswith(prefix):
+                return prefix
+        return None
+
     def _limit_for(self, request: Request) -> tuple[int, int] | None:
+        prefix = self._prefix_for(request)
+        if prefix is not None:
+            return _PREFIX_LIMITS[(request.method.upper(), prefix)]
         method_path = (request.method.upper(), request.url.path)
         override = _PATH_LIMIT_OVERRIDES.get(method_path)
         if override is not None:

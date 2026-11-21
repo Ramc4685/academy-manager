@@ -10,7 +10,7 @@
   academy's recorded changes for that class applied. No change on record
   means the stored fee, unchanged.
 * :class:`MongoProjectedClassFees`: the fee a report (projected income,
-  session economics, percent-of-revenue payroll) uses for a month. A FUTURE
+  session economics) uses for a month. A FUTURE
   month reads the fee with scheduled changes applied; a PAST month reads the
   fee it was billed at (an applied change's flip undone); the current month
   reads the stored fee, as before.

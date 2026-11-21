@@ -20,14 +20,26 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
-import { confirmPasswordResetValue, verifyPasswordResetCodeValue } from "@/lib/auth/firebase";
+import {
+  applyEmailVerificationCode,
+  confirmPasswordResetValue,
+  verifyPasswordResetCodeValue,
+} from "@/lib/auth/firebase";
 import { toAuthErrorMessage } from "@/lib/auth/auth-error";
 import { safeContinuePath } from "@/lib/auth/continue-url";
 import { brand } from "@/lib/brand";
 
 const MIN_PASSWORD_LENGTH = 8;
 
-type Status = "verifying" | "ready" | "submitting" | "done" | "expired" | "invalid" | "unsupported";
+type Status =
+  | "verifying"
+  | "ready"
+  | "submitting"
+  | "done"
+  | "email-verified"
+  | "expired"
+  | "invalid"
+  | "unsupported";
 
 function errorCode(err: unknown): string | undefined {
   if (err && typeof err === "object" && "code" in err) {
@@ -50,7 +62,7 @@ function AuthActionContent() {
   const oobCode = searchParams.get("oobCode");
 
   useEffect(() => {
-    if (mode !== "resetPassword") {
+    if (mode !== "resetPassword" && mode !== "verifyEmail") {
       setStatus("unsupported");
       return;
     }
@@ -62,6 +74,11 @@ function AuthActionContent() {
     let cancelled = false;
     (async () => {
       try {
+        if (mode === "verifyEmail") {
+          await applyEmailVerificationCode(oobCode);
+          if (!cancelled) setStatus("email-verified");
+          return;
+        }
         const verifiedEmail = await verifyPasswordResetCodeValue(oobCode);
         if (cancelled) return;
         setEmail(verifiedEmail);
@@ -193,6 +210,27 @@ function AuthActionContent() {
           </div>
         ) : null}
 
+        {status === "email-verified" ? (
+          <div className="mt-6 text-center" role="status" aria-live="polite">
+            <h1 className="font-display text-2xl font-bold text-slate-900">Email confirmed</h1>
+            <p className="mt-2 text-sm text-slate-600">
+              Sign in to finish setting up your account. You can do this on any device.
+            </p>
+            <Link
+              href={
+                safeContinuePath(
+                  searchParams.get("continueUrl"),
+                  window.location.origin
+                ) as Parameters<typeof Link>[0]["href"]
+              }
+              data-testid="verify-continue"
+              className="mt-6 inline-flex items-center justify-center rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              Continue to sign in
+            </Link>
+          </div>
+        ) : null}
+
         {status === "expired" ? (
           <Dead
             title="This link has expired"
@@ -210,7 +248,7 @@ function AuthActionContent() {
         {status === "unsupported" ? (
           <Dead
             title="We can’t handle this link"
-            body="This link is not a password link. Sign in to continue, or ask your academy to send a new invite."
+            body="This link is not a password or email link. Sign in to continue, or ask your academy to send a new invite."
           />
         ) : null}
       </div>

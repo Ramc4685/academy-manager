@@ -39,17 +39,24 @@ const IS_DEV = process.env.NODE_ENV === "development";
 // frame-ancestors is intentionally absent: it is spec-ignored in report-only
 // policies (WebKit logs a console error for it) — X-Frame-Options: DENY covers
 // framing until enforcement; add `frame-ancestors 'none'` back when flipping.
+// Firebase Google/Apple sign-in (popup and redirect) loads gapi from
+// apis.google.com and runs its helper in an iframe on the auth domain: the page
+// host itself in proxy mode, else the project's firebaseapp.com origin. Without
+// these the policy cannot be enforced without breaking sign-in.
+// Cloudflare Turnstile (public trial self-booking, L9) loads its api.js from
+// challenges.cloudflare.com and renders the challenge in an iframe there.
 // report-uri makes the policy observable (WebKit treats a report-only policy
 // with no reporting destination as a no-op and logs a console error).
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com${IS_DEV ? " 'unsafe-eval'" : ""}`,
+  `script-src 'self' 'unsafe-inline' https://apis.google.com https://static.cloudflareinsights.com https://challenges.cloudflare.com${IS_DEV ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
   `img-src 'self' data: blob: https://firebasestorage.googleapis.com ${FIREBASE_HOSTING_ORIGIN}`,
   "font-src 'self' data:",
   `connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firebasestorage.googleapis.com https://cloudflareinsights.com https://*.ingest.us.sentry.io${
     IS_DEV ? " ws: http://localhost:* http://127.0.0.1:*" : ""
   }`,
+  `frame-src 'self' ${FIREBASE_AUTH_HELPER_ORIGIN} https://challenges.cloudflare.com`,
   "base-uri 'self'",
   "form-action 'self' https://checkout.stripe.com",
   "object-src 'none'",

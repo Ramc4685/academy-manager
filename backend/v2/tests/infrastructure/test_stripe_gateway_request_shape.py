@@ -248,6 +248,10 @@ async def test_autopay_setup_checkout_uses_setup_mode_without_subscription_data(
     assert request["client_reference_id"] == "parent_1"
     assert "subscription_data" not in request
     assert "line_items" not in request
+    assert request["payment_method_options"]["us_bank_account"] == {
+        "financial_connections": {"permissions": ["payment_method"]},
+        "verification_method": "automatic",
+    }
     assert request["metadata"] == {
         "academy_id": "academy_1",
         "parent_id": "parent_1",
@@ -283,10 +287,12 @@ async def test_payment_intent_reconciliation_search_is_scoped_to_academy() -> No
         {
             "query": 'metadata["academy_id"]:"academy_1" AND status:"succeeded"',
             "limit": 25,
+            "expand": ["data.latest_charge"],
         },
         {
             "query": 'metadata["academy_id"]:"academy_1" AND status:"processing"',
             "limit": 25,
+            "expand": ["data.latest_charge"],
         },
     ]
 
@@ -303,6 +309,19 @@ async def test_payment_intent_reconciliation_search_scopes_to_connected_account(
     )
 
     assert _FakePaymentIntent.calls[-1]["stripe_account"] == "acct_connected_1"
+
+
+@pytest.mark.asyncio
+async def test_payment_intent_search_narrows_to_one_parent() -> None:
+    gateway = RealStripeGateway(api_key="sk_test_fake", webhook_secret="whsec_fake")
+
+    await gateway.search_app_owned_payment_intents(academy_id="academy_1", parent_id='par"ent')
+
+    assert [call["query"] for call in _FakePaymentIntent.calls] == [
+        'metadata["academy_id"]:"academy_1" AND metadata["parent_id"]:"par\\"ent"'
+        f' AND status:"{status}"'
+        for status in ("succeeded", "processing")
+    ]
 
 
 @pytest.mark.asyncio
@@ -378,6 +397,8 @@ async def test_invoice_checkout_session_uses_invoice_metadata_and_reference() ->
     assert request["mode"] == "payment"
     assert request["client_reference_id"] == "parent_1"
     assert request["idempotency_key"] == "invoice-checkout:inv_123:4100"
+    # A one-time payment saves nothing, so it asks for no bank permission.
+    assert "payment_method_options" not in request
     assert request["metadata"] == {
         "invoice_id": "inv_123",
         "academy_id": "academy_1",

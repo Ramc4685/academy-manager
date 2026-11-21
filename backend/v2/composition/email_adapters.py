@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import html
 import logging
-from collections.abc import Awaitable, Callable
-from datetime import date
-from typing import Any
+from collections.abc import Awaitable, Callable, Sequence
+from datetime import date, datetime
+from typing import Any, TypedDict
+from urllib.parse import quote
 
 from pydantic import BaseModel
 
@@ -100,8 +101,36 @@ async def _academy_brand(academies: Any, academy_name: str) -> EmailBrand:
     return branded_as(await lookup_academy_brand(academies, current_academy_id()), academy_name)
 
 
+class _SenderIdentityKwargs(TypedDict):
+    sender_name: str | None
+    reply_to: str | None
+
+
+async def _identity(academies: Any) -> _SenderIdentityKwargs:
+    """The academy's From display name and Reply-To as send kwargs (L9a; billing
+    mail joined in L11). Never raises: a failed lookup sends with neither."""
+    identity = await sender_identity_for_current_academy(academies)
+    return {"sender_name": identity.sender_name, "reply_to": identity.reply_to}
+
+
+def due_phrase(days_past_due: int) -> str:
+    """ "is due in 2 days" / "is due today" / "is 3 days past due" (L1 A4-6)."""
+    days = abs(days_past_due)
+    word = "day" if days == 1 else "days"
+    if days_past_due < 0:
+        return f"is due in {days} {word}"
+    if days_past_due == 0:
+        return "is due today"
+    return f"is {days} {word} past due"
+
+
 def _branded_button(*, label: str, url: str) -> str:
     return button(label, url)
+
+
+class UndeliverableNotice(ValueError):
+    """Nobody to send to (no active parent, no email, a suppressed address).
+    Retrying cannot help, so handlers that may skip these log and return (L1 B5)."""
 
 
 class LoginInviteEmailAdapter:
@@ -222,6 +251,40 @@ class LastCharge(BaseModel):
     charged_on: date
 
 
+class InvoiceAdjustment(BaseModel):
+    """One discount, waiver or credit line, in the invoice's own public wording
+    (#1035). ``category`` is the recurring discount's category, when it has one.
+    Never an admin's private note or audit reason."""
+
+    model_config = {"frozen": True}
+
+    description: str
+    amount_cents: int
+    category: str | None = None
+
+
+def adjustments_html(
+    adjustments: Sequence[InvoiceAdjustment],
+    *,
+    currency: str,
+    academy_name: str,
+    fully_covered: bool = False,
+) -> str:
+    """The parent-facing explanation of every amount taken off the bill. A
+    coach-child benefit that covers the whole bill names who pays for it
+    ("fees covered by <academy>"); a partial one keeps its own description."""
+    rows = []
+    for adj in adjustments:
+        label = (
+            f"Coach benefit: fees covered by {academy_name}"
+            if fully_covered and adj.category == "coach_child"
+            else adj.description
+        )
+        amount = format_money(adj.amount_cents, currency)
+        rows.append(f"<li>{html.escape(label)}: {html.escape(amount)}</li>")
+    return f"<ul style='padding-left: 18px;'>{''.join(rows)}</ul>" if rows else ""
+
+
 class InvoiceNaming(BaseModel):
     """What a parent needs to recognise a charge (issue #659).
 
@@ -241,6 +304,8 @@ class InvoiceNaming(BaseModel):
     #: The previous successful charge on this enrollment, when one landed in
     #: the last 45 days. ``None`` means "say nothing" — never "no charge".
     last_charge: LastCharge | None = None
+    #: Discount / waiver / credit lines (#1035); empty means "say nothing".
+    adjustments: tuple[InvoiceAdjustment, ...] = ()
 
 
 def tuition_for(period: str, naming: InvoiceNaming) -> str:
@@ -276,6 +341,59 @@ def invoice_number_html(naming: InvoiceNaming) -> str:
     )
 
 
+def _ordinal(day: int) -> str:
+    suffix = "th" if 10 <= day % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    return f"{day}{suffix}"
+
+
+async def render_ach_schedule_notice(
+    *,
+    academies: Any,
+    parent_name: str | None,
+    effective_from: date | None,
+    charge_day: int,
+    on_invoice_day: bool,
+    manage_url: str | None,
+) -> tuple[str, str]:
+    """``(subject, html)`` of the notice that autopay moves to a new day of the
+    month (L8, Nacha advance notice). Render only: this takes no sender, and
+    nothing in the app sends it.
+
+    shortcut: the amount always reads "your usual monthly tuition", since no
+    per-family projection of the next charge exists; add one when it does."""
+    academy_name = await academies.get_academy_name(current_academy_id()) or "Your academy"
+    day = _ordinal(charge_day)
+    when = (
+        f"Starting {effective_from.strftime('%B')} {effective_from.day}, {effective_from.year}"
+        if effective_from
+        else "From your next invoice"
+    )
+    greeting = f"<p>Hi {html.escape(parent_name)},</p>" if parent_name else ""
+    action = (
+        _branded_button(label="Manage autopay", url=manage_url)
+        if manage_url
+        else f"<p style='color: {_BRAND_MUTED};'>Contact the academy to make a change.</p>"
+    )
+    inner = (
+        f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
+        "Your autopay date is changing</h2>"
+        f"{greeting}"
+        f"<p>{when}, {html.escape(academy_name)} will charge your saved payment method "
+        f"for monthly tuition on the <strong>{day} of each month</strong>"
+        f"{', the day the invoice is issued' if on_invoice_day else ''}.</p>"
+        "<p>The amount is your usual monthly tuition, as shown on each invoice.</p>"
+        "<p>Nothing to do if that works for you. To change your payment method or turn "
+        "off autopay, use the parent app before then, or contact the academy.</p>"
+        f"{action}"
+    )
+    body = _branded_shell(
+        academy_name=academy_name,
+        inner_html=inner,
+        brand=await _academy_brand(academies, academy_name),
+    )
+    return f"Your autopay date is changing to the {day} of the month", body
+
+
 class InvoiceEmailAdapter:
     def __init__(
         self,
@@ -287,11 +405,20 @@ class InvoiceEmailAdapter:
         naming: Callable[[str], Awaitable[InvoiceNaming | None]] | None = None,
         contact_copies: InvoiceContactCopies | None = None,
         self_service_policies: Any | None = None,
+        pay_page_url: str | None = None,
+        pay_link: Callable[[str], Awaitable[tuple[str | None, str]]] | None = None,
     ) -> None:
         self._memberships = memberships
         self._users = users
         self._academies = academies
         self._sender = sender
+        # The academy's own /parent/payments URL. The email's Pay button points
+        # here, never at the raw Checkout URL: a Stripe session dies within 24h
+        # (or the moment it completes), but the app mints a fresh one per click.
+        self._pay_page_url = pay_page_url
+        # Per-academy /parent/payments resolver for notices built outside a
+        # request (the dunning worker and outbox handler): academy_id -> (url, name).
+        self._pay_link = pay_link
         # Issue #659: resolves student / class / invoice number for one
         # invoice id. Unwired (or failing) degrades to month-only copy.
         self._naming = naming
@@ -330,6 +457,20 @@ class InvoiceEmailAdapter:
             )
             return InvoiceNaming()
 
+    async def _family_naming(self, invoice_ids: Sequence[str]) -> InvoiceNaming:
+        """One name for a family charge (L8): ``"Arjun, Maya and Dev"`` (each child
+        once) and every invoice number. A sibling whose name cannot be resolved
+        is left out."""
+        namings = [await self._naming_for(invoice_id) for invoice_id in invoice_ids]
+        names = list(dict.fromkeys(n.student_name for n in namings if n.student_name))
+        numbers = [n.invoice_number for n in namings if n.invoice_number]
+        joined = " and ".join([", ".join(names[:-1]), names[-1]] if len(names) > 1 else names)
+        return InvoiceNaming(
+            student_name=joined or None,
+            invoice_number=", ".join(numbers) if numbers else None,
+            adjustments=tuple(adj for n in namings for adj in n.adjustments),
+        )
+
     _tuition_for = staticmethod(tuition_for)
     _tuition_html = staticmethod(tuition_html)
 
@@ -362,6 +503,7 @@ class InvoiceEmailAdapter:
         balance_due_cents: int,
         currency: str,
         checkout_url: str | None,
+        bundled: bool = False,
     ) -> str | None:
         academy_id = current_academy_id()
         membership = await self._memberships.get_membership(academy_id, parent_id)
@@ -381,10 +523,31 @@ class InvoiceEmailAdapter:
         month = format_tuition_month(period)
         safe_amount = html.escape(amount)
         safe_total = html.escape(total)
-        pay_line = (
-            _branded_button(label="Pay invoice", url=checkout_url)
-            if checkout_url
-            else f"<p style='color: {_BRAND_MUTED};'>Please contact the academy to arrange payment.</p>"
+        # checkout_url only says "this invoice is payable online"; the link the
+        # parent clicks is the app's, which starts a fresh Checkout session.
+        if checkout_url and self._pay_page_url:
+            # A bundled email quotes this student's whole open balance, so its
+            # button must rebuild that same student-scoped bundle (not the
+            # parent's family-wide balance, which may span other children).
+            pay_url = f"{self._pay_page_url}?pay={quote(invoice_id, safe='')}"
+            if bundled:
+                pay_url += "&bundle=1"
+            pay_line = _branded_button(label="Pay invoice", url=pay_url)
+        elif checkout_url:
+            pay_line = (
+                f"<p style='color: {_BRAND_MUTED};'>Please log in to the parent portal to pay.</p>"
+            )
+        else:
+            pay_line = f"<p style='color: {_BRAND_MUTED};'>Please contact the academy to arrange payment.</p>"
+        # A fully waived month (#1035): nothing to pay, so no pay copy at all.
+        no_payment_html = "<p><strong>No payment required.</strong></p>"
+        if balance_due_cents <= 0:
+            pay_line = no_payment_html
+        adjustments_block = adjustments_html(
+            naming.adjustments,
+            currency=currency,
+            academy_name=academy_name,
+            fully_covered=total_cents <= 0,
         )
         subject = self._tuition_for(period, naming)
         if naming.session_label:
@@ -394,14 +557,16 @@ class InvoiceEmailAdapter:
             f"<h2 style='color: {_BRAND_HEADING}; font-size: 20px; margin: 0 0 12px;'>"
             f"{html.escape(month)} tuition</h2>"
             f"<p>{self._tuition_html(period, naming)} is ready.</p>"
+            f"{adjustments_block}"
             f"<p>Balance due: <strong>{safe_amount}</strong> "
             f"(invoice total {safe_total}).</p>"
             f"{pay_line}"
-            f"{payment_instructions_html}"
+            f"{payment_instructions_html if balance_due_cents > 0 else ''}"
             f"{self._invoice_number_html(naming)}"
         )
         brand = await _academy_brand(self._academies, academy_name)
         body = _branded_shell(academy_name=academy_name, inner_html=inner, brand=brand)
+        identity = await _identity(self._academies)
         outcome = await self._sender.send(
             recipient=ResolvedRecipient(
                 user_id=parent_id,
@@ -410,6 +575,7 @@ class InvoiceEmailAdapter:
             ),
             subject=subject,
             body=body,
+            **identity,
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "invoice email delivery failed")
@@ -423,10 +589,13 @@ class InvoiceEmailAdapter:
                 f"<h2 style='color: {_BRAND_HEADING}; font-size: 20px; margin: 0 0 12px;'>"
                 f"{html.escape(month)} tuition</h2>"
                 f"<p>{self._tuition_html(period, naming)} is ready.</p>"
+                f"{adjustments_block}"
                 f"<p>Balance due: <strong>{safe_amount}</strong> "
                 f"(invoice total {safe_total}).</p>"
                 + (
-                    f"<p style='color: {_BRAND_MUTED};'>The payment link was sent to the "
+                    no_payment_html
+                    if balance_due_cents <= 0
+                    else f"<p style='color: {_BRAND_MUTED};'>The payment link was sent to the "
                     "family's primary email.</p>"
                     if checkout_url
                     else f"<p style='color: {_BRAND_MUTED};'>Please contact the academy to "
@@ -440,6 +609,7 @@ class InvoiceEmailAdapter:
                 invoice_id=invoice_id,
                 subject=subject,
                 body=_branded_shell(academy_name=academy_name, inner_html=copy_inner, brand=brand),
+                **identity,
             )
         return outcome.provider_message_id
 
@@ -453,42 +623,97 @@ class InvoiceEmailAdapter:
         currency: str,
         attempt_no: int,
         terminal: bool,
+        failure_code: str | None = None,
+        next_attempt_at: datetime | None = None,
+        bank_debit: bool = False,
+        invoice_ids: Sequence[str] = (),
     ) -> None:
         academy_id = current_academy_id()
         membership = await self._memberships.get_membership(academy_id, parent_id)
         if membership is None or not membership.is_active() or "parent" not in membership.roles:
-            raise ValueError("dunning parent has no active membership in request academy")
+            raise UndeliverableNotice("dunning parent has no active membership in request academy")
 
         user = await self._users.get_by_id(parent_id)
         email = str(user.email if user else "").strip()
         if not email:
-            raise ValueError("dunning parent email not found")
+            raise UndeliverableNotice("dunning parent email not found")
 
         academy_name = await self._academies.get_academy_name(academy_id) or "Your academy"
-        naming = await self._naming_for(invoice_id)
+        naming = (
+            await self._family_naming(invoice_ids)
+            if len(invoice_ids) > 1
+            else await self._naming_for(invoice_id)
+        )
         amount = format_money(balance_due_cents, currency)
         safe_amount = html.escape(amount)
         tuition = self._tuition_for(period, naming)
         tuition_html = self._tuition_html(period, naming)
         number_html = self._invoice_number_html(naming)
-        if terminal:
+        balance_html = f"<p>Balance due: <strong>{safe_amount}</strong>.</p>"
+        retry_on = format_charge_date(next_attempt_at.date()) if next_attempt_at else None
+        heading_style = f"color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;"
+        if failure_code == "no_saved_payment_method":
+            subject = f"Add a payment method — {tuition}"
+            heading = "Add a payment method"
+            message = (
+                f"<p>Autopay is on for {tuition_html}, but there is no saved card or "
+                "bank account for us to charge.</p>"
+                f"{balance_html}"
+                "<p>Pay now, or save a card or bank account and autopay will charge it "
+                "automatically.</p>"
+            )
+            button_label = "Pay now or add a payment method"
+        elif bank_debit and terminal:
+            subject = f"Autopay paused — {tuition}"
+            heading = "Autopay paused"
+            message = (
+                f"<p>Your bank did not complete the payment for {tuition_html}.</p>"
+                f"{balance_html}"
+                "<p>Autopay is paused. Please re-link your bank account or pay by card.</p>"
+            )
+            button_label = "Pay now"
+        elif bank_debit:
+            subject = f"Bank payment returned — {tuition}"
+            heading = "Bank payment returned"
+            when = f" on {html.escape(retry_on)}" if retry_on else ""
+            message = (
+                f"<p>Your bank returned the payment for {tuition_html} for insufficient "
+                "funds.</p>"
+                f"{balance_html}"
+                f"<p>We will try your bank account again{when}. You can pay now instead.</p>"
+            )
+            button_label = "Pay now"
+        elif terminal:
             subject = f"Autopay disabled — {tuition}"
-            inner = (
-                f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>Autopay disabled</h2>"
+            heading = "Autopay disabled"
+            message = (
                 f"<p>We could not collect {tuition_html} after {attempt_no} attempts.</p>"
                 f"<p>Balance due: <strong>{safe_amount}</strong>. "
                 "Autopay has been disabled for this enrollment until payment details are updated.</p>"
-                f"{number_html}"
             )
+            button_label = "Pay now or update your card"
         else:
             subject = f"Autopay attempt {attempt_no} failed — {tuition}"
-            inner = (
-                f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>Autopay attempt failed</h2>"
+            heading = "Autopay attempt failed"
+            when = (
+                f" on {html.escape(retry_on)}" if retry_on else " on the published retry schedule"
+            )
+            message = (
                 f"<p>We could not collect {tuition_html}.</p>"
                 f"<p>Balance due: <strong>{safe_amount}</strong>. "
-                "We will retry automatically on the published retry schedule.</p>"
-                f"{number_html}"
+                f"We will retry automatically{when}.</p>"
             )
+            button_label = "Pay now or update your card"
+        pay_url, _ = await self._pay_link(academy_id) if self._pay_link else (None, "")
+        # A plain pay-page link, never a sign-in token: a forwarded or leaked
+        # billing email must not hand out a session (L11 security review). A
+        # signed-out parent is sent through /login?returnTo= and lands back here.
+        pay_button = (
+            _branded_button(label=button_label, url=f"{pay_url}?pay={quote(invoice_id, safe='')}")
+            if pay_url
+            else ""
+        )
+        inner = f"<h2 style='{heading_style}'>{heading}</h2>{message}{pay_button}{number_html}"
         body = _branded_shell(
             academy_name=academy_name,
             inner_html=inner,
@@ -502,7 +727,10 @@ class InvoiceEmailAdapter:
             ),
             subject=subject,
             body=body,
+            **await _identity(self._academies),
         )
+        if outcome.suppressed:
+            raise UndeliverableNotice(outcome.failed_reason or "dunning email suppressed")
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "dunning email delivery failed")
 
@@ -510,11 +738,11 @@ class InvoiceEmailAdapter:
         academy_id = current_academy_id()
         membership = await self._memberships.get_membership(academy_id, parent_id)
         if membership is None or not membership.is_active() or "parent" not in membership.roles:
-            raise ValueError(f"{what} parent has no active membership in request academy")
+            raise UndeliverableNotice(f"{what} parent has no active membership in request academy")
         user = await self._users.get_by_id(parent_id)
         email = str(user.email if user else "").strip()
         if not email:
-            raise ValueError(f"{what} parent email not found")
+            raise UndeliverableNotice(f"{what} parent email not found")
         return ResolvedRecipient(
             user_id=parent_id,
             email=email,
@@ -531,14 +759,20 @@ class InvoiceEmailAdapter:
         currency: str,
         charge_on: date,
         portal_url: str | None,
+        invoice_ids: Sequence[str] = (),
     ) -> str | None:
         """Pre-charge notice for autopay parents (issue #651): what, when, how
-        to pay early or update the card. Sent once per generated invoice."""
+        to pay early or update the card. Sent once per generated invoice, or
+        once for siblings charged together (L8)."""
         recipient = await self._parent_recipient(parent_id, what="autopay notice")
         academy_name = await self._academies.get_academy_name(current_academy_id()) or (
             "Your academy"
         )
-        naming = await self._naming_for(invoice_id)
+        naming = (
+            await self._family_naming(invoice_ids)
+            if len(invoice_ids) > 1
+            else await self._naming_for(invoice_id)
+        )
         amount = format_money(amount_cents, currency)
         safe_amount = html.escape(amount)
         safe_date = html.escape(charge_on.strftime("%B %d, %Y"))
@@ -547,7 +781,7 @@ class InvoiceEmailAdapter:
             if portal_url
             else (
                 f"<p style='color: {_BRAND_MUTED};'>Contact the academy to pay early "
-                "or update your card.</p>"
+                "or update your payment method.</p>"
             )
         )
         inner = (
@@ -555,9 +789,10 @@ class InvoiceEmailAdapter:
             f"Upcoming autopay charge</h2>"
             f"<p>{self._tuition_html(period, naming)} is "
             f"<strong>{safe_amount}</strong>.</p>"
-            f"<p>Your saved card will be charged on <strong>{safe_date}</strong>. "
-            "Nothing to do if that works for you. Pay early or update your card "
-            "before then if not.</p>"
+            f"{adjustments_html(naming.adjustments, currency=currency, academy_name=academy_name)}"
+            f"<p>Your saved payment method will be charged on <strong>{safe_date}</strong>. "
+            "Nothing to do if that works for you. Pay early or update your payment "
+            "method before then if not.</p>"
             f"{self._last_charge_html(naming)}"
             f"{action}"
             f"{self._invoice_number_html(naming)}"
@@ -573,47 +808,64 @@ class InvoiceEmailAdapter:
                 inner_html=inner,
                 brand=await _academy_brand(self._academies, academy_name),
             ),
+            **await _identity(self._academies),
         )
         if not outcome.ok:
             raise ValueError(outcome.failed_reason or "autopay notice delivery failed")
         return outcome.provider_message_id
 
-    async def send_autopay_receipt(
+    async def send_payment_receipt(
         self,
         *,
         parent_id: str,
-        invoice_id: str,
-        period: str,
+        invoice_id: str | None,
+        period: str | None,
         amount_cents: int,
         currency: str,
+        autopay: bool = True,
+        bank_debit: bool = False,
+        invoice_ids: Sequence[str] = (),
     ) -> None:
-        """Receipt after a successful autopay charge (issue #651)."""
-        recipient = await self._parent_recipient(parent_id, what="autopay receipt")
+        """Receipt for one settled payment, any method (#651, L1 A5-2)."""
+        recipient = await self._parent_recipient(parent_id, what="payment receipt")
         academy_name = await self._academies.get_academy_name(current_academy_id()) or (
             "Your academy"
         )
-        naming = await self._naming_for(invoice_id)
-        amount = format_money(amount_cents, currency)
+        if len(invoice_ids) > 1:
+            naming = await self._family_naming(invoice_ids)
+        else:
+            naming = await self._naming_for(invoice_id) if invoice_id else InvoiceNaming()
+        amount = html.escape(format_money(amount_cents, currency))
+        what = self._tuition_html(period, naming) if period else "your account balance"
+        if bank_debit:
+            line = f"Your bank payment of <strong>{amount}</strong> for {what} has cleared."
+        elif autopay:
+            line = f"We charged <strong>{amount}</strong> to your saved card for {what}."
+        else:
+            line = f"We received your payment of <strong>{amount}</strong> for {what}."
         inner = (
             f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
             f"Payment received</h2>"
-            f"<p>We charged <strong>{html.escape(amount)}</strong> to your saved card for "
-            f"{self._tuition_html(period, naming)}.</p>"
+            f"<p>{line}</p>"
             f"<p style='color: {_BRAND_MUTED};'>Thank you. No action is needed.</p>"
             f"{self._last_charge_html(naming)}"
             f"{self._invoice_number_html(naming)}"
         )
+        subject_what = self._tuition_for(period, naming) if period else "account balance"
         outcome = await self._sender.send(
             recipient=recipient,
-            subject=f"Receipt: {amount} paid — {self._tuition_for(period, naming)}",
+            subject=f"Receipt: {format_money(amount_cents, currency)} paid — {subject_what}",
             body=_branded_shell(
                 academy_name=academy_name,
                 inner_html=inner,
                 brand=await _academy_brand(self._academies, academy_name),
             ),
+            **await _identity(self._academies),
         )
+        if outcome.suppressed:
+            raise UndeliverableNotice(outcome.failed_reason or "payment receipt suppressed")
         if not outcome.ok:
-            raise ValueError(outcome.failed_reason or "autopay receipt delivery failed")
+            raise ValueError(outcome.failed_reason or "payment receipt delivery failed")
 
 
 class DuesReminderEmailAdapter:
@@ -675,7 +927,6 @@ class DuesReminderEmailAdapter:
         number_html = invoice_number_html(naming)
         safe_name = html.escape(display_name or "there")
         safe_amount = html.escape(format_money(balance_due_cents, currency))
-        day_word = "day" if days_past_due == 1 else "days"
         pay_line = (
             _branded_button(label="Pay now", url=pay_url)
             if pay_url
@@ -685,8 +936,8 @@ class DuesReminderEmailAdapter:
             f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
             "Payment reminder</h2>"
             f"<p>Hi {safe_name},</p>"
-            f"<p>{lead_html} is <strong>{safe_amount}</strong> and is now "
-            f"<strong>{days_past_due} {day_word}</strong> past its due date.</p>"
+            f"<p>{lead_html} is <strong>{safe_amount}</strong> and "
+            f"<strong>{html.escape(due_phrase(days_past_due))}</strong>.</p>"
             f"{number_html}"
             f"{pay_line}"
         )
@@ -704,6 +955,7 @@ class DuesReminderEmailAdapter:
             ),
             subject=f"Payment reminder: {tuition}",
             body=body,
+            **await _identity(self._academies),
         )
         return outcome.ok
 
@@ -751,6 +1003,7 @@ class DuesReminderEmailAdapter:
             ),
             subject="Payment reminder: outstanding balance",
             body=body,
+            **await _identity(self._academies),
         )
         return outcome.ok
 
@@ -760,8 +1013,9 @@ class AddCardReminderEmailAdapter:
     ``EmailSendPort`` — mirrors ``LoginInviteEmailAdapter``; billing must not
     import communications directly."""
 
-    def __init__(self, *, sender: EmailSendPort) -> None:
+    def __init__(self, *, sender: EmailSendPort, academies: Any | None = None) -> None:
         self._sender = sender
+        self._academies = academies
 
     async def send_invite_email(
         self, *, user_id: str, email: str, display_name: str, subject: str, body: str
@@ -770,5 +1024,6 @@ class AddCardReminderEmailAdapter:
             recipient=ResolvedRecipient(user_id=user_id, email=email, display_name=display_name),
             subject=subject,
             body=body,
+            **await _identity(self._academies),
         )
         return AddCardReminderEmailOutcome(ok=outcome.ok, failed_reason=outcome.failed_reason)

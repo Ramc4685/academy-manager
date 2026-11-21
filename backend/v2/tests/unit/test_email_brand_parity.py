@@ -30,6 +30,7 @@ from backend.v2.composition.email_adapters import (
     InvoiceEmailAdapter,
     InvoiceNaming,
     LastCharge,
+    render_ach_schedule_notice,
 )
 from backend.v2.contexts.billing.application.ports import (
     InviteEmailOutcome as BillingInviteOutcome,
@@ -166,8 +167,13 @@ class _ResetLinks:
 
 
 class _VerifyLinks:
-    async def generate_email_verification_link(self, email: str) -> str:
+    async def generate_email_verification_link(self, email: str, **_: Any) -> str:
         return "https://verify.example.test/?oob=xyz"
+
+
+class _NoUsers:
+    async def get_by_email(self, email: str) -> None:
+        return None
 
 
 class _Verifier:
@@ -223,6 +229,7 @@ async def render_all(doc: dict[str, Any]) -> dict[str, str]:
             academies=academies,  # type: ignore[arg-type]
             sender=sender,
             naming=_naming,
+            pay_page_url="https://blno.example.test/parent/payments",
         )
         await invoices.send_invoice_email(
             parent_id="parent-1",
@@ -251,7 +258,7 @@ async def render_all(doc: dict[str, Any]) -> dict[str, str]:
             charge_on=date(2026, 9, 8),
             portal_url="https://portal.example.test/parent/payments",
         )
-        await invoices.send_autopay_receipt(
+        await invoices.send_payment_receipt(
             parent_id="parent-1",
             invoice_id="inv-1",
             period="2026-09",
@@ -315,6 +322,16 @@ async def render_all(doc: dict[str, Any]) -> dict[str, str]:
         )
         bodies["dispute_notice"] = dispute_sender.sent[0]["body"]
 
+        # L8: render only, there is no sender to call.
+        _subject, bodies["ach_schedule_notice"] = await render_ach_schedule_notice(
+            academies=academies,
+            parent_name="Parent One",
+            effective_from=date(2027, 1, 1),
+            charge_day=1,
+            on_invoice_day=True,
+            manage_url="https://portal.example.test/parent/payments",
+        )
+
     card_sender = _BillingInviteSender()
     await SendAddCardReminder(
         contacts=_Contacts(),
@@ -343,6 +360,8 @@ async def render_all(doc: dict[str, Any]) -> dict[str, str]:
         sender=verify_sender,
         academies=academies,
         cooldown=_Cooldown(),
+        users=_NoUsers(),
+        password_links=_ResetLinks(),
         **_brand_kwargs(academies),
     ).execute("token", academy_id=ACADEMY_ID)
     bodies["verification"] = verify_sender.sent[0]["body"]
@@ -357,6 +376,7 @@ EMAILS = [
     "past_due_reminder",
     "manual_reminder",
     "dispute_notice",
+    "ach_schedule_notice",
     "add_card",
     "login_invite",
     "verification",

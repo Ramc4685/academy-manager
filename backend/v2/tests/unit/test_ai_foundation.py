@@ -29,6 +29,7 @@ from backend.v2.contexts.ai.domain.prompts import PROMPTS
 from backend.v2.contexts.ai.infrastructure.anthropic_llm_port import (
     AnthropicLlmPort,
     cost_cents,
+    cost_microcents,
 )
 from backend.v2.contexts.ai.infrastructure.disabled_llm_port import DisabledLlmPort
 from backend.v2.shared.tenancy import TenantContextUnset, tenant_scope
@@ -116,7 +117,12 @@ async def test_anthropic_port_sends_messages_request_and_parses_usage() -> None:
         "messages": [{"role": "user", "content": "usr"}],
     }
     assert result == LlmResult(
-        text="Hello!", input_tokens=12, output_tokens=3, cost_cents=1, model=DEFAULT_MODEL
+        text="Hello!",
+        input_tokens=12,
+        output_tokens=3,
+        cost_cents=1,
+        cost_microcents=12 * 10 + 3 * 50,
+        model=DEFAULT_MODEL,
     )
 
 
@@ -337,3 +343,64 @@ async def test_migration_0226_builds_the_unique_counter_index_and_rerun_is_a_no_
     index = info["ai_call_counters_academy_key_unique"]
     assert index["key"] == [("academy_id", 1), ("key", 1)]
     assert index["unique"] is True
+
+
+def test_cost_microcents_keeps_the_fraction_cost_cents_rounds_up() -> None:
+    assert cost_microcents(DEFAULT_MODEL, 1_000, 200) == 1_000 * 10 + 200 * 50
+    assert cost_cents(DEFAULT_MODEL, 1_000, 200) == 1
+
+
+def _answer(stop_reason: str = "end_turn") -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "model": DEFAULT_MODEL,
+            "stop_reason": stop_reason,
+            "content": [{"type": "text", "text": "{}"}],
+            "usage": {"input_tokens": 5, "output_tokens": 5},
+        },
+    )
+
+
+async def test_anthropic_port_maps_a_non_json_body_to_provider_error() -> None:
+    port = AnthropicLlmPort(
+        api_key="k",
+        transport=httpx.MockTransport(lambda _r: httpx.Response(200, text="<html>oops</html>")),
+    )
+    with pytest.raises(AiProviderError):
+        await port.complete(prompt_version="v", system="s", user="u", max_tokens=1)
+
+
+@pytest.mark.parametrize("status", [429, 529])
+async def test_anthropic_port_retries_once_on_rate_limit_or_overload(
+    status: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from backend.v2.contexts.ai.infrastructure import anthropic_llm_port
+
+    monkeypatch.setattr(anthropic_llm_port, "RETRY_DELAY_SECONDS", 0)
+    replies = [httpx.Response(status, json={}), _answer()]
+    port = AnthropicLlmPort(api_key="k", transport=httpx.MockTransport(lambda _r: replies.pop(0)))
+    result = await port.complete(prompt_version="v", system="s", user="u", max_tokens=1)
+    assert result.text == "{}" and replies == []
+
+    port = AnthropicLlmPort(
+        api_key="k", transport=httpx.MockTransport(lambda _r: httpx.Response(status, json={}))
+    )
+    with pytest.raises(AiProviderError):
+        await port.complete(prompt_version="v", system="s", user="u", max_tokens=1)
+
+
+async def test_a_truncated_answer_is_recorded_then_refused_with_its_own_message() -> None:
+    port = AnthropicLlmPort(
+        api_key="k", transport=httpx.MockTransport(lambda _r: _answer("max_tokens"))
+    )
+    result = await port.complete(prompt_version="v", system="s", user="u", max_tokens=1)
+    assert result.truncated is True
+
+    use_case, _, calls = _record_ai_call(FakeCap(2))
+    with pytest.raises(AiProviderError, match="cut off"):
+        await use_case.execute(
+            feature="placeholder", prompt_version="placeholder-v0", result=result, approver=None
+        )
+    assert len(calls.recorded) == 1
+    assert calls.recorded[0].cost_microcents == result.cost_microcents

@@ -51,6 +51,10 @@ export interface AdminStudentSessionSummary {
   discount?: AdminStudentSessionDiscount | null;
   /** Issue #674: billing's per-enrollment autopay axis; current rows only. */
   autopay_status?: string | null;
+  /** Never invoiced (owner's or coach's child, scholarship); still attends. */
+  not_billed?: boolean;
+  not_billed_reason?: NotBilledReason | null;
+  not_billed_note?: string | null;
   /** Issue #674: lifecycle facts, present on past (cancelled/withdrawn) rows. */
   cancelled_at?: string | null;
   withdrawal_date?: string | null;
@@ -213,6 +217,37 @@ export function setTuitionDiscount(
       method: "PUT",
       body: JSON.stringify(payload),
     },
+  );
+}
+
+export type NotBilledReason = "owner_child" | "coach_child" | "scholarship" | "other";
+
+export interface SetEnrollmentBillingRequest {
+  not_billed: boolean;
+  reason?: NotBilledReason | null;
+  note?: string | null;
+  void_open_invoices?: boolean;
+}
+
+export interface EnrollmentBillingView {
+  enrollment_id: string;
+  not_billed: boolean;
+  billing_type: string;
+  not_billed_reason?: NotBilledReason | null;
+  not_billed_note?: string | null;
+  voided_invoice_ids: string[];
+  kept_invoice_ids: string[];
+  skipped_period?: string | null;
+}
+
+/** Owner only, audited: mark an enrollment not billed, or start billing it. */
+export function setEnrollmentBilling(
+  enrollmentId: string,
+  payload: SetEnrollmentBillingRequest,
+): Promise<EnrollmentBillingView> {
+  return apiFetch<EnrollmentBillingView>(
+    `/admin/enrollments/${encodeURIComponent(enrollmentId)}/billing`,
+    { method: "PUT", body: JSON.stringify(payload) },
   );
 }
 

@@ -16,6 +16,10 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from backend.v2.composition.evening_wins import _ParentWinsProvider
+from backend.v2.contexts.ai.domain.narrative import AiNarrative, source_fingerprint
+from backend.v2.contexts.ai.infrastructure.mongo_ai_narrative_repo import (
+    MongoAiNarrativeRepository,
+)
 from backend.v2.contexts.communications.application.unsubscribe_footer import (
     render_unsubscribe_footer,
 )
@@ -60,7 +64,8 @@ OTHER = "acad-other"
 CHI = ZoneInfo("America/Chicago")
 LOCAL_NOW = datetime(2026, 10, 30, 19, 0, tzinfo=CHI)
 TODAY = datetime(2026, 10, 30, 17, 0, tzinfo=CHI).astimezone(UTC)
-YESTERDAY = datetime(2026, 10, 29, 20, 0, tzinfo=CHI).astimezone(UTC)
+# Before yesterday's 19:00 send: already in yesterday's email.
+YESTERDAY = datetime(2026, 10, 29, 18, 0, tzinfo=CHI).astimezone(UTC)
 
 
 async def _seed(db: Any) -> None:
@@ -152,7 +157,9 @@ async def _seed(db: Any) -> None:
     )
 
 
-def _use_case(db: Any, sent: StubEmailSendPort) -> SendParentEveningWins:
+def _use_case(
+    db: Any, sent: StubEmailSendPort, narratives: Any = None, milestones: Any = None
+) -> SendParentEveningWins:
     return SendParentEveningWins(
         claims=MongoParentWinSendRepository(db),
         resolver=MongoAudienceResolver(db=db),
@@ -164,6 +171,8 @@ def _use_case(db: Any, sent: StubEmailSendPort) -> SendParentEveningWins:
             skills=MongoSkillRepository(db),
             levels=MongoLevelRepository(db),
             academies=MongoAcademyRepository(db),
+            narratives=narratives,
+            milestones=milestones,
         ),
     )
 
@@ -275,3 +284,99 @@ async def test_coach_notes_are_quoted_escaped_and_absent_without_a_note(real_db:
     # A note on the level's last skill rides with the level-up.
     assert "Coach: \u201cReady for Level 2\u201d" in body
     assert body.count("Coach: ") == 2
+
+
+@pytest.mark.parametrize("fresh", [True, False])
+async def test_a_level_finish_day_carries_the_approved_ai_note(real_db: Any, fresh: bool) -> None:
+    """Diya's only win is the skill that finished Level 1. Her approved note is
+    printed; a note drafted from different wins (stale fingerprint) is not."""
+    await _seed(real_db)
+    fingerprint = source_fingerprint([("Footwork", None)], 1, 1) if fresh else "stale"
+    with tenant_scope(ACADEMY):
+        await MongoAiNarrativeRepository(real_db).upsert_draft(
+            AiNarrative(
+                narrative_id="n-diya",
+                student_id="s-diya",
+                for_date="2026-10-30",
+                kind="evening_wins",
+                text="Diya nailed her footwork and finished Level 1.",
+                status="approved",
+                prompt_version="v1",
+                created_by="coach",
+                created_at=TODAY,
+                source_fingerprint=fingerprint,
+            )
+        )
+        stub = StubEmailSendPort()
+        await _use_case(real_db, stub, MongoAiNarrativeRepository(real_db)).execute(
+            SendParentEveningWinsCommand(academy_id=ACADEMY, local_now=LOCAL_NOW)
+        )
+
+    (body,) = [m["body"] for m in stub.sent if m["email"] == "raj@example.test"]
+    assert "Diya finished Level 1!" in body
+    assert ("Diya nailed her footwork and finished Level 1." in body) is fresh
+
+
+# --- L5B: celebration milestones in the evening email ------------------------------
+
+
+async def _milestone_settings(db: Any, *, enabled: bool) -> None:
+    await db["academies"].update_one(
+        {"academy_id": ACADEMY},
+        {
+            "$set": {
+                "progress_settings": {
+                    "milestones_enabled": enabled,
+                    "milestones": [
+                        {
+                            "kind": "skills_passed",
+                            "count": 3,
+                            "since": datetime(2026, 10, 1, tzinfo=UTC),
+                        }
+                    ],
+                    "share_name": "first_name",
+                }
+            }
+        },
+    )
+
+
+@pytest.mark.parametrize("enabled", [True, False], ids=["on", "off"])
+async def test_a_milestone_reached_today_is_celebrated_once_and_only_when_on(
+    real_db: Any, enabled: bool
+) -> None:
+    from backend.v2.composition.pathway import compose_record_milestones
+
+    await _seed(real_db)
+    await _milestone_settings(real_db, enabled=enabled)
+    stub = StubEmailSendPort()
+    with tenant_scope(ACADEMY):
+        await _use_case(real_db, stub, milestones=compose_record_milestones(real_db)).execute(
+            SendParentEveningWinsCommand(academy_id=ACADEMY, local_now=LOCAL_NOW)
+        )
+        # Tomorrow's email (another pass, outside today's window) does not repeat it.
+        await real_db["student_skill_progress"].update_one(
+            {"skill_progress_id": "s-aarav-L2-4"},
+            {
+                "$set": {
+                    "status": "PASSED",
+                    "last_updated_at": datetime(2026, 10, 31, 22, tzinfo=UTC),
+                }
+            },
+        )
+        tomorrow = StubEmailSendPort()
+        await _use_case(real_db, tomorrow, milestones=compose_record_milestones(real_db)).execute(
+            SendParentEveningWinsCommand(
+                academy_id=ACADEMY, local_now=datetime(2026, 10, 31, 19, 0, tzinfo=CHI)
+            )
+        )
+
+    (body,) = [m["body"] for m in stub.sent if m["email"] == "raj@example.test"]
+    line = "Milestone: Aarav has now mastered 3 skills!"
+    assert (line in body) is enabled
+    assert "Milestone: Diya" not in body  # one skill passed, threshold is three
+    assert all("Milestone:" not in m["body"] for m in tomorrow.sent)
+    expected = 1 if enabled else 0
+    assert (
+        await real_db["student_milestones"].count_documents({"student_id": "s-aarav"}) == expected
+    )

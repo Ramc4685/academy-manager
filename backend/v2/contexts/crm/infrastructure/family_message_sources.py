@@ -42,6 +42,7 @@ from backend.v2.contexts.crm.domain.family_messages import (
     MessageStatus,
     as_utc,
 )
+from backend.v2.shared.comms.public_failure import public_failure
 
 _SEND_STATUSES: dict[str, MessageStatus] = {
     "queued": "queued",
@@ -134,7 +135,13 @@ class CampaignDeliveriesSource:
                     status=status,
                     summary=f"Email: {subject}" if subject else "Academy email",
                     recipient=_s(doc.get("recipient_email")),
-                    failed_reason=_s(doc.get("failed_reason")) if status == "failed" else None,
+                    # Mapped: a raw gate reason ("suppressed:complaint") comes from the
+                    # shared suppression list and may describe another academy.
+                    failed_reason=(
+                        public_failure(_s(doc.get("failed_reason")), "email_delivery_failed")
+                        if status == "failed"
+                        else None
+                    ),
                 )
             )
         return entries
@@ -181,7 +188,9 @@ class ParentDigestSource:
                         status=status,
                         summary=f"Parent digest for {day}" if day else "Parent digest",
                         failed_reason=(
-                            _s(doc.get("failed_reason")) if status == "failed" else None
+                            public_failure(_s(doc.get("failed_reason")), "email_delivery_failed")
+                            if status == "failed"
+                            else None
                         ),
                     )
                 )
@@ -245,7 +254,13 @@ class AbsenceNoticeSendsSource:
                     source="absence_notice",
                     status=status,
                     summary=f"Absence notice confirmation for {child}",
-                    failed_reason=_s(doc.get("failed_reason")) if status == "failed" else None,
+                    # Mapped: a raw gate reason ("suppressed:complaint") comes from the
+                    # shared suppression list and may describe another academy.
+                    failed_reason=(
+                        public_failure(_s(doc.get("failed_reason")), "email_delivery_failed")
+                        if status == "failed"
+                        else None
+                    ),
                 )
             )
         return entries
@@ -302,7 +317,9 @@ class InvoiceContactCopiesSource:
                         summary=f"Invoice copy to {contact.name}",
                         recipient=_s(doc.get("recipient_email")),
                         failed_reason=(
-                            _s(doc.get("failed_reason")) if status == "failed" else None
+                            public_failure(_s(doc.get("failed_reason")), "email_delivery_failed")
+                            if status == "failed"
+                            else None
                         ),
                     )
                 )

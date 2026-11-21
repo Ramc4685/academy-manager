@@ -59,7 +59,7 @@ export function parseCsv(text: string): string[][] {
   return rows;
 }
 
-function quoteCell(value: string): string {
+export function quoteCell(value: string): string {
   return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 

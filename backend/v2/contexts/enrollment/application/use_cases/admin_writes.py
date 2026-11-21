@@ -103,6 +103,7 @@ from backend.v2.contexts.enrollment.domain.models import (
 )
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.shared.events import Outbox
+from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.security.external_url import validate_external_url
 
@@ -411,7 +412,9 @@ class CreateSession:
             timezone=timezone,
         )
         if existing is not None:
-            raise DuplicateSessionSeries(_duplicate_series_message(existing))
+            raise DuplicateSessionSeries(
+                _duplicate_series_message(existing), session_id=existing.session_id
+            )
 
 
 class EditSessionCommand(BaseModel):
@@ -568,7 +571,9 @@ class EditSession:
                 exclude_session_id=current.session_id,
             )
             if existing is not None:
-                raise DuplicateSessionSeries(_duplicate_series_message(existing))
+                raise DuplicateSessionSeries(
+                    _duplicate_series_message(existing), session_id=existing.session_id
+                )
             start_at, end_at = _representative_series_datetimes(
                 days_of_week=list(recurring_values["days_of_week"] or []),
                 start_time=str(recurring_values["start_time"] or "00:00"),
@@ -1448,7 +1453,11 @@ class TransferEnrollment:
         # records that as a `hold_reclaim_orphaned` audit event instead of
         # silently pretending the target seat was never touched.
         try:
-            await self._enrollments.update_session(enrollment.enrollment_id, cmd.target_session_id)
+            await self._enrollments.update_session(
+                enrollment.enrollment_id,
+                cmd.target_session_id,
+                expected_session_id=enrollment.session_id,
+            )
         except BaseException:
             await self._release_quietly(cmd.target_session_id, acquisition)
             raise
@@ -1627,6 +1636,94 @@ class TransferEnrollment:
         )
 
 
+class BulkTransferEnrollmentsCommand(BaseModel):
+    model_config = {"frozen": True}
+    enrollment_ids: list[str]
+    target_session_id: str
+    effective_at: datetime | None = None
+    effective_date: date | None = None
+    actor_id: str | None = None
+    reason: str | None = None
+
+
+class BulkTransferRowResult(BaseModel):
+    model_config = {"frozen": True}
+    enrollment_id: str
+    ok: bool
+    error_code: str | None = None
+    message: str | None = None
+
+
+class BulkTransferResult(BaseModel):
+    model_config = {"frozen": True}
+    results: list[BulkTransferRowResult]
+
+    @property
+    def moved_count(self) -> int:
+        return sum(1 for r in self.results if r.ok)
+
+    @property
+    def failed_count(self) -> int:
+        return len(self.results) - self.moved_count
+
+
+class BulkTransferEnrollments:
+    """Move several roster rows to one class (A0-8).
+
+    Loops the single-row ``TransferEnrollment`` so seat capacity, billing
+    proration, lifecycle events and roster notices are exactly the single
+    transfer's. Each row stands alone: a refusal (full class, dead row) is
+    reported for that row and the rest still move — never a half-moved row.
+    """
+
+    def __init__(self, *, transfer: TransferEnrollment) -> None:
+        self._transfer = transfer
+
+    async def execute(self, cmd: BulkTransferEnrollmentsCommand) -> BulkTransferResult:
+        results: list[BulkTransferRowResult] = []
+        for enrollment_id in dict.fromkeys(cmd.enrollment_ids):
+            try:
+                await self._transfer.execute(
+                    TransferEnrollmentCommand(
+                        enrollment_id=enrollment_id,
+                        target_session_id=cmd.target_session_id,
+                        effective_at=cmd.effective_at,
+                        effective_date=cmd.effective_date,
+                        actor_id=cmd.actor_id,
+                        reason=cmd.reason,
+                    )
+                )
+            except DomainError as exc:
+                results.append(
+                    BulkTransferRowResult(
+                        enrollment_id=enrollment_id,
+                        ok=False,
+                        error_code=exc.code,
+                        message=exc.message,
+                    )
+                )
+                continue
+            except Exception:
+                # Rows already moved stay moved; report this one instead of
+                # hiding the earlier successes behind a 500. The failure may have
+                # come after the row was re-pointed, so never claim it stayed.
+                log.exception("bulk_transfer_row_failed enrollment_id=%s", enrollment_id)
+                results.append(
+                    BulkTransferRowResult(
+                        enrollment_id=enrollment_id,
+                        ok=False,
+                        error_code="Enrollment.TransferFailed",
+                        message=(
+                            "Something went wrong while moving this student. The roster "
+                            "has refreshed: check where they are before trying again."
+                        ),
+                    )
+                )
+                continue
+            results.append(BulkTransferRowResult(enrollment_id=enrollment_id, ok=True))
+        return BulkTransferResult(results=results)
+
+
 class OverrideEnrollmentFeeCommand(BaseModel):
     model_config = {"frozen": True}
     enrollment_id: str
@@ -1794,7 +1891,12 @@ class PauseEnrollment:
             occurred_at=now,
             billing_policy="release_seat_waitlist_stop_billing",
             billing_result="future_billing_stopped",
-            metadata={"seat_policy": "released_to_waitlist"},
+            # #1052: the pause's intent, so history can say "resumes" or "review".
+            metadata={
+                "seat_policy": "released_to_waitlist",
+                **({"resume_on": cmd.resume_on.isoformat()} if cmd.resume_on else {}),
+                **({"review_on": cmd.review_on.isoformat()} if cmd.review_on else {}),
+            },
         )
         if self._billing_deferrals is not None and cmd.create_billing_deferral:
             # Issue #651: one deferral per PAUSED month. The old single row
@@ -1890,6 +1992,9 @@ class WithdrawEnrollmentCommand(BaseModel):
     #: event next to the free-text ``reason``. Optional: the system paths
     #: (hold reclaim, hold expiry) have no admin to choose one.
     reason_code: DepartureReasonCode | None = None
+    #: False when the caller tells the family itself in one message (account
+    #: deletion), so a multi-class family does not also get one email per drop.
+    notify_family: bool = True
 
 
 async def _decide_withdrawal_billing(
@@ -2116,7 +2221,7 @@ class WithdrawEnrollment:
                 roster_notifier=self._roster_notifier,
             ),
         )
-        if self._notifier is not None:
+        if self._notifier is not None and cmd.notify_family:
             # Issue #743: the roster notice above is coach-facing. Without
             # this the family never learned an admin-initiated Drop (or Stop
             # all classes, which composes this use case) happened at all —

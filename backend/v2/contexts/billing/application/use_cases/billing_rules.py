@@ -62,7 +62,9 @@ BILLING_RULE_BOUNDS: Final[Mapping[str, tuple[int, int]]] = {
 #: own per-entry bounds instead of a row in ``BILLING_RULE_BOUNDS``, which the
 #: integer validate/diff/apply pipeline below iterates over.
 REMINDER_DAYS_KEY: Final[str] = "reminder_days"
-REMINDER_DAY_BOUNDS: Final[tuple[int, int]] = (1, 60)
+#: Days relative to the due date: negative is before it, 0 is the day itself
+#: (owner L1, 2026-11-15). The default schedule stays (15, 20).
+REMINDER_DAY_BOUNDS: Final[tuple[int, int]] = (-7, 60)
 MAX_REMINDER_DAYS: Final[int] = 4
 
 #: ``cancellation_effective_timing`` is an enum, not a bounded number, so it
@@ -319,9 +321,43 @@ def _reminder_days(schedule: InvoiceScheduleLike) -> tuple[int, ...]:
     return tuple(sorted({int(day) for day in raw}))
 
 
-def charge_hour_sentence() -> str:
-    """Charge-time sentence, e.g. "09:00 academy time on the due date"."""
-    return f"{FIRST_ATTEMPT_LOCAL_HOUR:02d}:00 academy time on the due date"
+def _charge_day_phrase(offset: int | None) -> str:
+    if offset is None:
+        return "on the due date"
+    if offset == 0:
+        return "on the invoice date"
+    return f"{offset} day{'s' if offset != 1 else ''} after the invoice date"
+
+
+def charge_hour_sentence(offset: int | None = None) -> str:
+    """Charge-time sentence, e.g. "09:00 academy time on the due date".
+
+    ``offset`` is ``autopay_charge_offset_days``: ``None`` charges on the due
+    date, otherwise that many days after the invoice is generated (L8).
+    """
+    return f"{FIRST_ATTEMPT_LOCAL_HOUR:02d}:00 academy time {_charge_day_phrase(offset)}"
+
+
+def _schedule_change_rows(schedule: InvoiceScheduleLike) -> tuple[BillingRuleRow, ...]:
+    """A pending dated schedule change, read-only (set by migration, L8)."""
+    change = getattr(schedule, "schedule_change", None)
+    if change is None:
+        return ()
+    reminders = ", ".join(str(day) for day in change.reminder_days) or "none"
+    return (
+        BillingRuleRow(
+            key="scheduled_schedule_change",
+            label="Scheduled change",
+            editable=False,
+            display=(
+                f"From {change.effective_from.isoformat()}: due "
+                f"{change.invoice_due_days} days after the invoice date, autopay "
+                f"charged {_charge_day_phrase(change.autopay_charge_offset_days)}, "
+                f"reminders on days {reminders}"
+            ),
+            detail="Applied automatically on that date; the values above change then.",
+        ),
+    )
 
 
 def retry_schedule_sentence() -> str:
@@ -396,7 +432,9 @@ class BuildBillingRulesView:
                             key="autopay_charge_time",
                             label="Autopay charge time",
                             editable=False,
-                            display=charge_hour_sentence(),
+                            display=charge_hour_sentence(
+                                getattr(schedule, "autopay_charge_offset_days", None)
+                            ),
                             detail=(
                                 "The dunning worker prepares the first attempt from this "
                                 "hour in the academy's timezone."
@@ -412,6 +450,7 @@ class BuildBillingRulesView:
                                 "enrollment's autopay is switched off."
                             ),
                         ),
+                        *_schedule_change_rows(schedule),
                     ),
                 ),
                 BillingRuleGroup(
@@ -517,15 +556,16 @@ class BuildBillingRulesView:
                         ),
                         BillingRuleRow(
                             key=REMINDER_DAYS_KEY,
-                            label="Past-due reminder days",
+                            label="Payment reminder days",
                             editable=True,
                             values=_reminder_days(schedule),
                             unit="days",
                             min_value=REMINDER_DAY_BOUNDS[0],
                             max_value=REMINDER_DAY_BOUNDS[1],
                             detail=(
-                                "Days after the due date the reminder job emails the "
-                                "parent. Leave empty to send none."
+                                "Days from the due date the reminder job emails the "
+                                "parent: -2 is two days before, 0 the day itself, 15 "
+                                "fifteen days after. Leave empty to send none."
                             ),
                         ),
                         BillingRuleRow(

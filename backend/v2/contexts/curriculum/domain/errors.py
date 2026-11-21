@@ -48,6 +48,13 @@ class SkillNotFound(DomainError):
     status_code = 404
 
 
+class InvalidOrder(DomainError):
+    """A reorder must list every active item of the program or level exactly once."""
+
+    code = "Curriculum.InvalidOrder"
+    status_code = 422
+
+
 class DuplicateSequence(DomainError):
     code = "Curriculum.DuplicateSequence"
     status_code = 409

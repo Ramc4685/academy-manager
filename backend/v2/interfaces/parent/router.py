@@ -7,6 +7,8 @@ from fastapi import APIRouter
 from .absence_routes import router as absence_router
 from .academy_routes import router as academy_router
 from .activity_routes import router as activity_router
+from .calendar_feed_routes import router as calendar_feed_router
+from .class_recap_routes import router as class_recap_router
 from .email_preference_routes import router as email_preference_router
 from .enrollment_routes import router as enrollment_router
 from .home_routes import router as home_router
@@ -18,6 +20,7 @@ from .pause_routes import router as pause_router
 from .payment_routes import router as payment_router
 from .profile_routes import router as profile_router
 from .progress_skill_routes import router as progress_skill_router
+from .referral_routes import router as referral_router
 from .schedule_routes import router as schedule_router
 from .self_cancel_routes import router as self_cancel_router
 from .session_routes import router as session_router
@@ -29,6 +32,7 @@ from .webhook_routes import router as webhook_router
 router = APIRouter(prefix="/parent")
 router.include_router(absence_router)
 router.include_router(academy_router)
+router.include_router(calendar_feed_router)
 router.include_router(activity_router)
 router.include_router(email_preference_router)
 router.include_router(enrollment_router)
@@ -40,6 +44,7 @@ router.include_router(onboarding_router)
 router.include_router(pause_router)
 router.include_router(payment_router)
 router.include_router(profile_router)
+router.include_router(referral_router)
 router.include_router(schedule_router)
 router.include_router(self_cancel_router)
 router.include_router(session_router)
@@ -48,3 +53,4 @@ router.include_router(waitlist_router)
 router.include_router(waiver_router)
 router.include_router(webhook_router)
 router.include_router(progress_skill_router)
+router.include_router(class_recap_router)

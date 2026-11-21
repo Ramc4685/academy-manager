@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from backend.v2.composition.level_up_lifecycle import enrollment_status_lookup
+from backend.v2.contexts.billing.infrastructure.mongo_billing_counter_repo import (
+    MongoBillingCounterRepository,
+)
+from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo import (
+    MongoBillingSettingsRepository,
+)
 from backend.v2.contexts.curriculum.application.use_cases.get_pathway import GetFullPathway
 from backend.v2.contexts.curriculum.application.use_cases.manage_criteria import AddSkillCriterion
 from backend.v2.contexts.curriculum.application.use_cases.manage_lesson_cards import (
@@ -19,6 +27,7 @@ from backend.v2.contexts.curriculum.application.use_cases.manage_levels import (
     DeleteLevel,
     GetLevelUsage,
     ListLevels,
+    ReorderLevels,
     UpdateLevel,
 )
 from backend.v2.contexts.curriculum.application.use_cases.manage_program import (
@@ -31,6 +40,7 @@ from backend.v2.contexts.curriculum.application.use_cases.manage_refs import Add
 from backend.v2.contexts.curriculum.application.use_cases.manage_skills import (
     CreateSkill,
     ListSkills,
+    ReorderSkills,
     UpdateSkill,
 )
 from backend.v2.contexts.curriculum.application.use_cases.seed_curriculum import (
@@ -61,6 +71,12 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
 )
 from backend.v2.contexts.student_progress.application.use_cases.auto_approve_level_ups import (
     AutoApproveLevelUps,
+)
+from backend.v2.contexts.student_progress.application.use_cases.certificate_share import (
+    SetCertificateShare,
+)
+from backend.v2.contexts.student_progress.application.use_cases.curriculum_change_checks import (
+    CurriculumChangeChecks,
 )
 from backend.v2.contexts.student_progress.application.use_cases.get_certificate_detail import (
     GetCertificateDetail,
@@ -105,6 +121,11 @@ from backend.v2.contexts.student_progress.application.use_cases.mark_skill_maste
 from backend.v2.contexts.student_progress.application.use_cases.place_student import (
     PlaceStudentInLevel,
 )
+from backend.v2.contexts.student_progress.application.use_cases.progress_milestones import (
+    GetProgressSettings,
+    RecordReachedMilestones,
+    UpdateProgressSettings,
+)
 from backend.v2.contexts.student_progress.application.use_cases.recommend_level_up import (
     RecommendLevelUp,
 )
@@ -113,6 +134,9 @@ from backend.v2.contexts.student_progress.application.use_cases.record_test_atte
 )
 from backend.v2.contexts.student_progress.application.use_cases.review_level_up import (
     ReviewLevelUpRecommendation,
+)
+from backend.v2.contexts.student_progress.application.use_cases.revoke_certificate import (
+    RevokeCertificate,
 )
 from backend.v2.contexts.student_progress.application.use_cases.set_mastery_note import (
     SetMasteryNote,
@@ -123,14 +147,27 @@ from backend.v2.contexts.student_progress.application.use_cases.unmark_skill_mas
 from backend.v2.contexts.student_progress.application.use_cases.update_skill_status import (
     UpdateSkillStatus,
 )
+from backend.v2.contexts.student_progress.domain.logic import format_cert_number
 from backend.v2.contexts.student_progress.infrastructure.curriculum_lookup_adapter import (
     CurriculumSkillLookupAdapter as CurriculumSkillLookup,
+)
+from backend.v2.contexts.student_progress.infrastructure.mongo_certificate_audit import (
+    MongoCertificateAuditLog,
 )
 from backend.v2.contexts.student_progress.infrastructure.mongo_certificate_repo import (
     MongoSkillCertificateRepository as MongoCertificateRepository,
 )
 from backend.v2.contexts.student_progress.infrastructure.mongo_level_progress_repo import (
     MongoStudentLevelProgressRepository as MongoLevelProgressRepository,
+)
+from backend.v2.contexts.student_progress.infrastructure.mongo_milestone_repo import (
+    MongoStudentMilestoneRepository,
+)
+from backend.v2.contexts.student_progress.infrastructure.mongo_placement_audit import (
+    MongoPlacementAuditLog,
+)
+from backend.v2.contexts.student_progress.infrastructure.mongo_progress_settings_repo import (
+    MongoProgressSettingsRepository,
 )
 from backend.v2.contexts.student_progress.infrastructure.mongo_recommendation_repo import (
     MongoLevelUpRecommendationRepository as MongoRecommendationRepository,
@@ -141,9 +178,11 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_re
 from backend.v2.contexts.student_progress.infrastructure.mongo_test_attempt_repo import (
     MongoTestAttemptRepository,
 )
+from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.tenancy import current_academy_id
+from backend.v2.shared.tenancy.academy_url import academy_frontend_url
 
 # ---------------------------------------------------------------------------
 # SeedBadmintonPathway callable wrapper
@@ -213,6 +252,24 @@ class SeedLessonCards:
         )
 
 
+class CertificateNumberAdapter:
+    """``CertificateNumbers`` over the academy's billing counter and invoice prefix.
+
+    Both repositories read the tenant at call time; the counter's ``$inc`` is
+    what keeps concurrent approvals from sharing a number.
+    """
+
+    def __init__(
+        self, counters: MongoBillingCounterRepository, settings: MongoBillingSettingsRepository
+    ) -> None:
+        self._counters = counters
+        self._settings = settings
+
+    async def next_number(self) -> str:
+        prefix = (await self._settings.get()).invoice_number_prefix
+        return format_cert_number(prefix, await self._counters.next_value(scope="certificate"))
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
@@ -232,6 +289,8 @@ class CurriculumComposition:
     create_skill: CreateSkill
     update_skill: UpdateSkill
     list_skills: ListSkills
+    reorder_levels: ReorderLevels
+    reorder_skills: ReorderSkills
     add_criterion: AddSkillCriterion
     add_external_ref: AddExternalReference
     get_full_pathway: GetFullPathway
@@ -255,6 +314,7 @@ class StudentProgressComposition:
     get_level_up_queue: GetLevelUpQueue
     get_certificates: GetStudentCertificates
     get_certificate_detail: GetCertificateDetail
+    revoke_certificate: RevokeCertificate
     get_skill_board: GetSkillBoard
     get_teaching_focus: GetTeachingFocus
     get_recent_skill_updates: GetRecentSkillUpdates
@@ -265,6 +325,15 @@ class StudentProgressComposition:
     set_mastery_note: SetMasteryNote
     auto_approve_level_ups: AutoApproveLevelUps
     get_pathway_dashboard: GetPathwayDashboard
+    curriculum_change_checks: CurriculumChangeChecks
+    # L5B PR2: parent share links, progress settings, milestone records.
+    set_certificate_share: SetCertificateShare
+    get_progress_settings: GetProgressSettings
+    update_progress_settings: UpdateProgressSettings
+    record_milestones: RecordReachedMilestones
+    #: ``(academy_id, token) -> https://<slug>.<apex>/c/<token>``: the academy's
+    #: own host, never the product host (where ``/c/`` is a 404).
+    certificate_share_url: Callable[[str, str], Awaitable[str]]
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +371,8 @@ def compose_curriculum(db: AsyncIOMotorDatabase[Any]) -> CurriculumComposition:
         create_skill=CreateSkill(levels=levels_repo, skills=skills_repo),
         update_skill=UpdateSkill(skills=skills_repo),
         list_skills=ListSkills(skills=skills_repo),
+        reorder_levels=ReorderLevels(levels=levels_repo),
+        reorder_skills=ReorderSkills(skills=skills_repo),
         add_criterion=AddSkillCriterion(skills=skills_repo, criteria=criteria_repo),
         add_external_ref=AddExternalReference(skills=skills_repo, refs=refs_repo),
         get_full_pathway=GetFullPathway(pathway_query=pathway_query),
@@ -334,6 +405,8 @@ def compose_student_progress(
     test_attempt_repo = MongoTestAttemptRepository(db)
     recommendation_repo = MongoRecommendationRepository(db)
     certificate_repo = MongoCertificateRepository(db)
+    progress_audit = MongoCertificateAuditLog(db)
+    progress_settings = MongoProgressSettingsRepository(db)
     skill_lookup = CurriculumSkillLookup(
         skill_repo=MongoSkillRepository(db),
         level_repo=MongoLevelRepository(db),
@@ -361,6 +434,9 @@ def compose_student_progress(
         level_progress=level_progress_repo,
         skill_progress=skill_progress_repo,
         certificates=certificate_repo,
+        cert_numbers=CertificateNumberAdapter(
+            MongoBillingCounterRepository(db), MongoBillingSettingsRepository(db)
+        ),
         skill_lookup=skill_lookup,
         enrollment_lookup=enrollment_lookup,
         outbox=outbox,
@@ -371,11 +447,15 @@ def compose_student_progress(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
             skill_lookup=skill_lookup,
+            recommendations=recommendation_repo,
+            enrollment_lookup=enrollment_lookup,
             outbox=outbox,
+            audit=MongoPlacementAuditLog(db),
         ),
         update_skill_status=UpdateSkillStatus(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
+            skill_lookup=skill_lookup,
             outbox=outbox,
         ),
         record_test_attempt=record_test_attempt,
@@ -417,6 +497,7 @@ def compose_student_progress(
         get_certificate_detail=GetCertificateDetail(
             certificates=certificate_repo, skill_lookup=skill_lookup
         ),
+        revoke_certificate=RevokeCertificate(certificates=certificate_repo, audit=progress_audit),
         get_skill_board=GetSkillBoard(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,
@@ -472,4 +553,45 @@ def compose_student_progress(
             certificates=certificate_repo,
             levels=skill_lookup,
         ),
+        curriculum_change_checks=CurriculumChangeChecks(
+            level_progress=level_progress_repo,
+            skill_progress=skill_progress_repo,
+            skill_lookup=skill_lookup,
+            recommendations=recommendation_repo,
+            recommend_level_up=recommend_level_up,
+        ),
+        set_certificate_share=SetCertificateShare(
+            certificates=certificate_repo, audit=progress_audit
+        ),
+        get_progress_settings=GetProgressSettings(settings=progress_settings),
+        update_progress_settings=UpdateProgressSettings(
+            settings=progress_settings, audit=progress_audit
+        ),
+        record_milestones=compose_record_milestones(db),
+        certificate_share_url=_certificate_share_url(db),
+    )
+
+
+def _certificate_share_url(
+    db: AsyncIOMotorDatabase[Any],
+) -> Callable[[str, str], Awaitable[str]]:
+    frontend_url = get_settings().frontend_url
+
+    async def share_url(academy_id: str, token: str) -> str:
+        doc = await db["academies"].find_one({"academy_id": academy_id}, {"slug": 1})
+        base = academy_frontend_url(
+            frontend_url=frontend_url, academy_slug=str((doc or {}).get("slug") or "")
+        )
+        return f"{base}/c/{quote(token, safe='')}"
+
+    return share_url
+
+
+def compose_record_milestones(db: AsyncIOMotorDatabase[Any]) -> RecordReachedMilestones:
+    """Shared by the parent journey and the evening wins email."""
+    return RecordReachedMilestones(
+        settings=MongoProgressSettingsRepository(db),
+        skill_progress=MongoSkillProgressRepository(db),
+        certificates=MongoCertificateRepository(db),
+        milestones=MongoStudentMilestoneRepository(db),
     )

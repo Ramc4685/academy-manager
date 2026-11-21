@@ -43,6 +43,8 @@ import {
   paymentDisplayLabel,
   skipReasonLabel,
 } from "./format";
+import { useAcademyTimezone } from "@/components/admin/use-academy-today";
+import { academyDateISO, academyMonthKey } from "@/lib/format/academy-time";
 
 /**
  * Which row actions this invoice may take, derived once (#857).
@@ -300,6 +302,7 @@ export function GenerateDialog({
   onOpenChange: (open: boolean) => void;
   onGenerated: () => void;
 }) {
+  const timezone = useAcademyTimezone();
   const [period, setPeriod] = useState("");
   const [result, setResult] = useState<{
     message: string;
@@ -338,7 +341,7 @@ export function GenerateDialog({
     <RallyDialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (nextOpen && !period) setPeriod(new Date().toISOString().slice(0, 7));
+        if (nextOpen && !period) setPeriod(academyMonthKey(timezone));
         if (!nextOpen) close();
         else onOpenChange(true);
       }}
@@ -548,9 +551,10 @@ export function MarkPaidDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const timezone = useAcademyTimezone();
   const { options: methodOptions, method, setMethod } = useManualPaymentMethods(payment !== null);
   const [amountInput, setAmountInput] = useState("");
-  const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [paymentDate, setPaymentDate] = useState(() => academyDateISO(timezone));
   const [referenceNumber, setReferenceNumber] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -565,7 +569,7 @@ export function MarkPaidDialog({
       }),
     onSuccess: () => {
       setAmountInput("");
-      setPaymentDate(new Date().toISOString().slice(0, 10));
+      setPaymentDate(academyDateISO(timezone));
       setReferenceNumber("");
       setNotes("");
       setError(null);

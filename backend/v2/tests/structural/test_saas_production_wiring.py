@@ -143,6 +143,21 @@ def test_ci_installs_single_backend_requirements_file() -> None:
     assert "Legacy backend tests" not in workflow
 
 
+def test_frontend_deploys_only_after_the_backend_and_migrations_succeed() -> None:
+    """G:jobs_data_infra:4: a Worker shipped beside a failed backend deploy
+    calls endpoints that do not exist yet."""
+    import yaml
+
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github/workflows/production.yml").read_text(encoding="utf-8")
+    )
+    job = workflow["jobs"]["deploy-frontend"]
+
+    assert {"migrate-production", "deploy-backend"} <= set(job["needs"])
+    assert "needs.migrate-production.result == 'success'" in job["if"]
+    assert "needs.deploy-backend.result == 'success'" in job["if"]
+
+
 def test_v2_app_configures_cors_for_frontend_origin(monkeypatch) -> None:
     from fastapi.testclient import TestClient
 
@@ -188,3 +203,14 @@ def test_v2_main_attaches_lead_conversion_to_registration_approval() -> None:
 
     assert "compose_mark_lead_enrolled" in source
     assert "admin_registration_review.set_lead_conversion(" in source
+
+
+def test_v2_main_attaches_the_trial_guest_cancellation_notifier() -> None:
+    """L9: compose_cancel_session_occurrence leaves guest_notifier unset; without
+    this attach a website guest on a cancelled date is never told."""
+    source = (REPO_ROOT / "backend/v2/main.py").read_text(encoding="utf-8")
+
+    assert (
+        "app.state.admin.cancel_session_occurrence._guest_notifier = app.state.trial_emails"
+        in source
+    )

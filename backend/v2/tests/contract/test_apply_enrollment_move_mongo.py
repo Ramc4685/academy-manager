@@ -259,7 +259,23 @@ async def test_delta_is_net_of_the_stored_tuition_discount(db, acad) -> None:
     await _seed_session(db, acad, "sess-a", price=8000, day="Sat")
     await _seed_session(db, acad, "sess-b", price=12000, day="Sun")
     ledger = MongoBillingLedgerRepository(db)
-    await _seed_invoice(ledger, acad)
+    invoice = await _seed_invoice(ledger, acad)
+    # The month was priced with the policy: its invoice carries the line.
+    await ledger.save_line(
+        InvoiceLine(
+            line_id="line-discount-sep",
+            academy_id=acad,
+            invoice_id=invoice.invoice_id,
+            line_type="discount",
+            description="Sibling discount",
+            quantity=1,
+            unit_amount_cents=-1600,
+            amount_cents=-1600,
+            source_type="tuition_discount",
+            source_id="disc-1",
+            created_at=NOW,
+        )
+    )
     await db["enrollment_discounts"].insert_one(
         {
             "discount_id": "disc-1",
@@ -278,6 +294,31 @@ async def test_delta_is_net_of_the_stored_tuition_discount(db, acad) -> None:
 
     # Gross the delta would be 3000; net of the 20% policy it is 2400.
     assert result.delta_cents == 2400
+
+
+@pytest.mark.asyncio
+async def test_a_policy_added_after_the_month_was_billed_is_not_applied(db, acad) -> None:
+    """No discount line on the period invoice: the month was not discounted."""
+    await _seed_session(db, acad, "sess-a", price=8000, day="Sat")
+    await _seed_session(db, acad, "sess-b", price=12000, day="Sun")
+    await _seed_invoice(MongoBillingLedgerRepository(db), acad)
+    await db["enrollment_discounts"].insert_one(
+        {
+            "discount_id": "disc-1",
+            "academy_id": acad,
+            "enrollment_id": "enr-1",
+            "student_id": "stu-1",
+            "category": "sibling",
+            "kind": "percent",
+            "percent_bps": 2000,
+            "effective_start": "2026-01-01",
+            "status": "active",
+        }
+    )
+
+    result = await _use_case(db).execute(_cmd())
+
+    assert result.delta_cents == 3000
 
 
 @pytest.mark.asyncio

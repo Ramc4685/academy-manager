@@ -49,8 +49,19 @@ export interface Skill {
   is_required: boolean;
   scoring_type: string;
   pass_threshold_pct: number;
+  pass_rule?: SkillPassRule;
+  pass_tries?: number | null;
   is_active: boolean;
 }
+
+/** How a coach's tap passes a skill (absent on older payloads means ONE_TAP). */
+export type SkillPassRule = "ONE_TAP" | "N_TRIES" | "LEAD_COACH";
+
+export const SKILL_PASS_RULES: ReadonlyArray<{ value: SkillPassRule; label: string }> = [
+  { value: "ONE_TAP", label: "One tap" },
+  { value: "N_TRIES", label: "Several tries" },
+  { value: "LEAD_COACH", label: "Lead coach signs off" },
+];
 
 export interface SkillCriterion {
   criterion_id: string;
@@ -215,6 +226,14 @@ export interface SkillCertificate {
   program_name: string;
   completed_at: string;
   issued_at: string;
+  /** Only admin reads return revoked certificates. */
+  status?: "issued" | "revoked";
+  revoked_at?: string | null;
+  revoke_reason?: string | null;
+  /** The level colour when it was issued; null on older certificates. */
+  level_color?: string | null;
+  /** Set while the parent shares a public link (`/c/<token>`); null when not shared. */
+  share_token?: string | null;
 }
 
 /** One certificate plus what the printable certificate shows (read from the curriculum). */
@@ -227,6 +246,8 @@ export interface CertificateDetail {
   next_level: { level_id: string; name: string; number: number } | null;
   /** The program's whole level ladder, in order, with each level's colour. */
   levels: { name: string; color: string | null }[];
+  /** Parent reads: the public link on the academy's own host, built by the server; null when not shared. */
+  share_url?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +289,6 @@ export function createLevel(
   body: {
     name: string;
     description: string;
-    sequence: number;
     completion_rule?: string;
   },
 ): Promise<Level> {
@@ -293,37 +313,73 @@ export type SkillScoringType = (typeof SKILL_SCORING_TYPES)[number]["value"];
 
 export interface CreateSkillBody {
   program_id: string;
-  sequence: number;
   name: string;
   description: string;
   is_required: boolean;
   scoring_type: SkillScoringType;
   pass_threshold_pct?: number;
+  pass_rule?: SkillPassRule;
+  pass_tries?: number | null;
 }
 
-// The new skill goes after the level's existing skills.
+// The server numbers the new skill after the level's existing ones.
 export function buildCreateSkillBody(
   level: Pick<Level, "program_id">,
-  existingSkills: ReadonlyArray<Pick<Skill, "sequence">>,
   form: {
     name: string;
     description: string;
     is_required: boolean;
     scoring_type: SkillScoringType;
+    pass_rule?: SkillPassRule;
+    pass_tries?: number | null;
   },
 ): CreateSkillBody {
-  const lastSequence = existingSkills.reduce(
-    (max, s) => Math.max(max, s.sequence),
-    0,
-  );
   return {
     program_id: level.program_id,
-    sequence: lastSequence + 1,
     name: form.name.trim(),
     description: form.description.trim(),
     is_required: form.is_required,
     scoring_type: form.scoring_type,
+    ...(form.pass_rule ? { pass_rule: form.pass_rule } : {}),
+    ...(form.pass_rule === "N_TRIES" ? { pass_tries: form.pass_tries ?? 3 } : {}),
   };
+}
+
+// Mirrors POST /admin/pathway/placements (BulkPlacementBody).
+export interface BulkPlacementBody {
+  program_id: string;
+  level_id: string;
+  student_ids: string[];
+  credited_skill_ids: string[];
+  notify_parents: boolean;
+  reason?: string;
+}
+
+export interface BulkPlacementResult {
+  student_id: string;
+  outcome: "placed" | "refused";
+  progress_id?: string;
+  code?: string;
+}
+
+export function placeStudentsInBulk(
+  body: BulkPlacementBody,
+): Promise<{ results: BulkPlacementResult[] }> {
+  return apiFetch<{ results: BulkPlacementResult[] }>("/admin/pathway/placements", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+// Mirrors PUT /admin/skills/{skill_id} (UpdateSkillBody); omitted fields stay as they are.
+export function updateSkillPassRule(
+  skillId: string,
+  body: { pass_rule: SkillPassRule; pass_tries?: number },
+): Promise<Skill> {
+  return apiFetch<Skill>(`/admin/skills/${encodeURIComponent(skillId)}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
 }
 
 export function createSkill(
@@ -642,13 +698,60 @@ export interface PathwayDashboard {
     level_started_at: string;
   }[];
   unplaced_count: number;
+  /** Active not-billed students: in the lists, out of the counts. */
+  not_billed_count?: number;
   coaches: { coach_id: string; coach_name: string; skills_ticked: number }[];
 }
 
-export function getAdminPathwayDashboard(): Promise<PathwayDashboard> {
-  return apiFetch<PathwayDashboard>("/admin/pathway/dashboard", {
+export function getAdminPathwayDashboard(programId?: string): Promise<PathwayDashboard> {
+  const query = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
+  return apiFetch<PathwayDashboard>(`/admin/pathway/dashboard${query}`, {
     method: "GET",
   });
+}
+
+/** Retire a level. 409s: Curriculum.LevelHasStudents, Curriculum.LevelUpsPending (message says what to do). */
+export function retireLevel(levelId: string): Promise<Level> {
+  return apiFetch<Level>(`/admin/levels/${encodeURIComponent(levelId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ is_active: false }),
+  });
+}
+
+/** Retire a skill; students it alone held back are queued for a level-up. */
+export function retireSkill(
+  skillId: string,
+): Promise<Skill & { active_students: number; level_ups_queued: number }> {
+  return apiFetch(`/admin/skills/${encodeURIComponent(skillId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ is_active: false }),
+  });
+}
+
+/** 409 Curriculum.LevelUpsPending while level-ups in this program wait for review. */
+export function reorderLevels(programId: string, ids: string[]): Promise<{ ids: string[] }> {
+  return apiFetch(`/admin/programs/${encodeURIComponent(programId)}/levels/order`, {
+    method: "PUT",
+    body: JSON.stringify({ ids }),
+  });
+}
+
+export function reorderSkills(levelId: string, ids: string[]): Promise<{ ids: string[] }> {
+  return apiFetch(`/admin/levels/${encodeURIComponent(levelId)}/skills/order`, {
+    method: "PUT",
+    body: JSON.stringify({ ids }),
+  });
+}
+
+export function revokeCertificate(
+  studentId: string,
+  certId: string,
+  reason: string,
+): Promise<SkillCertificate> {
+  return apiFetch<SkillCertificate>(
+    `/admin/students/${encodeURIComponent(studentId)}/certificates/${encodeURIComponent(certId)}/revoke`,
+    { method: "POST", body: JSON.stringify({ reason }) },
+  );
 }
 
 /** A hex colour for the level, or "" to go back to its default. */
@@ -794,6 +897,62 @@ export function getParentStudentCertificates(
   ).then((d) => d.certificates);
 }
 
+export interface CertificateShareState {
+  share_token: string | null;
+  /** `https://<academy host>/c/<token>`: never the product host, where `/c/` is a 404. */
+  share_url: string | null;
+}
+
+/** Create (idempotent) the public link for the parent's own child's certificate. */
+export function shareParentCertificate(
+  studentId: string,
+  certId: string,
+): Promise<CertificateShareState> {
+  return apiFetch(
+    `/parent/students/${encodeURIComponent(studentId)}/certificates/${encodeURIComponent(certId)}/share`,
+    { method: "POST" },
+  );
+}
+
+/** Turn the public link off; the old link 404s from the next load. */
+export function unshareParentCertificate(
+  studentId: string,
+  certId: string,
+): Promise<CertificateShareState> {
+  return apiFetch(
+    `/parent/students/${encodeURIComponent(studentId)}/certificates/${encodeURIComponent(certId)}/share`,
+    { method: "DELETE" },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Admin — progress settings (milestones + share-page name rule)
+// ---------------------------------------------------------------------------
+
+export type MilestoneKind = "skills_passed" | "levels_completed";
+export type ShareNameRule = "first_name" | "initial";
+
+export interface ProgressSettings {
+  milestones_enabled: boolean;
+  milestones: { kind: MilestoneKind; count: number; since?: string }[];
+  share_name: ShareNameRule;
+}
+
+export function getProgressSettings(): Promise<ProgressSettings> {
+  return apiFetch<ProgressSettings>("/admin/curriculum/progress-settings", { method: "GET" });
+}
+
+export function updateProgressSettings(body: {
+  milestones_enabled: boolean;
+  milestones: { kind: MilestoneKind; count: number }[];
+  share_name: ShareNameRule;
+}): Promise<ProgressSettings> {
+  return apiFetch<ProgressSettings>("/admin/curriculum/progress-settings", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Session skill board
 // ---------------------------------------------------------------------------
@@ -802,6 +961,8 @@ export interface SkillBoardCell {
   status: SkillStatus;
   last_updated_at: string | null;
   coach_note?: string | null;
+  /** Taps counted so far on an N_TRIES skill. */
+  tries?: number;
 }
 
 export interface SkillBoardSkill {
@@ -812,6 +973,8 @@ export interface SkillBoardSkill {
   /** Observable criterion descriptions, in display order: the coach's quick-tags.
    *  Absent on boards cached before the field shipped (persisted for 24h). */
   criteria?: string[];
+  pass_rule?: SkillPassRule;
+  pass_tries?: number | null;
 }
 
 export interface SkillBoardStudentRow {

@@ -146,7 +146,7 @@ async def _seed_signals(db: Any, academy_id: str, n: int) -> None:
                 "source_key": f"trial_passed:{academy_id}-trial-{i}",
             }
         )
-        # Student i holds a seat in a class with three past dates and no mark.
+        # Student i holds a seat and was absent from the last two classes.
         await db["enrollments"].insert_one(
             {
                 "academy_id": academy_id,
@@ -191,6 +191,20 @@ async def _seed_signals(db: Any, academy_id: str, n: int) -> None:
                 "status": "scheduled",
             }
             for w in range(1, 5)
+        ]
+    )
+    await db["attendance"].insert_many(
+        [
+            {
+                "academy_id": academy_id,
+                "attendance_id": f"{academy_id}-att-{i}-{w}",
+                "student_id": f"{academy_id}-stu-{i}",
+                "occurrence_id": f"{academy_id}-occ-{w}",
+                "status": "absent",
+                "marked_at": live_now - timedelta(days=w * 7),
+            }
+            for i in range(n)
+            for w in (1, 2)
         ]
     )
     # Done and hand-written follow-ups are never "trial passed, not registered".

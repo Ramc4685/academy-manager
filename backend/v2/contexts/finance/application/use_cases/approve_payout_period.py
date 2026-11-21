@@ -28,10 +28,14 @@ from backend.v2.contexts.finance.application.ports import (
     PayoutAuditLog,
     PayoutPeriodRepository,
 )
+from backend.v2.contexts.finance.application.use_cases.generate_payout_period import (
+    OverlappingPayoutPeriodError,
+)
 from backend.v2.contexts.finance.domain.payout_period import (
     PayoutPeriod,
     approve,
     mark_paid,
+    require_version,
 )
 
 
@@ -64,18 +68,37 @@ class _BaseTransition:
 
 
 class ApprovePayoutPeriod(_BaseTransition):
-    async def execute(self, *, period_id: str, actor_id: str = "system") -> PayoutPeriod:
+    async def execute(
+        self, *, period_id: str, actor_id: str = "system", expected_version: int | None = None
+    ) -> PayoutPeriod:
         period = await self._load(period_id)
-        approved = approve(period, at=self._clock())
-        if approved is period:
+        if period.status == "approved":
+            # Before the version check: a retry whose first response was lost
+            # gets the approval back, not a 409 for its own write.
             return period
+        require_version(period, expected_version)
+        # Any status: two periods over the same days would pay those classes
+        # twice, including overlaps stored before generation refused them (#504).
+        other = await self._repo.find_overlapping(
+            coach_id=period.coach_id,
+            period_start=period.period_start,
+            period_end=period.period_end,
+            exclude_period_id=period.period_id,
+        )
+        if other is not None:
+            raise OverlappingPayoutPeriodError(other)
+        approved = approve(period, at=self._clock())
         stored = await self._repo.replace(approved)
         await self._audit.record(
             stored,
             action="approved",
             actor_id=actor_id,
             before={"status": period.status},
-            after={"status": stored.status, "total_minor": stored.total_minor},
+            after={
+                "status": stored.status,
+                "total_minor": stored.total_minor,
+                "version": stored.version,
+            },
         )
         return stored
 
@@ -87,11 +110,13 @@ class MarkPayoutPaid(_BaseTransition):
         *,
         period_id: str | None = None,
         actor_id: str = "system",
+        expected_version: int | None = None,
     ) -> PayoutPeriod:
         if command is None:
             if period_id is None:
                 raise TypeError("MarkPayoutPaid.execute requires command or period_id")
             period = await self._load(period_id)
+            require_version(period, expected_version)
             command = MarkPayoutPaidCommand(
                 period_id=period_id,
                 method="unspecified",
@@ -101,6 +126,9 @@ class MarkPayoutPaid(_BaseTransition):
             )
         else:
             period = await self._load(command.period_id)
+            if not _same_payment(period, command):
+                # A retry of the payment already recorded skips this check.
+                require_version(period, expected_version)
 
         paid = mark_paid(
             period,
@@ -122,6 +150,21 @@ class MarkPayoutPaid(_BaseTransition):
                 "paid_amount_minor": stored.paid_amount_minor,
                 "paid_method": stored.paid_method,
                 "paid_reference": stored.paid_reference,
+                "version": stored.version,
             },
         )
         return stored
+
+
+def _ms(value: datetime | None) -> datetime | None:
+    # Mongo stores milliseconds; a retry's microseconds must not read as a new payment.
+    return None if value is None else value.replace(microsecond=value.microsecond // 1000 * 1000)
+
+
+def _same_payment(period: PayoutPeriod, command: MarkPayoutPaidCommand) -> bool:
+    return period.status == "paid" and (
+        period.paid_method,
+        period.paid_amount_minor,
+        period.paid_reference,
+        _ms(period.paid_at),
+    ) == (command.method, command.amount_minor, command.reference, _ms(command.paid_at))

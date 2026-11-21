@@ -44,6 +44,8 @@ export interface AdminSessionView {
   amount_cents?: number | null;
   status: "scheduled" | "cancelled" | "completed";
   enrolled_count: number;
+  /** Of enrolled_count: children never invoiced (they still take a seat). */
+  not_billed_count?: number;
   waitlist_count: number;
   // Communication pack (#613) — optional per-session onboarding facts.
   whatsapp_group_link?: string | null;
@@ -53,6 +55,8 @@ export interface AdminSessionView {
   arrival_minutes_before?: number | null;
   coach_contact_policy?: string | null;
   absence_policy?: string | null;
+  /** Set only by the all-classes list (`window=all`), on the academy's clock. */
+  phase?: "active" | "upcoming" | "ended" | null;
 }
 
 export interface AdminSessionList {
@@ -203,6 +207,8 @@ export type EnrollmentStatus =
 
 export interface AdminEnrollmentView {
   enrollment_id: string;
+  /** Never invoiced; on the roster but out of the headcount. */
+  not_billed?: boolean;
   session_id: string;
   student_id: string;
   parent_id: string;
@@ -225,6 +231,9 @@ export interface AdminEnrollmentView {
   pathway_completion_percentage?: number;
   pathway_next_action?: string;
   dues_status?: "current" | "due" | "overdue";
+  /** Latest lifecycle event on the seat (L2 A0-12); null when none. */
+  latest_event_type?: string | null;
+  latest_event_date?: string | null;
 }
 
 export interface AdminEnrollmentList {
@@ -241,13 +250,6 @@ export interface CreateEnrollmentRequest {
 export interface TransferEnrollmentRequest {
   target_session_id: string;
   effective_date: string;
-  reason?: string;
-}
-
-export interface PauseEnrollmentRequest {
-  effective_date: string;
-  resume_on?: string | null;
-  review_on?: string | null;
   reason?: string;
 }
 
@@ -278,24 +280,6 @@ export interface WithdrawEnrollmentRequest {
 export interface RemoveEnrollmentRequest {
   effective_date: string;
   reason: string;
-}
-
-export interface EnrollmentEventView {
-  event_id: string;
-  event_type: string;
-  effective_date: string;
-  reason: string | null;
-  billing_policy: string | null;
-  billing_result: string | null;
-  credit_id: string | null;
-  refund_id: string | null;
-  metadata: Record<string, string>;
-}
-
-export interface EnrollmentEventsResponse {
-  enrollment_id: string;
-  events: EnrollmentEventView[];
-  next_cursor: string | null;
 }
 
 /**
@@ -398,6 +382,13 @@ export interface AdminPaymentView {
   void_reason?: string | null;
   voided_at?: string | null;
   voided_by?: string | null;
+  /** Stripe dispute (chargeback) on this payment (#980); absent when never disputed. */
+  dispute_id?: string | null;
+  dispute_status?: string | null;
+  dispute_reason?: string | null;
+  dispute_amount_cents?: number | null;
+  dispute_outcome?: string | null;
+  disputed_at?: string | null;
   created_at: string;
   paid_at?: string | null;
 }
@@ -899,23 +890,6 @@ export interface WithdrawalCreditPreviewResponse {
   no_credit_reason?: string | null;
 }
 
-export interface AdminPayoutView {
-  payout_id: string;
-  coach_id: string;
-  amount_cents: number;
-  period_start: string;
-  period_end: string;
-  paid_at: string | null;
-  expected_revenue_cents?: number | null;
-  students_count?: number | null;
-  sessions_count?: number | null;
-  rule_label?: string | null;
-}
-
-export interface AdminPayoutList {
-  payouts: AdminPayoutView[];
-}
-
 export type CoachPayBillingUnit = "per_session" | "per_hour" | "percent_of_revenue";
 export type CoachRateTimelineIssueType =
   | "gap"
@@ -1104,6 +1078,7 @@ export interface AdminSessionEconomicsRow {
   title: string;
   coach_name: string | null;
   active_enrollment_count: number;
+  not_billed_enrollment_count?: number;
   paid_student_count: number;
   unpaid_student_count: number;
   monthly_fee_cents: number;
@@ -1372,6 +1347,8 @@ export type AdminAttentionKind =
   | "overdue_dues"
   | "autopay_failure"
   | "dunning_exhaustion"
+  | "autopay_stuck"
+  | "bank_return_review"
   | "pause_requests"
   | "scheduled_resume_blocked"
   | "scheduled_action_failed"
@@ -1391,6 +1368,8 @@ export interface AdminAttentionItem {
 
 export interface AdminAttentionList {
   items: AdminAttentionItem[];
+  /** Sources that failed to load: unknown, not "nothing waiting" (L2 A0-5). */
+  unavailable?: { source: string; label: string }[];
 }
 
 export interface BroadcastRequest {
@@ -1848,7 +1827,7 @@ export function sendLoginInvite(userId: string): Promise<{ sent_at: string }> {
 
 export function listAdminSessions(
   date?: string,
-  opts?: { window?: "upcoming" },
+  opts?: { window?: "upcoming" | "all" },
 ): Promise<AdminSessionList> {
   const params = new URLSearchParams();
   if (date) params.set("date", date);
@@ -1970,6 +1949,9 @@ export interface CancelSessionOccurrenceResponse {
   roster_entries_removed: number;
   makeups_reopened: number;
   credits_issued: number;
+  /** #1207: the date's credits in total, and skip reason → families. */
+  credit_total_cents?: number;
+  credit_skips?: Record<string, number>;
   billing_result: string | null;
   notified: boolean;
 }
@@ -1990,6 +1972,44 @@ export function cancelSessionOccurrence(
       body: JSON.stringify(payload),
     }
   );
+}
+
+export type CreditMissedClassResponse = components["schemas"]["CreditMissedClassResponse"];
+
+/**
+ * #1207: credit a PAST class date found missed only after it passed.
+ * `dry_run` previews the families and amounts and writes nothing; the confirm
+ * marks the date No class and issues the same credits a call-off would.
+ * 409 when the date is cancelled already, in the future, or had attendance.
+ */
+export function creditMissedClass(
+  occurrenceId: string,
+  payload: { reason: string; dry_run: boolean }
+): Promise<CreditMissedClassResponse> {
+  return apiFetch<CreditMissedClassResponse>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/credit-missed`,
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export type CloseAcademyDatesRequest = components["schemas"]["CloseAcademyDatesRequest"];
+export type CloseAcademyDatesResponse = components["schemas"]["CloseAcademyDatesResponse"];
+
+/**
+ * Academy-wide closure (L12): every class from start_date to end_date
+ * (academy-local, inclusive) is cancelled with the single-date credit and
+ * notice rules, and each family gets ONE email. `dry_run` previews the dates.
+ */
+export function closeAcademyDates(
+  payload: CloseAcademyDatesRequest
+): Promise<CloseAcademyDatesResponse> {
+  return apiFetch<CloseAcademyDatesResponse>("/admin/closures", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    // A closure cancels date by date on the server; the default 20 s abort
+    // would report a failure while the server keeps cancelling.
+    timeoutMs: 120_000,
+  });
 }
 
 export function addSessionReplacement(
@@ -2129,11 +2149,43 @@ export function transferEnrollment(
   });
 }
 
-export function pauseEnrollment(
-  enrollmentId: string,
-  payload: PauseEnrollmentRequest
-): Promise<void> {
-  return apiFetch<void>(`/admin/enrollments/${enrollmentId}/pause`, {
+/** A0-8 Copy class. Omitted schedule fields keep the source class's. */
+export interface CopySessionRequest {
+  title: string;
+  days_of_week?: string[];
+  start_time?: string;
+  end_time?: string;
+  copy_roster: boolean;
+}
+
+export interface CopySessionResponse {
+  session: AdminSessionView;
+  /** False when an admin (not the owner) copied a priced class. */
+  price_copied: boolean;
+  roster: { student_id: string; full_name: string; ok: boolean; error_code: string | null; message: string | null }[];
+}
+
+export function copySession(sessionId: string, payload: CopySessionRequest): Promise<CopySessionResponse> {
+  return apiFetch<CopySessionResponse>(`/admin/sessions/${encodeURIComponent(sessionId)}/copy`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** A0-8: one row per requested enrollment; a refused row never blocks the rest. */
+export interface BulkTransferEnrollmentsResponse {
+  results: { enrollment_id: string; ok: boolean; error_code: string | null; message: string | null }[];
+  moved_count: number;
+  failed_count: number;
+}
+
+export function bulkTransferEnrollments(payload: {
+  enrollment_ids: string[];
+  target_session_id: string;
+  effective_date: string;
+  reason?: string;
+}): Promise<BulkTransferEnrollmentsResponse> {
+  return apiFetch<BulkTransferEnrollmentsResponse>("/admin/enrollments/bulk-transfer", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -2161,20 +2213,6 @@ export function returnFromHold(
     method: "POST",
     body: JSON.stringify(payload),
   });
-}
-
-export function listEnrollmentEvents(
-  enrollmentId: string,
-  params?: { limit?: number; cursor?: string }
-): Promise<EnrollmentEventsResponse> {
-  const query = new URLSearchParams();
-  if (params?.limit != null) query.set("limit", String(params.limit));
-  if (params?.cursor) query.set("cursor", params.cursor);
-  const qs = query.toString();
-  return apiFetch<EnrollmentEventsResponse>(
-    `/admin/enrollments/${enrollmentId}/events${qs ? `?${qs}` : ""}`,
-    { method: "GET" }
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -2235,6 +2273,18 @@ export function getAdminPaymentFeed(limit = 20): Promise<AdminPaymentFeedRespons
 export function getAdminCollections(period?: string): Promise<AdminCollectionsView> {
   const query = period ? `?period=${encodeURIComponent(period)}` : "";
   return apiFetch<AdminCollectionsView>(`/admin/payments/collections${query}`, {
+    method: "GET",
+  });
+}
+
+/** Academy-wide family counts past due in ANY billing month (L2 B2). */
+export interface AdminOverdueFamiliesView {
+  past_due_count: number;
+  needs_action_count: number;
+}
+
+export function getAdminOverdueFamilies(): Promise<AdminOverdueFamiliesView> {
+  return apiFetch<AdminOverdueFamiliesView>("/admin/payments/overdue-families", {
     method: "GET",
   });
 }
@@ -2345,6 +2395,44 @@ export function updateBillingRules(
   });
 }
 
+/** Settings -> Billing rules -> Family offers (L9 C1). The PUT is owner only. */
+export type FamilyOffersView = components["schemas"]["FamilyOffersResponse"];
+export type UpdateFamilyOffersPayload = components["schemas"]["UpdateFamilyOffersRequest"];
+
+export function getFamilyOffers(): Promise<FamilyOffersView> {
+  return apiFetch<FamilyOffersView>("/admin/billing/family-offers", { method: "GET" });
+}
+
+export function updateFamilyOffers(payload: UpdateFamilyOffersPayload): Promise<FamilyOffersView> {
+  return apiFetch<FamilyOffersView>("/admin/billing/family-offers", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Settings -> Billing rules -> Referrals (L9 C2): the list and the unsent email copy. */
+export type ReferralListView = components["schemas"]["ReferralListResponse"];
+export type ReferralRow = components["schemas"]["ReferralRowView"];
+export type ReferralEmailPreview = components["schemas"]["ReferralEmailPreviewResponse"];
+
+export function getReferrals(): Promise<ReferralListView> {
+  return apiFetch<ReferralListView>("/admin/billing/referrals", { method: "GET" });
+}
+
+/** Owner only: approve a referral whose code came only from the website inquiry. */
+export function approveReferral(referralId: string): Promise<ReferralRow> {
+  return apiFetch<ReferralRow>(
+    `/admin/billing/referrals/${encodeURIComponent(referralId)}/approve`,
+    { method: "POST" },
+  );
+}
+
+export function getReferralEmailPreview(): Promise<ReferralEmailPreview> {
+  return apiFetch<ReferralEmailPreview>("/admin/billing/referrals/email-preview", {
+    method: "GET",
+  });
+}
+
 /**
  * The CourtMastr processing markup this academy pays on Stripe-collected
  * payments, with the agreement text and its acceptance (Phase 2 A1).
@@ -2399,6 +2487,8 @@ export interface ConnectedAccountReadiness {
   payouts_enabled: boolean;
   ready_for_charges: boolean;
   account_id_masked: string | null;
+  /** Direct charges need Stripe to collect fees and carry losses (#980). */
+  direct_charges_supported?: boolean;
 }
 
 export interface ConnectReadiness {
@@ -2411,6 +2501,8 @@ export interface ConnectReadiness {
    * platform account through the fallback, not the academy's own.
    */
   funds_route_to_academy: boolean;
+  /** Why parents cannot pay right now (null when they can). */
+  payments_blocked_reason?: string | null;
   webhook_events: { quarantined: number; failed: number };
   /**
    * The one health verdict, composed on the backend (billing-health trim spec
@@ -2420,6 +2512,43 @@ export interface ConnectReadiness {
    */
   health: BillingHealthVerdict;
   autopay_disable_failures: AutopayDisableFailures;
+  disputes?: OpenDisputes;
+  /** Refunds Stripe could not deliver: the parent has not been paid back. */
+  refund_failures?: RefundFailures;
+}
+
+export interface RefundFailure {
+  refund_id: string;
+  payment_id: string;
+  parent_id: string;
+  amount_cents: number;
+  currency: string;
+  reason: string;
+  failed_at: string | null;
+}
+
+export interface RefundFailures {
+  count: number;
+  rows: RefundFailure[];
+  truncated: boolean;
+}
+
+export interface OpenDispute {
+  dispute_id: string;
+  payment_id: string | null;
+  amount_cents: number;
+  currency: string;
+  reason: string;
+  status: string;
+  evidence_due_by: string | null;
+  opened_at: string | null;
+}
+
+/** Open Stripe disputes (chargebacks); answered in the academy's Stripe dashboard. */
+export interface OpenDisputes {
+  count: number;
+  rows: OpenDispute[];
+  truncated: boolean;
 }
 
 export type BillingHealthState = "blocked" | "attention" | "ok";
@@ -2821,21 +2950,42 @@ export function sendAdminInvoice(invoiceId: string): Promise<SendInvoiceResponse
   );
 }
 
-export function chargeAdminInvoiceAutopay(
+// A "Charge now" whose outcome we never learned (timeout, network drop, 5xx,
+// or a 409 whose detail starts with charge_in_progress) keeps its request id for this window, so a retry
+// replays the first charge on the server instead of making a second one.
+const CHARGE_RETRY_WINDOW_MS = 10 * 60 * 1000;
+const unconfirmedCharges = new Map<string, { requestId: string; at: number }>();
+
+export async function chargeAdminInvoiceAutopay(
   invoiceId: string,
   reason?: string,
 ): Promise<ChargeAutopayResponse> {
-  // request_id makes a retried submit the same charge rather than a second one.
-  return apiFetch<ChargeAutopayResponse>(
-    `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/charge-autopay`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        ...(reason ? { reason } : {}),
-        request_id: crypto.randomUUID(),
-      }),
-    },
-  );
+  const now = Date.now();
+  const prior = unconfirmedCharges.get(invoiceId);
+  const requestId =
+    prior && now - prior.at < CHARGE_RETRY_WINDOW_MS ? prior.requestId : crypto.randomUUID();
+  unconfirmedCharges.set(invoiceId, { requestId, at: prior?.requestId === requestId ? prior.at : now });
+  try {
+    const result = await apiFetch<ChargeAutopayResponse>(
+      `/admin/billing/invoices/${encodeURIComponent(invoiceId)}/charge-autopay`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...(reason ? { reason } : {}),
+          request_id: requestId,
+        }),
+      },
+    );
+    unconfirmedCharges.delete(invoiceId);
+    return result;
+  } catch (error) {
+    const { status, message } = (error ?? {}) as { status?: unknown; message?: unknown };
+    const stillRunning = status === 409 && String(message ?? "").startsWith("charge_in_progress");
+    if (typeof status === "number" && status >= 400 && status < 500 && !stillRunning) {
+      unconfirmedCharges.delete(invoiceId);
+    }
+    throw error;
+  }
 }
 
 // Issue #511: one key per payment INTENT, minted when the admin starts filling
@@ -2909,9 +3059,6 @@ export function generateAdminInvoiceArtifact(
 // Finance
 // ---------------------------------------------------------------------------
 
-export function listPayouts(): Promise<AdminPayoutList> {
-  return apiFetch<AdminPayoutList>("/admin/finance/payouts", { method: "GET" });
-}
 
 export function listExpenses(): Promise<AdminExpenseList> {
   return apiFetch<AdminExpenseList>("/admin/finance/expenses", { method: "GET" });
@@ -2994,6 +3141,7 @@ export interface AdminProjectedIncomeResponse {
   enrollment_count: number;
   autopay_enrollment_count: number;
   manual_enrollment_count: number;
+  not_billed_enrollment_count?: number;
   by_session: AdminProjectedIncomeSessionRow[];
   empty: boolean;
 }
@@ -3100,9 +3248,9 @@ export function getInquiryConversion(range: {
 }
 
 /**
- * People reports (roadmap L5b): students whose lifecycle is at_risk (no
- * attendance in the last three class dates), by class and by the class's
- * coach. No money.
+ * People reports (roadmap L5b): students whose lifecycle is at_risk (their
+ * last two recorded marks on a live seat are both absences), by class and by
+ * the class's coach. No money.
  */
 export interface AdminClassRiskRow {
   session_id: string;
@@ -3129,6 +3277,8 @@ export interface AdminAttendanceRiskResponse {
   by_coach: AdminCoachRiskRow[];
   students: number;
   at_risk: number;
+  /** Not-billed students, left out of the counts above. */
+  not_billed?: number;
 }
 
 export function getAttendanceRisk(): Promise<AdminAttendanceRiskResponse> {
@@ -3249,12 +3399,15 @@ export interface CampaignAudiencePayload {
   type: "academy" | "session";
   role?: "parent" | "coach";
   session_id?: string;
+  /** #1030: several sessions in one campaign, deduplicated server-side. */
+  session_ids?: string[];
 }
 
 export interface SendEmailCampaignRequest {
   subject: string;
   body: string;
   audience: CampaignAudiencePayload;
+  expected_audience_fingerprint?: string;
 }
 
 export interface SendEmailCampaignResponse {
@@ -3262,6 +3415,42 @@ export interface SendEmailCampaignResponse {
   total_recipients: number;
   sent_count: number;
   failed_count: number;
+  /** True when the send went to the background queue (counts are still zero). */
+  queued?: boolean;
+}
+
+/** #1029: the audience the send would reach, resolved server-side; emails nobody. */
+export interface EmailCampaignPreviewRecipient {
+  display_name: string | null;
+  email: string;
+  is_family_contact: boolean;
+}
+
+/** #1031: who the send would skip, with the rule that skips them. */
+export interface EmailCampaignPreviewExclusion {
+  display_name: string | null;
+  email: string | null;
+  reason: "missing_email" | "duplicate_address" | "suppressed" | "unsubscribed" | string;
+  is_family_contact: boolean;
+}
+
+export interface EmailCampaignPreview {
+  recipient_count: number;
+  family_count: number;
+  contact_count: number;
+  recipients: EmailCampaignPreviewRecipient[];
+  exclusions: EmailCampaignPreviewExclusion[];
+  /** Sent back with the campaign; a changed audience is refused with 409. */
+  audience_fingerprint: string;
+}
+
+export function previewEmailCampaign(
+  audience: CampaignAudiencePayload,
+): Promise<EmailCampaignPreview> {
+  return apiFetch<EmailCampaignPreview>("/admin/campaigns/preview", {
+    method: "POST",
+    body: JSON.stringify({ audience }),
+  });
 }
 
 export function sendEmailCampaign(
@@ -3384,8 +3573,11 @@ export function rejectAdminRegistration(
 
 /** Issue #776: pending counts for every admin inbox queue, keyed by queue id. */
 export interface AdminInboxCounts {
+  /** Decision queues only; absences and cancellations are never counted. */
   counts: Record<string, number>;
   total: number;
+  /** Queue ids whose count could not be read (L2 A0-5). */
+  unavailable?: string[];
 }
 
 export function getAdminInboxCounts(): Promise<AdminInboxCounts> {
@@ -3581,6 +3773,10 @@ export interface TrialRequestAdminRow {
   outcome?: "came" | "no_show" | null;
   outcome_by?: string | null;
   outcome_at?: string | null;
+  /** L9: a website guest's trial (no account): CRM contact, parent name and player age. */
+  contact_id?: string | null;
+  guest_name?: string | null;
+  guest_age?: string | null;
 }
 
 export interface TrialRequestsAdminResponse {
@@ -3689,6 +3885,14 @@ export function denyTrial(
   return apiFetch<TrialRequestAdminRow>(
     `/admin/self-service/trials/${encodeURIComponent(requestId)}/deny`,
     { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+/** L9: cancel one approved website guest booking; it returns to pending. */
+export function cancelGuestTrialBooking(requestId: string): Promise<void> {
+  return apiFetch<void>(
+    `/admin/self-service/trials/${encodeURIComponent(requestId)}/cancel-booking`,
+    { method: "POST" },
   );
 }
 
@@ -4017,6 +4221,13 @@ export function getCoachDigestLog(limit = 20): Promise<CoachDigestLogView> {
   });
 }
 
+/** L11: suppressed addresses and failed campaign sends, this academy's people only. */
+export type DeliveryProblemsView = components["schemas"]["DeliveryProblemsView"];
+
+export function getDeliveryProblems(): Promise<DeliveryProblemsView> {
+  return apiFetch<DeliveryProblemsView>("/admin/comms/delivery-problems", { method: "GET" });
+}
+
 /** AI usage meter (plan 2026-11-04 Phase 2, slice A3): this month's drafts against the plan's cap. */
 export interface AiUsage {
   used: number;
@@ -4305,6 +4516,10 @@ export interface AdminPublicPageSettingsView {
   theme: "floodlit" | "daylight" | "showcase";
   /** "Only N seats left" shows at or below this many seats (0 hides it, max 20). */
   seats_left_threshold: number;
+  /** L9: families may book a trial date themselves. Optional for older fixtures. */
+  self_book_trials?: boolean;
+  /** L9: website guests per class date (1 to 5). */
+  trial_guest_cap?: number;
   /** `https://<host>/` of the academy's own domain; null when none is on record. Read-only. */
   public_url: string | null;
 }
@@ -4442,6 +4657,30 @@ export function updateAdminAiWinBackPersonalised(enabled: boolean): Promise<{ en
   });
 }
 
+/** L13: the owner's AI limits (owner-only, 404 otherwise). */
+export interface AdminAiControlsView {
+  monthly_call_cap: number;
+  /** feature -> calls per day; an absent feature has no daily limit. */
+  daily_call_caps: Record<string, number>;
+  coach_review_narratives: boolean;
+  features: string[];
+}
+
+export type UpdateAdminAiControlsRequest = Omit<AdminAiControlsView, "features">;
+
+export function getAdminAiControls(): Promise<AdminAiControlsView> {
+  return apiFetch<AdminAiControlsView>("/admin/ai/controls", { method: "GET" });
+}
+
+export function updateAdminAiControls(
+  payload: UpdateAdminAiControlsRequest
+): Promise<AdminAiControlsView> {
+  return apiFetch<AdminAiControlsView>("/admin/ai/controls", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 /** B1: whether AI drafting is on for this academy (V2_AI_ENABLED + key). */
 export function fetchAdminAiStatus(): Promise<{ enabled: boolean }> {
   return apiFetch<{ enabled: boolean }>("/admin/ai/status", { method: "GET" });
@@ -4493,5 +4732,36 @@ export function previewAdminNurtureStep(step: NurtureStepInput): Promise<Nurture
   return apiFetch<NurturePreview>("/admin/crm/nurture-sequence/preview", {
     method: "POST",
     body: JSON.stringify(step),
+  });
+}
+
+/** The last month the academy calls final ("YYYY-MM"), or null (never published). */
+export interface SchedulePublishView {
+  published_through: string | null;
+}
+
+export function getSchedulePublish(): Promise<SchedulePublishView> {
+  return apiFetch<SchedulePublishView>("/admin/schedule/publish", { method: "GET" });
+}
+
+export function setSchedulePublish(publishedThrough: string | null): Promise<SchedulePublishView> {
+  return apiFetch<SchedulePublishView>("/admin/schedule/publish", {
+    method: "PUT",
+    body: JSON.stringify({ published_through: publishedThrough }),
+  });
+}
+
+/** The Month dates AI helper's suggestion; nothing is saved until the admin calls the dates off. */
+export interface NoClassSuggestion {
+  no_class: { date: string; reason: string }[];
+  notes: string;
+  prompt_version: string;
+}
+
+export function suggestNoClassDates(input: { text: string; classDates: string[] }): Promise<NoClassSuggestion> {
+  return apiFetch<NoClassSuggestion>("/admin/schedule/suggest-no-class-dates", {
+    method: "POST",
+    body: JSON.stringify({ text: input.text, class_dates: input.classDates }),
+    dedup: false,
   });
 }

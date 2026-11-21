@@ -15,6 +15,13 @@ class SkillProgressNotFound(DomainError):
     status_code = 404
 
 
+class PassNeedsLeadCoach(DomainError):
+    """A LEAD_COACH skill can only be passed by a lead coach, admin or owner."""
+
+    code = "StudentProgress.PassNeedsLeadCoach"
+    status_code = 403
+
+
 class SkillAlreadyPassed(DomainError):
     code = "StudentProgress.SkillAlreadyPassed"
     status_code = 409
@@ -80,4 +87,21 @@ class LevelUpInProgress(DomainError):
     """An approval already holds the student's level-up, so undo would race it."""
 
     code = "StudentProgress.LevelUpInProgress"
+    status_code = 409
+
+
+class StudentNotFound(DomainError):
+    """No student with this id in the academy: placement writes nothing."""
+
+    code = "StudentProgress.StudentNotFound"
+    status_code = 404
+
+
+class CertificateNotFound(DomainError):
+    code = "StudentProgress.CertificateNotFound"
+    status_code = 404
+
+
+class CertificateAlreadyRevoked(DomainError):
+    code = "StudentProgress.CertificateAlreadyRevoked"
     status_code = 409
