@@ -54,15 +54,21 @@ export function BiometricLock() {
       if (busyRef.current || !isBiometricLockOn()) return;
       if (document.visibilityState === "hidden") {
         hiddenAt.current = Date.now();
-        // Cover right away so the app switcher snapshot shows no family data.
+        // Cover right away so the app switcher snapshot shows no family data, and
+        // hide the page behind it from screen readers and focus (the CSS rule).
+        document.documentElement.setAttribute("data-app-lock", "");
         setCovered(true);
         return;
       }
       const away = hiddenAt.current === null ? 0 : Date.now() - hiddenAt.current;
       hiddenAt.current = null;
-      if (away >= LOCK_AFTER_MS) needsUnlock.current = true;
+      // A clock set backwards (negative away) locks too.
+      if (away >= LOCK_AFTER_MS || away < 0) needsUnlock.current = true;
       if (needsUnlock.current) void unlock();
-      else setCovered(false);
+      else {
+        document.documentElement.removeAttribute("data-app-lock");
+        setCovered(false);
+      }
     }
 
     document.addEventListener("visibilitychange", onVisibility);
