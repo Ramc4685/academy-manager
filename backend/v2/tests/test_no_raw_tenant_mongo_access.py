@@ -233,6 +233,16 @@ APPROVED_COMPOSITION_EXCEPTIONS = {
 # say what it reads and why the read cannot be tenant-scoped. Admission bar:
 # read-only, operator-facing, never reachable from a tenant request path.
 APPROVED_CROSS_TENANT_EXCEPTIONS = {
+    Path("contexts/billing/infrastructure/mongo_payment_intent_directory.py"): (
+        "By design cross-tenant and read-only (#982): a dispute on a platform "
+        "charge carries no Connect account and no metadata, so in multi_academy "
+        "mode ingest finds its academy from the ledger payment that recorded the "
+        "disputed PaymentIntent, before any tenant scope exists. It reads only "
+        "academy_id and stripe_account_id of ledger_payments rows matching the "
+        "exact stripe_payment_intent_id (index from migration 0245), at most "
+        "three, and writes nothing. Only the signature-verified Stripe webhook "
+        "reaches it."
+    ),
     Path("contexts/billing/infrastructure/mongo_connected_account_directory.py"): (
         "By design cross-tenant and read-only: Stripe delivers each direct-charge "
         "academy's payment events as Connect events to the one boot-academy "

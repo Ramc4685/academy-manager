@@ -232,6 +232,18 @@ class AccountAcademyResolver(Protocol):
     ) -> bool: ...
 
 
+class PaymentIntentOwnerDirectory(Protocol):
+    """Cross-academy lookup of which academies recorded a PaymentIntent (#982).
+
+    Backed by the read-only ``MongoPaymentIntentDirectory``; ingest uses it to
+    attribute a platform dispute, which carries no other tenant marker.
+    """
+
+    async def owners_of_payment_intent(
+        self, stripe_payment_intent_id: str
+    ) -> list[tuple[str, str | None]]: ...
+
+
 #: ``async (event_type, event) -> None``: the platform billing context's
 #: ``SyncTenantSubscriptionFromStripe``. An academy paying CourtMastr for a
 #: plan (``metadata.source == "platform_plan"``) is not parent tuition, so
@@ -268,6 +280,7 @@ class HandleWebhookEvent:
         enrollment_identity: EnrollmentBillingIdentityRepository | None = None,
         invoice_processing: StripeInvoiceProcessingRepository | None = None,
         connected_accounts: AccountAcademyResolver | None = None,
+        payment_intent_owners: PaymentIntentOwnerDirectory | None = None,
         payment_disputes: PaymentDisputeRepository | None = None,
         platform_plan_sync: PlatformPlanSync | None = None,
         family_autopay: FamilyAutopayPauser | None = None,
@@ -293,6 +306,7 @@ class HandleWebhookEvent:
         self._enrollment_identity = enrollment_identity
         self._invoice_processing = invoice_processing
         self._connected_accounts = connected_accounts
+        self._payment_intent_owners = payment_intent_owners
         self._platform_plan_sync = platform_plan_sync
         self._family_autopay = family_autopay
         self._expected_livemode = expected_livemode
@@ -464,10 +478,64 @@ class HandleWebhookEvent:
             return metadata_academy, None, QUARANTINE_UNATTRIBUTED
         if self._tenancy_mode == "single_academy":
             return self._academy_id, None, QUARANTINE_UNATTRIBUTED
+        if str(event.get("type") or "").startswith("charge.dispute."):
+            return await self._attribute_platform_dispute(event)
         return (
             UNATTRIBUTED_QUARANTINE_ACADEMY,
             "no metadata.academy_id and no Connect account on the event; "
             f"refusing to attribute to boot academy {self._academy_id} in multi_academy mode",
+            QUARANTINE_UNATTRIBUTED,
+        )
+
+    async def _attribute_platform_dispute(
+        self, event: dict[str, Any]
+    ) -> tuple[str, str | None, str]:
+        """A platform dispute in ``multi_academy`` mode (#982).
+
+        Stripe puts no metadata on a dispute, so the disputed PaymentIntent is
+        the only tenant link: exactly one academy's ledger payment recording it
+        ON THE PLATFORM (no ``stripe_account_id``) owns the dispute. Anything
+        else (no match, several academies, or a row on a connected account,
+        whose disputes arrive as Connect events instead) stays quarantined as
+        unattributed. A failed lookup raises ``WebhookAccountLookupUnavailable``
+        (503) so nothing is stored and Stripe redelivers.
+        """
+        obj = event.get("data", {}).get("object", {})
+        intent = obj.get("payment_intent") if isinstance(obj, dict) else None
+        if isinstance(intent, dict):
+            intent = intent.get("id")
+        intent_id = str(intent or "")
+        refusal = "no payment_intent on the dispute"
+        if intent_id and self._payment_intent_owners is not None:
+            try:
+                owners = await self._payment_intent_owners.owners_of_payment_intent(intent_id)
+            except Exception as exc:
+                log.warning(
+                    "stripe_webhook_ingest_dispute_owner_lookup_failed pi=%s err=%s",
+                    intent_id,
+                    exc,
+                )
+                raise WebhookAccountLookupUnavailable(
+                    "Disputed PaymentIntent owner lookup failed; retry the delivery."
+                ) from exc
+            academies = {academy for academy, _account in owners if academy}
+            if len(owners) == 1 and len(academies) == 1 and owners[0][1] is None:
+                return owners[0][0], None, QUARANTINE_UNATTRIBUTED
+            if not academies:
+                refusal = f"no ledger payment records payment_intent={intent_id}"
+            elif len(academies) > 1 or len(owners) > 1:
+                refusal = f"several ledger payments record payment_intent={intent_id}"
+            else:
+                refusal = (
+                    f"the ledger payment for payment_intent={intent_id} is on connected "
+                    f"account {owners[0][1]}, but the dispute arrived as a platform event"
+                )
+        elif intent_id:
+            refusal = "no payment-intent directory wired"
+        return (
+            UNATTRIBUTED_QUARANTINE_ACADEMY,
+            f"platform dispute with no tenant marker ({refusal}); refusing to attribute "
+            f"to boot academy {self._academy_id} in multi_academy mode",
             QUARANTINE_UNATTRIBUTED,
         )
 

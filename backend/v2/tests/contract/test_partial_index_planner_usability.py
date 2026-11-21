@@ -111,6 +111,13 @@ HOT_LOOKUPS: list[tuple[str, dict[str, Any], str]] = [
         {"academy_id": "acad_0", "digest_id": "dg"},
         "parent_report_card_send_id_per_academy_uq",
     ),
+    # #982: ingest attributes a platform dispute by its PaymentIntent, across
+    # academies, before any tenant scope (0245).
+    (
+        "ledger_payments",
+        {"stripe_payment_intent_id": "pi"},
+        "ledger_payment_intent_directory_lookup",
+    ),
     # CreateContact's idempotent-return read after a dedupe collision (0192).
     (
         "crm_contacts",

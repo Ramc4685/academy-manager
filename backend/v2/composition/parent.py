@@ -133,6 +133,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_re
 from backend.v2.contexts.billing.infrastructure.mongo_payment_dispute_repo import (
     MongoPaymentDisputeRepository,
 )
+from backend.v2.contexts.billing.infrastructure.mongo_payment_intent_directory import (
+    MongoPaymentIntentDirectory,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import (
     MongoPaymentRepository,
 )
@@ -712,6 +715,7 @@ def compose_parent_webhook_handler(
             academy_id,
             directory=MongoConnectedAccountDirectory(db),
         ),
+        payment_intent_owners=MongoPaymentIntentDirectory(db),
         payment_disputes=MongoPaymentDisputeRepository(db),
         platform_plan_sync=compose_platform_plan_sync(db, stripe=stripe).execute,
         family_autopay=compose_system_family_autopay_pause(db),
@@ -886,6 +890,7 @@ def compose_parent(
             academy_id,
             directory=MongoConnectedAccountDirectory(db),
         ),
+        payment_intent_owners=MongoPaymentIntentDirectory(db),
         payment_disputes=MongoPaymentDisputeRepository(db),
         platform_plan_sync=compose_platform_plan_sync(db, stripe=stripe).execute,
         family_autopay=compose_system_family_autopay_pause(db),
