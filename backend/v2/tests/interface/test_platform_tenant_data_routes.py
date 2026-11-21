@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
+import secrets
 import zipfile
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -12,6 +14,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.v2.contexts.platform.application.use_cases import (
+    tenant_data_offboarding as offboarding,
+)
 from backend.v2.contexts.platform.application.use_cases.tenant_data_offboarding import (
     TenantDataOffboardingService,
 )
@@ -139,7 +144,79 @@ def test_platform_admin_downloads_a_zip_of_only_that_tenant() -> None:
     with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
         body = zf.read("collections/students.jsonl").decode()
     assert '"s1"' in body and '"s2"' not in body
-    assert [a.action for a in audits] == ["tenant.data_exported"]
+    assert [a.action for a in audits] == ["tenant.data_export_started", "tenant.data_exported"]
+    assert "x-export-sha256" not in response.headers
+    sha = audits[1].after_snapshot["archive_sha256"]  # type: ignore[index]
+    assert sha == hashlib.sha256(response.content).hexdigest()
+
+
+class _CountingStore(FakeTenantDataStore):
+    """Counts documents handed out, to prove the export streams lazily."""
+
+    def __init__(self, rows: dict[str, list[dict[str, Any]]]) -> None:
+        super().__init__(rows)
+        self.served = 0
+
+    async def documents(self, collection: str, academy_id: str) -> AsyncIterator[dict[str, Any]]:
+        async for row in super().documents(collection, academy_id):
+            self.served += 1
+            yield row
+
+
+def _offboarding(store: FakeTenantDataStore) -> tuple[TenantDataOffboardingService, list[Any]]:
+    repo = FakeTenantRepository()
+    repo.tenants["acad_live"] = _tenant("acad_live", "active")
+    audits: list[RecordPlatformAuditEventCommand] = []
+
+    async def _record(command: RecordPlatformAuditEventCommand) -> object:
+        audits.append(command)
+        return None
+
+    service = TenantDataOffboardingService(
+        tenants=repo, data=store, audit_recorder=_record, clock=lambda: _NOW
+    )
+    return service, audits
+
+
+@pytest.mark.asyncio
+async def test_export_yields_bytes_before_reading_the_whole_tenant(monkeypatch) -> None:
+    monkeypatch.setattr(offboarding, "EXPORT_CHUNK_BYTES", 1024)
+    rows = [
+        {"academy_id": "acad_live", "student_id": f"s{i}", "pad": secrets.token_hex(100)}
+        for i in range(500)
+    ]
+    store = _CountingStore({"students": rows})
+    service, audits = _offboarding(store)
+
+    export = await service.export_tenant("acad_live", actor_user_id="platform-admin", reason="r")
+    assert [a.action for a in audits] == ["tenant.data_export_started"]
+    first = await anext(export.chunks)
+
+    assert first
+    assert store.served < len(rows)
+    assert [a.action for a in audits] == ["tenant.data_export_started"]
+    rest = b"".join([chunk async for chunk in export.chunks])
+    with zipfile.ZipFile(io.BytesIO(first + rest)) as zf:
+        assert len(zf.read("collections/students.jsonl").splitlines()) == len(rows)
+    assert [a.action for a in audits][-1] == "tenant.data_exported"
+
+
+@pytest.mark.asyncio
+async def test_a_foreign_row_aborts_the_export_without_a_completion_audit() -> None:
+    class _LeakyStore(FakeTenantDataStore):
+        async def documents(
+            self, collection: str, academy_id: str
+        ) -> AsyncIterator[dict[str, Any]]:
+            yield {"academy_id": academy_id, "student_id": "s1"}
+            yield {"academy_id": "acad_other", "student_id": "s9"}
+
+    service, audits = _offboarding(_LeakyStore({"students": []}))
+    export = await service.export_tenant("acad_live", actor_user_id="platform-admin", reason="r")
+
+    with pytest.raises(RuntimeError, match="foreign row"):
+        async for _ in export.chunks:
+            pass
+    assert [a.action for a in audits] == ["tenant.data_export_started"]
 
 
 def test_export_requires_a_reason() -> None:

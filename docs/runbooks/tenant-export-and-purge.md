@@ -11,7 +11,7 @@ written the call fails: tenant data never leaves without a trail.
 
 | Endpoint | What it does |
 | --- | --- |
-| `POST /api/v2/platform/tenants/{academy_id}/data-export` with `{"reason": "..."}` | Returns a zip of every tenant-scoped collection filtered by `academy_id`. Audit action `tenant.data_exported` (reason, archive SHA-256, byte size, per-collection counts). Allowed for any tenant status. |
+| `POST /api/v2/platform/tenants/{academy_id}/data-export` with `{"reason": "..."}` | Streams a zip of every tenant-scoped collection filtered by `academy_id`. Audit action `tenant.data_export_started` is written before the first byte (refused if it cannot be), and `tenant.data_exported` (reason, archive SHA-256, byte size, per-collection counts) after the last. There is no SHA-256 response header; read it from the completion audit row. Allowed for any tenant status. |
 | `POST /api/v2/platform/tenants/{academy_id}/purge-dry-run` | Counts per collection what a purge would delete and what it would keep. **Deletes nothing.** Refused with `409 Platform.TenantInvalidTransition` unless the tenant is `cancelled`. Audit action `tenant.purge_dry_run` (counts and `confirm_token`, `executed: false`). |
 
 The platform tenant page (`/platform/tenants/{academyId}`) has a "Data export
@@ -32,9 +32,14 @@ Relaxed Extended JSON keeps ObjectIds, dates and decimals typed, so
 `mongoimport --mode=insert` (or `bson.json_util.loads`) restores the rows.
 Only collections with at least one row for the academy get a file.
 
-The zip is built in memory. That is fine for today's academies (thousands of
-rows); if an academy grows past a few hundred MB of data, move the export to
-a background job that writes to object storage before using it.
+The zip is streamed: the server holds one document and a small output buffer
+at a time, so memory stays flat however large the academy is. A started audit
+row with no `tenant.data_exported` row after it means the download was cut
+off (client gone, proxy idle timeout, a foreign row refused mid-stream); that
+partial zip has no central directory and will not open, so run the export
+again. Very large academies may still hit a proxy idle or request timeout;
+if that happens, move the export to a background job that writes to object
+storage.
 
 ### Which collections are covered
 
@@ -73,7 +78,8 @@ writing. The agent or operator never runs it on their own initiative.
    notice period the platform agreement promises.
 2. **Export first.** Run the data export, check `manifest.json` counts, and
    store the zip where the owner decides (the academy may be owed a copy).
-   Record the archive SHA-256 from the audit row.
+   Record the archive SHA-256 from the `tenant.data_exported` audit row and
+   check it against the downloaded file (`shasum -a 256 <file>`).
 3. **Retention check.** Invoices, payments and ledger rows can carry legal
    retention duties. The owner decides whether financial collections are
    purged now or kept until the retention period ends. Write the decision
