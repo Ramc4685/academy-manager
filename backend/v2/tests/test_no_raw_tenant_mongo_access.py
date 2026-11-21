@@ -103,6 +103,8 @@ TENANT_OWNED_COLLECTIONS = {
     # explicitly rather than through the ContextVar (#880)
     "coach_digest_sends",
     "parent_digest_sends",
+    "parent_win_sends",
+    "parent_report_card_sends",
     # People CRM leads shared with the public tenant page (migration 0192)
     "crm_contacts",
     # Public tenant page programs (migration 0194, Lane B1)

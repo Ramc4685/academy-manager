@@ -101,6 +101,16 @@ HOT_LOOKUPS: list[tuple[str, dict[str, Any], str]] = [
         {"academy_id": "acad_0", "digest_id": "dg"},
         "parent_digest_send_id_per_academy_uq",
     ),
+    (
+        "parent_win_sends",
+        {"academy_id": "acad_0", "digest_id": "dg"},
+        "parent_win_send_id_per_academy_uq",
+    ),
+    (
+        "parent_report_card_sends",
+        {"academy_id": "acad_0", "digest_id": "dg"},
+        "parent_report_card_send_id_per_academy_uq",
+    ),
     # CreateContact's idempotent-return read after a dedupe collision (0192).
     (
         "crm_contacts",
