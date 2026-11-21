@@ -33,7 +33,13 @@ const INPUT = "rounded-md border border-neutral-300 px-2 py-1.5 text-sm focus:bo
  * APPENDS levels after the program's last one (it never replaces); the copy
  * says so, and an unwanted save is undone with Delete level in the editor.
  */
-export function SkillLadderDraftCard({ programId }: { programId: string }) {
+export function SkillLadderDraftCard({
+  programId,
+  lastLevelSequence,
+}: {
+  programId: string;
+  lastLevelSequence: number;
+}) {
   const queryClient = useQueryClient();
   const status = useQuery({ queryKey: queryKeys.admin.aiStatus(), queryFn: getAiStatus });
 
