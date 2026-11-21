@@ -412,7 +412,9 @@ class CreateSession:
             timezone=timezone,
         )
         if existing is not None:
-            raise DuplicateSessionSeries(_duplicate_series_message(existing))
+            raise DuplicateSessionSeries(
+                _duplicate_series_message(existing), session_id=existing.session_id
+            )
 
 
 class EditSessionCommand(BaseModel):
@@ -569,7 +571,9 @@ class EditSession:
                 exclude_session_id=current.session_id,
             )
             if existing is not None:
-                raise DuplicateSessionSeries(_duplicate_series_message(existing))
+                raise DuplicateSessionSeries(
+                    _duplicate_series_message(existing), session_id=existing.session_id
+                )
             start_at, end_at = _representative_series_datetimes(
                 days_of_week=list(recurring_values["days_of_week"] or []),
                 start_time=str(recurring_values["start_time"] or "00:00"),

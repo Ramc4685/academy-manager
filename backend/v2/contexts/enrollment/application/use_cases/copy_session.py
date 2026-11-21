@@ -25,7 +25,11 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     EditRosterAdd,
     EditRosterAddCommand,
 )
-from backend.v2.contexts.enrollment.domain.errors import CopyRosterRefused, SessionNotFound
+from backend.v2.contexts.enrollment.domain.errors import (
+    CopyRosterRefused,
+    DuplicateSessionSeries,
+    SessionNotFound,
+)
 from backend.v2.contexts.enrollment.domain.models import Session
 from backend.v2.shared.http.errors import DomainError
 
@@ -100,25 +104,34 @@ class CopySession:
                     "Change the days or times to copy the students: the copy meets when "
                     "this class does, so they'd be enrolled and billed twice."
                 )
-        session = await self._create_session.execute(
-            CreateSessionCommand(
-                coach_id=source.coach_id,
-                title=cmd.title,
-                location=source.location,
-                # Recurring classes re-derive their instants from the schedule;
-                # a one-off class keeps the source's instants.
-                start_at=None if source.days_of_week else source.start_at,
-                end_at=None if source.days_of_week else source.end_at,
-                capacity=source.capacity,
-                amount_cents=source.amount_cents if cmd.include_price else None,
-                days_of_week=days,
-                start_time=start_time,
-                end_time=end_time,
-                timezone=source.timezone,
-                assistant_coach_ids=list(source.assistant_coach_ids),
-                **{f: getattr(source, f) for f in COMMUNICATION_PACK_FIELDS},
+        try:
+            session = await self._create_session.execute(
+                CreateSessionCommand(
+                    coach_id=source.coach_id,
+                    title=cmd.title,
+                    location=source.location,
+                    # Recurring classes re-derive their instants from the schedule;
+                    # a one-off class keeps the source's instants.
+                    start_at=None if source.days_of_week else source.start_at,
+                    end_at=None if source.days_of_week else source.end_at,
+                    capacity=source.capacity,
+                    amount_cents=source.amount_cents if cmd.include_price else None,
+                    days_of_week=days,
+                    start_time=start_time,
+                    end_time=end_time,
+                    timezone=source.timezone,
+                    assistant_coach_ids=list(source.assistant_coach_ids),
+                    **{f: getattr(source, f) for f in COMMUNICATION_PACK_FIELDS},
+                )
             )
-        )
+        except DuplicateSessionSeries as exc:
+            # Usually a retry whose first attempt already made the copy (the
+            # response was lost). Say so and hand back the class that exists.
+            raise DuplicateSessionSeries(
+                "A class with this coach, location and schedule already exists, so no copy "
+                "was made. If you just copied this class, the copy is already there.",
+                **exc.details,
+            ) from exc
         roster = await self._copy_roster(source, session, cmd) if cmd.copy_roster else []
         return CopySessionResult(session=session, roster=roster)
 

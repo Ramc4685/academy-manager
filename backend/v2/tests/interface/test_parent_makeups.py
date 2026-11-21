@@ -10,6 +10,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
+    IneligibleMakeupView,
+    MakeupCandidatesResult,
     MakeupCandidateView,
     MakeupTargetView,
     SubmitMakeupRequestCommand,
@@ -59,8 +61,10 @@ class _ParentUseCases:
         targets_result: list[MakeupTargetView] | None = None,
         candidates_result: list[MakeupCandidateView] | None = None,
         candidates_enabled: bool = True,
+        ineligible_result: list[IneligibleMakeupView] | None = None,
     ) -> None:
         self._candidates_result = candidates_result or []
+        self._ineligible_result = ineligible_result or []
         self._candidates_enabled = candidates_enabled
         self.candidates_calls: list[str] = []
         self._submit_result = submit_result or _makeup_request()
@@ -110,6 +114,15 @@ class _ParentUseCases:
         async def execute(self, parent_id: str) -> list[MakeupCandidateView]:
             self._outer.candidates_calls.append(parent_id)
             return self._outer._candidates_result
+
+        async def scan(self, parent_id: str) -> MakeupCandidatesResult:
+            rows = await self.execute(parent_id)
+            return MakeupCandidatesResult(
+                makeups_enabled=True,
+                requires_notice=True,
+                candidates=rows,
+                ineligible=self._outer._ineligible_result,
+            )
 
     @property
     def list_makeup_candidates(self):
@@ -389,6 +402,32 @@ def test_makeup_candidates_are_scoped_to_the_signed_in_parent() -> None:
     ]
     assert rows[0]["student_name"] == "Ana Fake" and rows[0]["has_notice"] is False
     assert use_cases.candidates_calls == ["parent-1"]
+
+
+def test_makeup_candidates_carry_policy_and_ineligible_reasons() -> None:
+    """#1041: the panel needs the policy and why a flagged class can't be made up."""
+    use_cases = _ParentUseCases(
+        ineligible_result=[
+            IneligibleMakeupView(
+                student_id="student-1",
+                student_name="Ana Fake",
+                occurrence_id="occ-late",
+                class_title="Tuesday Beginners",
+                start_at=datetime(2026, 7, 7, 23, 0, tzinfo=UTC),
+                reason="The absence notice came in after the notice window.",
+            )
+        ]
+    )
+    with _make_client(use_cases=use_cases) as client:
+        response = client.get("/api/v2/parent/makeups/candidates")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["makeups_enabled"] is True and body["requires_notice"] is True
+    assert [(r["student_name"], r["occurrence_id"]) for r in body["ineligible"]] == [
+        ("Ana Fake", "occ-late")
+    ]
+    assert "notice window" in body["ineligible"][0]["reason"]
 
 
 def test_wrong_persona_cannot_list_makeup_candidates() -> None:

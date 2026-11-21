@@ -251,6 +251,56 @@ async def test_makeups_turned_off_lists_nothing() -> None:
     assert rows == []
 
 
+@pytest.mark.asyncio
+async def test_flagged_classes_that_fail_say_why_and_unflagged_ones_stay_quiet() -> None:
+    """#1041: a late notice, an open request and an attended class the parent
+    flagged come back with a reason; a plain attended class is not listed."""
+    makeups = _FakeMakeups()
+    await makeups.add(_request("kid-a", status="pending"))
+    result = await _use_case(
+        students=[_student("kid-a")],
+        enrollments=[_enrollment(student_id="kid-a")],
+        occurrences=[
+            _missed("occ-missed", 2),
+            _missed("occ-late", 3),
+            _missed("occ-present", 4),
+            _missed("occ-quiet", 5),
+        ],
+        notices=_FakeNotices(
+            [
+                _absence_notice(student_id="kid-a", occurrence_id="occ-missed"),
+                _absence_notice(
+                    student_id="kid-a", occurrence_id="occ-late", window_met=False
+                ).model_copy(update={"notice_id": "n-late"}),
+                _absence_notice(student_id="kid-a", occurrence_id="occ-present").model_copy(
+                    update={"notice_id": "n-present"}
+                ),
+            ]
+        ),
+        makeups=makeups,
+        policy=_policy(requires_notice=True),
+        present=[("occ-present", "kid-a"), ("occ-quiet", "kid-a")],
+    ).scan("parent-1")
+
+    assert result.makeups_enabled is True and result.requires_notice is True
+    assert result.candidates == []
+    reasons = {r.occurrence_id: r.reason for r in result.ineligible}
+    assert set(reasons) == {"occ-missed", "occ-late", "occ-present"}
+    assert "already open" in reasons["occ-missed"]
+    assert "on-time notice" in reasons["occ-late"]
+    assert "present" in reasons["occ-present"]
+
+
+@pytest.mark.asyncio
+async def test_scan_reports_makeups_turned_off() -> None:
+    policy = _policy(requires_notice=False).model_copy(update={"can_request_makeup": False})
+    result = await _use_case(
+        students=[_student()], enrollments=[_enrollment()], occurrences=[_missed()], policy=policy
+    ).scan("parent-1")
+    assert result.makeups_enabled is False
+    assert result.candidates == [] and result.ineligible == []
+
+
 def _policy(*, requires_notice: bool) -> ParentSelfServicePolicy:
     return ParentSelfServicePolicy.default("acad").model_copy(
         update={"makeup_requires_notice": requires_notice}

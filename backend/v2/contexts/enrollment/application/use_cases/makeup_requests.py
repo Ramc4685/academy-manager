@@ -149,6 +149,7 @@ class MakeupEligibility:
                 "the academy cancelled this class; it is credited, not made up",
                 occurrence_id=missed.occurrence_id,
                 student_id=student_id,
+                reason="cancelled",
             )
         if not await self._enrollments.is_active_or_paused(missed.session_id, student_id):
             raise StudentNotEnrolledInSession(
@@ -165,12 +166,14 @@ class MakeupEligibility:
                     "a window-met absence notice is required before requesting a makeup",
                     occurrence_id=missed.occurrence_id,
                     student_id=student_id,
+                    reason="notice_required",
                 )
         if await self._attendance.was_present(missed.occurrence_id, student_id):
             raise MakeupNotEligible(
                 "the student was marked present for this class",
                 occurrence_id=missed.occurrence_id,
                 student_id=student_id,
+                reason="present",
             )
         expires_at = missed.start_at + timedelta(days=policy.makeup_expiry_days)
         if now > expires_at:
@@ -265,6 +268,43 @@ class MakeupCandidateView(BaseModel):
     expires_at: datetime
 
 
+class IneligibleMakeupView(BaseModel):
+    """A class the parent flagged (absence notice or open request) that a
+    makeup request would be refused for now, with the reason in plain words."""
+
+    model_config = {"frozen": True}
+
+    student_id: str
+    student_name: str
+    occurrence_id: str
+    class_title: str
+    start_at: datetime
+    reason: str
+
+
+class MakeupCandidatesResult(BaseModel):
+    model_config = {"frozen": True}
+
+    makeups_enabled: bool
+    requires_notice: bool
+    candidates: list[MakeupCandidateView]
+    ineligible: list[IneligibleMakeupView]
+
+
+#: Why a flagged class can't be made up. Only refusals a parent can act on or
+#: would otherwise wonder about; a class the child attended without a notice
+#: is not listed at all.
+_INELIGIBLE_REASONS: dict[str, str] = {
+    "open_request": "A makeup request for this class is already open.",
+    "late_notice": (
+        "The absence notice came in after the notice window, and this academy "
+        "needs an on-time notice for a makeup."
+    ),
+    "present": "Marked present for this class.",
+    "cancelled": "The academy cancelled this class, so it is credited instead of made up.",
+}
+
+
 class CandidateStudentQuery(Protocol):
     async def list_for_parent(self, parent_id: str) -> list[Student]: ...
 
@@ -313,12 +353,22 @@ class ListMakeupCandidates:
         )
 
     async def execute(self, parent_id: str) -> list[MakeupCandidateView]:
+        return (await self.scan(parent_id)).candidates
+
+    async def scan(self, parent_id: str) -> MakeupCandidatesResult:
+        """Candidates plus the flagged classes that fail, and why (#1041)."""
         policy = await self._policies.get_or_default()
         if not policy.can_request_makeup:
-            return []
+            return MakeupCandidatesResult(
+                makeups_enabled=False,
+                requires_notice=policy.makeup_requires_notice,
+                candidates=[],
+                ineligible=[],
+            )
         now = self._now()
         window_start = now - timedelta(days=policy.makeup_expiry_days)
         found: list[tuple[Student, SessionOccurrence, datetime]] = []
+        refused: list[tuple[Student, SessionOccurrence, str]] = []
         for student in await self._students.list_for_parent(parent_id):
             for enrollment in await self._enrollments.active_or_paused_for_student(
                 student.student_id
@@ -331,13 +381,14 @@ class ListMakeupCandidates:
                         expires_at = await self._eligibility.check(
                             policy=policy, student_id=student.student_id, missed=missed, now=now
                         )
-                    except DomainError:
+                    except DomainError as exc:
+                        reason = await self._flagged_reason(exc, student.student_id, missed)
+                        if reason is not None:
+                            refused.append((student, missed, reason))
                         continue
                     found.append((student, missed, expires_at))
-        titles = {
-            s.session_id: s.title
-            for s in await self._sessions.get_many(sorted({m.session_id for _, m, _ in found}))
-        }
+        session_ids = {m.session_id for _, m, _ in found} | {m.session_id for _, m, _ in refused}
+        titles = {s.session_id: s.title for s in await self._sessions.get_many(sorted(session_ids))}
         rows: list[MakeupCandidateView] = []
         for student, missed, expires_at in found:
             notice = await self._notices.get_for_occurrence_and_student(
@@ -356,7 +407,38 @@ class ListMakeupCandidates:
                     expires_at=expires_at,
                 )
             )
-        return rows
+        return MakeupCandidatesResult(
+            makeups_enabled=True,
+            requires_notice=policy.makeup_requires_notice,
+            candidates=rows,
+            ineligible=[
+                IneligibleMakeupView(
+                    student_id=student.student_id,
+                    student_name=student.full_name,
+                    occurrence_id=missed.occurrence_id,
+                    class_title=titles.get(missed.session_id, "Class"),
+                    start_at=missed.start_at,
+                    reason=_INELIGIBLE_REASONS[reason],
+                )
+                for student, missed, reason in refused
+            ],
+        )
+
+    async def _flagged_reason(
+        self, exc: DomainError, student_id: str, missed: SessionOccurrence
+    ) -> str | None:
+        """The reason key for a refused class the parent flagged, else None."""
+        if isinstance(exc, DuplicateMakeupRequest):
+            return "open_request"
+        reason = exc.details.get("reason")
+        if reason not in ("notice_required", "present", "cancelled"):
+            return None
+        notice = await self._notices.get_for_occurrence_and_student(
+            missed.occurrence_id, student_id
+        )
+        if notice is None:
+            return None
+        return "late_notice" if reason == "notice_required" else str(reason)
 
 
 class ListParentMakeups:

@@ -17,6 +17,11 @@ import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
 import { SKILL_STATUS_LABELS } from "@/components/skills/SkillStatusChip";
 import { RetryButton } from "@/components/coach/RetryButton";
 import { TapSkillsWorkspace } from "@/components/coach/TapSkillsWorkspace";
+import {
+  selectedStudentIds,
+  toggleStudent,
+  type SkillGroupSelection,
+} from "@/lib/coach/skill-group-selection";
 
 const STATUS_OPTIONS: SkillStatus[] = [
   "INTRODUCED",
@@ -167,8 +172,9 @@ function BySkillWorkspace({
 }) {
   const [skillId, setSkillId] = useState(groups[0]?.skill_id ?? "");
   const [status, setStatus] = useState<SkillStatus>("PRACTICING");
-  const [selected, setSelected] = useState<string[]>([]);
+  const [selection, setSelection] = useState<SkillGroupSelection>(null);
   const group = groups.find((item) => item.skill_id === skillId) ?? groups[0];
+  const selected = group ? selectedStudentIds(selection, group.student_ids) : [];
   const sampleSkill = useMemo(
     () => students.flatMap((student) => student.skills).find((skill) => skill.skill_id === group?.skill_id),
     [group?.skill_id, students],
@@ -182,7 +188,7 @@ function BySkillWorkspace({
           skill_id: group.skill_id,
           program_id: sampleSkill?.program_id ?? "",
           level_id: sampleSkill?.level_id ?? "",
-          student_ids: selected.length > 0 ? selected : group.student_ids,
+          student_ids: selected,
           status,
         },
         date,
@@ -202,7 +208,7 @@ function BySkillWorkspace({
           value={group.skill_id}
           onChange={(event) => {
             setSkillId(event.target.value);
-            setSelected([]);
+            setSelection(null);
           }}
           className="mt-1 h-11 min-h-touch w-full rounded-md border border-neutral-300 bg-white px-3"
         >
@@ -219,15 +225,12 @@ function BySkillWorkspace({
           <label key={studentId} className="flex min-h-touch items-center gap-3 text-sm">
             <input
               type="checkbox"
-              checked={selected.length === 0 || selected.includes(studentId)}
-              onChange={(event) => {
-                const base = selected.length === 0 ? group.student_ids : selected;
-                setSelected(
-                  event.target.checked
-                    ? Array.from(new Set([...base, studentId]))
-                    : base.filter((item) => item !== studentId),
-                );
-              }}
+              checked={selected.includes(studentId)}
+              onChange={(event) =>
+                setSelection(
+                  toggleStudent(selection, group.student_ids, studentId, event.target.checked),
+                )
+              }
             />
             {group.student_names[index] ?? studentId}
           </label>
@@ -260,11 +263,18 @@ function BySkillWorkspace({
         </p>
       )}
       <button
-        disabled={mutation.isPending || !sampleSkill?.program_id || !sampleSkill?.level_id}
+        disabled={
+          mutation.isPending ||
+          selected.length === 0 ||
+          !sampleSkill?.program_id ||
+          !sampleSkill?.level_id
+        }
         onClick={() => mutation.mutate()}
         className="min-h-touch w-full rounded-md bg-blue-600 px-3 text-sm font-semibold text-white disabled:opacity-50"
       >
-        {mutation.isPending ? "Saving..." : "Update selected students"}
+        {mutation.isPending
+          ? "Saving..."
+          : `Update ${selected.length} selected student${selected.length === 1 ? "" : "s"}`}
       </button>
     </div>
   );

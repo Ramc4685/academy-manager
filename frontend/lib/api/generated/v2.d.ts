@@ -15529,6 +15529,24 @@ export interface components {
             /** Rows Total */
             rows_total: number;
         };
+        /** IneligibleMakeupView */
+        IneligibleMakeupView: {
+            /** Class Title */
+            class_title: string;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Reason */
+            reason: string;
+            /**
+             * Start At
+             * Format: date-time
+             */
+            start_at: string;
+            /** Student Id */
+            student_id: string;
+            /** Student Name */
+            student_name: string;
+        };
         /** InquiryConversionView */
         InquiryConversionView: {
             /**
@@ -16029,6 +16047,21 @@ export interface components {
         MakeupCandidatesResponse: {
             /** Candidates */
             candidates: components["schemas"]["MakeupCandidateView"][];
+            /**
+             * Ineligible
+             * @default []
+             */
+            ineligible: components["schemas"]["IneligibleMakeupView"][];
+            /**
+             * Makeups Enabled
+             * @default true
+             */
+            makeups_enabled: boolean;
+            /**
+             * Requires Notice
+             * @default false
+             */
+            requires_notice: boolean;
         };
         /** MakeupRequestAdminRow */
         MakeupRequestAdminRow: {
