@@ -99,6 +99,18 @@ class MongoLevelDeletionStore(TenantScopedRepository):
                     per_level[skill_level[skill_id]] = per_level.get(skill_level[skill_id], 0) + n
                 for level_id, n in per_level.items():
                     add(level_id, label, n)
+            # A recap lists taught skills in an array (practised ones are a subset);
+            # count each recap once per level, however many of its skills it taught.
+            recap_counts: dict[str, int] = {}
+            async for recap in self._db["class_recaps"].find(
+                self._scoped({"taught_skill_ids": {"$in": list(skill_level)}}),
+                {"taught_skill_ids": 1},
+            ):
+                taught = recap.get("taught_skill_ids") or []
+                for lid in {skill_level[sid] for sid in taught if sid in skill_level}:
+                    recap_counts[lid] = recap_counts.get(lid, 0) + 1
+            for lid, n in recap_counts.items():
+                usage[lid]["class_recaps"] = n
         return usage
 
     async def delete_level(self, level_id: str) -> dict[str, int]:

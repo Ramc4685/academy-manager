@@ -127,6 +127,8 @@ async def test_unused_level_is_deleted_with_its_skills_criteria_and_an_audit_row
         ("coach_skill_notes", {"skill_id": "lv-7-s1"}, "coach_skill_notes"),
         ("external_lesson_refs", {"skill_id": "lv-7-s0"}, "external_refs"),
         ("lesson_cards", {"level_id": "lv-7", "skill_ids": ["lv-7-s0"]}, "lesson_cards"),
+        # One recap teaching two of the level's skills counts once.
+        ("class_recaps", {"taught_skill_ids": ["lv-7-s0", "lv-7-s1", "other"]}, "class_recaps"),
     ],
 )
 @pytest.mark.asyncio
