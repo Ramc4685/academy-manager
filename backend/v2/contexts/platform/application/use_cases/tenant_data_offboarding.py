@@ -29,8 +29,8 @@ audit row cannot be written the export is refused, because tenant data must
 never leave without a trail. The export writes ``tenant.data_export_started``
 before its first byte and ``tenant.data_exported`` (archive SHA-256, size,
 counts) after its last; a started row with no exported row is an export that
-was cut off, and its truncated zip has no central directory, so it fails to
-open rather than passing for a complete copy.
+was cut off; its truncated zip has no central directory, so ordinary zip
+tools refuse it rather than pass it off as a complete copy.
 """
 
 from __future__ import annotations

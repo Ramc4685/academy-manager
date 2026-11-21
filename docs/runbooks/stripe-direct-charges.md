@@ -279,4 +279,7 @@ whose `account` contradicts the payment's recorded account is quarantined.
   recording it. Exactly one row, on the platform (no `stripe_account_id`):
   stored under that academy and processed. No row, rows in several academies,
   or a row on a connected account: quarantined as unattributed with the reason
-  in `error_message`. A lookup error answers 503 and stores nothing.
+  in `error_message`. A lookup error answers 503 and stores nothing. Only
+  `ledger_payments.stripe_payment_intent_id` is searched: a dispute on an
+  older `payments`-only charge, or one recorded under the legacy
+  `stripe_payment_intent` field, is still quarantined for manual handling.

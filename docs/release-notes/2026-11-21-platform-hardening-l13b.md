@@ -4,7 +4,7 @@ PR: TBD
 
 ## What changed
 - #849 regression: evening-win and report-card sends (`parent_win_sends`, `parent_report_card_sends`) had a global unique index on `digest_id` again, so one academy's claim id could block another's. Migration 0244 swaps each for a unique `(academy_id, digest_id)` index. A new guard test replays every migration and fails on any unique index on a tenant collection that leaves out `academy_id`, unless it is on a short, reasoned allowlist.
-- #983: the webhook handler's invoice and subscription hydration, admin "reconcile Stripe billing" and the billing reconciliation report now read Stripe objects on the academy's connected account. They used to read on the platform account, where direct charges don't exist (`resource_missing`).
+- #983: the webhook handler's invoice and subscription hydration, admin "reconcile Stripe billing" and the billing reconciliation report now read Stripe objects on the academy's connected account. They used to read on the platform account, where direct charges don't exist (`resource_missing`). Admin reconcile also records that account on the customer, subscription and payment rows it writes, so a later refund routes to the right account, and it now acts on the request's academy instead of the boot-time default.
 - #982: in `multi_academy` mode a dispute on a platform-account charge is now attributed by its PaymentIntent. When exactly one academy holds a platform ledger payment for that PaymentIntent, the dispute goes to that academy. Anything else (no row, two academies, a connected-account row) is quarantined with a reason instead of guessed. Migration 0245 adds the lookup index.
 - A newly bootstrapped academy's first user gets the `owner` role alongside `admin`. Re-running bootstrap never grants it to an existing membership.
 - Scheduled per-academy jobs skip `suspended` and `cancelled` tenants. The Stripe webhook drain and PaymentIntent reconcile still run for them, so money already in flight settles.
@@ -26,7 +26,7 @@ PR: TBD
       noAcademy: db[c].countDocuments({ digest_id: { $gt: "" }, academy_id: { $in: [null, ""] } }),
     };
   }
-  out.drift = db.getCollectionNames().flatMap((c) =>
+  out.drift = db.getCollectionInfos({ type: "collection" }).map((i) => i.name).flatMap((c) =>
     db[c].getIndexes()
       .filter((i) => i.unique && i.name !== "_id_" && !("academy_id" in i.key))
       .map((i) => `${c}.${i.name}`));
@@ -39,4 +39,5 @@ PR: TBD
 ## Risk / rollback
 - Risk: a dispute that used to be guessed onto an academy now waits in quarantine when attribution is ambiguous. That is intended; the runbook says how to re-drive it.
 - Risk: an integration reading `X-Export-Sha256` would break. None is known.
+- Risk (owner decision): while an academy is suspended it gets no invoice generation, dunning, late fees, waitlist offers, campaigns or digests. Monthly invoice generation catches up only one prior period, so a suspension longer than a month skips those months' invoices for good, and dunning resumes on invoices that aged during the suspension.
 - Rollback: revert the PR. 0244's per-academy indexes are stricter than nothing and safe to leave in place. If the old global index is truly needed, recreate it by hand after checking for cross-academy `digest_id` collisions. The 0245 index is harmless to keep.

@@ -36,8 +36,9 @@ The zip is streamed: the server holds one document and a small output buffer
 at a time, so memory stays flat however large the academy is. A started audit
 row with no `tenant.data_exported` row after it means the download was cut
 off (client gone, proxy idle timeout, a foreign row refused mid-stream); that
-partial zip has no central directory and will not open, so run the export
-again. Very large academies may still hit a proxy idle or request timeout;
+partial zip has no central directory: `unzip` refuses it, but streaming
+extractors may pull some entries out. Never treat it as a complete copy; run
+the export again. Very large academies may still hit a proxy idle or request timeout;
 if that happens, move the export to a background job that writes to object
 storage.
 
