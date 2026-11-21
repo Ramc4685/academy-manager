@@ -1,6 +1,6 @@
 # platform-hardening-l13b
 
-PR: TBD
+PR: #1224
 
 ## What changed
 - #849 regression: evening-win and report-card sends (`parent_win_sends`, `parent_report_card_sends`) had a global unique index on `digest_id` again, so one academy's claim id could block another's. Migration 0244 swaps each for a unique `(academy_id, digest_id)` index. A new guard test replays every migration and fails on any unique index on a tenant collection that leaves out `academy_id`, unless it is on a short, reasoned allowlist.
