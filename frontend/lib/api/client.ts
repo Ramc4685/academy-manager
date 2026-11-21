@@ -284,10 +284,12 @@ async function parseResponse<T>(res: Response, request: ApiRequestRef): Promise<
   // res.json() — that throws SyntaxError on an empty string. Treat
   // empty bodies as null, which is what callers expect for mutations
   // that don't return a payload (pause/resume/cancel/refund, etc.).
-  const isEmpty = res.status === 204 || res.headers.get("content-length") === "0";
+  // The BFF proxy drops content-length (#1067), so read the text and parse
+  // only a non-empty body instead of trusting the header.
   let body: unknown = null;
-  if (!isEmpty) {
-    body = contentType.includes("application/json") ? await res.json() : await res.text();
+  if (res.status !== 204) {
+    const text = await res.text();
+    if (text) body = contentType.includes("application/json") ? JSON.parse(text) : text;
   }
   if (!res.ok) throw makeError(res.status, body, readRequestId(res.headers), request);
   return body as T;

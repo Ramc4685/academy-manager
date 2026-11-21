@@ -2317,6 +2317,25 @@ def test_copy_class_refuses_an_identical_series(admin_client):
     assert r.status_code == 409
 
 
+def test_copy_class_retry_names_the_copy_it_already_made(admin_client):
+    """A retry after a lost response must not be a dead-end 409: it says the
+    copy exists and returns its id so the dialog can open it."""
+    source = _recurring_class(admin_client)
+    body = {"title": "Thursday Beginners", "days_of_week": ["Thu"]}
+    first = admin_client.post(f"/api/v2/admin/sessions/{source}/copy", json=body)
+    assert first.status_code == 200, first.text
+
+    retry = admin_client.post(f"/api/v2/admin/sessions/{source}/copy", json=body)
+
+    assert retry.status_code == 409
+    error = retry.json()["error"]
+    assert error["code"] == "Enrollment.DuplicateSessionSeries"
+    assert "already there" in error["message"]
+    assert error["details"]["session_id"] == first.json()["session"]["session_id"]
+    sessions = admin_client.seed["sessions"].sessions.values()
+    assert sum(1 for s in sessions if s.title == "Thursday Beginners") == 1
+
+
 def test_copy_class_with_roster_on_the_same_schedule_is_a_409(admin_client):
     source = _recurring_class(admin_client)
     r = admin_client.post(

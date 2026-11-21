@@ -41,6 +41,16 @@ class StripeIdempotencyConflict(DomainError):
     status_code = 409
 
 
+class BillingSettingsUnavailable(DomainError):
+    """The billing settings could not be read before a charge. Nothing was sent
+    to Stripe: without the settings the ACH discount is unknown, so charging
+    could bill full price. An admin gets a 503 and retries; the dunning worker
+    parks the rung as a technical failure."""
+
+    code = "Billing.SettingsUnavailable"
+    status_code = 503
+
+
 class PaymentNotFound(DomainError):
     code = "Billing.PaymentNotFound"
     status_code = 404

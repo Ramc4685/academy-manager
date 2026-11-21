@@ -242,8 +242,8 @@ async def copy_session(
                 actor_id=claims.user_id,
             )
         )
-    except DuplicateSessionSeries as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # DuplicateSessionSeries goes to the shared DomainError handler (409) so its
+    # session_id detail reaches the dialog's "Open the existing class" link.
     except AcademyTimezoneUnset as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except CopyRosterRefused as exc:

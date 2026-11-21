@@ -70,8 +70,22 @@ class MakeupCandidateView(BaseModel):
     expires_at: datetime
 
 
+class IneligibleMakeupView(BaseModel):
+    student_id: str
+    student_name: str
+    occurrence_id: str
+    class_title: str
+    start_at: datetime
+    reason: str
+
+
 class MakeupCandidatesResponse(BaseModel):
     candidates: list[MakeupCandidateView]
+    # #1041: the policy the list was built under, and the flagged classes
+    # (absence notice or open request) that can't be made up, with why.
+    makeups_enabled: bool = True
+    requires_notice: bool = False
+    ineligible: list[IneligibleMakeupView] = []
 
 
 class MakeupTargetsResponse(BaseModel):
@@ -137,9 +151,12 @@ async def list_makeup_candidates(
     makeup request for now, under the academy's current policy."""
     if use_cases.list_makeup_candidates is None:
         raise HTTPException(status_code=503, detail="Makeup candidates are not available.")
-    rows = await use_cases.list_makeup_candidates.execute(claims.user_id)
+    result = await use_cases.list_makeup_candidates.scan(claims.user_id)
     return MakeupCandidatesResponse(
-        candidates=[MakeupCandidateView(**r.model_dump()) for r in rows]
+        candidates=[MakeupCandidateView(**r.model_dump()) for r in result.candidates],
+        makeups_enabled=result.makeups_enabled,
+        requires_notice=result.requires_notice,
+        ineligible=[IneligibleMakeupView(**r.model_dump()) for r in result.ineligible],
     )
 
 
