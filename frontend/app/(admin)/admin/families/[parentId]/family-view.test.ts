@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   autopayToggle,
+  chargeFailureMessage,
   currentPeriod,
   defaultDueDate,
   enrollmentOptions,
@@ -328,3 +329,30 @@ describe("refunds (#929)", () => {
     expect(refundableCents(invoice({ refunded_cents: 9000 }))).toBe(0);
   });
 });
+
+describe("chargeFailureMessage", () => {
+  const base = { invoice_id: "inv-1", status: "open", balance_due_cents: 6000, requires_action: false };
+
+  it("says nothing on success", () => {
+    expect(chargeFailureMessage({ ...base, success: true, decline_code: null })).toBeNull();
+  });
+
+  it("does not call an unreachable Stripe a card decline", () => {
+    const message = chargeFailureMessage({ ...base, success: false, decline_code: "stripe_unavailable" });
+    expect(message).toContain("Couldn't reach Stripe, try again");
+    expect(message).not.toMatch(/declin/i);
+  });
+
+  it("describes a real bank decline in plain words", () => {
+    expect(chargeFailureMessage({ ...base, success: false, decline_code: "card_declined" })).toBe(
+      "The bank declined this card.",
+    );
+  });
+
+  it("explains a 3DS prompt", () => {
+    expect(
+      chargeFailureMessage({ ...base, success: false, requires_action: true, decline_code: null }),
+    ).toMatch(/confirm this payment/);
+  });
+});
+

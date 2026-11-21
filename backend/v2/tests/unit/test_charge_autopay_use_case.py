@@ -24,7 +24,7 @@ from backend.v2.contexts.billing.application.use_cases.charge_invoice_via_autopa
 )
 from backend.v2.contexts.billing.domain.billing_settings import BillingSettings
 from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
-from backend.v2.contexts.billing.domain.errors import StripeUnavailable
+from backend.v2.contexts.billing.domain.errors import BillingSettingsUnavailable, StripeUnavailable
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
     LedgerAllocationResult,
@@ -750,6 +750,24 @@ async def test_unknown_payment_method_type_fails_safe_to_no_discount() -> None:
 
     assert repo.lines_by_invoice.get("inv-1", []) == []
     assert stripe.create_calls[0]["amount_cents"] == 10_000
+
+
+async def test_settings_read_failure_raises_settings_unavailable_without_charging() -> None:
+    """Admin Charge now got a bare 500 when the settings read failed; it is a
+    503-mapped domain error now, and still never reaches Stripe."""
+
+    class SettingsDown(FakeBillingSettingsRepo):
+        async def get(self) -> BillingSettings:
+            raise RuntimeError("mongo timeout")
+
+    repo = FakeLedgerRepo(invoices=[_invoice(status="open")])
+    stripe = FakeStripeSucceeds()
+    settings = SettingsDown(BillingSettings(academy_id="acad-1"))
+
+    with pytest.raises(BillingSettingsUnavailable):
+        await _uc(repo, stripe, settings=settings).execute("inv-1")
+
+    assert stripe.create_calls == []
 
 
 async def test_retrieve_payment_method_failure_parks_instead_of_charging_full_price() -> None:

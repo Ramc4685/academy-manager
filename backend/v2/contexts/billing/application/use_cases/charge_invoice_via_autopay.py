@@ -62,7 +62,11 @@ from backend.v2.contexts.billing.domain.dunning import (
     NO_SAVED_PAYMENT_METHOD,
     STRIPE_UNAVAILABLE,
 )
-from backend.v2.contexts.billing.domain.errors import StripeIdempotencyConflict, StripeUnavailable
+from backend.v2.contexts.billing.domain.errors import (
+    BillingSettingsUnavailable,
+    StripeIdempotencyConflict,
+    StripeUnavailable,
+)
 from backend.v2.contexts.billing.domain.fees import compute_ach_discount
 from backend.v2.contexts.billing.domain.ledger import (
     InvoiceLine,
@@ -935,10 +939,16 @@ class ChargeInvoiceViaAutopay:
         Raises StripeUnavailable when the discount could apply but the payment
         method cannot be read: charging then would drop the discount and bill
         full price, so the caller parks and retries. A settings read failure
-        propagates for the same reason (the worker's technical park)."""
+        raises BillingSettingsUnavailable for the same reason: the worker parks
+        it as a technical failure and an admin gets a 503, not a 500."""
         if self._settings is None or self._stripe is None:
             return None, None
-        settings = await self._settings.get()
+        try:
+            settings = await self._settings.get()
+        except Exception as exc:
+            raise BillingSettingsUnavailable(
+                "Couldn't read the billing settings, so the card was not charged. Try again."
+            ) from exc
         try:
             payment_method = await self._stripe.retrieve_payment_method(
                 payment_method_id, **on_account
