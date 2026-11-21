@@ -12,16 +12,21 @@ primary_region = "ord"
   FIREBASE_PROJECT_ID = "academy-courtmastr"
   V2_EMAIL_DELIVERY_ENABLED = "true"
   FRONTEND_URL = "https://academy.courtmastr.com"
-  CORS_ORIGINS = "https://academy.courtmastr.com,https://blno-academy.courtmastr.com"
+  CORS_ORIGINS = "https://academy.courtmastr.com,https://blno-academy.courtmastr.com,https://demo-academy.courtmastr.com"
   SCHEDULER_TZ = "America/Chicago"
   V2_ENV = "prod"
-  APP_TENANCY_MODE = "single_academy"
+  # Multi-academy: the request host picks the academy (docs/runbooks/enable-multi-academy.md).
+  APP_TENANCY_MODE = "multi_academy"
+  V2_SAAS_MODE = "true"
+  V2_PLATFORM_BASE_DOMAIN = "courtmastr.com"
+  # Recorded owner decision; SaaS mode refuses to boot without it.
+  V2_ALLOW_STATIC_TENANT_PARENT_WIRING = "true"
   PRIMARY_ACADEMY_ID = "acad_blno_badminton"
   # The one academy that charges on the PLATFORM Stripe account (BLNO owns it).
   # Every other academy must charge through its own connected account.
   # Changing this moves money: it needs a reviewed PR and an approved deploy.
   HOUSE_ACADEMY_ID = "acad_blno_badminton"
-  ENABLE_PLATFORM_ROUTES = "false"
+  ENABLE_PLATFORM_ROUTES = "true"
   # TODO(#779): both flags stay false; owner rollup and student login are parked future enhancements.
   ENABLE_OWNER_ROLE = "false"
   ENABLE_STUDENT_LOGIN = "false"

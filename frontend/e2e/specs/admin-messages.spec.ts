@@ -5,6 +5,7 @@ import {
   ADMIN_USER_A,
   fulfillJson,
   stubAcademy,
+  stubCampaignPreview,
   stubMe,
   stubMemberships,
 } from "../fixtures/saas-stubs";
@@ -88,6 +89,7 @@ async function stubMessagesPage(page: Page): Promise<{ readCalls: string[] }> {
   const readCalls: string[] = [];
 
   await stubMe(page, ADMIN_USER_A);
+  await stubCampaignPreview(page);
   await stubMemberships(page, [
     { academy_id: ACADEMY_A, academy_name: "Aces Academy", role: "admin" },
   ]);
@@ -400,5 +402,68 @@ test.describe("admin direct messages (#864)", () => {
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     );
     expect(overflow).toBeLessThanOrEqual(0);
+  });
+});
+
+test.describe("admin email campaign audience (#1029, #1030, #1031)", () => {
+  test("counts resolved recipients, not students, and sends several sessions as one", async ({
+    page,
+  }) => {
+    await page.setViewportSize(DESKTOP);
+    await stubMessagesPage(page);
+    await page.route("**/api/v2/admin/sessions*", (route) =>
+      fulfillJson(route, {
+        sessions: [
+          { session_id: "s1", title: "Beginners Tuesday", start_time: "17:00", enrolled_count: 8 },
+          { session_id: "s2", title: "Juniors Thursday", start_time: "18:00", enrolled_count: 5 },
+        ],
+      }),
+    );
+    const previews: string[][] = [];
+    await page.route("**/api/v2/admin/campaigns/preview", (route) => {
+      const ids = (route.request().postDataJSON() as { audience: { session_ids?: string[] } })
+        .audience.session_ids ?? [];
+      previews.push(ids);
+      const two = ids.length > 1;
+      return fulfillJson(route, {
+        recipient_count: two ? 10 : 7,
+        family_count: two ? 10 : 7,
+        contact_count: 0,
+        recipients: [{ display_name: "Dana Whitfield", email: "dana@example.test", is_family_contact: false }],
+        exclusions: [{ display_name: "Robin Hale", email: null, reason: "missing_email", is_family_contact: false }],
+        audience_fingerprint: two ? "fp-2" : "fp-1",
+      });
+    });
+    let sent: Record<string, unknown> | null = null;
+    await page.route("**/api/v2/admin/campaigns", (route) => {
+      sent = route.request().postDataJSON() as Record<string, unknown>;
+      return fulfillJson(route, { campaign_id: "c1", total_recipients: 10, sent_count: 10, failed_count: 0 }, 201);
+    });
+
+    await page.goto("/admin/messages#campaign");
+    const card = page.locator("#campaign");
+    await card.getByLabel("By session").check();
+    await card.getByLabel("Beginners Tuesday").check();
+    // 8 students but 7 families: the label is the resolved audience.
+    await expect(card.getByText("Audience: 7 email recipients on Beginners Tuesday (7 families).")).toBeVisible();
+
+    await card.getByLabel("Juniors Thursday").check();
+    await expect(card.getByTestId("campaign-selected-sessions")).toHaveText(
+      "Selected: Beginners Tuesday, Juniors Thursday",
+    );
+    await expect(card.getByText(/10 email recipients across 2 sessions/)).toBeVisible();
+
+    await card.getByLabel("Email subject").fill("Court change");
+    await card.getByLabel("Email body").fill("Court 3 on Tuesday.");
+    await card.getByRole("button", { name: "Send email" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("No email address on file")).toBeVisible();
+    await dialog.getByRole("button", { name: "Send email" }).click();
+
+    await expect.poll(() => sent).not.toBeNull();
+    expect(sent).toMatchObject({
+      audience: { type: "session", session_ids: ["s1", "s2"] },
+      expected_audience_fingerprint: "fp-2",
+    });
   });
 });

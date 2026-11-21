@@ -248,3 +248,28 @@ async def test_siblings_charged_on_one_day_get_one_pre_charge_notice() -> None:
 
     assert calls == [("inv-a", ("inv-a", "inv-b")), ("inv-c", ())]
     assert result.autopay_notified == 3
+
+
+@pytest.mark.asyncio
+async def test_zero_balance_waiver_on_autopay_is_emailed_not_noticed() -> None:
+    """#1035: autopay never charges a $0 balance, so a pre-charge notice
+    ("X will be charged") would be false. The waiver invoice is emailed."""
+    waived = _invoice("inv-waived", balance_due_cents=0).model_copy(
+        update={"subtotal_cents": 10_000, "discount_cents": 10_000}
+    )
+    sender = _RecordingSender()
+    notices: list[str] = []
+
+    async def notify(invoice_id: str, **_: object) -> None:
+        notices.append(invoice_id)
+
+    result = await SendGeneratedInvoices(
+        ledger=_FakeLedger([waived]),
+        autopay=_FakeAutopay({"enr-1": "active"}),
+        send=sender,
+        notify_autopay=notify,
+    ).execute("2026-09")
+
+    assert sender.sent == ["inv-waived"]
+    assert notices == []
+    assert (result.emailed, result.autopay_notified) == (1, 0)

@@ -24,10 +24,6 @@ _PUBLIC_WRITE_PATHS = {
     ("POST", "/api/v2/register/parent"),
     ("POST", "/api/v2/register/parent/verification-email"),
     ("POST", "/api/v2/parent/onboarding/start"),
-    # Unauthenticated one-time-token consume: token entropy makes brute force
-    # infeasible, but unlimited anonymous POSTs would let one client hammer
-    # Mongo and the Firebase Admin API (issue #546).
-    ("POST", "/api/v2/magic-link/consume"),
     # Anonymous "forgot password": mails a reset link; per-mailbox cooldown in
     # the use case, this caps one client spraying many addresses.
     ("POST", "/api/v2/password-reset"),

@@ -182,7 +182,12 @@ class EnrollmentWriter(Protocol):
 
     async def update_status(self, enrollment_id: str, status: str) -> None: ...
 
-    async def update_session(self, enrollment_id: str, session_id: str) -> None: ...
+    async def update_session(
+        self, enrollment_id: str, session_id: str, *, expected_session_id: str | None = None
+    ) -> None:
+        """With ``expected_session_id``, raises ``EnrollmentMovedConcurrently``
+        unless the row is still in that class."""
+        ...
 
     async def update_amount_cents(self, enrollment_id: str, amount_cents: int | None) -> None: ...
 

@@ -147,6 +147,17 @@ class OccurrenceAttendanceAdapter:
         return sum(1 for row in rows if row.status in _PRESENT_STATUSES)
 
 
+class StudentPresenceAdapter:
+    """``StudentPresenceQuery`` over coaching's attendance rows (makeup eligibility)."""
+
+    def __init__(self, attendance: MongoAttendanceRepository) -> None:
+        self._attendance = attendance
+
+    async def was_present(self, occurrence_id: str, student_id: str) -> bool:
+        row = await self._attendance.find_existing(occurrence_id, student_id)
+        return row is not None and row.status in _PRESENT_STATUSES
+
+
 def compose_apply_occurrence_cancellation(
     db: Any, *, clock: Callable[[], datetime] | None = None
 ) -> ApplyOccurrenceCancellation:

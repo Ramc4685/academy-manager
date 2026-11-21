@@ -32,6 +32,7 @@ import { statHint, statText } from "@/lib/ui/load-state";
 import { academyDateISO, academyMonthKey } from "@/lib/format/academy-time";
 
 import { MyFollowUpsCard } from "@/components/admin/my-follow-ups-card";
+import { ClassReportHandoffsCard } from "@/components/admin/ClassReportHandoffsCard";
 import { SetupChecklistCard } from "@/components/admin/setup-checklist-card";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { useAcademyTimezone } from "@/components/admin/use-academy-today";
@@ -177,6 +178,8 @@ export default function AdminDashboardPage() {
       {/* People CRM Phase 4a: the signed-in staff member's follow-ups that
           are overdue or due today. */}
       <MyFollowUpsCard />
+
+      {isOwner && <ClassReportHandoffsCard />}
 
       {/* KPI strip */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">

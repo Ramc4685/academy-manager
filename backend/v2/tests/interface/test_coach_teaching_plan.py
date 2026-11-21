@@ -79,11 +79,17 @@ class _FakeSkillLookup:
 
 
 class _FakeOccurrences:
-    def __init__(self, occurrences: list[object]) -> None:
+    """``execute`` is the coach's own classes; ``execute_for_academy`` is all of them."""
+
+    def __init__(self, occurrences: list[object], academy: list[object] | None = None) -> None:
         self._occurrences = occurrences
+        self._academy = academy if academy is not None else occurrences
 
     async def execute(self, coach_id: str, on_date: date) -> list[object]:
         return list(self._occurrences)
+
+    async def execute_for_academy(self, on_date: date) -> list[object]:
+        return list(self._academy)
 
 
 class _FakeRoster:
@@ -143,10 +149,10 @@ class _AssignedSessions:
         return coach_id == COACH_ID and session_id in self._assigned
 
 
-def _occurrence() -> SimpleNamespace:
+def _occurrence(occurrence_id: str = "occ-1", session_id: str = SESSION_ID) -> SimpleNamespace:
     return SimpleNamespace(
-        occurrence_id="occ-1",
-        session_id=SESSION_ID,
+        occurrence_id=occurrence_id,
+        session_id=session_id,
         title="U11 Beginners",
         location="Court 2",
         start_at=NOW,
@@ -155,7 +161,9 @@ def _occurrence() -> SimpleNamespace:
     )
 
 
-def _make_plan_use_case(*, occurrences: list[object]) -> GenerateDailyTeachingPlan:
+def _make_plan_use_case(
+    *, occurrences: list[object], academy_occurrences: list[object] | None = None
+) -> GenerateDailyTeachingPlan:
     teaching_focus = GetTeachingFocus(
         level_progress=_FakeLevelProgressRepo(
             [
@@ -175,7 +183,7 @@ def _make_plan_use_case(*, occurrences: list[object]) -> GenerateDailyTeachingPl
         skill_lookup=_FakeSkillLookup(),
     )
     return GenerateDailyTeachingPlan(
-        occurrences=_FakeOccurrences(occurrences),
+        occurrences=_FakeOccurrences(occurrences, academy_occurrences),
         get_roster=_FakeRoster(),
         teaching_focus=teaching_focus,
         lesson_cards=_FakeLessonCards(),
@@ -207,6 +215,7 @@ def _coach_use_cases(
     assigned: set[str],
     with_plan: bool = True,
     program_resolves: bool = True,
+    academy_occurrences: list[object] | None = None,
 ) -> CoachUseCases:
     use_cases = CoachUseCases(
         list_today=AsyncMock(),  # type: ignore[arg-type]
@@ -235,7 +244,9 @@ def _coach_use_cases(
     )
     use_cases.curriculum = _curriculum(program_resolves=program_resolves)  # type: ignore[assignment]
     if with_plan:
-        use_cases.generate_daily_teaching_plan = _make_plan_use_case(occurrences=occurrences)
+        use_cases.generate_daily_teaching_plan = _make_plan_use_case(
+            occurrences=occurrences, academy_occurrences=academy_occurrences
+        )
     return use_cases
 
 
@@ -247,12 +258,14 @@ def _build_app(
     authenticated: bool = True,
     with_plan: bool = True,
     program_resolves: bool = True,
+    academy_occurrences: list[object] | None = None,
 ) -> FastAPI:
     use_cases = _coach_use_cases(
         occurrences=occurrences if occurrences is not None else [_occurrence()],
         assigned=assigned if assigned is not None else {SESSION_ID},
         with_plan=with_plan,
         program_resolves=program_resolves,
+        academy_occurrences=academy_occurrences,
     )
 
     app = FastAPI()
@@ -325,6 +338,28 @@ def test_today_plan_empty_day_returns_no_sessions() -> None:
     resp = client.get(f"/api/v2/coach/today/plan?program_id={PROGRAM_ID}")
     assert resp.status_code == 200, resp.text
     assert resp.json()["sessions"] == []
+
+
+def _planned_occurrences(persona: str, *, own: list[object]) -> list[str]:
+    academy = [_occurrence("occ-1"), _occurrence("occ-2", "sess-other-coach")]
+    client = TestClient(_build_app(persona=persona, occurrences=own, academy_occurrences=academy))
+    resp = client.get(f"/api/v2/coach/today/plan?date=2026-10-01&program_id={PROGRAM_ID}")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["date"] == "2026-10-01"
+    return [s["occurrence_id"] for s in resp.json()["sessions"]]
+
+
+def test_today_plan_owner_with_no_classes_gets_the_academy_wide_plan() -> None:
+    # #1044: Admin coverage showed two classes on Today, then "No sessions today".
+    assert _planned_occurrences("owner", own=[]) == ["occ-1", "occ-2"]
+
+
+def test_today_plan_owner_coaching_one_class_still_sees_the_others() -> None:
+    assert _planned_occurrences("owner", own=[_occurrence("occ-1")]) == ["occ-1", "occ-2"]
+
+
+def test_today_plan_ordinary_coach_keeps_assignment_scope() -> None:
+    assert _planned_occurrences("coach", own=[_occurrence("occ-1")]) == ["occ-1"]
 
 
 def test_today_plan_no_pathway_marks_unconfigured() -> None:

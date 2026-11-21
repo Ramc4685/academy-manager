@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { CourtMastrLogo } from "@/components/ds/courtmastr-logo";
 import { brand, copyrightNotice } from "@/lib/brand";
 
 import styles from "@/app/landing.module.css";
@@ -28,15 +29,7 @@ export function PlatformLandingPage() {
     <div className={styles.page}>
       <header className={styles.topbar}>
         <div className={styles.brand}>
-          <div className={styles.logomark}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-              <path
-                d="M12 2 L8 8 L4 6 L8 12 L4 18 L8 16 L12 22 L16 16 L20 18 L16 12 L20 6 L16 8 Z"
-                fill="#facc15"
-              />
-              <circle cx="12" cy="12" r="2.4" fill="#fff" />
-            </svg>
-          </div>
+          <CourtMastrLogo size={36} />
           <div className={styles.brandText}>
             <span className={styles.b1}>{brand.productName}</span>
             <span className={styles.b2}>Academy - Operations</span>

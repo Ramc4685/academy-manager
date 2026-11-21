@@ -172,7 +172,7 @@ Still not switched on (see `scripts/ops/`):
   build and prints a `::notice::` with the state it built; setting the
   variable and redeploying is the whole switch. Query strings are stripped
   from event URLs, the Referer header and navigation/fetch breadcrumbs before
-  send (magic-link tokens, Firebase `oobCode`s and `?email=` live there).
+  send (unsubscribe tokens, Firebase `oobCode`s and `?email=` live there).
 - `SENTRY_AUTH_TOKEN` must be present as a repo secret for the release step
   to run; check the deploy workflow's "Sentry release" step is not skipped.
 

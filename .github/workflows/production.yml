@@ -1020,7 +1020,14 @@ jobs:
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '' }}
           NEXT_PUBLIC_APP_ENV: ${{ env.NEXT_PUBLIC_APP_ENV }}
           NEXT_PUBLIC_SENTRY_RELEASE: ${{ env.NEXT_PUBLIC_SENTRY_RELEASE }}
+          # Must equal the Fly secret V2_PROXY_SHARED_SECRET, or multi-academy mode refuses every request.
+          BFF_PROXY_SHARED_SECRET: ${{ secrets.BFF_PROXY_SHARED_SECRET }}
         run: |
+          if [ -z "${BFF_PROXY_SHARED_SECRET}" ]; then
+            echo "::error::BFF_PROXY_SHARED_SECRET is not set; multi-academy mode needs it on the Worker."
+            exit 1
+          fi
+          printf '%s' "${BFF_PROXY_SHARED_SECRET}" | pnpm exec wrangler secret put BFF_PROXY_SHARED_SECRET
           if [ -z "${NEXT_PUBLIC_SENTRY_DSN}" ]; then
             echo "::notice::NEXT_PUBLIC_SENTRY_DSN is not set; the frontend build ships without browser Sentry."
           else

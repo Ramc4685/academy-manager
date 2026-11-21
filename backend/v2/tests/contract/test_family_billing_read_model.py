@@ -680,3 +680,40 @@ async def test_family_credits_list_who_why_how_much_and_where_it_went(db, acad) 
             "applied_invoices": ["INV-3"],
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_pause_timeline_names_the_review_date_from_event_metadata(db, acad) -> None:
+    """#1052: the read model must project ``metadata``, or every pause reads "review required"."""
+    await _seed_family(db, acad)
+    await db["enrollment_events"].delete_many({"academy_id": acad})
+    await db["enrollment_events"].insert_many(
+        [
+            {
+                "academy_id": acad,
+                "event_id": "ev-review",
+                "event_type": "paused",
+                "enrollment_id": "e-hannah",
+                "student_id": "s-hannah",
+                "occurred_at": datetime(2026, 9, 4, 19, 59, tzinfo=UTC),
+                "metadata": {"review_on": "2026-10-15"},
+            },
+            {
+                "academy_id": acad,
+                "event_id": "ev-legacy",
+                "event_type": "paused",
+                "enrollment_id": "e-hannah",
+                "student_id": "s-hannah",
+                "occurred_at": datetime(2026, 8, 4, 19, 59, tzinfo=UTC),
+                "metadata": "legacy string, not a dict",
+            },
+        ]
+    )
+
+    view = await _read_model(db).build("p-1")
+
+    assert view is not None
+    summaries = [e["summary"] for e in view["timeline"] if e["code"] == "enrollment:paused"]
+    assert len(summaries) == 2
+    assert summaries[0].endswith("review Oct 15")
+    assert summaries[1].endswith("review required")

@@ -4388,6 +4388,73 @@
             "title": "Discount Cents",
             "type": "integer"
           },
+          "dispute_amount_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispute Amount Cents"
+          },
+          "dispute_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispute Id"
+          },
+          "dispute_outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispute Outcome"
+          },
+          "dispute_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispute Reason"
+          },
+          "dispute_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispute Status"
+          },
+          "disputed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disputed At"
+          },
           "enrollment_id": {
             "anyOf": [
               {
@@ -12325,6 +12392,113 @@
         "title": "BulkStatusBody",
         "type": "object"
       },
+      "BulkTransferEnrollmentsRequest": {
+        "description": "A0-8: move several roster rows to one class in one request.",
+        "properties": {
+          "effective_date": {
+            "format": "date",
+            "title": "Effective Date",
+            "type": "string"
+          },
+          "enrollment_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Enrollment Ids",
+            "type": "array"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "target_session_id": {
+            "title": "Target Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enrollment_ids",
+          "target_session_id",
+          "effective_date"
+        ],
+        "title": "BulkTransferEnrollmentsRequest",
+        "type": "object"
+      },
+      "BulkTransferEnrollmentsResponse": {
+        "properties": {
+          "failed_count": {
+            "title": "Failed Count",
+            "type": "integer"
+          },
+          "moved_count": {
+            "title": "Moved Count",
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/BulkTransferRowView"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results",
+          "moved_count",
+          "failed_count"
+        ],
+        "title": "BulkTransferEnrollmentsResponse",
+        "type": "object"
+      },
+      "BulkTransferRowView": {
+        "properties": {
+          "enrollment_id": {
+            "title": "Enrollment Id",
+            "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enrollment_id",
+          "ok"
+        ],
+        "title": "BulkTransferRowView",
+        "type": "object"
+      },
       "CalendarFeedLinkView": {
         "properties": {
           "url": {
@@ -12336,6 +12510,130 @@
           "url"
         ],
         "title": "CalendarFeedLinkView",
+        "type": "object"
+      },
+      "CampaignPreviewExclusion": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "is_family_contact": {
+            "default": false,
+            "title": "Is Family Contact",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "CampaignPreviewExclusion",
+        "type": "object"
+      },
+      "CampaignPreviewRecipient": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "is_family_contact": {
+            "default": false,
+            "title": "Is Family Contact",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "CampaignPreviewRecipient",
+        "type": "object"
+      },
+      "CampaignPreviewRequest": {
+        "properties": {
+          "audience": {
+            "$ref": "#/components/schemas/SendCampaignAudience"
+          }
+        },
+        "required": [
+          "audience"
+        ],
+        "title": "CampaignPreviewRequest",
+        "type": "object"
+      },
+      "CampaignPreviewResponse": {
+        "description": "Resolved audience before a send (#1029): unique addresses, and the\nfamilies and opted-in contacts they belong to. Never an enrollment count.",
+        "properties": {
+          "audience_fingerprint": {
+            "default": "",
+            "title": "Audience Fingerprint",
+            "type": "string"
+          },
+          "contact_count": {
+            "title": "Contact Count",
+            "type": "integer"
+          },
+          "exclusions": {
+            "items": {
+              "$ref": "#/components/schemas/CampaignPreviewExclusion"
+            },
+            "title": "Exclusions",
+            "type": "array"
+          },
+          "family_count": {
+            "title": "Family Count",
+            "type": "integer"
+          },
+          "recipient_count": {
+            "title": "Recipient Count",
+            "type": "integer"
+          },
+          "recipients": {
+            "items": {
+              "$ref": "#/components/schemas/CampaignPreviewRecipient"
+            },
+            "title": "Recipients",
+            "type": "array"
+          }
+        },
+        "required": [
+          "recipient_count",
+          "family_count",
+          "contact_count"
+        ],
+        "title": "CampaignPreviewResponse",
         "type": "object"
       },
       "CancelAccountDeletionPayload": {
@@ -12684,6 +12982,80 @@
         "title": "CheckoutStatusResponse",
         "type": "object"
       },
+      "ChildClassRecapList": {
+        "properties": {
+          "recaps": {
+            "items": {
+              "$ref": "#/components/schemas/ChildClassRecapView"
+            },
+            "title": "Recaps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "recaps"
+        ],
+        "title": "ChildClassRecapList",
+        "type": "object"
+      },
+      "ChildClassRecapView": {
+        "properties": {
+          "class_starts_at": {
+            "format": "date-time",
+            "title": "Class Starts At",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "practiced_skills": {
+            "items": {
+              "$ref": "#/components/schemas/ChildRecapSkillView"
+            },
+            "title": "Practiced Skills",
+            "type": "array"
+          },
+          "taught_skills": {
+            "items": {
+              "$ref": "#/components/schemas/ChildRecapSkillView"
+            },
+            "title": "Taught Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "class_starts_at",
+          "taught_skills",
+          "practiced_skills"
+        ],
+        "title": "ChildClassRecapView",
+        "type": "object"
+      },
+      "ChildPracticeView": {
+        "properties": {
+          "skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 30,
+            "minItems": 1,
+            "title": "Skill Ids",
+            "type": "array"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "skill_ids"
+        ],
+        "title": "ChildPracticeView",
+        "type": "object"
+      },
       "ChildProfileView": {
         "properties": {
           "date_of_birth": {
@@ -12729,6 +13101,29 @@
           }
         },
         "title": "ChildProfileView",
+        "type": "object"
+      },
+      "ChildRecapSkillView": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_id",
+          "name",
+          "passed"
+        ],
+        "title": "ChildRecapSkillView",
         "type": "object"
       },
       "ClassPublicFieldsRequest": {
@@ -12941,6 +13336,246 @@
           "coach_display"
         ],
         "title": "ClassPublicProfileView",
+        "type": "object"
+      },
+      "ClassRecapView": {
+        "properties": {
+          "ai_enabled": {
+            "title": "Ai Enabled",
+            "type": "boolean"
+          },
+          "can_edit": {
+            "title": "Can Edit",
+            "type": "boolean"
+          },
+          "can_resolve": {
+            "title": "Can Resolve",
+            "type": "boolean"
+          },
+          "class_starts_at": {
+            "format": "date-time",
+            "title": "Class Starts At",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "practice": {
+            "items": {
+              "$ref": "#/components/schemas/ChildPracticeView"
+            },
+            "title": "Practice",
+            "type": "array"
+          },
+          "reports": {
+            "items": {
+              "$ref": "#/components/schemas/ClassReportView"
+            },
+            "title": "Reports",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "roster": {
+            "items": {
+              "$ref": "#/components/schemas/RecapRosterView"
+            },
+            "title": "Roster",
+            "type": "array"
+          },
+          "skill_options": {
+            "items": {
+              "$ref": "#/components/schemas/RecapSkillView"
+            },
+            "title": "Skill Options",
+            "type": "array"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "taught_skills": {
+            "items": {
+              "$ref": "#/components/schemas/RecapSkillView"
+            },
+            "title": "Taught Skills",
+            "type": "array"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "class_starts_at",
+          "can_edit",
+          "can_resolve",
+          "ai_enabled",
+          "revision",
+          "source",
+          "updated_at",
+          "taught_skills",
+          "practice",
+          "roster",
+          "skill_options",
+          "reports"
+        ],
+        "title": "ClassRecapView",
+        "type": "object"
+      },
+      "ClassReportHandoffList": {
+        "properties": {
+          "reports": {
+            "items": {
+              "$ref": "#/components/schemas/ClassReportHandoffView"
+            },
+            "title": "Reports",
+            "type": "array"
+          }
+        },
+        "required": [
+          "reports"
+        ],
+        "title": "ClassReportHandoffList",
+        "type": "object"
+      },
+      "ClassReportHandoffView": {
+        "properties": {
+          "author_id": {
+            "title": "Author Id",
+            "type": "string"
+          },
+          "class_starts_at": {
+            "format": "date-time",
+            "title": "Class Starts At",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "report_id": {
+            "title": "Report Id",
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "report_id",
+          "occurrence_id",
+          "class_starts_at",
+          "author_id",
+          "text",
+          "submitted_at"
+        ],
+        "title": "ClassReportHandoffView",
+        "type": "object"
+      },
+      "ClassReportView": {
+        "properties": {
+          "ai_used": {
+            "title": "Ai Used",
+            "type": "boolean"
+          },
+          "applied_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Revision"
+          },
+          "is_mine": {
+            "title": "Is Mine",
+            "type": "boolean"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "pass_claims": {
+            "items": {
+              "$ref": "#/components/schemas/PassClaimView"
+            },
+            "title": "Pass Claims",
+            "type": "array"
+          },
+          "questions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Questions",
+            "type": "array"
+          },
+          "report_id": {
+            "title": "Report Id",
+            "type": "string"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "report_id",
+          "is_mine",
+          "text",
+          "submitted_at",
+          "outcome",
+          "ai_used",
+          "questions",
+          "pass_claims",
+          "applied_revision",
+          "resolved_at"
+        ],
+        "title": "ClassReportView",
         "type": "object"
       },
       "ClassRiskView": {
@@ -14731,39 +15366,6 @@
         "title": "ConnectedAccountReadinessDto",
         "type": "object"
       },
-      "ConsumeMagicLinkRequest": {
-        "properties": {
-          "token": {
-            "maxLength": 512,
-            "minLength": 1,
-            "title": "Token",
-            "type": "string"
-          }
-        },
-        "required": [
-          "token"
-        ],
-        "title": "ConsumeMagicLinkRequest",
-        "type": "object"
-      },
-      "ConsumeMagicLinkResponse": {
-        "properties": {
-          "custom_token": {
-            "title": "Custom Token",
-            "type": "string"
-          },
-          "next_path": {
-            "title": "Next Path",
-            "type": "string"
-          }
-        },
-        "required": [
-          "custom_token",
-          "next_path"
-        ],
-        "title": "ConsumeMagicLinkResponse",
-        "type": "object"
-      },
       "ContactPatch": {
         "additionalProperties": false,
         "properties": {
@@ -14839,6 +15441,133 @@
           }
         },
         "title": "ContactPatch",
+        "type": "object"
+      },
+      "CopiedRosterRowView": {
+        "properties": {
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "full_name",
+          "ok"
+        ],
+        "title": "CopiedRosterRowView",
+        "type": "object"
+      },
+      "CopySessionRequest": {
+        "description": "A0-8 Copy class. Omitted schedule fields keep the source class's.",
+        "properties": {
+          "copy_roster": {
+            "default": false,
+            "title": "Copy Roster",
+            "type": "boolean"
+          },
+          "days_of_week": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Of Week"
+          },
+          "end_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Time"
+          },
+          "start_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Time"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "CopySessionRequest",
+        "type": "object"
+      },
+      "CopySessionResponse": {
+        "properties": {
+          "price_copied": {
+            "title": "Price Copied",
+            "type": "boolean"
+          },
+          "roster": {
+            "items": {
+              "$ref": "#/components/schemas/CopiedRosterRowView"
+            },
+            "title": "Roster",
+            "type": "array"
+          },
+          "session": {
+            "$ref": "#/components/schemas/AdminSessionView"
+          }
+        },
+        "required": [
+          "session",
+          "price_copied",
+          "roster"
+        ],
+        "title": "CopySessionResponse",
         "type": "object"
       },
       "CorrectAttendanceRequest": {
@@ -20213,6 +20942,45 @@
         "title": "ImportSummaryView",
         "type": "object"
       },
+      "IneligibleMakeupView": {
+        "properties": {
+          "class_title": {
+            "title": "Class Title",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "student_name",
+          "occurrence_id",
+          "class_title",
+          "start_at",
+          "reason"
+        ],
+        "title": "IneligibleMakeupView",
+        "type": "object"
+      },
       "InquiryConversionView": {
         "properties": {
           "date_from": {
@@ -21476,6 +22244,96 @@
           "sent_at"
         ],
         "title": "LoginInviteResponse",
+        "type": "object"
+      },
+      "MakeupCandidateView": {
+        "properties": {
+          "class_title": {
+            "title": "Class Title",
+            "type": "string"
+          },
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "has_notice": {
+            "title": "Has Notice",
+            "type": "boolean"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "student_name",
+          "occurrence_id",
+          "session_id",
+          "class_title",
+          "start_at",
+          "end_at",
+          "has_notice",
+          "expires_at"
+        ],
+        "title": "MakeupCandidateView",
+        "type": "object"
+      },
+      "MakeupCandidatesResponse": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/MakeupCandidateView"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "ineligible": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/IneligibleMakeupView"
+            },
+            "title": "Ineligible",
+            "type": "array"
+          },
+          "makeups_enabled": {
+            "default": true,
+            "title": "Makeups Enabled",
+            "type": "boolean"
+          },
+          "requires_notice": {
+            "default": false,
+            "title": "Requires Notice",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "candidates"
+        ],
+        "title": "MakeupCandidatesResponse",
         "type": "object"
       },
       "MakeupRequestAdminRow": {
@@ -25754,6 +26612,24 @@
         "title": "ParentWaiverStudentView",
         "type": "object"
       },
+      "PassClaimView": {
+        "properties": {
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "skill_id"
+        ],
+        "title": "PassClaimView",
+        "type": "object"
+      },
       "PasswordResetRequest": {
         "properties": {
           "email": {
@@ -28937,6 +29813,52 @@
         "title": "ReasonCountView",
         "type": "object"
       },
+      "RecapRosterView": {
+        "properties": {
+          "attendance": {
+            "title": "Attendance",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "name",
+          "attendance"
+        ],
+        "title": "RecapRosterView",
+        "type": "object"
+      },
+      "RecapSkillView": {
+        "properties": {
+          "level_name": {
+            "default": "",
+            "title": "Level Name",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_id",
+          "name"
+        ],
+        "title": "RecapSkillView",
+        "type": "object"
+      },
       "RecommendLevelUpBody": {
         "properties": {
           "program_id": {
@@ -30519,6 +31441,49 @@
         "title": "RowIssueView",
         "type": "object"
       },
+      "SaveClassRecapBody": {
+        "properties": {
+          "class_starts_at": {
+            "format": "date-time",
+            "title": "Class Starts At",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "mutation_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Mutation Id",
+            "type": "string"
+          },
+          "practice": {
+            "items": {
+              "$ref": "#/components/schemas/ChildPracticeView"
+            },
+            "maxItems": 100,
+            "title": "Practice",
+            "type": "array"
+          },
+          "taught_skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 30,
+            "title": "Taught Skill Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "class_starts_at",
+          "mutation_id",
+          "expected_revision"
+        ],
+        "title": "SaveClassRecapBody",
+        "type": "object"
+      },
       "SchedulePriceChangeRequest": {
         "properties": {
           "effective_period": {
@@ -30880,6 +31845,21 @@
             ],
             "title": "Session Id"
           },
+          "session_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Ids"
+          },
           "type": {
             "enum": [
               "academy",
@@ -30905,6 +31885,18 @@
             "minLength": 1,
             "title": "Body",
             "type": "string"
+          },
+          "expected_audience_fingerprint": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Audience Fingerprint"
           },
           "idempotency_key": {
             "anyOf": [
@@ -32928,6 +33920,39 @@
           "offset"
         ],
         "title": "StudentScheduleResponse",
+        "type": "object"
+      },
+      "SubmitClassReportBody": {
+        "properties": {
+          "class_starts_at": {
+            "format": "date-time",
+            "title": "Class Starts At",
+            "type": "string"
+          },
+          "report_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Report Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "use_ai": {
+            "default": false,
+            "title": "Use Ai",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "class_starts_at",
+          "report_id",
+          "text"
+        ],
+        "title": "SubmitClassReportBody",
         "type": "object"
       },
       "SubscriptionSummary": {
@@ -39669,6 +40694,48 @@
         ]
       }
     },
+    "/api/v2/admin/campaigns/preview": {
+      "post": {
+        "description": "Read-only: resolves the audience the send would reach; emails nobody.",
+        "operationId": "preview_email_campaign_api_v2_admin_campaigns_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CampaignPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Email Campaign",
+        "tags": [
+          "admin.comms"
+        ]
+      }
+    },
     "/api/v2/admin/class-public-profiles": {
       "get": {
         "operationId": "list_class_public_profiles_api_v2_admin_class_public_profiles_get",
@@ -39687,6 +40754,27 @@
         "summary": "List Class Public Profiles",
         "tags": [
           "admin.public-page"
+        ]
+      }
+    },
+    "/api/v2/admin/class-reports/handoffs": {
+      "get": {
+        "operationId": "list_class_report_handoffs_api_v2_admin_class_reports_handoffs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassReportHandoffList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Class Report Handoffs",
+        "tags": [
+          "admin.class-reports"
         ]
       }
     },
@@ -40536,6 +41624,48 @@
           }
         },
         "summary": "Manually add a student to a session (comp/scholarship path)",
+        "tags": [
+          "admin.sessions"
+        ]
+      }
+    },
+    "/api/v2/admin/enrollments/bulk-transfer": {
+      "post": {
+        "description": "A0-8: per-row results; a refused row never blocks the others.",
+        "operationId": "bulk_transfer_enrollments_api_v2_admin_enrollments_bulk_transfer_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkTransferEnrollmentsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkTransferEnrollmentsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bulk Transfer Enrollments",
         "tags": [
           "admin.sessions"
         ]
@@ -48661,6 +49791,59 @@
         ]
       }
     },
+    "/api/v2/admin/sessions/{session_id}/copy": {
+      "post": {
+        "description": "A0-8: new class from this one; optionally its active students too.",
+        "operationId": "copy_session_api_v2_admin_sessions__session_id__copy_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopySessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopySessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Copy a class",
+        "tags": [
+          "admin.sessions"
+        ]
+      }
+    },
     "/api/v2/admin/sessions/{session_id}/enrollments": {
       "get": {
         "operationId": "list_enrollments_api_v2_admin_sessions__session_id__enrollments_get",
@@ -51710,6 +52893,201 @@
         ]
       }
     },
+    "/api/v2/coach/occurrences/{occurrence_id}/class-recap": {
+      "get": {
+        "operationId": "get_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassRecapView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Class Recap",
+        "tags": [
+          "coach.class-recap"
+        ]
+      },
+      "put": {
+        "operationId": "save_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveClassRecapBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassRecapView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Class Recap",
+        "tags": [
+          "coach.class-recap"
+        ]
+      }
+    },
+    "/api/v2/coach/occurrences/{occurrence_id}/class-reports": {
+      "post": {
+        "operationId": "submit_class_report_api_v2_coach_occurrences__occurrence_id__class_reports_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitClassReportBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassReportView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Class Report",
+        "tags": [
+          "coach.class-recap"
+        ]
+      }
+    },
+    "/api/v2/coach/occurrences/{occurrence_id}/class-reports/{report_id}/resolve": {
+      "post": {
+        "operationId": "resolve_class_report_api_v2_coach_occurrences__occurrence_id__class_reports__report_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassReportView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Class Report",
+        "tags": [
+          "coach.class-recap"
+        ]
+      }
+    },
     "/api/v2/coach/profile": {
       "get": {
         "operationId": "get_profile_api_v2_coach_profile_get",
@@ -53724,47 +55102,6 @@
         "summary": "Healthz"
       }
     },
-    "/api/v2/magic-link/consume": {
-      "post": {
-        "operationId": "consume_magic_link_api_v2_magic_link_consume_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConsumeMagicLinkRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsumeMagicLinkResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Consume Magic Link",
-        "tags": [
-          "magic-link"
-        ]
-      }
-    },
     "/api/v2/me": {
       "get": {
         "operationId": "me_api_v2_me_get",
@@ -55054,6 +56391,28 @@
         ]
       }
     },
+    "/api/v2/parent/makeups/candidates": {
+      "get": {
+        "description": "#1037/#1041: each child's missed classes the server would accept a\nmakeup request for now, under the academy's current policy.",
+        "operationId": "list_makeup_candidates_api_v2_parent_makeups_candidates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MakeupCandidatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Makeup Candidates",
+        "tags": [
+          "parent.makeup_requests"
+        ]
+      }
+    },
     "/api/v2/parent/makeups/eligible-targets": {
       "get": {
         "operationId": "list_eligible_makeup_targets_api_v2_parent_makeups_eligible_targets_get",
@@ -55834,6 +57193,48 @@
         "summary": "Share Certificate",
         "tags": [
           "parent-progress"
+        ]
+      }
+    },
+    "/api/v2/parent/students/{student_id}/class-recaps": {
+      "get": {
+        "operationId": "list_child_class_recaps_api_v2_parent_students__student_id__class_recaps_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChildClassRecapList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Child Class Recaps",
+        "tags": [
+          "parent-class-recap"
         ]
       }
     },

@@ -14,6 +14,7 @@ import {
 import { queryKeys } from "@/lib/query/keys";
 import { reportVitals } from "@/lib/pwa/vitals";
 import { formatSessionTimeRange } from "@/lib/time/session-time";
+import { formatPlainDate } from "@/lib/format/plain-date";
 import { LessonCardView } from "@/components/teaching/lesson-card";
 import { StudentFocusRow } from "@/components/teaching/student-focus-row";
 import { RetryButton } from "@/components/coach/RetryButton";
@@ -52,7 +53,10 @@ export default function CoachTeachingPlanPage() {
             ‹ Today
           </Link>
           <h1 className="text-2xl font-semibold">Teaching plan</h1>
-          <p className="text-sm text-neutral-500">{date}</p>
+          {/* #1044: name the class date so a retrospective coverage plan is unambiguous. */}
+          <p className="text-sm text-neutral-500" data-testid="plan-date">
+            {formatPlainDate(date)}
+          </p>
         </div>
         <DatePicker date={date} onChange={setDate} />
       </header>
@@ -83,7 +87,7 @@ export default function CoachTeachingPlanPage() {
 
       {!isError && data && sessions.length === 0 && (
         <p className="text-neutral-500" data-testid="plan-empty-state">
-          No sessions today.
+          {date === todayISO() ? "No sessions today." : `No sessions on ${formatPlainDate(date)}.`}
         </p>
       )}
 

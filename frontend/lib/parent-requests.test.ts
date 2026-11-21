@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { assignedClassCopy, requestStatusChipVariant } from "./parent-requests";
+import {
+  assignedClassCopy,
+  makeupCandidateKey,
+  makeupCandidateLabel,
+  makeupEmptyMessage,
+  requestStatusChipVariant,
+} from "./parent-requests";
 
 describe("requestStatusChipVariant", () => {
   it("maps each known backend status to its Chip variant", () => {
@@ -51,5 +57,44 @@ describe("assignedClassCopy (#1038)", () => {
   it("returns null when nothing is assigned", () => {
     expect(assignedClassCopy(null, "America/Chicago")).toBeNull();
     expect(assignedClassCopy(undefined, "America/Chicago")).toBeNull();
+  });
+});
+
+describe("makeup candidate picker (#1037)", () => {
+  const base = {
+    occurrence_id: "occ-1",
+    session_id: "sess-1",
+    class_title: "Tuesday Beginners",
+    // 00:30 UTC Wednesday is still Tuesday evening in Chicago.
+    start_at: "2026-11-18T00:30:00Z",
+    end_at: "2026-11-18T01:30:00Z",
+    has_notice: false,
+    expires_at: "2026-12-02T00:00:00Z",
+  };
+  const ana = { ...base, student_id: "s-ana", student_name: "Ana Fake" };
+  const ben = { ...base, student_id: "s-ben", student_name: "Ben Fake" };
+
+  it("keys siblings in the same class apart", () => {
+    expect(makeupCandidateKey(ana)).not.toBe(makeupCandidateKey(ben));
+    expect(makeupCandidateKey(ana)).toBe("s-ana:occ-1");
+  });
+
+  it("labels child, class and the academy-local date and time", () => {
+    expect(makeupCandidateLabel(ana, "America/Chicago")).toBe(
+      "Ana Fake — Tuesday Beginners — Tue, Nov 17 · 6:30 PM – 7:30 PM CST",
+    );
+  });
+});
+
+describe("makeupEmptyMessage (#1041)", () => {
+  it("says makeups are off rather than that nothing was missed", () => {
+    expect(makeupEmptyMessage({ makeups_enabled: false, requires_notice: false })).toMatch(/turned off/);
+  });
+
+  it("explains the on-time notice rule when the academy requires it", () => {
+    expect(makeupEmptyMessage({ makeups_enabled: true, requires_notice: true })).toMatch(
+      /on-time absence notice/,
+    );
+    expect(makeupEmptyMessage({ makeups_enabled: true, requires_notice: false })).not.toMatch(/notice/);
   });
 });

@@ -1422,3 +1422,55 @@ async def test_bundled_send_tells_the_email_its_link_must_pay_the_balance() -> N
     assert email.calls[0]["bundled"] is True
     assert email.calls[0]["balance_due_cents"] == 14_000
     assert email.calls[1]["bundled"] is False
+
+
+# ---------------------------------------------------------------------------
+# #1035: a fully offset draft is a real invoice; a blank draft is not
+# ---------------------------------------------------------------------------
+
+
+def _draft_line(line_type: str, amount: int) -> InvoiceLine:
+    return InvoiceLine(
+        line_id=f"line-{line_type}",
+        academy_id="acad-1",
+        invoice_id="inv-1",
+        line_type=line_type,
+        description=line_type,
+        quantity=1,
+        unit_amount_cents=amount,
+        amount_cents=amount,
+        created_at=FIRST_SEND,
+    )
+
+
+async def test_fully_waived_draft_is_sent_with_zero_balance() -> None:
+    # The hand-billed shape (BillEnrollmentPeriod): tuition + waiver lines net
+    # the header to a $0 subtotal, exactly like a blank draft's header.
+    waived = _invoice(status="draft", balance_due_cents=0).model_copy(
+        update={"subtotal_cents": 0, "total_cents": 0}
+    )
+    repo = FakeLedgerRepository(invoices=[waived])
+    await repo.save_line(_draft_line("tuition", 10_000))
+    await repo.save_line(_draft_line("discount", -10_000))
+    email = FakeInvoiceEmail()
+
+    result = await _uc(repo, email=email).execute("inv-1")
+
+    assert result.invoice.status == "open"
+    assert result.invoice.delivery_status == "sent"
+    assert email.calls[0]["balance_due_cents"] == 0
+    assert email.calls[0]["checkout_url"] is None
+
+
+async def test_blank_draft_is_still_refused() -> None:
+    from backend.v2.contexts.billing.application.use_cases.send_invoice import (
+        EmptyInvoiceNotSendable,
+    )
+
+    blank = _invoice(status="draft", balance_due_cents=0).model_copy(
+        update={"subtotal_cents": 0, "total_cents": 0}
+    )
+    repo = FakeLedgerRepository(invoices=[blank])
+
+    with pytest.raises(EmptyInvoiceNotSendable):
+        await _uc(repo, email=FakeInvoiceEmail()).execute("inv-1")

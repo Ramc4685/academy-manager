@@ -22,6 +22,25 @@ STRIPE_ID_KEYS: tuple[str, ...] = (
     "stripe_subscription_id",
 )
 
+#: Dispute state ``MongoPaymentDisputeRepository.stamp_payment`` writes onto a
+#: disputed payment row (#980); carried to the admin list unchanged.
+DISPUTE_KEYS: tuple[str, ...] = (
+    "dispute_id",
+    "dispute_status",
+    "dispute_reason",
+    "dispute_amount_cents",
+    "dispute_outcome",
+    "disputed_at",
+)
+
+
+def dispute_fields(doc: dict[str, Any]) -> dict[str, Any]:
+    """``doc``'s dispute stamp, or ``{}`` when it was never disputed."""
+    if not doc.get("dispute_id"):
+        return {}
+    return {key: doc.get(key) for key in DISPUTE_KEYS}
+
+
 # Only money actually received settles an invoice. A pending, failed or expired
 # attempt that references an invoice must NOT stamp paid_at / method / Stripe
 # ids onto it, otherwise an unpaid invoice renders as "Stripe linked".
@@ -60,7 +79,9 @@ def is_settled(doc: dict[str, Any]) -> bool:
     return str(doc.get("status") or "") in SETTLED_STATUSES
 
 
-def apply_settlement(row: dict[str, Any], doc: dict[str, Any]) -> bool:
+def apply_settlement(
+    row: dict[str, Any], doc: dict[str, Any], *, carry_dispute: bool = True
+) -> bool:
     """Merge ``doc``'s settlement facts into ``row`` in place.
 
     Returns False (and touches nothing) unless ``doc`` is money received.
@@ -85,6 +106,8 @@ def apply_settlement(row: dict[str, Any], doc: dict[str, Any]) -> bool:
             row[key] = doc[key]
     if has_stripe_ids(doc):
         row["stripe_linked"] = True
+    if carry_dispute:
+        row.update(dispute_fields(doc))
 
     method = settlement_method(doc)
     if method is not None:
@@ -113,8 +136,11 @@ def settle_matching_rows(
         row = rows_by_key.get(key)
         if row is not None and not any(r is row for r in matched):
             matched.append(row)
+    # One dispute is one chargeback: show it on the lowest invoice id only, or a
+    # payment covering three invoices reads as three disputes (#980).
+    matched.sort(key=lambda r: str(r.get("payment_id") or ""))
     settled = 0
     for row in matched:
-        if apply_settlement(row, doc):
+        if apply_settlement(row, doc, carry_dispute=settled == 0):
             settled += 1
     return settled

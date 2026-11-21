@@ -795,6 +795,44 @@ export function listEligibleMakeupTargets(params: {
   });
 }
 
+/**
+ * #1037/#1041: one missed class one child can still request a makeup for,
+ * as the server's own eligibility rules see it. Siblings in the same class
+ * share an occurrence, so a row is keyed by student AND occurrence.
+ */
+export interface MakeupCandidateView {
+  student_id: string;
+  student_name: string;
+  occurrence_id: string;
+  session_id: string;
+  class_title: string;
+  start_at: string;
+  end_at: string;
+  has_notice: boolean;
+  expires_at: string;
+}
+
+/** #1041: a class the parent flagged that can't be made up, and why. */
+export interface IneligibleMakeupView {
+  student_id: string;
+  student_name: string;
+  occurrence_id: string;
+  class_title: string;
+  start_at: string;
+  reason: string;
+}
+
+export interface MakeupCandidatesResponse {
+  candidates: MakeupCandidateView[];
+  makeups_enabled: boolean;
+  requires_notice: boolean;
+  ineligible: IneligibleMakeupView[];
+}
+
+export function listMakeupCandidates(): Promise<MakeupCandidatesResponse> {
+  return apiFetch("/parent/makeups/candidates", { method: "GET" });
+}
+
 export type TrialRequestStudentRef = "prospective" | "existing_student";
 
 export interface TrialRequestView {

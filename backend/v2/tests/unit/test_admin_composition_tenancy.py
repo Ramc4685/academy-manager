@@ -26,13 +26,21 @@ class _FakeReconciliationStripe:
     ) -> None:
         self.invoice = invoice
         self.payment_intent = payment_intent
+        #: (method, object id, stripe_account) per read, for #983.
+        self.reads: list[tuple[str, str, str | None]] = []
 
-    async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
+    async def retrieve_invoice(
+        self, stripe_invoice_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
+        self.reads.append(("invoice", stripe_invoice_id, stripe_account))
         assert self.invoice is not None
         assert self.invoice["id"] == stripe_invoice_id
         return self.invoice
 
-    async def retrieve_payment_intent(self, stripe_payment_intent_id: str) -> dict[str, Any]:
+    async def retrieve_payment_intent(
+        self, stripe_payment_intent_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
+        self.reads.append(("payment_intent", stripe_payment_intent_id, stripe_account))
         assert self.payment_intent is not None
         assert self.payment_intent["id"] == stripe_payment_intent_id
         return self.payment_intent
@@ -1452,3 +1460,180 @@ async def test_admin_dues_followup_whatsapp_uses_the_request_academys_country(
         rows = await admin.list_dues_followup()
 
     assert rows[0]["whatsapp_url"].startswith("https://wa.me/919876543210?text=")
+
+
+def _ready_connected_account(academy_id: str, stripe_account_id: str) -> dict[str, Any]:
+    from backend.v2.contexts.billing.domain.connected_account import ConnectedAccount
+
+    account = ConnectedAccount.new(
+        fees_collector="stripe",
+        losses_collector="stripe",
+        academy_id=academy_id,
+        stripe_account_id=stripe_account_id,
+    ).with_status(status="active", charges_enabled=True)
+    return account.model_dump(mode="python")
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_report_reads_stripe_on_the_academys_connected_account(
+    mongo_db,
+) -> None:
+    """#983: a direct charge lives on the academy's account, not the platform."""
+    await mongo_db["academy_connected_accounts"].insert_one(
+        _ready_connected_account("request-acad", "acct_request")
+    )
+    stripe = _FakeReconciliationStripe(
+        invoice={"id": "in_1", "payment_intent": "pi_1", "customer": "cus_1"},
+        payment_intent={"id": "pi_1", "status": "succeeded", "amount": 100, "currency": "usd"},
+    )
+
+    with tenant_scope("request-acad"):
+        await _billing_health(mongo_db, stripe).get_billing_reconciliation_report(
+            stripe_invoice_id="in_1"
+        )
+
+    assert stripe.reads == [
+        ("invoice", "in_1", "acct_request"),
+        ("payment_intent", "pi_1", "acct_request"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_report_prefers_the_recorded_payments_account(mongo_db) -> None:
+    """A recorded payment names where its objects live; none means the platform."""
+    await mongo_db["academy_connected_accounts"].insert_one(
+        _ready_connected_account("request-acad", "acct_current")
+    )
+    await mongo_db["ledger_payments"].insert_many(
+        [
+            {
+                "academy_id": "request-acad",
+                "payment_id": "lp_old",
+                "stripe_payment_intent_id": "pi_legacy",
+                "status": "succeeded",
+            },
+            {
+                "academy_id": "request-acad",
+                "payment_id": "lp_direct",
+                "stripe_payment_intent_id": "pi_direct",
+                "stripe_account_id": "acct_recorded",
+                "status": "succeeded",
+            },
+        ]
+    )
+    for pi, expected in (("pi_legacy", None), ("pi_direct", "acct_recorded")):
+        stripe = _FakeReconciliationStripe(payment_intent={"id": pi, "status": "succeeded"})
+        with tenant_scope("request-acad"):
+            await _billing_health(mongo_db, stripe).get_billing_reconciliation_report(
+                payment_intent_id=pi
+            )
+        assert stripe.reads == [("payment_intent", pi, expected)]
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_report_never_reads_another_academys_account(mongo_db) -> None:
+    await mongo_db["academy_connected_accounts"].insert_one(
+        _ready_connected_account("other-acad", "acct_other")
+    )
+    stripe = _FakeReconciliationStripe(payment_intent={"id": "pi_x", "status": "succeeded"})
+
+    with tenant_scope("request-acad"):
+        await _billing_health(mongo_db, stripe).get_billing_reconciliation_report(
+            payment_intent_id="pi_x"
+        )
+
+    assert stripe.reads == [("payment_intent", "pi_x", None)]
+
+
+@pytest.mark.asyncio
+async def test_admin_reconcile_reads_the_checkout_session_on_the_academys_account(
+    mongo_db,
+) -> None:
+    await mongo_db["academy_connected_accounts"].insert_one(
+        _ready_connected_account("request-acad", "acct_request")
+    )
+
+    class _Stripe:
+        def __init__(self) -> None:
+            self.reads: list[tuple[str, str | None]] = []
+
+        async def retrieve_checkout_session(
+            self, checkout_session_id: str, *, stripe_account: str | None = None
+        ) -> dict[str, Any]:
+            self.reads.append((checkout_session_id, stripe_account))
+            return {"id": checkout_session_id, "metadata": {"academy_id": "someone-else"}}
+
+    stripe = _Stripe()
+    admin = _admin_use_cases_with_stripe(mongo_db, stripe)
+    with tenant_scope("request-acad"), pytest.raises(ValueError, match="different academy"):
+        await admin.reconcile_stripe_billing(
+            parent_id="parent-1",
+            enrollment_id="enroll-1",
+            stripe_customer_id=None,
+            stripe_checkout_session_id="cs_1",
+            reason="manual check",
+            actor_id="admin-1",
+        )
+
+    assert stripe.reads == [("cs_1", "acct_request")]
+
+
+@pytest.mark.asyncio
+async def test_admin_reconcile_records_the_connected_account_on_every_row_it_writes(
+    mongo_db,
+) -> None:
+    """#983 made the connected-account read succeed; the rows it then writes
+    must carry that account, or a later refund goes to the platform."""
+    await mongo_db["academy_connected_accounts"].insert_one(
+        _ready_connected_account("request-acad", "acct_request")
+    )
+    await mongo_db["enrollments"].insert_one(
+        {"academy_id": "request-acad", "enrollment_id": "enroll-1", "parent_id": "parent-1"}
+    )
+    await mongo_db["ledger_payments"].insert_one(
+        {
+            "academy_id": "request-acad",
+            "payment_id": "pay-1",
+            "payment_origin": "legacy_payment",
+            "enrollment_id": "enroll-1",
+            "status": "pending",
+            "final_amount_cents": 5000,
+            "created_at": datetime(2026, 11, 1, tzinfo=UTC),
+        }
+    )
+
+    class _Stripe:
+        async def retrieve_checkout_session(
+            self, checkout_session_id: str, *, stripe_account: str | None = None
+        ) -> dict[str, Any]:
+            assert stripe_account == "acct_request"
+            return {
+                "id": checkout_session_id,
+                "metadata": {"academy_id": "request-acad", "parent_id": "parent-1"},
+                "customer": "cus_connected",
+                "subscription": "sub_connected",
+                "payment_intent": "pi_connected",
+                "payment_status": "paid",
+                "status": "complete",
+                "amount_total": 5000,
+            }
+
+    admin = _admin_use_cases_with_stripe(mongo_db, _Stripe())
+    with tenant_scope("request-acad"):
+        await admin.reconcile_stripe_billing(
+            parent_id="parent-1",
+            enrollment_id="enroll-1",
+            stripe_customer_id=None,
+            stripe_checkout_session_id="cs_1",
+            reason="manual check",
+            actor_id="admin-1",
+        )
+
+    payment = await mongo_db["ledger_payments"].find_one({"payment_id": "pay-1"})
+    assert payment["status"] == "succeeded"
+    assert payment["stripe_account_id"] == "acct_request"
+    customer = await mongo_db["parent_billing_customers"].find_one({"parent_id": "parent-1"})
+    assert customer["stripe_customer_id"] == "cus_connected"
+    assert customer["stripe_account_id"] == "acct_request"
+    subscription = await mongo_db["subscriptions"].find_one({"academy_id": "request-acad"})
+    assert subscription["stripe_account_id"] == "acct_request"

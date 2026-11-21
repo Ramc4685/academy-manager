@@ -54,6 +54,19 @@ class SessionAudience:
 
 
 @dataclass(frozen=True, slots=True)
+class SessionsAudience:
+    """Parents enrolled in any of several sessions, one copy per address (#1030)."""
+
+    session_ids: tuple[str, ...]
+
+    type: Literal["sessions"] = field(default="sessions", init=False)
+
+    def __post_init__(self) -> None:
+        if not self.session_ids:
+            raise InvalidAudienceError("sessions audience requires at least one session_id")
+
+
+@dataclass(frozen=True, slots=True)
 class CoachAudience:
     """Coaches, optionally narrowed to one session's coach roster."""
 
@@ -96,6 +109,7 @@ class PaymentRiskAudience:
 Audience = (
     AcademyAudience
     | SessionAudience
+    | SessionsAudience
     | CoachAudience
     | SelectedRecipientsAudience
     | PaymentRiskAudience
@@ -119,6 +133,11 @@ def parse_audience(raw: Mapping[str, Any]) -> Audience:
         if not session_id:
             raise InvalidAudienceError("session audience requires session_id")
         return SessionAudience(session_id=str(session_id))
+    if audience_type == "sessions":
+        session_ids = raw.get("session_ids") or []
+        if not isinstance(session_ids, list | tuple) or not session_ids:
+            raise InvalidAudienceError("sessions audience requires non-empty session_ids list")
+        return SessionsAudience(session_ids=tuple(str(s) for s in session_ids))
     if audience_type == "coach":
         session_id = raw.get("session_id")
         return CoachAudience(session_id=str(session_id) if session_id else None)
@@ -142,6 +161,8 @@ def audience_descriptor(audience: Audience) -> dict[str, Any]:
         return {"type": "academy", "role": audience.role}
     if isinstance(audience, SessionAudience):
         return {"type": "session", "session_id": audience.session_id}
+    if isinstance(audience, SessionsAudience):
+        return {"type": "sessions", "session_ids": list(audience.session_ids)}
     if isinstance(audience, CoachAudience):
         return {"type": "coach", "session_id": audience.session_id}
     if isinstance(audience, SelectedRecipientsAudience):

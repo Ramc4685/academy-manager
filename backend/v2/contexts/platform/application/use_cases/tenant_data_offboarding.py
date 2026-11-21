@@ -4,9 +4,10 @@ Offboarding a tenant needs two things before anything is ever deleted: a
 complete copy of the tenant's data, and a preview of exactly what a purge
 would remove. This module provides both and nothing destructive:
 
-* :meth:`TenantDataOffboardingService.export_tenant` builds a zip archive of
+* :meth:`TenantDataOffboardingService.export_tenant` streams a zip archive of
   every tenant-scoped collection, each filtered by ``academy_id``, plus a
-  manifest of per-collection counts and a SHA-256 of every file.
+  manifest of per-collection counts and a SHA-256 of every file. It holds one
+  document and a small output buffer at a time, never the whole archive.
 * :meth:`TenantDataOffboardingService.purge_dry_run` counts, per collection,
   what a purge of a *cancelled* tenant would delete and what it would keep.
   It returns a ``confirm_token`` derived from those counts; the (future,
@@ -25,7 +26,11 @@ them.
 
 Both operations write a ``platform_audit_events`` row and fail closed: if the
 audit row cannot be written the export is refused, because tenant data must
-never leave without a trail.
+never leave without a trail. The export writes ``tenant.data_export_started``
+before its first byte and ``tenant.data_exported`` (archive SHA-256, size,
+counts) after its last; a started row with no exported row is an export that
+was cut off; its truncated zip has no central directory, so ordinary zip
+tools refuse it rather than pass it off as a complete copy.
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ import hashlib
 import io
 import zipfile
 from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -97,11 +103,40 @@ class TenantExportManifest(BaseModel, frozen=True):
     files: dict[str, str]  # archive path -> sha256 of the file
 
 
-class TenantExportArchive(BaseModel, frozen=True):
+@dataclass(frozen=True)
+class TenantExportStream:
+    """A tenant export in flight: iterate ``chunks`` to get the zip bytes."""
+
     filename: str
-    content: bytes
-    sha256: str
-    manifest: TenantExportManifest
+    chunks: AsyncIterator[bytes]
+
+
+#: Bytes buffered before a chunk is handed to the response.
+EXPORT_CHUNK_BYTES = 256 * 1024
+
+
+class _ZipSink(io.RawIOBase):
+    """Write-only, non-seekable target for ``zipfile``: it collects what the
+    archive writes until the generator drains it. Non-seekable makes
+    ``zipfile`` use data descriptors, so nothing is ever rewritten."""
+
+    def __init__(self) -> None:
+        self._buffer = bytearray()
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, data: Any) -> int:
+        self._buffer += data
+        return len(data)
+
+    def pending(self) -> int:
+        return len(self._buffer)
+
+    def take(self) -> bytes:
+        data = bytes(self._buffer)
+        self._buffer.clear()
+        return data
 
 
 class PurgeDryRun(BaseModel, frozen=True):
@@ -198,28 +233,81 @@ class TenantDataOffboardingService:
         reason: str,
         request_id: str | None = None,
         ip_address: str | None = None,
-    ) -> TenantExportArchive:
+    ) -> TenantExportStream:
         tenant = await self._tenant(academy_id)
         now = self._clock()
-        buffer = io.BytesIO()
+        # Fail closed BEFORE any byte: no trail, no export.
+        await self._emit_audit(
+            actor_user_id=actor_user_id,
+            academy_id=academy_id,
+            action="tenant.data_export_started",
+            after={"reason": reason, "tenant_status": tenant.status},
+            request_id=request_id,
+            ip_address=ip_address,
+        )
+        stamp = now.strftime("%Y%m%dT%H%M%SZ")
+        return TenantExportStream(
+            filename=f"tenant-export-{academy_id}-{stamp}.zip",
+            chunks=self._export_chunks(
+                tenant,
+                now=now,
+                actor_user_id=actor_user_id,
+                reason=reason,
+                request_id=request_id,
+                ip_address=ip_address,
+            ),
+        )
+
+    async def _export_chunks(
+        self,
+        tenant: Tenant,
+        *,
+        now: datetime,
+        actor_user_id: str,
+        reason: str,
+        request_id: str | None,
+        ip_address: str | None,
+    ) -> AsyncIterator[bytes]:
+        academy_id = tenant.academy_id
+        sink = _ZipSink()
+        archive_sha = hashlib.sha256()
+        archive_bytes = 0
         counts: list[CollectionCount] = []
         files: dict[str, str] = {}
-        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+
+        def drain() -> bytes:
+            nonlocal archive_bytes
+            data = sink.take()
+            archive_sha.update(data)
+            archive_bytes += len(data)
+            return data
+
+        with zipfile.ZipFile(sink, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for name in exportable_collections(await self._data.collection_names()):
-                lines: list[str] = []
-                async for doc in self._data.documents(name, academy_id):
-                    if doc.get("academy_id") != academy_id:
-                        # Defence in depth: the store filters by academy_id,
-                        # but nothing of another tenant may ever be archived.
-                        raise RuntimeError(f"export store returned a foreign row from {name}")
-                    lines.append(json_util.dumps(doc, json_options=json_util.RELAXED_JSON_OPTIONS))
-                if not lines:
+                docs = self._data.documents(name, academy_id).__aiter__()
+                doc = await anext(docs, None)
+                if doc is None:
                     continue
                 path = f"collections/{name}.jsonl"
-                payload = ("\n".join(lines) + "\n").encode()
-                archive.writestr(path, payload)
-                files[path] = hashlib.sha256(payload).hexdigest()
-                counts.append(CollectionCount(collection=name, count=len(lines)))
+                file_sha = hashlib.sha256()
+                count = 0
+                with archive.open(path, "w", force_zip64=True) as entry:
+                    while doc is not None:
+                        if doc.get("academy_id") != academy_id:
+                            # Defence in depth: the store filters by academy_id,
+                            # but nothing of another tenant may ever be archived.
+                            raise RuntimeError(f"export store returned a foreign row from {name}")
+                        line = (
+                            json_util.dumps(doc, json_options=json_util.RELAXED_JSON_OPTIONS) + "\n"
+                        ).encode()
+                        entry.write(line)
+                        file_sha.update(line)
+                        count += 1
+                        if sink.pending() >= EXPORT_CHUNK_BYTES:
+                            yield drain()
+                        doc = await anext(docs, None)
+                files[path] = file_sha.hexdigest()
+                counts.append(CollectionCount(collection=name, count=count))
             manifest = TenantExportManifest(
                 format_version=ARCHIVE_FORMAT_VERSION,
                 academy_id=academy_id,
@@ -232,8 +320,10 @@ class TenantDataOffboardingService:
                 files=files,
             )
             archive.writestr("manifest.json", manifest.model_dump_json(indent=2))
-        content = buffer.getvalue()
-        digest = hashlib.sha256(content).hexdigest()
+        # Closing the archive wrote the central directory into the sink. Audit
+        # BEFORE yielding it: without the directory the zip cannot be opened,
+        # so a failed completion audit leaves the client nothing usable.
+        final = drain()
         await self._emit_audit(
             actor_user_id=actor_user_id,
             academy_id=academy_id,
@@ -241,21 +331,15 @@ class TenantDataOffboardingService:
             after={
                 "reason": reason,
                 "tenant_status": tenant.status,
-                "archive_sha256": digest,
-                "archive_bytes": len(content),
+                "archive_sha256": archive_sha.hexdigest(),
+                "archive_bytes": archive_bytes,
                 "total_documents": manifest.total_documents,
                 "collection_counts": {c.collection: c.count for c in counts},
             },
             request_id=request_id,
             ip_address=ip_address,
         )
-        stamp = now.strftime("%Y%m%dT%H%M%SZ")
-        return TenantExportArchive(
-            filename=f"tenant-export-{academy_id}-{stamp}.zip",
-            content=content,
-            sha256=digest,
-            manifest=manifest,
-        )
+        yield final
 
     async def purge_dry_run(
         self,

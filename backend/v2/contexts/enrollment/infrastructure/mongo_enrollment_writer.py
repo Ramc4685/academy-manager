@@ -7,6 +7,7 @@ from typing import ClassVar, cast
 
 from pymongo.errors import DuplicateKeyError
 
+from backend.v2.contexts.enrollment.domain.errors import EnrollmentMovedConcurrently
 from backend.v2.contexts.enrollment.domain.models import (
     LIVE,
     RECLAIM_PENDING,
@@ -388,11 +389,24 @@ class MongoEnrollmentWriter(TenantScopedRepository):
             },
         )
 
-    async def update_session(self, enrollment_id: str, session_id: str) -> None:
-        existing = await self._find_one({"enrollment_id": enrollment_id})
-        previous_session_id = existing.get("session_id") if existing else None
-        await self._update_one(
-            {"enrollment_id": enrollment_id},
+    async def update_session(
+        self, enrollment_id: str, session_id: str, *, expected_session_id: str | None = None
+    ) -> None:
+        """Point the row at ``session_id``.
+
+        With ``expected_session_id`` the write only lands while the row is still
+        in that class: two concurrent transfers of one row can't both move it
+        (and both reserve a target seat). The loser gets ``EnrollmentMovedConcurrently``.
+        """
+        if expected_session_id is None:
+            existing = await self._find_one({"enrollment_id": enrollment_id})
+            previous_session_id = existing.get("session_id") if existing else None
+            query: dict[str, object] = {"enrollment_id": enrollment_id}
+        else:
+            previous_session_id = expected_session_id
+            query = {"enrollment_id": enrollment_id, "session_id": expected_session_id}
+        result = await self._update_one(
+            query,
             {
                 "$set": {"session_id": session_id},
                 "$push": {
@@ -404,6 +418,11 @@ class MongoEnrollmentWriter(TenantScopedRepository):
                 },
             },
         )
+        if expected_session_id is not None and result.modified_count == 0:
+            raise EnrollmentMovedConcurrently(
+                "This student was just moved by another request. Refresh the roster.",
+                enrollment_id=enrollment_id,
+            )
 
     async def update_amount_cents(self, enrollment_id: str, amount_cents: int | None) -> None:
         update: dict[str, object]

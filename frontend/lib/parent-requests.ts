@@ -1,5 +1,9 @@
 import type { ChipVariant } from "@/components/ds/chip";
-import type { AssignedClassView } from "@/lib/api/parent";
+import type {
+  AssignedClassView,
+  MakeupCandidatesResponse,
+  MakeupCandidateView,
+} from "@/lib/api/parent";
 import { formatAcademyTimeRange } from "@/lib/format/academy-time";
 
 /**
@@ -55,4 +59,28 @@ export function assignedClassCopy(
     where: assigned.location ?? "Venue to be confirmed",
     cancelled: assigned.status === "cancelled",
   };
+}
+
+/** #1037: siblings in one class share an occurrence, so the key needs both ids. */
+export function makeupCandidateKey(c: Pick<MakeupCandidateView, "student_id" | "occurrence_id">): string {
+  return `${c.student_id}:${c.occurrence_id}`;
+}
+
+/** "Child — Class — date and time" in the academy timezone (#1037). */
+export function makeupCandidateLabel(c: MakeupCandidateView, academyTimezone: string | null): string {
+  return `${c.student_name} — ${c.class_title} — ${formatAcademyTimeRange(c.start_at, c.end_at, academyTimezone)}`;
+}
+
+/**
+ * #1041: why the makeup picker is empty, so "nothing to pick" never reads the
+ * same as "makeups are off" or "this academy needs an on-time notice".
+ */
+export function makeupEmptyMessage(
+  data: Pick<MakeupCandidatesResponse, "makeups_enabled" | "requires_notice">,
+): string {
+  if (!data.makeups_enabled) return "Makeup requests are turned off for this academy.";
+  if (data.requires_notice) {
+    return "No missed classes available for a makeup request. This academy needs an on-time absence notice before a missed class can be made up.";
+  }
+  return "No missed classes available for a makeup request.";
 }

@@ -2076,7 +2076,9 @@ ENROLLMENT_EVENTS_MAX_LIMIT = 500
 ENROLLMENT_EVENTS_DEFAULT_LIMIT = 100
 
 
-def make_list_enrollment_events(db: Any) -> object:
+def make_list_enrollment_events(
+    db: Any,
+) -> Callable[..., Awaitable[tuple[list[dict[str, Any]], tuple[datetime, str] | None]]]:
     from backend.v2.shared.tenancy import current_academy_id
 
     async def list_enrollment_events(

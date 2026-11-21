@@ -23,13 +23,15 @@ class MongoAcademyRepository:
         name = doc.get("display_name") or doc.get("name")
         return str(name) if name else None
 
-    async def list_ids(self) -> list[str]:
-        academy_ids: list[str] = []
-        async for doc in self.collection.find({}, {"academy_id": 1}):
+    async def list_ids_with_status(self) -> list[tuple[str, str | None]]:
+        """``(academy_id, status)`` of every academy; status None when unset."""
+        rows: list[tuple[str, str | None]] = []
+        async for doc in self.collection.find({}, {"academy_id": 1, "status": 1}):
             academy_id = str(doc.get("academy_id") or "")
             if academy_id:
-                academy_ids.append(academy_id)
-        return academy_ids
+                status = doc.get("status")
+                rows.append((academy_id, str(status) if status else None))
+        return rows
 
     async def update_by_id(self, academy_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
         doc = await self.collection.find_one_and_update(

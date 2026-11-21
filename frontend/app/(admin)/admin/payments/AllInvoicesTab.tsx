@@ -37,6 +37,7 @@ import { useIsPhone } from "@/lib/use-is-phone";
 import { webhookEventLabel } from "@/lib/billing-health";
 
 import {
+  disputeLabel,
   finalCents,
   formatCents,
   formatPeriodLabel,
@@ -478,6 +479,7 @@ export function AllInvoicesTab() {
                           {p.voided_at ? ` · ${new Date(p.voided_at).toLocaleDateString()}` : ""}
                         </div>
                       )}
+                      <DisputeNote payment={p} />
                       {/* The Stripe ids and the reconciliation note are the
                           evidence `billing-trust-recovery.spec.ts` reads off
                           the row, so the phone layout carries them too — the
@@ -591,6 +593,7 @@ export function AllInvoicesTab() {
                               : ""}
                           </div>
                         )}
+                        <DisputeNote payment={p} className="mt-1 max-w-[200px] text-xs" />
                       </td>
                       <td className="px-4 py-3">
                         {method ? <Chip variant={method.variant} label={method.label} /> : <span className="text-rally-subtle">—</span>}
@@ -725,5 +728,19 @@ function StripeIdDetails({ summary, paymentId }: { summary: string; paymentId: s
         {summary}
       </div>
     </details>
+  );
+}
+
+/** A Stripe dispute on this payment (#980); answered in the academy's Stripe dashboard. */
+function DisputeNote({ payment, className = "" }: { payment: AdminPaymentView; className?: string }) {
+  const label = disputeLabel(payment);
+  if (!label) return null;
+  return (
+    <div
+      className={`font-medium text-red-700 ${className}`}
+      data-testid={`payment-dispute-note-${payment.payment_id}`}
+    >
+      {label}
+    </div>
   );
 }

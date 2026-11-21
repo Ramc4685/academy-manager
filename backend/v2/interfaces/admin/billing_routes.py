@@ -926,7 +926,7 @@ async def add_invoice_line(
 async def add_invoice_adjustment(
     invoice_id: str,
     body: AddInvoiceAdjustmentRequest,
-    _claims: AuthClaims = Depends(require_owner()),
+    claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> InvoiceLineResponse:
     add_line = _required_callable(use_cases.add_invoice_line, "Invoice adjustment management")
@@ -938,6 +938,10 @@ async def add_invoice_adjustment(
             quantity=1,
             unit_amount_cents=body.amount_cents,
             product_id=None,
+            # The audit trail keeps why and who (#1035); the parent sees only
+            # the description.
+            reason=body.reason,
+            actor_id=claims.user_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

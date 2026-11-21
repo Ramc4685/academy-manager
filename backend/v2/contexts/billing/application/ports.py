@@ -619,7 +619,9 @@ class StripeGateway(Protocol):
     ) -> dict[str, Any]:
         """Fetch current Stripe Checkout Session state for reconciliation."""
 
-    async def retrieve_invoice(self, stripe_invoice_id: str) -> dict[str, Any]:
+    async def retrieve_invoice(
+        self, stripe_invoice_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         """Fetch current Stripe invoice state for reconciliation."""
 
     async def void_stripe_invoice(self, stripe_invoice_id: str) -> None:
@@ -632,7 +634,9 @@ class StripeGateway(Protocol):
         rolling back the ledger-side void.
         """
 
-    async def retrieve_subscription(self, stripe_subscription_id: str) -> dict[str, Any]:
+    async def retrieve_subscription(
+        self, stripe_subscription_id: str, *, stripe_account: str | None = None
+    ) -> dict[str, Any]:
         """Fetch current Stripe subscription state for reconciliation."""
 
     async def retrieve_payment_intent(

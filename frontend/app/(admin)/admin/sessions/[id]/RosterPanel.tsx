@@ -31,14 +31,13 @@ import { actionCellClass, actionHeaderClass, formatDateOnly, formatEnrollmentDat
 // Issue #699: "cancelled"/"withdrawn" are the legacy spellings of
 // "deleted"/"dropped" — both map to the same chip so a roster row from
 // either era of backend code renders identically. "held"/"reclaim_pending"
-// are issue #697's hold states; the roster does not yet have dedicated hold
-// chip copy (frontend hold UI is #697's own follow-up), so they fall back to
-// the same treatment as "paused" (seat-safe but not attending right now).
+// are #697's hold states (seat kept, not attending); they get their own
+// ON HOLD chip so they never read as a legacy pause (A0-10).
 const ENROLL_CHIP: Record<EnrollmentStatus, { variant: ChipVariant; label: string }> = {
   active: { variant: "enrolled", label: "ACTIVE" },
   paused: { variant: "paused", label: "PAUSED" },
-  held: { variant: "paused", label: "ON HOLD" },
-  reclaim_pending: { variant: "paused", label: "ON HOLD" },
+  held: { variant: "pending", label: "ON HOLD" },
+  reclaim_pending: { variant: "pending", label: "ON HOLD" },
   cancelled: { variant: "expired", label: "CANCELLED" },
   deleted: { variant: "expired", label: "CANCELLED" },
   withdrawn: { variant: "expired", label: "WITHDRAWN" },
@@ -79,6 +78,21 @@ const TERMINAL_STATUSES: ReadonlySet<EnrollmentStatus> = new Set<EnrollmentStatu
   "withdrawn",
   "dropped",
 ]);
+
+// A0-8: rows the bulk Transfer may select — the live statuses on the Active
+// tab that TransferEnrollment accepts. `reclaim_pending` is mid-flight.
+const BULK_TRANSFERABLE: ReadonlySet<EnrollmentStatus> = new Set<EnrollmentStatus>(["active", "held"]);
+
+export function isBulkTransferable(status: EnrollmentStatus): boolean {
+  return BULK_TRANSFERABLE.has(status);
+}
+
+/** Row multi-select for the bulk Transfer (A0-8). Omit to render no checkboxes. */
+export interface RosterSelection {
+  selectedIds: ReadonlySet<string>;
+  onToggle: (enrollmentId: string) => void;
+  onToggleAll: (checked: boolean) => void;
+}
 
 /** Splits a roster into the Active and Past tab contents (#712, #735). */
 export function partitionRoster<T extends Pick<AdminEnrollmentView, "status">>(
@@ -191,7 +205,6 @@ export function RosterTable({
   onPathwayLevelChange,
   onDelete,
   onHold,
-  onPause,
   onResume,
   onReturn,
   onTransfer,
@@ -199,7 +212,9 @@ export function RosterTable({
   onUndoScheduledDrop,
   onReEnroll,
   academyTimezone,
+  selection,
 }: {
+  selection?: RosterSelection;
   enrollments: AdminEnrollmentView[];
   sessionId: string;
   /** Session/academy zone. `pending_cancellation_at` is the last instant of
@@ -216,7 +231,6 @@ export function RosterTable({
   onPathwayLevelChange: (enrollment: AdminEnrollmentView, levelId: string) => void;
   onDelete: (enrollment: AdminEnrollmentView) => void;
   onHold: (enrollment: AdminEnrollmentView) => void;
-  onPause: (enrollment: AdminEnrollmentView) => void;
   onResume: (id: string) => void;
   onReturn: (enrollment: AdminEnrollmentView) => void;
   onTransfer: (enrollment: AdminEnrollmentView) => void;
@@ -237,6 +251,23 @@ export function RosterTable({
   });
   const deleteRequiresOwner = departurePolicyQuery.data?.delete_enrollment_requires_owner;
   const isPhone = useIsPhone();
+  const selectable = selection ? enrollments.filter((e) => isBulkTransferable(e.status)) : [];
+  const allSelected =
+    selectable.length > 0 && selectable.every((e) => selection?.selectedIds.has(e.enrollment_id));
+
+  function selectBox(e: AdminEnrollmentView) {
+    if (!selection || !isBulkTransferable(e.status)) return null;
+    return (
+      <input
+        type="checkbox"
+        className="h-4 w-4 accent-rally-cobalt-600"
+        checked={selection.selectedIds.has(e.enrollment_id)}
+        onChange={() => selection.onToggle(e.enrollment_id)}
+        aria-label={`Select ${e.full_name}`}
+        data-testid={`roster-select-${e.enrollment_id}`}
+      />
+    );
+  }
 
   /**
    * The row's actions, identical on both layouts (#857). Reusing
@@ -271,7 +302,6 @@ export function RosterTable({
           dispatchRosterAction(action, enrollmentId, e, {
             onDelete,
             onHold,
-            onPause,
             onResume,
             onReturn,
             onTransfer,
@@ -296,7 +326,16 @@ export function RosterTable({
             <PhoneListRow
               key={e.enrollment_id}
               data-testid={`enrollment-row-${e.enrollment_id}`}
-              leading={<Avatar name={e.full_name} size={28} />}
+              leading={
+                selection ? (
+                  <div className="flex items-center gap-2">
+                    {selectBox(e)}
+                    <Avatar name={e.full_name} size={28} />
+                  </div>
+                ) : (
+                  <Avatar name={e.full_name} size={28} />
+                )
+              }
               title={e.full_name}
               primary={
                 <div className="flex items-center gap-2">
@@ -368,6 +407,19 @@ export function RosterTable({
       <table className="w-full min-w-[840px] text-sm">
         <thead>
           <tr className="border-b border-rally-line text-left">
+            {selection && (
+              <Th className="w-10">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-rally-cobalt-600"
+                  checked={allSelected}
+                  disabled={selectable.length === 0}
+                  onChange={(event) => selection.onToggleAll(event.target.checked)}
+                  aria-label="Select all students"
+                  data-testid="roster-select-all"
+                />
+              </Th>
+            )}
             <Th>Name</Th>
             <Th>Pathway Level</Th>
             <Th>Status</Th>
@@ -391,6 +443,7 @@ export function RosterTable({
                 data-testid={`enrollment-row-${e.enrollment_id}`}
                 className={`border-b border-rally-line/60 last:border-0 ${rowToneClass}`}
               >
+                {selection && <td className="px-4 py-3">{selectBox(e)}</td>}
                 <td className="px-4 py-3">
                   <div className="flex min-w-0 items-center gap-2">
                     <Avatar name={e.full_name} size={28} />
@@ -472,7 +525,9 @@ export function RosterTable({
  * mirrors the status-based conditions the inline button row used to apply.
  * #711 widened Drop to paused/held rows: `WithdrawEnrollment` accepts exactly
  * {active, paused, held} (a paused row already released its seat, which the
- * backend handles). #697's seat-safe Hold/Return pair is not decided here:
+ * backend handles). A0-10: Hold replaced Pause on this menu — an active row
+ * is never offered Pause, and a legacy paused row keeps Resume (and Drop) so
+ * its data is not stranded. #697's seat-safe Hold/Return pair is not decided here:
  * it comes from the shared `holdActionsFor`, so the roster and the student
  * profile Sessions panel offer it on exactly the same statuses.
  */
@@ -485,9 +540,7 @@ export function rosterActionsFor(
   // Offered alongside Drop, not instead of it — an admin may still want the
   // student gone today, and the immediate Drop retires the queued action.
   if (dropScheduled) actions.push("undo_scheduled_drop");
-  if (status === "active") actions.push("pause");
   if (status === "paused") actions.push("resume");
-  // #697's seat-safe pair, beside the transitional pause/resume group.
   actions.push(...holdActionsFor(status));
   // Issue #827: a row that already ended has no seat to hold, pause or drop —
   // the only thing left to offer is putting the student back. Additive: the
@@ -506,7 +559,6 @@ function dispatchRosterAction(
   handlers: {
     onDelete: (enrollment: AdminEnrollmentView) => void;
     onHold: (enrollment: AdminEnrollmentView) => void;
-    onPause: (enrollment: AdminEnrollmentView) => void;
     onResume: (id: string) => void;
     onReturn: (enrollment: AdminEnrollmentView) => void;
     onTransfer: (enrollment: AdminEnrollmentView) => void;
@@ -516,9 +568,6 @@ function dispatchRosterAction(
   },
 ): void {
   switch (action) {
-    case "pause":
-      handlers.onPause(enrollment);
-      break;
     case "resume":
       handlers.onResume(enrollment.enrollment_id);
       break;

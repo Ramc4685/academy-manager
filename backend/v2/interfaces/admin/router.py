@@ -20,6 +20,7 @@ from .billing_products_routes import router as billing_products_router
 from .billing_routes import router as billing_router
 from .billing_rules_routes import router as billing_rules_router
 from .billing_setup_routes import router as billing_setup_router
+from .class_report_routes import router as class_report_router
 from .coach_pay_rate_routes import router as coach_pay_rate_router
 from .collections_routes import router as collections_router
 from .comms_routes import router as comms_router
@@ -105,6 +106,7 @@ router.include_router(coach_pay_rate_router)
 router.include_router(comms_router)
 router.include_router(academy_router)
 router.include_router(ai_usage_router)
+router.include_router(class_report_router)
 router.include_router(ai_controls_router)
 router.include_router(ai_import_router)
 router.include_router(ai_schedule_router)
