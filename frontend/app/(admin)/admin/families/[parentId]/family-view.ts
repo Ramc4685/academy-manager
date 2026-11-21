@@ -354,13 +354,16 @@ const CHARGE_NOT_ATTEMPTED: Readonly<Record<string, string>> = {
     "Stripe already has a charge for this invoice that needs a look. Check Billing Health before charging again.",
 };
 
+/**
+ * A message only for outcomes where nothing is in flight: a decline or a
+ * charge that was never attempted, where charging again is safe. A pending
+ * (ACH processing) or 3DS result returns null so the dialog closes: the
+ * request id is already spent, and a second click would start a second charge.
+ */
 export function chargeFailureMessage(result: ChargeAutopayResponse): string | null {
-  if (result.success) return null;
-  if (result.requires_action) {
-    return "The bank asked the family to confirm this payment. They'll get a prompt from Stripe.";
-  }
+  if (result.success || result.requires_action) return null;
   const code = result.decline_code?.trim().toLowerCase();
-  if (!code) return "Stripe hasn't confirmed this charge yet. Check the timeline in a minute.";
+  if (!code) return null;
   return CHARGE_NOT_ATTEMPTED[code] ?? describeCardDeclineCode(code);
 }
 

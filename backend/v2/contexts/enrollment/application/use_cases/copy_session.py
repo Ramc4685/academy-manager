@@ -105,7 +105,25 @@ class CopySession:
                     "this class does, so they'd be enrolled and billed twice."
                 )
         try:
-            session = await self._create_session.execute(self._create_command(source, cmd))
+            session = await self._create_session.execute(
+                CreateSessionCommand(
+                    coach_id=source.coach_id,
+                    title=cmd.title,
+                    location=source.location,
+                    # Recurring classes re-derive their instants from the schedule;
+                    # a one-off class keeps the source's instants.
+                    start_at=None if source.days_of_week else source.start_at,
+                    end_at=None if source.days_of_week else source.end_at,
+                    capacity=source.capacity,
+                    amount_cents=source.amount_cents if cmd.include_price else None,
+                    days_of_week=days,
+                    start_time=start_time,
+                    end_time=end_time,
+                    timezone=source.timezone,
+                    assistant_coach_ids=list(source.assistant_coach_ids),
+                    **{f: getattr(source, f) for f in COMMUNICATION_PACK_FIELDS},
+                )
+            )
         except DuplicateSessionSeries as exc:
             # Usually a retry whose first attempt already made the copy (the
             # response was lost). Say so and hand back the class that exists.
@@ -116,27 +134,6 @@ class CopySession:
             ) from exc
         roster = await self._copy_roster(source, session, cmd) if cmd.copy_roster else []
         return CopySessionResult(session=session, roster=roster)
-
-    @staticmethod
-    def _create_command(source: Session, cmd: CopySessionCommand) -> CreateSessionCommand:
-        days = cmd.days_of_week if cmd.days_of_week is not None else source.days_of_week
-        return CreateSessionCommand(
-            coach_id=source.coach_id,
-            title=cmd.title,
-            location=source.location,
-            # Recurring classes re-derive their instants from the schedule;
-            # a one-off class keeps the source's instants.
-            start_at=None if source.days_of_week else source.start_at,
-            end_at=None if source.days_of_week else source.end_at,
-            capacity=source.capacity,
-            amount_cents=source.amount_cents if cmd.include_price else None,
-            days_of_week=days,
-            start_time=cmd.start_time or source.start_time,
-            end_time=cmd.end_time or source.end_time,
-            timezone=source.timezone,
-            assistant_coach_ids=list(source.assistant_coach_ids),
-            **{f: getattr(source, f) for f in COMMUNICATION_PACK_FIELDS},
-        )
 
     async def _copy_roster(
         self, source: Session, session: Session, cmd: CopySessionCommand

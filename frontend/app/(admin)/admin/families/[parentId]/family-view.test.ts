@@ -349,10 +349,11 @@ describe("chargeFailureMessage", () => {
     );
   });
 
-  it("explains a 3DS prompt", () => {
+  it("stays quiet on a 3DS or still-processing charge so a second click can't charge again", () => {
     expect(
       chargeFailureMessage({ ...base, success: false, requires_action: true, decline_code: null }),
-    ).toMatch(/confirm this payment/);
+    ).toBeNull();
+    expect(chargeFailureMessage({ ...base, success: false, decline_code: null })).toBeNull();
   });
 });
 
