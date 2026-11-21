@@ -128,3 +128,137 @@ async def test_preview_sends_nothing_and_records_nothing() -> None:
     assert await db["message_campaigns"].count_documents({}) == 0
     assert await db["message_deliveries"].count_documents({}) == 0
     assert sender.sent == []
+
+
+# --- #1031: recipient review, exclusions, changed-audience guard ----------------
+
+
+class _Gate:
+    """Mirrors the real gates: never raises, refuses with a reason string."""
+
+    def __init__(self, refused: dict[str, str]) -> None:
+        self.refused = refused
+
+    async def check(self, *, recipient_user_id: str, email: str, category: Any) -> Any:
+        from backend.v2.contexts.communications.application.send_gate import ALLOW, GateVerdict
+
+        reason = self.refused.get(email)
+        return GateVerdict(allowed=False, reason=reason) if reason else ALLOW
+
+
+async def test_preview_lists_recipients_and_explains_every_exclusion() -> None:
+    db = AsyncMongoMockClient()["preview-exclusions"]
+    await _seed_session(db, "sess-1", {"p0": ["s0"], "p1": ["s1"], "p2": ["s2"], "p3": ["s3"]})
+    # p1 has no address; p4 shares p0's address under another account.
+    await db["users"].update_one({"user_id": "par-p1"}, {"$unset": {"email": ""}})
+    await _seed_session(db, "sess-1", {"p4": ["s4"]})
+    await db["users"].update_one({"user_id": "par-p4"}, {"$set": {"email": "P0@example.test"}})
+    await db["family_contacts"].insert_one(
+        {
+            "academy_id": A,
+            "contact_id": "c1",
+            "parent_id": "par-p0",
+            "name": "Second Parent",
+            "email": "second@example.test",
+            "gets_notices": True,
+            "created_at": "1",
+        }
+    )
+    use_case = _use_case(db)
+    use_case.gates = (
+        _Gate({"p2@example.test": "suppressed:hard_bounce"}),
+        _Gate({"p3@example.test": "unsubscribed:campaign"}),
+    )
+
+    with tenant_scope(A):
+        preview = await use_case.preview(SessionAudience(session_id="sess-1"))
+
+    assert [(r.email, r.is_family_contact) for r in preview.recipients] == [
+        ("p0@example.test", False),
+        ("second@example.test", True),
+    ]
+    assert (preview.recipient_count, preview.family_count, preview.contact_count) == (2, 1, 1)
+    reasons = {(e.display_name, e.reason) for e in preview.exclusions}
+    assert reasons == {
+        ("Parent p1", "missing_email"),
+        ("Parent p4", "duplicate_address"),
+        ("Parent p2", "suppressed"),
+        ("Parent p3", "unsubscribed"),
+    }
+
+
+async def test_preview_never_includes_another_academys_roster() -> None:
+    db = AsyncMongoMockClient()["preview-tenancy"]
+    await _seed_session(db, "sess-1", {"p0": ["s0"]})
+    await _seed_session(db, "sess-1", {"x0": ["x0"]}, academy_id="acad-2")
+
+    with tenant_scope(A):
+        preview = await _use_case(db).preview(SessionAudience(session_id="sess-1"))
+
+    assert [r.email for r in preview.recipients] == ["p0@example.test"]
+
+
+async def test_send_refuses_when_the_audience_changed_since_preview() -> None:
+    from backend.v2.contexts.communications.application.use_cases.send_campaign import (
+        SendCampaignCommand,
+    )
+    from backend.v2.contexts.communications.domain.errors import AudienceChangedError
+
+    db = AsyncMongoMockClient()["preview-changed"]
+    await _seed_session(db, "sess-1", {"p0": ["s0"]})
+    sender = StubEmailSendPort()
+    use_case = _use_case(db)
+    use_case.sender = sender
+    audience = SessionAudience(session_id="sess-1")
+
+    with tenant_scope(A):
+        seen = await use_case.preview(audience)
+        # A family joins between the review and the send.
+        await _seed_session(db, "sess-1", {"p1": ["s1"]})
+        command = SendCampaignCommand(
+            academy_id=A,
+            sender_id="admin-1",
+            audience=audience,
+            subject="Hi",
+            body="Hello",
+            expected_audience_fingerprint=seen.audience_fingerprint,
+        )
+        try:
+            await use_case.execute(command)
+        except AudienceChangedError:
+            pass
+        else:  # pragma: no cover - the assertion below names the failure
+            raise AssertionError("a changed audience must be re-reviewed")
+        assert sender.sent == []
+        assert await db["message_campaigns"].count_documents({}) == 0
+
+        fresh = await use_case.preview(audience)
+        assert fresh.audience_fingerprint != seen.audience_fingerprint
+        result = await use_case.execute(
+            SendCampaignCommand(
+                academy_id=A,
+                sender_id="admin-1",
+                audience=audience,
+                subject="Hi",
+                body="Hello",
+                expected_audience_fingerprint=fresh.audience_fingerprint,
+            )
+        )
+    assert result.sent_count == 2
+
+
+def test_composed_campaign_preview_consults_the_senders_own_gates() -> None:
+    from types import SimpleNamespace
+
+    from backend.v2.composition.digests import compose_send_campaign
+    from backend.v2.contexts.communications.infrastructure.gated_send_port import (
+        GatedEmailSendPort,
+    )
+
+    suppressions, preferences = _Gate({}), _Gate({})
+    sender = GatedEmailSendPort(
+        inner=StubEmailSendPort(), suppressions=suppressions, preferences=preferences
+    )
+    db = AsyncMongoMockClient()["preview-compose"]
+    use_case = compose_send_campaign(db, sender, SimpleNamespace())
+    assert tuple(use_case.gates) == (suppressions, preferences)

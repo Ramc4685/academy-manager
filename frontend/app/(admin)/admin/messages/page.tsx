@@ -32,10 +32,12 @@ import {
   type AdminAcademyView,
   type CampaignAudiencePayload,
 } from "@/lib/api/admin";
+import type { ApiError } from "@/lib/api/client";
 import { queryKeys } from "@/lib/query/keys";
 import { formatAcademyDate, formatAcademyDateTime } from "@/lib/format/academy-time";
 import { campaignAudienceLabel, type CampaignAudienceState } from "@/lib/format/campaign-audience";
 
+import { CampaignRecipientReview } from "@/components/admin/campaign-recipient-review";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { DeliveryProblemsPanel } from "@/components/admin/delivery-problems-panel";
 import { Avatar } from "@/components/ds/avatar";
@@ -837,6 +839,8 @@ function EmailCampaignComposer() {
         subject,
         body: buildEmailHtml(body, academy),
         audience,
+        // #1031: the send is refused if the audience changed since this review.
+        expected_audience_fingerprint: preview.data?.audience_fingerprint,
       }),
     onSuccess: (r) => {
       setResult({
@@ -849,7 +853,14 @@ function EmailCampaignComposer() {
       setBody("");
       setError(null);
     },
-    onError: (err: Error) => {
+    onError: (err: ApiError) => {
+      if (err.status === 409 && err.details?.code === "audience_changed") {
+        setError(
+          "The audience changed since you reviewed it. Check the updated recipients and send again.",
+        );
+        void preview.refetch();
+        return;
+      }
       setError(err.message ?? "Failed to send campaign.");
     },
   });
@@ -1007,7 +1018,11 @@ function EmailCampaignComposer() {
           variant="primary"
           size="sm"
           disabled={!canSend}
-          onClick={() => setConfirmOpen(true)}
+          onClick={() => {
+            // Re-resolve so the review shows the audience as it is now (#1031).
+            void preview.refetch();
+            setConfirmOpen(true);
+          }}
         >
           {mutation.isPending ? "Sending…" : "Send email"}
         </Button>
@@ -1025,6 +1040,7 @@ function EmailCampaignComposer() {
               A real email leaves the academy&apos;s address for every recipient. It cannot be
               recalled, edited or unsent, and bounces do not roll back the send.
             </p>
+            {preview.data && <CampaignRecipientReview preview={preview.data} />}
             <p className="font-semibold text-rally-ink">Preview</p>
             <p className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border border-rally-line bg-rally-paper px-3 py-2 text-rally-ink">
               {body.trim()}

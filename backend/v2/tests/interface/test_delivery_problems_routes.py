@@ -114,7 +114,8 @@ def test_campaign_preview_returns_the_resolved_audience_counts() -> None:
         json={"audience": {"type": "session", "session_id": "sess-1"}},
     )
     assert res.status_code == 200, res.text
-    assert res.json() == {"recipient_count": 7, "family_count": 6, "contact_count": 1}
+    assert res.json()["recipient_count"] == 7
+    assert (res.json()["family_count"], res.json()["contact_count"]) == (6, 1)
     assert getattr(seen[0], "session_id", None) == "sess-1"
 
 
@@ -123,3 +124,34 @@ def test_a_parent_cannot_preview_a_campaign() -> None:
         "/api/v2/admin/campaigns/preview", json={"audience": {"type": "academy"}}
     )
     assert res.status_code == 404
+
+
+def test_a_changed_audience_is_a_409_the_ui_can_tell_apart() -> None:
+    from types import SimpleNamespace
+
+    from backend.v2.contexts.communications.domain.errors import AudienceChangedError
+    from backend.v2.interfaces.admin.deps import get_admin_use_cases
+
+    commands: list[object] = []
+
+    class _Send:
+        async def execute(self, command):
+            commands.append(command)
+            raise AudienceChangedError("changed")
+
+    client = _client(("admin",))
+    client.app.dependency_overrides[get_admin_use_cases] = lambda: SimpleNamespace(  # type: ignore[attr-defined]
+        send_campaign=_Send()
+    )
+    res = client.post(
+        "/api/v2/admin/campaigns",
+        json={
+            "subject": "Hi",
+            "body": "Hello",
+            "audience": {"type": "academy", "role": "parent"},
+            "expected_audience_fingerprint": "fp-old",
+        },
+    )
+    assert res.status_code == 409
+    assert res.json()["detail"]["code"] == "audience_changed"
+    assert getattr(commands[0], "expected_audience_fingerprint", None) == "fp-old"

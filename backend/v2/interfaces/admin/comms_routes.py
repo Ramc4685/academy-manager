@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from backend.v2.contexts.communications.application.errors import (
     AcademyAudience,
+    AudienceChangedError,
     DuplicateCampaignError,
     EmptyAudienceError,
     SessionAudience,
@@ -28,6 +29,8 @@ from backend.v2.interfaces.admin.views import (
     AdminMessageList,
     AdminMessageView,
     BroadcastRequest,
+    CampaignPreviewExclusion,
+    CampaignPreviewRecipient,
     CampaignPreviewRequest,
     CampaignPreviewResponse,
     CoachDigestLogEntryView,
@@ -130,6 +133,24 @@ async def preview_email_campaign(
         recipient_count=preview.recipient_count,
         family_count=preview.family_count,
         contact_count=preview.contact_count,
+        recipients=[
+            CampaignPreviewRecipient(
+                display_name=r.display_name,
+                email=r.email or "",
+                is_family_contact=r.is_family_contact,
+            )
+            for r in preview.recipients
+        ],
+        exclusions=[
+            CampaignPreviewExclusion(
+                display_name=e.display_name,
+                email=e.email,
+                reason=e.reason,
+                is_family_contact=e.is_family_contact,
+            )
+            for e in preview.exclusions
+        ],
+        audience_fingerprint=preview.audience_fingerprint,
     )
 
 
@@ -153,8 +174,13 @@ async def send_email_campaign(
                 subject=payload.subject,
                 body=payload.body,
                 idempotency_key=payload.idempotency_key,
+                expected_audience_fingerprint=payload.expected_audience_fingerprint,
             )
         )
+    except AudienceChangedError as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": "audience_changed", "message": str(exc)}
+        ) from exc
     except EmptyAudienceError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except DuplicateCampaignError as exc:
