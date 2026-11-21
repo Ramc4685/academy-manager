@@ -3409,6 +3409,22 @@ export interface SendEmailCampaignResponse {
   queued?: boolean;
 }
 
+/** #1029: the audience the send would reach, resolved server-side; emails nobody. */
+export interface EmailCampaignPreview {
+  recipient_count: number;
+  family_count: number;
+  contact_count: number;
+}
+
+export function previewEmailCampaign(
+  audience: CampaignAudiencePayload,
+): Promise<EmailCampaignPreview> {
+  return apiFetch<EmailCampaignPreview>("/admin/campaigns/preview", {
+    method: "POST",
+    body: JSON.stringify({ audience }),
+  });
+}
+
 export function sendEmailCampaign(
   payload: SendEmailCampaignRequest,
 ): Promise<SendEmailCampaignResponse> {

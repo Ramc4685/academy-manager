@@ -88,3 +88,38 @@ def test_a_background_campaign_reports_queued_not_zero_delivered() -> None:
     assert res.status_code == 201, res.text
     assert res.json()["queued"] is True
     assert res.json()["total_recipients"] == 40
+
+
+def test_campaign_preview_returns_the_resolved_audience_counts() -> None:
+    from types import SimpleNamespace
+
+    from backend.v2.contexts.communications.application.use_cases.send_campaign import (
+        CampaignAudiencePreview,
+    )
+    from backend.v2.interfaces.admin.deps import get_admin_use_cases
+
+    seen: list[object] = []
+
+    class _Send:
+        async def preview(self, audience):
+            seen.append(audience)
+            return CampaignAudiencePreview(recipient_count=7, family_count=6, contact_count=1)
+
+    client = _client(("admin",))
+    client.app.dependency_overrides[get_admin_use_cases] = lambda: SimpleNamespace(  # type: ignore[attr-defined]
+        send_campaign=_Send()
+    )
+    res = client.post(
+        "/api/v2/admin/campaigns/preview",
+        json={"audience": {"type": "session", "session_id": "sess-1"}},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() == {"recipient_count": 7, "family_count": 6, "contact_count": 1}
+    assert getattr(seen[0], "session_id", None) == "sess-1"
+
+
+def test_a_parent_cannot_preview_a_campaign() -> None:
+    res = _client(("parent",)).post(
+        "/api/v2/admin/campaigns/preview", json={"audience": {"type": "academy"}}
+    )
+    assert res.status_code == 404

@@ -48,6 +48,9 @@ class ResolvedRecipient:
     user_id: str
     email: str | None
     display_name: str | None = None
+    #: An opted-in family contact (second parent, guardian) rather than a user.
+    #: Lets a preview tell families apart from extra addresses (#1029).
+    is_family_contact: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -28,11 +28,14 @@ from backend.v2.interfaces.admin.views import (
     AdminMessageList,
     AdminMessageView,
     BroadcastRequest,
+    CampaignPreviewRequest,
+    CampaignPreviewResponse,
     CoachDigestLogEntryView,
     CoachDigestLogView,
     CoachDigestTestSendRequest,
     CoachDigestTestSendResponse,
     DMRequest,
+    SendCampaignAudience,
     SendCampaignRequest,
     SendCampaignResponse,
 )
@@ -105,6 +108,31 @@ async def dm(
     return _message_view(m, claims.user_id)
 
 
+def _campaign_audience(raw: SendCampaignAudience) -> AcademyAudience | SessionAudience:
+    if raw.type == "session":
+        if not raw.session_id:
+            raise HTTPException(status_code=400, detail="session_id required for session audience")
+        return SessionAudience(session_id=raw.session_id)
+    return AcademyAudience(role=raw.role)
+
+
+@router.post("/campaigns/preview", response_model=CampaignPreviewResponse)
+async def preview_email_campaign(
+    payload: CampaignPreviewRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> CampaignPreviewResponse:
+    """Read-only: resolves the audience the send would reach; emails nobody."""
+    if use_cases.send_campaign is None:
+        raise HTTPException(status_code=503, detail="Email campaign sending is not configured")
+    preview = await use_cases.send_campaign.preview(_campaign_audience(payload.audience))
+    return CampaignPreviewResponse(
+        recipient_count=preview.recipient_count,
+        family_count=preview.family_count,
+        contact_count=preview.contact_count,
+    )
+
+
 @router.post("/campaigns", response_model=SendCampaignResponse, status_code=201)
 async def send_email_campaign(
     payload: SendCampaignRequest,
@@ -114,12 +142,7 @@ async def send_email_campaign(
     if use_cases.send_campaign is None:
         raise HTTPException(status_code=503, detail="Email campaign sending is not configured")
 
-    if payload.audience.type == "session":
-        if not payload.audience.session_id:
-            raise HTTPException(status_code=400, detail="session_id required for session audience")
-        audience = SessionAudience(session_id=payload.audience.session_id)
-    else:
-        audience = AcademyAudience(role=payload.audience.role)
+    audience = _campaign_audience(payload.audience)
 
     try:
         result = await use_cases.send_campaign.execute(

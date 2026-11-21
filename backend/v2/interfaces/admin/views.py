@@ -2575,6 +2575,19 @@ class SendCampaignRequest(BaseModel):
     idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
 
 
+class CampaignPreviewRequest(BaseModel):
+    audience: SendCampaignAudience
+
+
+class CampaignPreviewResponse(BaseModel):
+    """Resolved audience before a send (#1029): unique addresses, and the
+    families and opted-in contacts they belong to. Never an enrollment count."""
+
+    recipient_count: int
+    family_count: int
+    contact_count: int
+
+
 class SendCampaignResponse(BaseModel):
     campaign_id: str
     total_recipients: int

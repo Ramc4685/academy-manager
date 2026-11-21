@@ -87,6 +87,20 @@ class SendCampaignResult:
     queued: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class CampaignAudiencePreview:
+    """Who a campaign would reach, resolved exactly as the send resolves it.
+
+    ``recipient_count`` is unique email addresses; ``family_count`` the primary
+    parents among them and ``contact_count`` the opted-in family contacts. An
+    enrollment count is never a family count: siblings share a parent (#1029).
+    """
+
+    recipient_count: int
+    family_count: int
+    contact_count: int
+
+
 def derive_idempotency_key(command: SendCampaignCommand) -> str:
     """Content-derived idempotency key for callers that supply none.
 
@@ -343,6 +357,20 @@ class SendCampaign:
             total_recipients=len(recipients),
             sent_count=sent_count,
             failed_count=failed_count,
+        )
+
+    async def preview(self, audience: Audience) -> CampaignAudiencePreview:
+        """Resolve the audience without sending or recording anything."""
+        reachable = [
+            r
+            for r in _dedupe_recipients(await self._resolve(audience))
+            if r.email and r.email.strip()
+        ]
+        contacts = sum(1 for r in reachable if r.is_family_contact)
+        return CampaignAudiencePreview(
+            recipient_count=len(reachable),
+            family_count=len(reachable) - contacts,
+            contact_count=contacts,
         )
 
     async def _resolve(self, audience: Audience) -> list[ResolvedRecipient]:

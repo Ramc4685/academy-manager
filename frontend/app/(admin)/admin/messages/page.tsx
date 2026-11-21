@@ -25,14 +25,16 @@ import {
   broadcastMessage,
   markAdminMessageRead,
   sendDm,
+  previewEmailCampaign,
   sendEmailCampaign,
   type AdminMessageView,
   type AdminSessionView,
   type AdminAcademyView,
+  type CampaignAudiencePayload,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { formatAcademyDate, formatAcademyDateTime } from "@/lib/format/academy-time";
-import { sessionAudienceLabel } from "@/lib/format/campaign-audience";
+import { campaignAudienceLabel, type CampaignAudienceState } from "@/lib/format/campaign-audience";
 
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import { DeliveryProblemsPanel } from "@/components/admin/delivery-problems-panel";
@@ -795,8 +797,6 @@ function EmailCampaignComposer() {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const parentCount = useParentRecipientCount();
-
   const { data: academyData } = useQuery({
     queryKey: queryKeys.admin.academy(),
     queryFn: getAdminAcademy,
@@ -812,15 +812,31 @@ function EmailCampaignComposer() {
   const academy: AdminAcademyView | undefined = academyData;
   const brandColor = academy?.brand_color ?? "#1a56db";
 
+  const audience: CampaignAudiencePayload =
+    audienceType === "session"
+      ? { type: "session", session_id: sessionId }
+      : { type: "academy", role: "parent" };
+  const audienceChosen = audienceType === "academy" || sessionId.length > 0;
+
+  // #1029: the count comes from the server's resolution of this audience (the
+  // same one the send uses), never from the session's enrolled-student count.
+  const preview = useQuery({
+    queryKey: queryKeys.admin.campaignPreview(audience),
+    queryFn: () => previewEmailCampaign(audience),
+    enabled: audienceChosen,
+  });
+  const previewState: CampaignAudienceState = preview.data
+    ? { status: "ready", counts: preview.data }
+    : preview.isError
+      ? { status: "error" }
+      : { status: "loading" };
+
   const mutation = useMutation({
     mutationFn: () =>
       sendEmailCampaign({
         subject,
         body: buildEmailHtml(body, academy),
-        audience:
-          audienceType === "session"
-            ? { type: "session", session_id: sessionId }
-            : { type: "academy", role: "parent" },
+        audience,
       }),
     onSuccess: (r) => {
       setResult({
@@ -842,18 +858,18 @@ function EmailCampaignComposer() {
     !mutation.isPending &&
     subject.trim().length > 0 &&
     body.trim().length > 0 &&
-    (audienceType === "academy" || sessionId.length > 0);
+    audienceChosen &&
+    previewState.status === "ready" &&
+    previewState.counts.recipient_count > 0;
 
-  // #838: say who this reaches before it goes. A session send reaches the
-  // families on that roster (one email per family, #1029); an academy send
-  // reaches every parent.
+  // #838: say who this reaches before it goes, in resolved addresses (#1029).
   const selectedSession = sessions.find((s) => s.session_id === sessionId);
   const audienceLabel =
     audienceType === "session"
       ? selectedSession
-        ? sessionAudienceLabel(selectedSession.enrolled_count, selectedSession.title)
+        ? campaignAudienceLabel(previewState, `on ${selectedSession.title}`)
         : "the selected session"
-      : recipientLabel(parentCount);
+      : campaignAudienceLabel(previewState, "in the academy");
 
   if (result) {
     return (
@@ -1001,7 +1017,7 @@ function EmailCampaignComposer() {
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         overline="Send email campaign"
-        title={`Email ${audienceLabel}?`}
+        title={`Send to ${audienceLabel}?`}
         subject={subject.trim()}
         consequence={
           <>

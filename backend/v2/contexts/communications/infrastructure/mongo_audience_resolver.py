@@ -271,6 +271,7 @@ class MongoAudienceResolver(AudienceResolver):
                     user_id=f"{FAMILY_CONTACT_RECIPIENT_PREFIX}{contact_id}",
                     email=email,
                     display_name=doc.get("name"),
+                    is_family_contact=True,
                 )
             )
         return recipients
