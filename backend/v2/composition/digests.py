@@ -1196,6 +1196,17 @@ def compose_send_campaign(
         brands=_AcademyBrandLookup(MongoAcademyRepository(db)),
         list_unsubscribe=bool(getattr(settings, "email_list_unsubscribe_enabled", False)),
         background=bool(getattr(settings, "campaign_background_send_enabled", False)),
+        # The gated sender's own gates, read-only, so the recipient preview
+        # explains exactly who the send would refuse (#1031).
+        gates=tuple(
+            gate
+            for gate in (
+                getattr(sender, "suppressions", None),
+                getattr(sender, "preferences", None),
+                getattr(sender, "prospects", None),
+            )
+            if gate is not None
+        ),
     )
 
 

@@ -254,7 +254,7 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
     async def list_undelivered_invoices_for_period(
         self, period: str, *, limit: int = 100
     ) -> list[LedgerInvoice]:
-        """Invoices for ``period`` that still owe money and were never sent.
+        """Invoices for ``period`` that owe money (or were fully waived) and were never sent.
 
         Drives the post-generation email pass (issue #430). ``delivery_status``
         is the idempotency key: ``sent`` invoices drop out, so a re-run never
@@ -272,7 +272,14 @@ class MongoBillingLedgerRepository(TenantScopedRepository):
                 "academy_id": academy_id,
                 "period": period,
                 "status": {"$in": ["open", "partially_paid"]},
-                "balance_due_cents": {"$gt": 0},
+                # Money owed, or a month minted at net $0 over real tuition
+                # whose parent still gets a "no payment required" invoice
+                # (#1035). The flag is stamped at mint only, so older $0
+                # invoices are never swept up and emailed by surprise.
+                "$or": [
+                    {"balance_due_cents": {"$gt": 0}},
+                    {"total_cents": 0, "zero_net_notice": True},
+                ],
                 "delivery_status": {"$in": ["not_sent", "delivery_failed", None]},
             },
             sort=[("created_at", 1), ("invoice_id", 1)],

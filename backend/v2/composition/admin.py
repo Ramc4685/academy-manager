@@ -65,6 +65,7 @@ from backend.v2.composition.invoice_naming import (
     find_invoice_by_id_or_number,
 )
 from backend.v2.composition.lifecycle_billing import (
+    build_add_invoice_line,
     build_autopay_status_gateway,
     build_void_billing_invoice,
     compose_enrollment_billing_sync,
@@ -131,7 +132,6 @@ from backend.v2.contexts.billing.application.refund_idempotency import (
 )
 from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
-    AddInvoiceLineCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
@@ -1049,16 +1049,16 @@ def compose_admin(
         idempotency_store=idempotency_store,
     )
 
-    async def _notify_minted_invoices(period: str) -> None:
+    async def _notify_minted_invoices(period: str) -> object:
         """Deliver what the run just minted, in the same run (issue #659).
 
         ``send_generated_invoices`` is bound later in this same function; this
         body only runs at request time, long after it exists. It owns the
         autopay split — non-autopay families get the invoice and a pay link,
-        autopay families get the pre-charge notice — so nothing here needs to
-        know the difference.
+        autopay families get the pre-charge notice. Returns the outcome so the
+        ops digest counts these sends (#1033).
         """
-        await send_generated_invoices(period)
+        return await send_generated_invoices(period)
 
     generate_monthly_payments = GenerateMonthlyPayments(
         payments=payments_repo,
@@ -1593,33 +1593,12 @@ def compose_admin(
             raise ValueError("invoice not found")
         return await billing_ledger_repo.list_payment_attempts(invoice_id)
 
-    async def add_invoice_line(
-        *,
-        invoice_id: str,
-        description: str,
-        line_type: str,
-        quantity: int,
-        unit_amount_cents: int,
-        product_id: str | None,
-    ) -> dict[str, Any]:
-        result = await AddInvoiceLine(
-            ledger=billing_ledger_repo,
-            counters=billing_counters_repo,
-            settings=billing_settings_repo,
-        ).execute(
-            AddInvoiceLineCommand(
-                invoice_id=invoice_id,
-                description=description,
-                line_type=line_type,
-                quantity=quantity,
-                unit_amount_cents=unit_amount_cents,
-                product_id=product_id,
-            )
-        )
-        return {
-            "line": result.line.model_dump(mode="python"),
-            "invoice": result.invoice.model_dump(mode="python"),
-        }
+    add_invoice_line = build_add_invoice_line(
+        ledger=billing_ledger_repo,
+        counters=billing_counters_repo,
+        settings=billing_settings_repo,
+        audit=billing_audit_log,
+    )
 
     async def remove_invoice_line(*, invoice_id: str, line_id: str) -> None:
         await RemoveInvoiceLine(ledger=billing_ledger_repo).execute(

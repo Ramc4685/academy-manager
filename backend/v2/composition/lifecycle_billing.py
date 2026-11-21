@@ -24,6 +24,10 @@ from datetime import UTC, date, datetime
 from functools import partial
 from typing import Any
 
+from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
+    AddInvoiceLine,
+    AddInvoiceLineCommand,
+)
 from backend.v2.contexts.billing.application.use_cases.apply_enrollment_lifecycle import (
     ApplyEnrollmentLifecycle,
     ApplyEnrollmentLifecycleCommand,
@@ -309,6 +313,45 @@ def compose_enrollment_move_billing_sync(
         settings=MongoBillingSettingsRepository(db),
     )
     return EnrollmentMoveBillingSyncAdapter(use_case)
+
+
+def build_add_invoice_line(
+    *, ledger: Any, counters: Any, settings: Any, audit: Any
+) -> Callable[..., Awaitable[dict[str, Any]]]:
+    """Admin "add line": the charge or adjustment, plus (#1035) the owner's
+    reason and actor in the billing audit trail."""
+
+    async def add_invoice_line(
+        *,
+        invoice_id: str,
+        description: str,
+        line_type: str,
+        quantity: int,
+        unit_amount_cents: int,
+        product_id: str | None,
+        reason: str | None = None,
+        actor_id: str | None = None,
+    ) -> dict[str, Any]:
+        result = await AddInvoiceLine(
+            ledger=ledger, counters=counters, settings=settings, audit=audit
+        ).execute(
+            AddInvoiceLineCommand(
+                invoice_id=invoice_id,
+                description=description,
+                line_type=line_type,
+                quantity=quantity,
+                unit_amount_cents=unit_amount_cents,
+                product_id=product_id,
+                reason=reason,
+                actor_id=actor_id,
+            )
+        )
+        return {
+            "line": result.line.model_dump(mode="python"),
+            "invoice": result.invoice.model_dump(mode="python"),
+        }
+
+    return add_invoice_line
 
 
 def build_void_billing_invoice(

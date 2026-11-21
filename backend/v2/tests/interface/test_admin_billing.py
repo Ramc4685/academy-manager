@@ -1341,6 +1341,37 @@ def test_add_invoice_adjustment_allows_negative_discount_line(admin_client):
     assert body["invoice_status"] == "open"
 
 
+def test_add_invoice_adjustment_threads_reason_and_actor_to_the_audit(admin_client):
+    """#1035: the dialog's required Reason was dropped before it reached the
+    writer, so nothing recorded why the parent's bill changed."""
+    calls: list[dict] = []
+
+    async def add_invoice_line(**kwargs) -> dict:
+        calls.append(kwargs)
+        line = {
+            "line_id": "line-1",
+            "invoice_id": "inv-1",
+            "line_type": "adjustment",
+            "description": kwargs["description"],
+            "quantity": 1,
+            "unit_amount_cents": kwargs["unit_amount_cents"],
+            "amount_cents": kwargs["unit_amount_cents"],
+        }
+        invoice = {"total_cents": 0, "balance_due_cents": 0, "status": "open"}
+        return {"line": line, "invoice": invoice}
+
+    admin_client.use_cases.add_invoice_line = add_invoice_line
+
+    response = admin_client.post(
+        "/api/v2/admin/billing/invoices/inv-1/adjustments",
+        json={"description": "Coach benefit", "amount_cents": -7_000, "reason": "Coach child"},
+    )
+
+    assert response.status_code == 201, response.text
+    assert calls[0]["reason"] == "Coach child"
+    assert calls[0]["actor_id"]
+
+
 def test_record_invoice_manual_payment_route(admin_client):
     async def record_manual_payment(**kwargs):
         # P0-4: the route must thread the admin actor for the audit trail.

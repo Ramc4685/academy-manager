@@ -2570,6 +2570,8 @@ class SendCampaignAudience(BaseModel):
     type: Literal["academy", "session"]
     role: Literal["parent", "coach"] = "parent"
     session_id: str | None = None
+    # #1030: several sessions in one campaign; one copy per address across them.
+    session_ids: list[str] | None = Field(default=None, max_length=50)
 
 
 class SendCampaignRequest(BaseModel):
@@ -2580,6 +2582,39 @@ class SendCampaignRequest(BaseModel):
     # derives one from the campaign content, so an identical retried POST
     # never re-emails the audience (#512).
     idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
+    # #1031: the fingerprint from the preview the admin confirmed. A send whose
+    # audience now resolves differently is refused with 409 audience_changed.
+    expected_audience_fingerprint: str | None = Field(default=None, max_length=128)
+
+
+class CampaignPreviewRequest(BaseModel):
+    audience: SendCampaignAudience
+
+
+class CampaignPreviewRecipient(BaseModel):
+    display_name: str | None = None
+    email: str
+    is_family_contact: bool = False
+
+
+class CampaignPreviewExclusion(BaseModel):
+    display_name: str | None = None
+    email: str | None = None
+    # missing_email | duplicate_address | suppressed | unsubscribed
+    reason: str
+    is_family_contact: bool = False
+
+
+class CampaignPreviewResponse(BaseModel):
+    """Resolved audience before a send (#1029): unique addresses, and the
+    families and opted-in contacts they belong to. Never an enrollment count."""
+
+    recipient_count: int
+    family_count: int
+    contact_count: int
+    recipients: list[CampaignPreviewRecipient] = Field(default_factory=list)
+    exclusions: list[CampaignPreviewExclusion] = Field(default_factory=list)
+    audience_fingerprint: str = ""
 
 
 class SendCampaignResponse(BaseModel):

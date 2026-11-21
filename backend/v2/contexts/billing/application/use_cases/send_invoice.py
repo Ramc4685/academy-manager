@@ -266,6 +266,10 @@ class SendInvoice:
                 held_primary = stamped
         return held_primary
 
+    async def _has_charge_line(self, invoice: LedgerInvoice) -> bool:
+        lines = await self._ledger.get_lines_for_invoice(invoice.invoice_id)
+        return any(line.amount_cents > 0 for line in lines)
+
     async def _is_autopaying(self, invoice: LedgerInvoice) -> bool:
         """True when the autopay/dunning worker will charge this invoice itself.
 
@@ -348,7 +352,11 @@ class SendInvoice:
 
         # 2. Finalize draft invoices before sending
         if invoice.status == "draft":
-            if invoice.total_cents == 0:
+            # A blank draft has nothing to say; a draft whose charges are fully
+            # offset by a waiver is a real $0 invoice and is sent (#1035). The
+            # header cannot tell them apart (a hand-billed waiver nets to a $0
+            # subtotal), so look for an actual charge line.
+            if invoice.total_cents == 0 and not await self._has_charge_line(invoice):
                 raise EmptyInvoiceNotSendable("Add at least one charge before sending")
             invoice = finalize(invoice, now=now)
             invoice = await self._ledger.save_invoice(invoice)

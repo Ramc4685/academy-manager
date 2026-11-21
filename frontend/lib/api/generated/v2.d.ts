@@ -1119,6 +1119,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/campaigns/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Email Campaign
+         * @description Read-only: resolves the audience the send would reach; emails nobody.
+         */
+        post: operations["preview_email_campaign_api_v2_admin_campaigns_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/class-public-profiles": {
         parameters: {
             query?: never;
@@ -12563,6 +12583,58 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** CampaignPreviewExclusion */
+        CampaignPreviewExclusion: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Email */
+            email?: string | null;
+            /**
+             * Is Family Contact
+             * @default false
+             */
+            is_family_contact: boolean;
+            /** Reason */
+            reason: string;
+        };
+        /** CampaignPreviewRecipient */
+        CampaignPreviewRecipient: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Email */
+            email: string;
+            /**
+             * Is Family Contact
+             * @default false
+             */
+            is_family_contact: boolean;
+        };
+        /** CampaignPreviewRequest */
+        CampaignPreviewRequest: {
+            audience: components["schemas"]["SendCampaignAudience"];
+        };
+        /**
+         * CampaignPreviewResponse
+         * @description Resolved audience before a send (#1029): unique addresses, and the
+         *     families and opted-in contacts they belong to. Never an enrollment count.
+         */
+        CampaignPreviewResponse: {
+            /**
+             * Audience Fingerprint
+             * @default
+             */
+            audience_fingerprint: string;
+            /** Contact Count */
+            contact_count: number;
+            /** Exclusions */
+            exclusions?: components["schemas"]["CampaignPreviewExclusion"][];
+            /** Family Count */
+            family_count: number;
+            /** Recipient Count */
+            recipient_count: number;
+            /** Recipients */
+            recipients?: components["schemas"]["CampaignPreviewRecipient"][];
+        };
         /** CancelAccountDeletionPayload */
         CancelAccountDeletionPayload: {
             /** Reason */
@@ -19430,6 +19502,8 @@ export interface components {
             role: "parent" | "coach";
             /** Session Id */
             session_id?: string | null;
+            /** Session Ids */
+            session_ids?: string[] | null;
             /**
              * Type
              * @enum {string}
@@ -19441,6 +19515,8 @@ export interface components {
             audience: components["schemas"]["SendCampaignAudience"];
             /** Body */
             body: string;
+            /** Expected Audience Fingerprint */
+            expected_audience_fingerprint?: string | null;
             /** Idempotency Key */
             idempotency_key?: string | null;
             /** Subject */
@@ -23377,6 +23453,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SendCampaignResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_email_campaign_api_v2_admin_campaigns_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CampaignPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignPreviewResponse"];
                 };
             };
             /** @description Validation Error */

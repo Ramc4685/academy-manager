@@ -10,9 +10,12 @@ from pydantic import BaseModel
 
 from backend.v2.contexts.communications.application.errors import (
     AcademyAudience,
+    AudienceChangedError,
     DuplicateCampaignError,
     EmptyAudienceError,
+    InvalidAudienceError,
     SessionAudience,
+    SessionsAudience,
 )
 from backend.v2.contexts.communications.application.use_cases.send_campaign import (
     SendCampaignCommand,
@@ -28,11 +31,16 @@ from backend.v2.interfaces.admin.views import (
     AdminMessageList,
     AdminMessageView,
     BroadcastRequest,
+    CampaignPreviewExclusion,
+    CampaignPreviewRecipient,
+    CampaignPreviewRequest,
+    CampaignPreviewResponse,
     CoachDigestLogEntryView,
     CoachDigestLogView,
     CoachDigestTestSendRequest,
     CoachDigestTestSendResponse,
     DMRequest,
+    SendCampaignAudience,
     SendCampaignRequest,
     SendCampaignResponse,
 )
@@ -105,6 +113,60 @@ async def dm(
     return _message_view(m, claims.user_id)
 
 
+def _campaign_audience(
+    raw: SendCampaignAudience,
+) -> AcademyAudience | SessionAudience | SessionsAudience:
+    if raw.type == "session":
+        # Sorted, so the derived idempotency key never depends on click order.
+        ids = sorted({s for s in (raw.session_ids or []) if s})
+        if not ids and raw.session_id:
+            ids = [raw.session_id]
+        if not ids:
+            raise HTTPException(status_code=400, detail="session_id required for session audience")
+        if len(ids) == 1:
+            return SessionAudience(session_id=ids[0])
+        return SessionsAudience(session_ids=tuple(ids))
+    return AcademyAudience(role=raw.role)
+
+
+@router.post("/campaigns/preview", response_model=CampaignPreviewResponse)
+async def preview_email_campaign(
+    payload: CampaignPreviewRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> CampaignPreviewResponse:
+    """Read-only: resolves the audience the send would reach; emails nobody."""
+    if use_cases.send_campaign is None:
+        raise HTTPException(status_code=503, detail="Email campaign sending is not configured")
+    try:
+        preview = await use_cases.send_campaign.preview(_campaign_audience(payload.audience))
+    except InvalidAudienceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return CampaignPreviewResponse(
+        recipient_count=preview.recipient_count,
+        family_count=preview.family_count,
+        contact_count=preview.contact_count,
+        recipients=[
+            CampaignPreviewRecipient(
+                display_name=r.display_name,
+                email=r.email or "",
+                is_family_contact=r.is_family_contact,
+            )
+            for r in preview.recipients
+        ],
+        exclusions=[
+            CampaignPreviewExclusion(
+                display_name=e.display_name,
+                email=e.email,
+                reason=e.reason,
+                is_family_contact=e.is_family_contact,
+            )
+            for e in preview.exclusions
+        ],
+        audience_fingerprint=preview.audience_fingerprint,
+    )
+
+
 @router.post("/campaigns", response_model=SendCampaignResponse, status_code=201)
 async def send_email_campaign(
     payload: SendCampaignRequest,
@@ -114,12 +176,7 @@ async def send_email_campaign(
     if use_cases.send_campaign is None:
         raise HTTPException(status_code=503, detail="Email campaign sending is not configured")
 
-    if payload.audience.type == "session":
-        if not payload.audience.session_id:
-            raise HTTPException(status_code=400, detail="session_id required for session audience")
-        audience = SessionAudience(session_id=payload.audience.session_id)
-    else:
-        audience = AcademyAudience(role=payload.audience.role)
+    audience = _campaign_audience(payload.audience)
 
     try:
         result = await use_cases.send_campaign.execute(
@@ -130,9 +187,14 @@ async def send_email_campaign(
                 subject=payload.subject,
                 body=payload.body,
                 idempotency_key=payload.idempotency_key,
+                expected_audience_fingerprint=payload.expected_audience_fingerprint,
             )
         )
-    except EmptyAudienceError as exc:
+    except AudienceChangedError as exc:
+        raise HTTPException(
+            status_code=409, detail={"code": "audience_changed", "message": str(exc)}
+        ) from exc
+    except (EmptyAudienceError, InvalidAudienceError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except DuplicateCampaignError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

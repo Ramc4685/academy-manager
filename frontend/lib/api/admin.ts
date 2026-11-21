@@ -3399,12 +3399,15 @@ export interface CampaignAudiencePayload {
   type: "academy" | "session";
   role?: "parent" | "coach";
   session_id?: string;
+  /** #1030: several sessions in one campaign, deduplicated server-side. */
+  session_ids?: string[];
 }
 
 export interface SendEmailCampaignRequest {
   subject: string;
   body: string;
   audience: CampaignAudiencePayload;
+  expected_audience_fingerprint?: string;
 }
 
 export interface SendEmailCampaignResponse {
@@ -3414,6 +3417,40 @@ export interface SendEmailCampaignResponse {
   failed_count: number;
   /** True when the send went to the background queue (counts are still zero). */
   queued?: boolean;
+}
+
+/** #1029: the audience the send would reach, resolved server-side; emails nobody. */
+export interface EmailCampaignPreviewRecipient {
+  display_name: string | null;
+  email: string;
+  is_family_contact: boolean;
+}
+
+/** #1031: who the send would skip, with the rule that skips them. */
+export interface EmailCampaignPreviewExclusion {
+  display_name: string | null;
+  email: string | null;
+  reason: "missing_email" | "duplicate_address" | "suppressed" | "unsubscribed" | string;
+  is_family_contact: boolean;
+}
+
+export interface EmailCampaignPreview {
+  recipient_count: number;
+  family_count: number;
+  contact_count: number;
+  recipients: EmailCampaignPreviewRecipient[];
+  exclusions: EmailCampaignPreviewExclusion[];
+  /** Sent back with the campaign; a changed audience is refused with 409. */
+  audience_fingerprint: string;
+}
+
+export function previewEmailCampaign(
+  audience: CampaignAudiencePayload,
+): Promise<EmailCampaignPreview> {
+  return apiFetch<EmailCampaignPreview>("/admin/campaigns/preview", {
+    method: "POST",
+    body: JSON.stringify({ audience }),
+  });
 }
 
 export function sendEmailCampaign(

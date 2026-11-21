@@ -1920,6 +1920,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             or totals["invoices_emailed"]
             or totals["invoice_autopay_notices_sent"]
             or totals["invoice_emails_failed"]
+            # #1033: a failed pass is a signal, not an idle tick, even on a
+            # retry-only tick that generated nothing and emailed nothing.
+            or totals["invoice_email_pass_failed"]
+            or totals["invoice_mint_send_failed"]
+            or totals["generation_failed"]
         ):
             return
         counts = {key: value for key, value in totals.items() if key != "created"}
@@ -2862,6 +2867,9 @@ async def _run_monthly_invoice_generation(
         # send_invoices itself raised (per-invoice failures are
         # invoice_emails_failed).
         "invoice_email_pass_failed": 0,
+        # #1033: the notify-on-mint pass inside generation raised. Not a retry
+        # reason: the sweep right after it re-selects every undelivered invoice.
+        "invoice_mint_send_failed": 0,
     }
     log = logging.getLogger("backend.v2.scheduler")
     for academy_id in academy_ids:
@@ -2904,6 +2912,14 @@ async def _run_monthly_invoice_generation(
                 ran_any = True
                 generated_periods.append(run_period)
                 totals["period_run_count"] += 1
+                # #1033: the notify-on-mint pass already sent these; the sweep
+                # below only finds what it left undelivered, so each invoice's
+                # email outcome is counted exactly once across the two.
+                mint_send = getattr(result, "mint_send", None)
+                if mint_send is not None:
+                    _fold_send_counts(totals, mint_send)
+                if getattr(result, "mint_send_failed", False):
+                    totals["invoice_mint_send_failed"] += 1
                 created = int(getattr(result, "created", 0) or 0)
                 failed_repair = int(getattr(result, "failed_repair", 0) or 0)
                 if failed_repair:
@@ -2987,6 +3003,19 @@ async def _run_monthly_invoice_generation(
     return totals
 
 
+def _fold_send_counts(totals: dict[str, int], outcome: Any) -> None:
+    """Add one send pass's outcome (mint-time or sweep) to the run totals."""
+    for total_key, outcome_key in (
+        ("invoices_emailed", "emailed"),
+        ("invoice_emails_failed", "email_failed"),
+        ("invoice_emails_skipped_autopay", "skipped_autopay"),
+        # Autopay parents get a pre-charge notice, not an invoice email; without
+        # this the digest showed "0 emailed" for a fully notified run.
+        ("invoice_autopay_notices_sent", "autopay_notified"),
+    ):
+        totals[total_key] += int(_outcome_count(outcome, outcome_key))
+
+
 async def _email_generated_invoices(
     *,
     send_invoices: Callable[[str], Awaitable[Any]],
@@ -3011,15 +3040,7 @@ async def _email_generated_invoices(
             run_period,
         )
         return
-    for total_key, outcome_key in (
-        ("invoices_emailed", "emailed"),
-        ("invoice_emails_failed", "email_failed"),
-        ("invoice_emails_skipped_autopay", "skipped_autopay"),
-        # Autopay parents get a pre-charge notice, not an invoice email; without
-        # this the digest showed "0 emailed" for a fully notified run.
-        ("invoice_autopay_notices_sent", "autopay_notified"),
-    ):
-        totals[total_key] += int(_outcome_count(outcome, outcome_key))
+    _fold_send_counts(totals, outcome)
 
 
 def _monthly_generation_retry_reason(totals: dict[str, int]) -> str | None:

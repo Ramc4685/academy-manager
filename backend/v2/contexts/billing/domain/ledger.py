@@ -79,6 +79,11 @@ class LedgerInvoice(BaseModel):
     source_id: str | None = None
     # delivery tracking (separate axis from financial status)
     delivery_status: Literal["not_sent", "sent", "delivery_failed"] = "not_sent"
+    # #1035: a monthly invoice minted at net $0 over positive tuition (a full
+    # waiver, or credit covering it) that the send pass should still deliver
+    # with "No payment required". Stamped only at mint, so $0 invoices from
+    # before the change are never swept up and emailed by surprise.
+    zero_net_notice: bool = False
     sent_at: datetime | None = None
     last_sent_at: datetime | None = None
     # Resend provider message id from the most recent successful send. Lets the

@@ -169,7 +169,9 @@ class SendGeneratedInvoices:
         receiving an invoice they were also charged for is recoverable; a
         parent silently receiving nothing is the bug this fixes.
         """
-        if self._autopay is None or not invoice.enrollment_id:
+        # Autopay never charges a $0 balance (a fully waived month, #1035), so
+        # a "will be charged" notice would be false: email the invoice instead.
+        if self._autopay is None or not invoice.enrollment_id or invoice.balance_due_cents <= 0:
             return False
         try:
             status = await self._autopay.get_autopay_enrollment_status(
