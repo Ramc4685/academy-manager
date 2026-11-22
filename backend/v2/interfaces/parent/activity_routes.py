@@ -39,7 +39,7 @@ async def list_enrollments(
     portal = getattr(use_cases, "billing_portal_available", None)
     return ParentEnrollmentsResponse(
         enrollments=[ParentEnrollmentView(**row) for row in rows],
-        billing_portal_available=bool(portal and await portal(claims.user_id)),  # type: ignore[operator]
+        billing_portal_available=bool(portal and await portal(claims.user_id)),
     )
 
 
