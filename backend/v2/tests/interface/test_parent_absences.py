@@ -163,3 +163,43 @@ def test_duplicate_absence_notice_returns_409_with_error_code() -> None:
     assert response.status_code == 409, response.text
     body = response.json()
     assert body["error"]["code"] == "Enrollment.DuplicateAbsenceNotice"
+
+
+def test_get_absences_names_the_missed_class_per_occurrence() -> None:
+    # Two notices for one child on different Saturdays are not duplicates; the
+    # card has to show which class each one is for.
+    use_cases = _ParentUseCases(
+        list_result=[
+            _notice(notice_id="n-1", occurrence_id="sat:2026-11-28:09:00"),
+            _notice(notice_id="n-2", occurrence_id="sat:2026-12-05:09:00"),
+        ]
+    )
+    asked: list[list[str]] = []
+
+    async def _resolver(occurrence_ids: list[str]) -> dict[str, dict[str, object]]:
+        asked.append(occurrence_ids)
+        return {
+            oid: {
+                "occurrence_id": oid,
+                "session_id": "sat",
+                "session_title": "Junior Beginners",
+                "start_at": f"{oid.split(':')[1]}T15:00:00Z",
+                "end_at": f"{oid.split(':')[1]}T16:00:00Z",
+                "timezone": "America/Chicago",
+                "status": "scheduled",
+            }
+            for oid in occurrence_ids
+            if oid != "sat:2026-12-05:09:00"
+        }
+
+    use_cases.resolve_assigned_classes = _resolver  # type: ignore[attr-defined]
+    with _make_client(use_cases=use_cases) as client:
+        response = client.get("/api/v2/parent/absences")
+
+    assert response.status_code == 200, response.text
+    rows = {n["notice_id"]: n for n in response.json()["notices"]}
+    assert asked == [["sat:2026-11-28:09:00", "sat:2026-12-05:09:00"]]
+    assert rows["n-1"]["missed_class"]["session_title"] == "Junior Beginners"
+    assert rows["n-1"]["missed_class"]["start_at"].startswith("2026-11-28T15:00:00")
+    # Unresolvable occurrence degrades to no details, not a 500.
+    assert rows["n-2"]["missed_class"] is None

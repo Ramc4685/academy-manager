@@ -129,6 +129,15 @@ test.describe("parent self-service — absences", () => {
               submitted_by: "parent-1",
               submitted_at: "2026-07-10T12:00:00Z",
               notice_window_met: true,
+              missed_class: {
+                occurrence_id: "occ-050",
+                session_id: "sess-1",
+                session_title: "Junior Beginners",
+                start_at: "2026-07-18T14:00:00Z",
+                end_at: "2026-07-18T15:00:00Z",
+                timezone: "America/Chicago",
+                status: "scheduled",
+              },
             },
           ],
         }),
@@ -140,6 +149,10 @@ test.describe("parent self-service — absences", () => {
     await expect(page.getByRole("tab", { name: "Absences", selected: true })).toBeVisible();
     await expect(page.getByText("My absence notices")).toBeVisible();
     await expect(page.getByText("ON TIME")).toBeVisible();
+    // The card names the missed class; the send time is a separate line.
+    await expect(page.getByTestId("absence-class-notice-1")).toContainText("Junior Beginners");
+    await expect(page.getByTestId("absence-class-notice-1")).toContainText("9:00");
+    await expect(page.getByText(/^Submitted /)).toBeVisible();
   });
 
   test("submitting an absence on time shows a success confirmation", async ({ page }) => {

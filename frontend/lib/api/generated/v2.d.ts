@@ -8070,6 +8070,7 @@ export interface components {
         };
         /** AbsenceNoticeView */
         AbsenceNoticeView: {
+            missed_class?: components["schemas"]["AssignedClassView"] | null;
             /** Notice Id */
             notice_id: string;
             /** Notice Window Met */
@@ -16947,6 +16948,12 @@ export interface components {
         ParentEnrollmentView: {
             /** Autopay Enrollment Status */
             autopay_enrollment_status?: string | null;
+            /**
+             * Autopay Offer
+             * @default available
+             * @enum {string}
+             */
+            autopay_offer: "available" | "free_class" | "manual_payments" | "not_active" | "unavailable";
             /** Autopay Payment Method Label */
             autopay_payment_method_label?: string | null;
             /** Autopay Payment Method Last4 */
@@ -16993,6 +17000,11 @@ export interface components {
         };
         /** ParentEnrollmentsResponse */
         ParentEnrollmentsResponse: {
+            /**
+             * Billing Portal Available
+             * @default false
+             */
+            billing_portal_available: boolean;
             /** Enrollments */
             enrollments: components["schemas"]["ParentEnrollmentView"][];
         };
@@ -17136,6 +17148,8 @@ export interface components {
             enrollment_id?: string | null;
             /** Invoice Id */
             invoice_id: string;
+            /** Invoice Number */
+            invoice_number?: string | null;
             /** Lines */
             lines: components["schemas"]["ParentInvoiceLineView"][];
             /** Pdf Url */
@@ -17182,6 +17196,8 @@ export interface components {
             enrollment_id?: string | null;
             /** Invoice Id */
             invoice_id: string;
+            /** Invoice Number */
+            invoice_number?: string | null;
             /** Pdf Url */
             pdf_url?: string | null;
             /** Period */
