@@ -1,6 +1,6 @@
 # demo-academy-walkthrough
 
-PR: TBD
+PR: #1225
 
 ## What changed
 The Demo Academy seed now reuses the academy's Badminton Skill Pathway (bootstrapping it only when absent and refusing to run if more than one is active), places Sam on level 2 and Alex on level 1 with dated skill updates, adds one parent-visible coach note, and saves one class recap with a taught skill and practice credit on the latest completed Saturday class. Progress rows are insert-only and keyed by skill, so reruns never duplicate or overwrite updates made in the app, and skills retired in the app are skipped. Email suppressions are now written before progress, so a progress failure cannot leave demo addresses mailable. Parent Payments offers "Set up autopay" only when the class is priced and the academy takes online payments; otherwise it says "Free class, nothing to pay", "Paid directly to the academy" (no Stripe account, with a pay-the-academy note) or "Autopay not available right now" (a Stripe account that cannot charge yet). It shows the Billing portal only for a parent with a Stripe customer, and labels each invoice with the child and invoice number. Absence notices show the class and session date and time, with the submission time on its own line. Coach Delete Account copy no longer talks about children and automatic payments. Settings → Curriculum skill and level descriptions wrap cleanly on narrow phones.
