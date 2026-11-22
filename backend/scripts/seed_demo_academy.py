@@ -41,6 +41,38 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from backend.scripts.seed_local import build_recurring_session_doc, build_session_occurrence_docs
 from backend.v2.composition.platform_billing_identity import compose_invoice_prefix_assigner
 from backend.v2.contexts.billing.domain.ledger import format_invoice_number
+from backend.v2.contexts.coaching.application.use_cases.session_notes import ProgressNote
+from backend.v2.contexts.coaching.domain.class_recap import (
+    CONFIRMED_PRESENT,
+    ChildPractice,
+    ClassRecap,
+)
+from backend.v2.contexts.coaching.infrastructure.mongo_class_recap_repo import (
+    MongoClassRecapRepository,
+)
+from backend.v2.contexts.curriculum.application.use_cases.seed_curriculum import (
+    seed_badminton_pathway,
+)
+from backend.v2.contexts.curriculum.application.use_cases.seed_lesson_cards import (
+    seed_lesson_cards,
+)
+from backend.v2.contexts.curriculum.infrastructure.mongo_criterion_repo import (
+    MongoCriterionRepository,
+)
+from backend.v2.contexts.curriculum.infrastructure.mongo_ext_ref_repo import (
+    MongoExternalRefRepository,
+)
+from backend.v2.contexts.curriculum.infrastructure.mongo_lesson_card_repo import (
+    MongoLessonCardRepository,
+)
+from backend.v2.contexts.curriculum.infrastructure.mongo_level_repo import MongoLevelRepository
+from backend.v2.contexts.curriculum.infrastructure.mongo_program_repo import (
+    MongoProgramRepository,
+)
+from backend.v2.contexts.curriculum.infrastructure.mongo_skill_repo import MongoSkillRepository
+from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
+    MongoCurriculumVideoRefRepository,
+)
 from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
     BootstrapAcademy,
     BootstrapAcademyCommand,
@@ -55,7 +87,13 @@ from backend.v2.contexts.identity.infrastructure.mongo_account_deletion_store im
 from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import (
     MongoTenantBootstrapStore,
 )
+from backend.v2.contexts.student_progress.domain.models import (
+    SkillStatus,
+    StudentLevelProgress,
+    StudentSkillProgress,
+)
 from backend.v2.shared.profile.completeness import MEDICAL_NONE_SENTINEL
+from backend.v2.shared.tenancy import tenant_scope
 
 DEMO_ACADEMY_ID = "acad_demo_academy"
 SLUG = "demo-academy"
@@ -455,6 +493,262 @@ def _build(now: datetime, user_ids: dict[str, str]) -> dict[str, list[dict[str, 
     }
 
 
+#: child -> (current level, completed levels, ((level, skill, status, days ago), ...)).
+#: Levels and skills are positions (``sequence``) on whatever badminton pathway the
+#: academy has, so a pathway the owner renamed or reworded in the app still fits.
+PROGRESS: dict[str, tuple[int, tuple[int, ...], tuple[tuple[int, int, SkillStatus, int], ...]]] = {
+    "demo_student_sam": (
+        2,
+        (1,),
+        (
+            (1, 1, "PASSED", 33),
+            (1, 2, "PASSED", 30),
+            (1, 3, "PASSED", 27),
+            (1, 4, "PASSED", 24),
+            (1, 5, "PASSED", 20),
+            (1, 6, "PASSED", 17),
+            (2, 1, "PASSED", 6),
+            (2, 2, "PRACTICING", 3),
+        ),
+    ),
+    "demo_student_alex": (
+        1,
+        (),
+        (
+            (1, 1, "PASSED", 20),
+            (1, 2, "PASSED", 8),
+            (1, 3, "LEARNING", 2),
+        ),
+    ),
+}
+SEED_RECAP_ID = "demo_recap_seeded"
+
+
+async def _ensure_pathway(db: Any, owner: str) -> dict[str, Any]:
+    """The academy's one active badminton pathway: reused when present (with
+    every edit made in the app), else created exactly as Settings -> Curriculum
+    -> "Seed badminton pathway" creates it, lesson cards included."""
+    programs = MongoProgramRepository(db)
+    with tenant_scope(DEMO_ACADEMY_ID):
+        existed = bool(await programs.list_active())
+        # Idempotent: returns the existing active badminton program untouched.
+        program = await seed_badminton_pathway(
+            academy_id=DEMO_ACADEMY_ID,
+            programs=programs,
+            levels=MongoLevelRepository(db),
+            skills=MongoSkillRepository(db),
+            criteria=MongoCriterionRepository(db),
+            refs=MongoExternalRefRepository(db),
+            created_by=owner,
+        )
+        if not existed:
+            # Only on a fresh pathway: the card seed upserts by slug and would
+            # overwrite cards edited in the app.
+            await seed_lesson_cards(
+                academy_id=DEMO_ACADEMY_ID,
+                programs=programs,
+                levels=MongoLevelRepository(db),
+                skills=MongoSkillRepository(db),
+                cards=MongoLessonCardRepository(db),
+                video_refs=MongoCurriculumVideoRefRepository(db),
+                created_by=owner,
+                program_id=program.program_id,
+            )
+        if len(await programs.list_active()) != 1:
+            raise DemoScopeError("the demo academy must have exactly one active pathway")
+    levels = await (
+        db["skill_levels"]
+        .find({"academy_id": DEMO_ACADEMY_ID, "program_id": program.program_id, "is_active": True})
+        .sort("sequence", 1)
+        .to_list(None)
+    )
+    skills: dict[int, list[dict[str, Any]]] = {}
+    for n, level in enumerate(levels, start=1):
+        skills[n] = await (
+            db["skills"]
+            .find({"academy_id": DEMO_ACADEMY_ID, "level_id": level["level_id"], "is_active": True})
+            .sort("sequence", 1)
+            .to_list(None)
+        )
+    return {"program_id": program.program_id, "levels": levels, "skills": skills}
+
+
+async def _insert_missing(db: Any, name: str, match: dict[str, Any], doc: dict[str, Any]) -> None:
+    """Write ``doc`` only where ``match`` finds nothing, so a rerun never
+    overwrites a pass, a placement or a note made in the app."""
+    require_demo(doc.get("academy_id"))
+    await db[name].update_one(
+        {"academy_id": DEMO_ACADEMY_ID, **match}, {"$setOnInsert": doc}, upsert=True
+    )
+
+
+async def _seed_progress(db: Any, now: datetime, user_ids: dict[str, str]) -> None:
+    owner, coach = user_ids["owner"], user_ids["coach"]
+    pathway = await _ensure_pathway(db, owner)
+    program_id, levels, skills = pathway["program_id"], pathway["levels"], pathway["skills"]
+    start = now - timedelta(days=35)
+
+    # The owner can retire levels in the app; say so instead of an IndexError.
+    needed = max(max((cur, *done)) for cur, done, _ in PROGRESS.values())
+    if len(levels) < needed:
+        raise DemoScopeError(f"demo pathway needs {needed} active levels, has {len(levels)}")
+    for student_id, (current, completed, updates) in PROGRESS.items():
+        child = student_id.removeprefix("demo_student_")
+        # A child the coach has already placed keeps that placement.
+        if not await db["student_level_progress"].find_one(
+            {"academy_id": DEMO_ACADEMY_ID, "student_id": student_id, "program_id": program_id}
+        ):
+            began = start
+            for n in completed:
+                done = now - timedelta(days=14)
+                row = StudentLevelProgress(
+                    progress_id=f"demo_level_progress_{child}_{levels[n - 1]['level_id']}",
+                    academy_id=DEMO_ACADEMY_ID,
+                    student_id=student_id,
+                    program_id=program_id,
+                    level_id=levels[n - 1]["level_id"],
+                    status="completed",
+                    started_at=began,
+                    completed_at=done,
+                    created_at=began,
+                )
+                await _insert_missing(
+                    db, "student_level_progress", {"progress_id": row.progress_id}, row.model_dump()
+                )
+                began = done
+            row = StudentLevelProgress(
+                progress_id=f"demo_level_progress_{child}_{levels[current - 1]['level_id']}",
+                academy_id=DEMO_ACADEMY_ID,
+                student_id=student_id,
+                program_id=program_id,
+                level_id=levels[current - 1]["level_id"],
+                started_at=began,
+                created_at=began,
+            )
+            await _insert_missing(
+                db, "student_level_progress", {"progress_id": row.progress_id}, row.model_dump()
+            )
+        for level_n, skill_n, status, days_ago in updates:
+            level_skills = skills.get(level_n, [])
+            if skill_n > len(level_skills):
+                continue  # retired in the app; seed what still exists
+            skill = level_skills[skill_n - 1]
+            at = now - timedelta(days=days_ago)
+            update = StudentSkillProgress(
+                # Keyed by skill, so a reorder or a fresh pathway never collides.
+                skill_progress_id=f"demo_skill_progress_{child}_{skill['skill_id']}",
+                academy_id=DEMO_ACADEMY_ID,
+                student_id=student_id,
+                skill_id=skill["skill_id"],
+                level_id=skill["level_id"],
+                program_id=program_id,
+                status=status,
+                introduced_at=at - timedelta(days=7),
+                last_updated_at=at,
+                last_updated_by=coach,
+            )
+            await _insert_missing(
+                db,
+                "student_skill_progress",
+                {"student_id": student_id, "skill_id": skill["skill_id"]},
+                update.model_dump(),
+            )
+
+    sam_skill = (skills.get(2) or [{"name": "a new skill"}])[0]["name"]
+    note = ProgressNote(
+        note_id="demo_note_sam",
+        session_id="demo_session_sat",
+        student_id="demo_student_sam",
+        coach_id=coach,
+        body=(
+            f"Sam passed {sam_skill} this week and is moving well around the court. "
+            "A few minutes of shadow swings at home will help with what comes next."
+        ),
+        created_at=now - timedelta(days=6),
+        visibility="shared",
+    )
+    await _insert_missing(
+        db,
+        "progress_notes",
+        {"note_id": note.note_id},
+        {"academy_id": DEMO_ACADEMY_ID, **note.model_dump()},
+    )
+    await _seed_recap(db, now, coach, skills)
+
+
+async def _seed_recap(
+    db: Any, now: datetime, coach: str, skills: dict[int, list[dict[str, Any]]]
+) -> None:
+    """One finished Junior Beginners class with what was taught and who
+    practised it. Kept once written; replaced only if its class aged out of
+    the seeded schedule."""
+    seeded = await db["class_recaps"].find_one(
+        {"academy_id": DEMO_ACADEMY_ID, "recap_id": SEED_RECAP_ID}
+    )
+    if seeded and await db["session_occurrences"].find_one(
+        {"academy_id": DEMO_ACADEMY_ID, "occurrence_id": seeded["occurrence_id"]}
+    ):
+        return
+    if seeded:
+        await db["class_recaps"].delete_one(
+            {"academy_id": DEMO_ACADEMY_ID, "recap_id": SEED_RECAP_ID}
+        )
+    # Each child practises their own level's skill: Alex level 1, Sam level 2.
+    wanted = {"demo_student_alex": (1, 3), "demo_student_sam": (2, 2)}
+    focus = {
+        child: skills[level][pos - 1]["skill_id"]
+        for child, (level, pos) in wanted.items()
+        if pos <= len(skills.get(level, []))
+    }
+    if not focus:
+        return
+    classes = (
+        db["session_occurrences"]
+        .find(
+            {"academy_id": DEMO_ACADEMY_ID, "session_id": "demo_session_sat", "status": "completed"}
+        )
+        .sort("start_at", -1)
+    )
+    async for occurrence in classes:
+        if await db["class_recaps"].find_one(
+            {"academy_id": DEMO_ACADEMY_ID, "occurrence_id": occurrence["occurrence_id"]}
+        ):
+            continue  # a coach already recorded this class
+        present = [
+            row["student_id"]
+            async for row in db["attendance"].find(
+                {
+                    "academy_id": DEMO_ACADEMY_ID,
+                    "occurrence_id": occurrence["occurrence_id"],
+                    "status": {"$in": sorted(CONFIRMED_PRESENT)},
+                }
+            )
+            if row["student_id"] in focus
+        ]
+        if not present:
+            continue
+        # Mongo hands back naive datetimes; every stored time is UTC.
+        starts_at = occurrence["start_at"].replace(tzinfo=UTC)
+        recap = ClassRecap(
+            recap_id=SEED_RECAP_ID,
+            academy_id=DEMO_ACADEMY_ID,
+            occurrence_id=occurrence["occurrence_id"],
+            session_id=occurrence["session_id"],
+            class_starts_at=starts_at,
+            taught_skill_ids=tuple(dict.fromkeys(focus.values())),
+            practice=tuple(
+                ChildPractice(student_id=s, skill_ids=(focus[s],)) for s in sorted(present)
+            ),
+            revision=1,
+            last_mutation_id="demo_seed",
+            updated_by=coach,
+            updated_at=min(starts_at + timedelta(hours=1), now),
+        )
+        with tenant_scope(DEMO_ACADEMY_ID):
+            await MongoClassRecapRepository(db).save(recap, expected_revision=0)
+        return
+
+
 #: collection -> the field a document is keyed (and pruned) by inside the academy.
 KEYS: dict[str, str] = {
     "academy_settings": "settings_id",
@@ -620,8 +914,11 @@ async def seed(
     for name, docs in built.items():
         await _sync(db, name, docs)
     await _reserve_invoice_numbers(db, built["invoices"])
+    # Suppressions first: a progress-seed failure must never leave demo
+    # addresses mailable.
     for email in sorted(DEMO_EMAILS):
         await _suppress(db, email, now)
+    await _seed_progress(db, now, user_ids)
     print(f"Seeded {NAME} ({DEMO_ACADEMY_ID}) at https://{DOMAIN}")
     for persona, (email, _, roles) in PERSONAS.items():
         print(f"  {persona}: {email} roles={roles}")

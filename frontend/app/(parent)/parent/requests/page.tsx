@@ -278,8 +278,17 @@ function AbsencesPanel() {
                       <p className="text-xs font-semibold text-rally-subtle">
                         {nameById.get(n.student_id) ?? "Your child"}
                       </p>
-                      <p className="text-sm font-semibold text-rally-ink">
-                        {formatAcademyDateTime(n.submitted_at, academyTimezone)}
+                      <p data-testid={`absence-class-${n.notice_id}`} className="text-sm font-semibold text-rally-ink">
+                        {n.missed_class
+                          ? `${n.missed_class.session_title} — ${formatAcademyTimeRange(
+                              n.missed_class.start_at,
+                              n.missed_class.end_at,
+                              n.missed_class.timezone ?? academyTimezone,
+                            )}`
+                          : "Class details unavailable"}
+                      </p>
+                      <p className="mt-0.5 text-xs text-rally-subtle">
+                        Submitted {formatAcademyDateTime(n.submitted_at, academyTimezone)}
                       </p>
                       {n.notice_window_met === false && (
                         <p className="mt-1 text-xs text-status-amber-800">

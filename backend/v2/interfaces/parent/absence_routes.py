@@ -10,6 +10,10 @@ from pydantic import BaseModel
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
     SubmitAbsenceNoticeCommand,
 )
+from backend.v2.interfaces.parent.assigned_class import (
+    AssignedClassView,
+    resolve_assigned_classes,
+)
 from backend.v2.interfaces.parent.deps import ParentUseCases, get_parent_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
@@ -30,6 +34,9 @@ class AbsenceNoticeView(BaseModel):
     submitted_by: str
     submitted_at: datetime
     notice_window_met: bool
+    # The class the child misses, so the card shows the session, not just when
+    # the notice was sent. None when the occurrence can't be resolved.
+    missed_class: AssignedClassView | None = None
 
 
 class AbsenceNoticesResponse(BaseModel):
@@ -62,6 +69,17 @@ async def list_absences(
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> AbsenceNoticesResponse:
     rows = await use_cases.list_parent_absences.execute(claims.user_id)
+    # Ids come only from this parent's own notices; the resolver reads in-tenant.
+    classes = await resolve_assigned_classes(
+        getattr(use_cases, "resolve_assigned_classes", None),
+        sorted({r.occurrence_id for r in rows}),
+    )
     return AbsenceNoticesResponse(
-        notices=[AbsenceNoticeView(**r.model_dump(exclude={"academy_id"})) for r in rows]
+        notices=[
+            AbsenceNoticeView(
+                **r.model_dump(exclude={"academy_id"}),
+                missed_class=classes.get(r.occurrence_id),
+            )
+            for r in rows
+        ]
     )

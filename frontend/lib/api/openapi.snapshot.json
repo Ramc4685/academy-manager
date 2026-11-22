@@ -87,6 +87,16 @@
       },
       "AbsenceNoticeView": {
         "properties": {
+          "missed_class": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssignedClassView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "notice_id": {
             "title": "Notice Id",
             "type": "string"
@@ -24711,6 +24721,18 @@
             ],
             "title": "Autopay Enrollment Status"
           },
+          "autopay_offer": {
+            "default": "available",
+            "enum": [
+              "available",
+              "free_class",
+              "manual_payments",
+              "not_active",
+              "unavailable"
+            ],
+            "title": "Autopay Offer",
+            "type": "string"
+          },
           "autopay_payment_method_label": {
             "anyOf": [
               {
@@ -24900,6 +24922,11 @@
       },
       "ParentEnrollmentsResponse": {
         "properties": {
+          "billing_portal_available": {
+            "default": false,
+            "title": "Billing Portal Available",
+            "type": "boolean"
+          },
           "enrollments": {
             "items": {
               "$ref": "#/components/schemas/ParentEnrollmentView"
@@ -25173,6 +25200,17 @@
             "title": "Invoice Id",
             "type": "string"
           },
+          "invoice_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Number"
+          },
           "lines": {
             "items": {
               "$ref": "#/components/schemas/ParentInvoiceLineView"
@@ -25302,6 +25340,17 @@
           "invoice_id": {
             "title": "Invoice Id",
             "type": "string"
+          },
+          "invoice_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Number"
           },
           "pdf_url": {
             "anyOf": [

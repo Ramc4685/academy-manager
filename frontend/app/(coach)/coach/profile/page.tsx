@@ -186,7 +186,7 @@ export default function CoachProfilePage() {
 
       {!isLoading && !editing && (
         <div className="mt-4">
-          <DeleteAccountSection />
+          <DeleteAccountSection persona="coach" />
         </div>
       )}
 

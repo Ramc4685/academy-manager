@@ -269,6 +269,8 @@ class ParentInvoiceView(BaseModel):
     # Why a "void" invoice was voided (issue #651), e.g. "enrollment_cancelled";
     # None for every other status.
     void_reason: str | None = None
+    #: e.g. ``DEMO-202611-0001``; None for invoices made before numbering.
+    invoice_number: str | None = None
 
 
 class ParentInvoicesResponse(BaseModel):
@@ -340,10 +342,19 @@ class ParentEnrollmentView(BaseModel):
     autopay_payment_method_label: str | None = None
     autopay_payment_method_last4: str | None = None
     autopay_setup_status: str | None = None
+    #: Whether "Set up autopay" can work here: ``free_class`` ($0 fee),
+    #: ``manual_payments`` (the academy takes no online payments),
+    #: ``unavailable`` (its Stripe account can't charge right now) and
+    #: ``not_active`` are the refusals autopay start would return.
+    autopay_offer: Literal[
+        "available", "free_class", "manual_payments", "not_active", "unavailable"
+    ] = "available"
 
 
 class ParentEnrollmentsResponse(BaseModel):
     enrollments: list[ParentEnrollmentView]
+    #: The Stripe billing portal can open (the parent has a Stripe customer).
+    billing_portal_available: bool = False
 
 
 class PauseRequestView(BaseModel):

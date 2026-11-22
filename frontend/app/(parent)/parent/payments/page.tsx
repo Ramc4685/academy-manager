@@ -169,6 +169,13 @@ function autopayHelperText(enrollment: {
   return null;
 }
 
+function autopayOfferText(offer: string): string {
+  if (offer === "free_class") return "Free class, nothing to pay";
+  if (offer === "manual_payments") return "Paid directly to the academy";
+  if (offer === "unavailable") return "Autopay not available right now";
+  return "Autopay not available";
+}
+
 function initials(name: string): string {
   return name
     .split(" ")
@@ -423,6 +430,12 @@ export default function ParentPaymentsPage() {
   const payments = paymentsQuery.data?.payments ?? [];
   const enrollments = enrollmentsQuery.data?.enrollments ?? [];
   const invoices = invoicesQuery.data?.invoices ?? [];
+  const portalAvailable = enrollmentsQuery.data?.billing_portal_available === true;
+  const childByEnrollment = new Map(enrollments.map((e) => [e.enrollment_id, e.student_name]));
+  const liveEnrollments = enrollments.filter((e) => !e.departed);
+  const manualPaymentsOnly =
+    liveEnrollments.some((e) => e.autopay_offer === "manual_payments") &&
+    liveEnrollments.every((e) => e.autopay_offer === "manual_payments" || e.autopay_offer === "free_class");
   const pauseRequests = pauseRequestsQuery.data?.requests ?? [];
   const creditBalance = creditsQuery.data?.balance_cents ?? 0;
   const credits = creditsQuery.data?.credits ?? [];
@@ -451,6 +464,7 @@ export default function ParentPaymentsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-rally-ink">Payments</h1>
+        {portalAvailable && (
         <button
           type="button"
           data-testid="billing-portal"
@@ -465,6 +479,7 @@ export default function ParentPaymentsPage() {
           </svg>
           {portalMutation.isPending ? "Opening…" : "Billing portal"}
         </button>
+        )}
       </div>
 
       {/* Status banners */}
@@ -605,6 +620,19 @@ export default function ParentPaymentsPage() {
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-medium text-rally-ink">{formatPeriodLabel(invoice.period)}</p>
+                      {(() => {
+                        const label = [
+                          invoice.enrollment_id ? childByEnrollment.get(invoice.enrollment_id) : undefined,
+                          invoice.invoice_number,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ");
+                        return label ? (
+                          <p data-testid={`invoice-label-${invoice.invoice_id}`} className="text-xs text-rally-subtle">
+                            {label}
+                          </p>
+                        ) : null;
+                      })()}
                       <StatusPill
                         status={settling ? "processing" : invoice.status}
                         label={isVoid ? "Cancelled" : undefined}
@@ -747,6 +775,17 @@ export default function ParentPaymentsPage() {
             {autopayError}
           </p>
         )}
+        {manualPaymentsOnly && (
+          <div data-testid="manual-payments-note" className="mb-2 rounded-xl border border-rally-line bg-rally-paper px-4 py-3 text-sm text-rally-ink">
+            <p className="font-medium">Pay the academy directly</p>
+            <p className="mt-0.5 text-xs text-rally-subtle">
+              {academyQuery.data?.display_name ?? "Your academy"} records payments at the front desk, so there is nothing to set up online.
+            </p>
+            {academyQuery.data?.payment_instructions && (
+              <p className="mt-1 whitespace-pre-line text-xs text-rally-muted">{academyQuery.data.payment_instructions}</p>
+            )}
+          </div>
+        )}
         {enrollments.length === 0 ? (
           <p className="text-sm text-rally-subtle">No active enrollments.</p>
         ) : (
@@ -758,6 +797,9 @@ export default function ParentPaymentsPage() {
               const helperText = autopayHelperText(enrollment);
               const methodText = autopayMethodText(enrollment);
               const starting = startingAutopayEnrollmentId === enrollment.enrollment_id;
+              const offer = enrollment.autopay_offer ?? "available";
+              // Any other offer is a refusal autopay start would return.
+              const showAutopayButton = enabled || offer === "available";
               return (
                 <div
                   key={enrollment.enrollment_id}
@@ -772,8 +814,11 @@ export default function ParentPaymentsPage() {
                         {enrollment.student_name}
                       </p>
                       <p className="truncate text-xs text-rally-subtle">{enrollment.session_title}</p>
-                      <p className={`mt-0.5 text-xs ${enabled ? "text-status-green-800" : "text-rally-subtle"}`}>
-                        {autopayStatusText(enrollment)}
+                      <p
+                        data-testid={`autopay-status-${enrollment.enrollment_id}`}
+                        className={`mt-0.5 text-xs ${enabled ? "text-status-green-800" : "text-rally-subtle"}`}
+                      >
+                        {showAutopayButton ? autopayStatusText(enrollment) : autopayOfferText(offer)}
                       </p>
                       {methodText && (
                         <p className="mt-0.5 text-xs text-rally-muted">{methodText}</p>
@@ -784,6 +829,7 @@ export default function ParentPaymentsPage() {
                     <p className="mt-2 text-xs text-status-amber-800">{helperText}</p>
                   )}
                   <div className="mt-3 flex gap-2">
+                    {showAutopayButton && (
                     <Button
                       type="button"
                       data-testid={`start-autopay-${enrollment.enrollment_id}`}
@@ -801,6 +847,7 @@ export default function ParentPaymentsPage() {
                             ? "Retry autopay"
                             : "Set up autopay"}
                     </Button>
+                    )}
                     {/* #843: pausing a class is not a money action. It lives
                         with the class, on Children, next to cancel. */}
                     <Link
