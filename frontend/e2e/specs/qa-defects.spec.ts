@@ -64,8 +64,9 @@ async function stubParentPayments(page: Parameters<typeof stubMe>[0]) {
   await page.route("**/api/v2/parent/invoices", (route) =>
     fulfillJson(route, { invoices: [] }),
   );
+  // The flag says a portal exists; the backend can still refuse (e.g. a race).
   await page.route("**/api/v2/parent/enrollments", (route) =>
-    fulfillJson(route, { enrollments: [] }),
+    fulfillJson(route, { enrollments: [], billing_portal_available: true }),
   );
   await page.route("**/api/v2/parent/pause-requests", (route) =>
     fulfillJson(route, { requests: [] }),

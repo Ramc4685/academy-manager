@@ -109,6 +109,7 @@ class ParentUseCases:
     )
     start_invoice_payment_for_parent: object | None = None  # callable
     start_balance_payment_for_parent: object | None = None  # callable
+    billing_portal_available: object | None = None  # callable(parent_id) -> bool
     # Optional so existing ParentUseCases constructions (and tests) that predate
     # the skill pathway keep working. Real parent composition always sets it;
     # the skill routes are the only consumers.

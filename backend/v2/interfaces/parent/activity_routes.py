@@ -36,7 +36,11 @@ async def list_enrollments(
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ParentEnrollmentsResponse:
     rows = await use_cases.list_enrollments_for_parent(claims.user_id)  # type: ignore[operator]
-    return ParentEnrollmentsResponse(enrollments=[ParentEnrollmentView(**row) for row in rows])
+    portal = getattr(use_cases, "billing_portal_available", None)
+    return ParentEnrollmentsResponse(
+        enrollments=[ParentEnrollmentView(**row) for row in rows],
+        billing_portal_available=bool(portal and await portal(claims.user_id)),  # type: ignore[operator]
+    )
 
 
 @router.get("/attendance", response_model=ParentAttendanceResponse)

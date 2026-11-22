@@ -968,6 +968,8 @@ async def test_parent_enrollment_visibility_uses_app_owned_autopay_projection() 
             "autopay_payment_method_label": "Stripe Test Bank",
             "autopay_payment_method_last4": "6789",
             "autopay_setup_status": "active",
+            # The fixture class has no price, so there is nothing to automate.
+            "autopay_offer": "free_class",
         }
     ]
 
@@ -3833,3 +3835,108 @@ async def test_resolve_assigned_classes_returns_class_facts_in_academy_timezone(
     assert details["status"] == "scheduled"
     assert details["start_at"] == now + timedelta(days=2)
     assert foreign == {}
+
+
+def _offer_fixture_db() -> _FakeDb:
+    return _FakeDb(
+        {
+            "students": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "student_id": "s1",
+                        "parent_id": "parent-1",
+                        "full_name": "Sam",
+                    }
+                ]
+            ),
+            "enrollments": _FakeCollection(
+                [
+                    {
+                        "academy_id": "acad",
+                        "enrollment_id": "enr-1",
+                        "student_id": "s1",
+                        "session_id": "sess-1",
+                        "status": "active",
+                    }
+                ]
+            ),
+            "sessions": _FakeCollection(
+                [{"academy_id": "acad", "session_id": "sess-1", "title": "Juniors"}]
+            ),
+        }
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("route_kind", "fee_cents", "expected"),
+    [
+        ("connected", 8000, "available"),
+        ("platform", 8000, "available"),
+        ("no_account", 8000, "manual_payments"),
+        ("account_not_ready", 8000, "unavailable"),
+        ("account_platform_liable", 8000, "unavailable"),
+        ("connected", 0, "free_class"),
+        ("no_account", 0, "free_class"),
+    ],
+)
+async def test_autopay_offer_mirrors_what_autopay_start_would_accept(
+    monkeypatch, route_kind: str, fee_cents: int, expected: str
+) -> None:
+    import backend.v2.composition.parent as parent_module
+    from backend.v2.contexts.billing.domain.charge_route import ChargeRoute
+
+    async def _route(*_args: object) -> ChargeRoute:
+        return ChargeRoute(kind=route_kind)  # type: ignore[arg-type]
+
+    async def _fee(*_args: object, **_kwargs: object) -> int:
+        return fee_cents
+
+    monkeypatch.setattr(parent_module, "academy_card_route", _route)
+    monkeypatch.setattr(parent_module, "class_fee_cents_for_period", _fee)
+    parent = compose_parent(
+        _offer_fixture_db(),  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=_PortalStripe(),  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        rows = await parent.list_enrollments_for_parent("parent-1")
+
+    assert [r["autopay_offer"] for r in rows] == [expected]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("customer", "expected"), [({"stripe_customer_id": "cus_1"}, True), ({}, False), (None, False)]
+)
+async def test_billing_portal_available_needs_a_stripe_customer(
+    monkeypatch, customer: dict[str, str] | None, expected: bool
+) -> None:
+    import backend.v2.composition.parent as parent_module
+
+    seen: list[str] = []
+
+    async def _get_academy_customer(self: object, *, parent_id: str) -> dict[str, str] | None:
+        seen.append(parent_id)
+        return customer
+
+    monkeypatch.setattr(
+        parent_module.MongoParentBillingCustomerRepository,
+        "get_academy_customer",
+        _get_academy_customer,
+    )
+    parent = compose_parent(
+        _offer_fixture_db(),  # type: ignore[arg-type]
+        outbox=object(),  # type: ignore[arg-type]
+        idempotency_store=object(),  # type: ignore[arg-type]
+        stripe=_PortalStripe(),  # type: ignore[arg-type]
+        academy_id="acad",
+    )
+
+    with tenant_scope("acad"):
+        assert await parent.billing_portal_available("parent-1") is expected  # type: ignore[misc]
+    assert seen == ["parent-1"]

@@ -45,6 +45,7 @@ def _invoice_view(invoice) -> ParentInvoiceView:
         created_at=invoice.created_at,
         enrollment_id=invoice.enrollment_id,
         void_reason=getattr(invoice, "void_reason", None),
+        invoice_number=getattr(invoice, "invoice_number", None),
     )
 
 
