@@ -231,6 +231,8 @@ class CoachComposition:
     # test compositions working; real composition always sets both.
     set_progress_note_visibility: SetProgressNoteVisibility | None = None
     set_skill_note_visibility: SetSkillNoteVisibility | None = None
+    # Today flags classes whose recap is saved (coach recap shortcut).
+    recapped_occurrence_ids: Callable[[Sequence[str]], Awaitable[set[str]]] | None = None
 
 
 class CoachAssignedSessionLookup:
