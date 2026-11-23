@@ -71,12 +71,14 @@ async def _seed_occurrence(db: Any, academy_id: str, occurrence_id: str, start: 
     )
 
 
-async def _seed_mark(db: Any, academy_id: str, student_id: str, status: str) -> None:
+async def _seed_mark(
+    db: Any, academy_id: str, student_id: str, status: str, occurrence_id: str = MARKED
+) -> None:
     await db["attendance"].insert_one(
         {
-            "attendance_id": f"att-{academy_id}-{student_id}",
+            "attendance_id": f"att-{academy_id}-{occurrence_id}-{student_id}",
             "academy_id": academy_id,
-            "occurrence_id": MARKED,
+            "occurrence_id": occurrence_id,
             "session_id": SESSION,
             "student_id": student_id,
             "marked_by": f"coach-{academy_id}",
@@ -97,6 +99,9 @@ async def _seed(db: Any) -> None:
     await _seed_mark(db, DEMO, "stu-demo-1", "present")
     await _seed_mark(db, DEMO, "stu-demo-2", "present")
     await _seed_mark(db, BOOT, "stu-boot-1", "absent")
+    # A boot-academy mark on the id of the date Demo never marked: read with
+    # the boot academy, Demo's empty date would show 1 and offer Attendance.
+    await _seed_mark(db, BOOT, "stu-boot-1", "present", occurrence_id=EMPTY)
 
 
 def _rows_by_id(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
