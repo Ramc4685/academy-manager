@@ -214,6 +214,13 @@ def compute_self_cancel_terms(
 PAYMENT_INSTRUCTIONS_MAX_LENGTH = 1000
 
 
+#: Drop-off check-in window bounds (minutes relative to the class start).
+DROPOFF_OPENS_DEFAULT_MINUTES = 30
+DROPOFF_OPENS_MAX_MINUTES = 60
+DROPOFF_CLOSES_DEFAULT_MINUTES = 15
+DROPOFF_CLOSES_MAX_MINUTES = 240
+
+
 #: A calendar month, "YYYY-MM".
 SCHEDULE_MONTH_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])$"
 
@@ -258,6 +265,18 @@ class ParentSelfServicePolicy(BaseModel):
     #: "not confirmed" banner and the calendar feed carries everything, which
     #: is today's behaviour, so the publish step is opt-in per academy.
     schedule_published_through: str | None = Field(default=None, pattern=SCHEDULE_MONTH_PATTERN)
+    #: Parent drop-off check-in: the parent taps "I've arrived" for one class
+    #: date and staff confirm it, which writes the attendance mark. Off by
+    #: default, so nothing changes until an academy opts in. The report window
+    #: opens at most 60 minutes before the start so a confirmation always falls
+    #: inside MarkAttendance's 60-minute lead time.
+    dropoff_checkin_enabled: bool = False
+    dropoff_checkin_opens_minutes_before: int = Field(
+        default=DROPOFF_OPENS_DEFAULT_MINUTES, ge=0, le=DROPOFF_OPENS_MAX_MINUTES
+    )
+    dropoff_checkin_closes_minutes_after: int = Field(
+        default=DROPOFF_CLOSES_DEFAULT_MINUTES, ge=0, le=DROPOFF_CLOSES_MAX_MINUTES
+    )
 
     @staticmethod
     def default(academy_id: str) -> ParentSelfServicePolicy:

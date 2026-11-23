@@ -38,6 +38,8 @@ OCCURRENCE_DEPENDENT_COLLECTIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]]
         ),
     ),
     ("trial_requests", ("assigned_occurrence_id",)),
+    # A parent's drop-off report: deleting the occurrence would orphan it.
+    ("dropoff_checkins", ("occurrence_id",)),
 )
 
 

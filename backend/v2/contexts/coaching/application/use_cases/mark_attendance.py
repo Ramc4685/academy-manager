@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 from backend.v2.contexts.coaching.application.ports import (
     AttendanceRepository,
     EnrollmentLookup,
+    OccurrenceDetails,
     OccurrenceLookup,
 )
 from backend.v2.contexts.coaching.domain.errors import (
@@ -64,6 +65,20 @@ def ensure_occurrence_started(starts_at: datetime, now: datetime, **details: obj
             starts_at=starts_at.isoformat(),
             **details,
         )
+
+
+def is_assigned_to_occurrence(occurrence: OccurrenceDetails, coach_id: str) -> bool:
+    """Scheduled, actual, substitute or assistant coach of this occurrence.
+
+    Assistant coaches mark attendance like an assigned coach (they are never
+    paid for it; payroll ignores the list).
+    """
+    return coach_id in {
+        occurrence.scheduled_coach_id,
+        occurrence.actual_coach_id,
+        occurrence.substitute_coach_id,
+        *occurrence.assistant_coach_ids,
+    }
 
 
 class MarkAttendanceCommand(BaseModel):
@@ -150,14 +165,7 @@ class MarkAttendance:
                 session_id=cmd.session_id,
                 occurrence_id=cmd.occurrence_id,
             )
-        # Assistant coaches listed on the occurrence mark attendance like an
-        # assigned coach (they are never paid for it; payroll ignores the list).
-        if not supervisor and coach_id not in {
-            occurrence.scheduled_coach_id,
-            occurrence.actual_coach_id,
-            occurrence.substitute_coach_id,
-            *occurrence.assistant_coach_ids,
-        }:
+        if not supervisor and not is_assigned_to_occurrence(occurrence, coach_id):
             raise SessionNotAssigned(
                 "session occurrence not assigned to this coach",
                 session_id=cmd.session_id,

@@ -141,3 +141,28 @@ class RecapInvalid(DomainError):
 
     code = "Coaching.RecapInvalid"
     status_code = 422
+
+
+class DropoffCheckinDisabled(DomainError):
+    """The academy has not switched parent drop-off check-in on."""
+
+    code = "Coaching.DropoffCheckinDisabled"
+    status_code = 403
+
+
+class DropoffCheckinNotFound(DomainError):
+    """No such student for this parent, no such occurrence in this academy,
+    or (for a confirmation) no arrival report to confirm. 404 so another
+    family's child or another academy's class is never revealed."""
+
+    code = "Coaching.DropoffCheckinNotFound"
+    status_code = 404
+
+
+class DropoffWindowClosed(DomainError):
+    """The arrival cannot be reported or confirmed now. ``details["reason"]``
+    is ``cancelled``, ``not_scheduled``, ``not_open_yet``, ``closed`` or
+    ``expired``."""
+
+    code = "Coaching.DropoffWindowClosed"
+    status_code = 409

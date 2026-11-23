@@ -4094,6 +4094,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/session-occurrences/{occurrence_id}/checkins/{student_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm a parent's drop-off report and mark the child present (idempotent) */
+        post: operations["confirm_dropoff_api_v2_admin_session_occurrences__occurrence_id__checkins__student_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/session-occurrences/{occurrence_id}/coach": {
         parameters: {
             query?: never;
@@ -5424,6 +5441,23 @@ export interface paths {
         patch: operations["correct_attendance_api_v2_coach_occurrences__occurrence_id__attendance__student_id__patch"];
         trace?: never;
     };
+    "/api/v2/coach/occurrences/{occurrence_id}/checkins/{student_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm a parent's drop-off report and mark the child present (idempotent) */
+        post: operations["confirm_dropoff_api_v2_coach_occurrences__occurrence_id__checkins__student_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/coach/occurrences/{occurrence_id}/class-recap": {
         parameters: {
             query?: never;
@@ -6375,6 +6409,23 @@ export interface paths {
         head?: never;
         /** Update a child's DOB, emergency contact, or medical notes */
         patch: operations["update_child_api_v2_parent_children__student_id__patch"];
+        trace?: never;
+    };
+    "/api/v2/parent/children/{student_id}/occurrences/{occurrence_id}/arrival": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Report that a child has arrived for a class date (idempotent) */
+        post: operations["report_arrival_api_v2_parent_children__student_id__occurrences__occurrence_id__arrival_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v2/parent/children/{student_id}/schedule": {
@@ -8037,6 +8088,24 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AbsenceMakeupView
+         * @description Where a reported absence stands: reported, makeup eligible, requested,
+         *     booked (with the makeup class) or expired. Decided server-side by the
+         *     same eligibility check a makeup request runs; the client only displays it.
+         */
+        AbsenceMakeupView: {
+            booked_class?: components["schemas"]["AssignedClassView"] | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "reported" | "eligible" | "requested" | "booked" | "expired";
+        };
         /** AbsenceNoticeAdminRow */
         AbsenceNoticeAdminRow: {
             /** Notice Id */
@@ -8070,6 +8139,7 @@ export interface components {
         };
         /** AbsenceNoticeView */
         AbsenceNoticeView: {
+            makeup?: components["schemas"]["AbsenceMakeupView"] | null;
             missed_class?: components["schemas"]["AssignedClassView"] | null;
             /** Notice Id */
             notice_id: string;
@@ -9542,6 +9612,26 @@ export interface components {
              */
             win_back_enabled: boolean;
         };
+        /**
+         * AdminOccurrenceDropoffView
+         * @description Drop-off breakdown for the class date. Expected = roster (active
+         *     enrollments plus make-up / trial rows); ``checkins`` are every parent
+         *     report with its state, actor names and server timestamps.
+         */
+        AdminOccurrenceDropoffView: {
+            /** Checkins */
+            checkins: components["schemas"]["StaffDropoffCheckinView"][];
+            /** Confirmed Count */
+            confirmed_count: number;
+            /** Enabled */
+            enabled: boolean;
+            /** Expected Count */
+            expected_count: number;
+            /** Expected Student Ids */
+            expected_student_ids: string[];
+            /** Pending Count */
+            pending_count: number;
+        };
         /** AdminOccurrenceTeachingPlanResponse */
         AdminOccurrenceTeachingPlanResponse: {
             /** Coach Id */
@@ -10751,6 +10841,7 @@ export interface components {
         AdminStudentAttendanceList: {
             /** Attendance */
             attendance: components["schemas"]["AdminStudentAttendanceView"][];
+            dropoff?: components["schemas"]["AdminOccurrenceDropoffView"] | null;
         };
         /** AdminStudentAttendanceView */
         AdminStudentAttendanceView: {
@@ -13286,6 +13377,7 @@ export interface components {
             attendance_marked_at?: string | null;
             /** Attendance Status */
             attendance_status?: ("present" | "absent" | "late" | "voided") | null;
+            checkin?: components["schemas"]["StaffDropoffCheckinView"] | null;
             /** Enrollment Status */
             enrollment_status?: ("active" | "paused" | "held" | "reclaim_pending" | "cancelled") | null;
             /**
@@ -13354,6 +13446,10 @@ export interface components {
             coach_id?: string | null;
             /** Coach Name */
             coach_name?: string | null;
+            /** Dropoff Window Closes At */
+            dropoff_window_closes_at?: string | null;
+            /** Dropoff Window Opens At */
+            dropoff_window_opens_at?: string | null;
             /**
              * End At
              * Format: date-time
@@ -14228,6 +14324,37 @@ export interface components {
              * @enum {string}
              */
             platform: "ios" | "android";
+        };
+        /** DropoffCheckinView */
+        DropoffCheckinView: {
+            /**
+             * Can Report Arrival
+             * @default false
+             */
+            can_report_arrival: boolean;
+            /** Confirmed At */
+            confirmed_at?: string | null;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Reported At */
+            reported_at?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "none" | "pending" | "confirmed" | "expired";
+            /** Student Id */
+            student_id: string;
+            /**
+             * Window Closes At
+             * Format: date-time
+             */
+            window_closes_at: string;
+            /**
+             * Window Opens At
+             * Format: date-time
+             */
+            window_opens_at: string;
         };
         /** DunningResponse */
         DunningResponse: {
@@ -17405,13 +17532,20 @@ export interface components {
         };
         /** ParentScheduleEntryView */
         ParentScheduleEntryView: {
+            absence_makeup?: components["schemas"]["AbsenceMakeupView"] | null;
             /**
              * Absence Reported
              * @default false
              */
             absence_reported: boolean;
+            /**
+             * Can Report Arrival
+             * @default false
+             */
+            can_report_arrival: boolean;
             /** Cancellation Reason */
             cancellation_reason?: string | null;
+            checkin?: components["schemas"]["DropoffCheckinView"] | null;
             /** Coach Name */
             coach_name?: string | null;
             /**
@@ -17526,6 +17660,11 @@ export interface components {
              * @default true
              */
             can_request_trial: boolean;
+            /**
+             * Dropoff Checkin Enabled
+             * @default false
+             */
+            dropoff_checkin_enabled: boolean;
         };
         /** ParentSignedWaiverView */
         ParentSignedWaiverView: {
@@ -19542,6 +19681,12 @@ export interface components {
             cancellation_fee_cents: number;
             /** Cancellation Minimum Notice Days */
             cancellation_minimum_notice_days: number;
+            /** Dropoff Checkin Closes Minutes After */
+            dropoff_checkin_closes_minutes_after: number;
+            /** Dropoff Checkin Enabled */
+            dropoff_checkin_enabled: boolean;
+            /** Dropoff Checkin Opens Minutes Before */
+            dropoff_checkin_opens_minutes_before: number;
             /** Makeup Expiry Days */
             makeup_expiry_days: number;
             /** Makeup Requires Notice */
@@ -19992,6 +20137,56 @@ export interface components {
             source: string;
             /** Trial */
             trial: number;
+        };
+        /**
+         * StaffDropoffCheckinView
+         * @description Adds who reported / confirmed (names resolved where the read does so)
+         *     and the attendance mark the confirmation wrote or linked to.
+         */
+        StaffDropoffCheckinView: {
+            /** Attendance Id */
+            attendance_id?: string | null;
+            /**
+             * Can Report Arrival
+             * @default false
+             */
+            can_report_arrival: boolean;
+            /** Confirmed At */
+            confirmed_at?: string | null;
+            /** Confirmed By */
+            confirmed_by?: string | null;
+            /** Confirmed By Name */
+            confirmed_by_name?: string | null;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /**
+             * Reconciled With Existing Mark
+             * @default false
+             */
+            reconciled_with_existing_mark: boolean;
+            /** Reported At */
+            reported_at?: string | null;
+            /** Reported By */
+            reported_by?: string | null;
+            /** Reported By Name */
+            reported_by_name?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "none" | "pending" | "confirmed" | "expired";
+            /** Student Id */
+            student_id: string;
+            /**
+             * Window Closes At
+             * Format: date-time
+             */
+            window_closes_at: string;
+            /**
+             * Window Opens At
+             * Format: date-time
+             */
+            window_opens_at: string;
         };
         /** StartAutopayRequest */
         StartAutopayRequest: {
@@ -21247,6 +21442,12 @@ export interface components {
             cancellation_fee_cents?: number | null;
             /** Cancellation Minimum Notice Days */
             cancellation_minimum_notice_days?: number | null;
+            /** Dropoff Checkin Closes Minutes After */
+            dropoff_checkin_closes_minutes_after?: number | null;
+            /** Dropoff Checkin Enabled */
+            dropoff_checkin_enabled?: boolean | null;
+            /** Dropoff Checkin Opens Minutes Before */
+            dropoff_checkin_opens_minutes_before?: number | null;
             /** Makeup Expiry Days */
             makeup_expiry_days?: number | null;
             /** Makeup Requires Notice */
@@ -29202,6 +29403,38 @@ export interface operations {
             };
         };
     };
+    confirm_dropoff_api_v2_admin_session_occurrences__occurrence_id__checkins__student_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                occurrence_id: string;
+                student_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StaffDropoffCheckinView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_session_occurrence_coach_api_v2_admin_session_occurrences__occurrence_id__coach_patch: {
         parameters: {
             query?: never;
@@ -31883,6 +32116,38 @@ export interface operations {
             };
         };
     };
+    confirm_dropoff_api_v2_coach_occurrences__occurrence_id__checkins__student_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                occurrence_id: string;
+                student_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StaffDropoffCheckinView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_get: {
         parameters: {
             query?: never;
@@ -33823,6 +34088,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ParentSelfProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    report_arrival_api_v2_parent_children__student_id__occurrences__occurrence_id__arrival_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                student_id: string;
+                occurrence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DropoffCheckinView"];
                 };
             };
             /** @description Validation Error */

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  absenceMakeupDisplay,
   assignedClassCopy,
   makeupCandidateKey,
+  makeupBookingHref,
   makeupCandidateLabel,
   makeupEmptyMessage,
   requestStatusChipVariant,
@@ -96,5 +98,71 @@ describe("makeupEmptyMessage (#1041)", () => {
       /on-time absence notice/,
     );
     expect(makeupEmptyMessage({ makeups_enabled: true, requires_notice: false })).not.toMatch(/notice/);
+  });
+});
+
+describe("absenceMakeupDisplay", () => {
+  const ids = { studentId: "kid-1", occurrenceId: "occ:2026-11-14" };
+  const tz = "America/Chicago";
+
+  it("shows Reported, with the server's reason when a past class can't be made up", () => {
+    expect(absenceMakeupDisplay({ state: "reported" }, ids, tz)).toEqual({
+      label: "Reported",
+      chip: "approved",
+      detail: null,
+      bookHref: null,
+    });
+    expect(
+      absenceMakeupDisplay({ state: "reported", reason: "Marked present for this class." }, ids, tz)
+        .detail,
+    ).toBe("Marked present for this class.");
+  });
+
+  it("links an eligible makeup straight to booking with the class pre-selected", () => {
+    const display = absenceMakeupDisplay(
+      { state: "eligible", expires_at: "2026-12-14T15:00:00Z" },
+      ids,
+      tz,
+    );
+    expect(display.label).toBe("Makeup eligible");
+    expect(display.detail).toMatch(/^Request a makeup by .*Dec 14/);
+    expect(display.bookHref).toBe(makeupBookingHref("kid-1", "occ:2026-11-14"));
+    expect(display.bookHref).toBe("/parent/requests?tab=makeups&makeup=kid-1%3Aocc%3A2026-11-14");
+  });
+
+  it("names the booked makeup class and date", () => {
+    const display = absenceMakeupDisplay(
+      {
+        state: "booked",
+        booked_class: {
+          occurrence_id: "occ-t",
+          session_id: "s",
+          session_title: "Saturday Juniors",
+          location: null,
+          start_at: "2026-11-21T15:00:00Z",
+          end_at: "2026-11-21T16:00:00Z",
+          timezone: tz,
+          status: "scheduled",
+        },
+      },
+      ids,
+      tz,
+    );
+    expect(display.label).toBe("Makeup booked");
+    expect(display.chip).toBe("makeup");
+    expect(display.detail).toBe("Saturday Juniors — Sat, Nov 21 · 9:00 AM – 10:00 AM CST");
+    expect(display.bookHref).toBeNull();
+  });
+
+  it("shows requested and expired without a booking link", () => {
+    expect(absenceMakeupDisplay({ state: "requested" }, ids, tz)).toMatchObject({
+      label: "Makeup requested",
+      bookHref: null,
+    });
+    expect(absenceMakeupDisplay({ state: "expired" }, ids, tz)).toMatchObject({
+      label: "Makeup expired",
+      chip: "expired",
+      bookHref: null,
+    });
   });
 });

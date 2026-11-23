@@ -1,7 +1,7 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Card } from "@/components/ds/card";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ds/button";
 import { EmptyState } from "@/components/ds/empty-state";
 import { WaitlistOffers } from "@/components/parent/waitlist-offers";
 import { AssignedClassDetails } from "@/components/parent/one-time-class";
+import { AbsenceMakeupStatus } from "@/components/parent/absence-makeup-status";
 import { queryKeys } from "@/lib/query/keys";
 import {
   makeupCandidateKey,
@@ -53,7 +54,31 @@ const ALL_TABS: { id: RequestTab; label: string }[] = [
 ];
 
 export default function ParentRequestsPage() {
-  const [tab, setTab] = useState<RequestTab>("absences");
+  // useSearchParams needs a Suspense boundary (deep links from absences).
+  return (
+    <Suspense fallback={null}>
+      <ParentRequests />
+    </Suspense>
+  );
+}
+
+function ParentRequests() {
+  const searchParams = useSearchParams();
+  const linkedTab = searchParams.get("tab");
+  // "Book a makeup" links here with ?tab=makeups&makeup=<child>:<class date>.
+  const linkedMakeup = searchParams.get("makeup") ?? "";
+  const linkedRequestTab = ALL_TABS.find((t) => t.id === linkedTab)?.id ?? null;
+  const router = useRouter();
+  const [tab, setTab] = useState<RequestTab>(linkedRequestTab ?? "absences");
+  const [makeupKey, setMakeupKey] = useState(linkedMakeup);
+  // The link is in-page (Absences → Makeups): apply it, then drop it from the
+  // URL so the same link clicked again is a new navigation.
+  useEffect(() => {
+    if (!linkedRequestTab) return;
+    setTab(linkedRequestTab);
+    setMakeupKey(linkedMakeup);
+    router.replace("/parent/requests", { scroll: false });
+  }, [linkedRequestTab, linkedMakeup, router]);
   const academyQuery = useQuery({
     queryKey: queryKeys.parent.academy(),
     queryFn: getParentAcademy,
@@ -113,7 +138,7 @@ export default function ParentRequestsPage() {
       ) : (
         <>
           {activeTab === "absences" && <AbsencesPanel />}
-          {activeTab === "makeups" && <MakeupsPanel />}
+          {activeTab === "makeups" && <MakeupsPanel key={makeupKey} initialKey={makeupKey} />}
           {activeTab === "trials" && <TrialsPanel />}
         </>
       )}
@@ -303,6 +328,12 @@ function AbsencesPanel() {
                           Submitted inside the notice window
                         </p>
                       )}
+                      <AbsenceMakeupStatus
+                        makeup={n.makeup}
+                        studentId={n.student_id}
+                        occurrenceId={n.occurrence_id}
+                        academyTimezone={academyTimezone}
+                      />
                     </div>
                     <Chip variant={n.notice_window_met ? "approved" : "pending"} label={n.notice_window_met ? "ON TIME" : "LATE"} />
                   </div>
@@ -318,9 +349,9 @@ function AbsencesPanel() {
 
 // --- Makeups ---
 
-function MakeupsPanel() {
+function MakeupsPanel({ initialKey = "" }: { initialKey?: string }) {
   const queryClient = useQueryClient();
-  const [selectedKey, setSelectedKey] = useState<string>("");
+  const [selectedKey, setSelectedKey] = useState<string>(initialKey);
   const [targetOccurrenceId, setTargetOccurrenceId] = useState<string>("");
 
   const academyQuery = useQuery({
@@ -366,6 +397,9 @@ function MakeupsPanel() {
       setTargetOccurrenceId("");
       // Prefix match also refreshes the candidate list under ["parent","makeups"].
       void queryClient.invalidateQueries({ queryKey: queryKeys.parent.makeups() });
+      // The absence now reads "Makeup requested".
+      void queryClient.invalidateQueries({ queryKey: queryKeys.parent.absences() });
+      void queryClient.invalidateQueries({ queryKey: ["parent", "child-schedule"] });
     },
   });
 

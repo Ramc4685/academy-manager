@@ -1,10 +1,11 @@
 import type { ChipVariant } from "@/components/ds/chip";
 import type {
+  AbsenceMakeupView,
   AssignedClassView,
   MakeupCandidatesResponse,
   MakeupCandidateView,
 } from "@/lib/api/parent";
-import { formatAcademyTimeRange } from "@/lib/format/academy-time";
+import { formatAcademyDate, formatAcademyTimeRange } from "@/lib/format/academy-time";
 
 /**
  * Maps backend request-status strings to Chip variants for the parent
@@ -83,4 +84,72 @@ export function makeupEmptyMessage(
     return "No missed classes available for a makeup request. This academy needs an on-time absence notice before a missed class can be made up.";
   }
   return "No missed classes available for a makeup request.";
+}
+
+/** Makeups tab, pre-selecting one child's missed class (the eligible offer). */
+export function makeupBookingHref(studentId: string, occurrenceId: string): string {
+  return `/parent/requests?tab=makeups&makeup=${encodeURIComponent(
+    makeupCandidateKey({ student_id: studentId, occurrence_id: occurrenceId }),
+  )}`;
+}
+
+export interface AbsenceMakeupDisplay {
+  label: string;
+  chip: ChipVariant;
+  /** One plain-words line under the label, or null. */
+  detail: string | null;
+  /** Set only when a makeup can be requested now. */
+  bookHref: string | null;
+}
+
+/**
+ * How a reported absence's makeup state reads (Requests → Absences, Children).
+ * Display only: the state, dates and reason all come from the server.
+ */
+export function absenceMakeupDisplay(
+  makeup: AbsenceMakeupView,
+  ids: { studentId: string; occurrenceId: string },
+  academyTimezone: string | null,
+): AbsenceMakeupDisplay {
+  const until = (iso: string | null | undefined) =>
+    iso ? formatAcademyDate(iso, academyTimezone) : "";
+  switch (makeup.state) {
+    case "eligible":
+      return {
+        label: "Makeup eligible",
+        chip: "open",
+        detail: makeup.expires_at ? `Request a makeup by ${until(makeup.expires_at)}` : null,
+        bookHref: makeupBookingHref(ids.studentId, ids.occurrenceId),
+      };
+    case "requested":
+      return {
+        label: "Makeup requested",
+        chip: "pending",
+        detail: "Waiting for the academy to confirm a class",
+        bookHref: null,
+      };
+    case "booked": {
+      const booked = assignedClassCopy(makeup.booked_class, academyTimezone);
+      return {
+        label: "Makeup booked",
+        chip: "makeup",
+        detail: booked ? `${booked.title} — ${booked.when}` : null,
+        bookHref: null,
+      };
+    }
+    case "expired":
+      return {
+        label: "Makeup expired",
+        chip: "expired",
+        detail: "The window to make up this class has passed",
+        bookHref: null,
+      };
+    default:
+      return {
+        label: "Reported",
+        chip: "approved",
+        detail: makeup.reason ?? null,
+        bookHref: null,
+      };
+  }
 }

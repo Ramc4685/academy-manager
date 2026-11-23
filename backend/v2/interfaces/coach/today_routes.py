@@ -17,6 +17,8 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
 
+from backend.v2.composition.dropoff_checkins import DropoffCheckinComposition
+from backend.v2.contexts.coaching.application.use_cases.dropoff_checkin import OccurrenceRef
 from backend.v2.interfaces.coach.deps import (
     CoachUseCases,
     academy_zone_for_sessions,
@@ -29,6 +31,7 @@ from backend.v2.interfaces.coach.views import (
     CoachTodayResponse,
     CoachTrialGuest,
 )
+from backend.v2.interfaces.dropoff_views import StaffDropoffCheckinView, optional_dropoff_checkins
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import is_coach_supervisor, require_coach_surface
 
@@ -94,6 +97,7 @@ async def get_today(
     ),
     claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
+    dropoff: DropoffCheckinComposition | None = Depends(optional_dropoff_checkins),
 ) -> CoachTodayResponse:
     target_date = await _resolve_date(on_date, academy_id=claims.academy_id, use_cases=use_cases)
     supervisor = is_coach_supervisor(claims)
@@ -168,6 +172,20 @@ async def get_today(
             # A nicety for the Today shortcut; never worth failing the day.
             log.warning("coach recap lookup failed; treating recaps as unsaved", exc_info=True)
 
+    checkins: dict[str, dict[str, Any]] = {}
+    windows: dict[str, Any] = {}
+    if dropoff is not None and sessions:
+        refs = [
+            OccurrenceRef(
+                occurrence_id=s.occurrence_id,
+                starts_at=s.start_at,
+                status=getattr(s, "status", "scheduled"),
+            )
+            for s in sessions
+        ]
+        checkins = await dropoff.reads.for_occurrences(refs)
+        windows = await dropoff.reads.windows(refs)
+
     out = [
         CoachSession(
             session_id=s.session_id,
@@ -181,6 +199,8 @@ async def get_today(
             coach_name=coach_names.get(getattr(s, "coach_id", None) or ""),
             status=getattr(s, "status", "scheduled"),
             cancellation_reason=getattr(s, "cancellation_reason", None),
+            dropoff_window_opens_at=(w := windows.get(s.occurrence_id)) and w.opens_at,
+            dropoff_window_closes_at=w and w.closes_at,
             roster=[
                 CoachRosterEntry(
                     student_id=r.student_id,
@@ -203,6 +223,11 @@ async def get_today(
                     pending_cancellation_at=getattr(r, "pending_cancellation_at", None),
                     hold_return_on=getattr(r, "hold_return_on", None),
                     payment_due_cents=overdue_cents.get(r.student_id) or None,
+                    checkin=(
+                        StaffDropoffCheckinView.from_staff_snapshot(snap)
+                        if (snap := checkins.get(s.occurrence_id, {}).get(r.student_id))
+                        else None
+                    ),
                 )
                 for r in roster
             ],
