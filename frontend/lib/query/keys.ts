@@ -150,6 +150,7 @@ export const queryKeys = {
     attention: () => ["admin", "dashboard", "attention"] as const,
     setupChecklist: () => ["admin", "dashboard", "setup-checklist"] as const,
     inboxCounts: () => ["admin", "inbox", "counts"] as const,
+    inboxAttendance: () => ["admin", "inbox", "attendance"] as const,
     campaignPreview: (audience: unknown) => ["admin", "campaigns", "preview", audience] as const,
     academy: () => ["admin", "academy"] as const,
     fees: () => ["admin", "academy", "fees"] as const,

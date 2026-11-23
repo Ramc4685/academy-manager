@@ -1354,7 +1354,8 @@ export type AdminAttentionKind =
   | "scheduled_action_failed"
   | "billing_deferrals"
   | "waivers"
-  | "session_pressure";
+  | "session_pressure"
+  | "missing_attendance";
 
 export interface AdminAttentionItem {
   attention_id: string;
@@ -3582,6 +3583,42 @@ export interface AdminInboxCounts {
 
 export function getAdminInboxCounts(): Promise<AdminInboxCounts> {
   return apiFetch<AdminInboxCounts>("/admin/inbox/counts", { method: "GET" });
+}
+
+/** A past class date with students on the roster and no attendance marks. */
+export interface AdminMissingAttendanceRow {
+  occurrence_id: string;
+  session_id: string;
+  session_name: string;
+  start_at: string;
+  enrolled_count: number;
+  /** Sessions -> class -> Class dates, with that date's Attendance open. */
+  href: string;
+}
+
+/** A mark changed or voided after it was first recorded (review only). */
+export interface AdminAttendanceCorrectionRow {
+  attendance_id: string;
+  occurrence_id: string;
+  session_id: string;
+  session_name: string;
+  start_at: string | null;
+  student_name: string;
+  status: string;
+  previous_status: string | null;
+  corrected_at: string;
+  corrected_by_name: string | null;
+  reason: string | null;
+  href: string;
+}
+
+export interface AdminAttendanceReview {
+  missing: AdminMissingAttendanceRow[];
+  corrections: AdminAttendanceCorrectionRow[];
+}
+
+export function getAdminAttendanceReview(): Promise<AdminAttendanceReview> {
+  return apiFetch<AdminAttendanceReview>("/admin/inbox/attendance", { method: "GET" });
 }
 
 export function listAdminAttention(): Promise<AdminAttentionList> {

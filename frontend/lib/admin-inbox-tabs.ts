@@ -14,7 +14,8 @@ export type InboxTab =
   | "trials"
   | "absences"
   | "cancellations"
-  | "pauses";
+  | "pauses"
+  | "attendance";
 
 /** Counted ids match the backend's `INBOX_QUEUE_IDS`; `?tab=` values key off them. */
 export const INBOX_TABS: { id: InboxTab; label: string }[] = [
@@ -26,6 +27,7 @@ export const INBOX_TABS: { id: InboxTab; label: string }[] = [
   { id: "absences", label: "Absences" },
   { id: "cancellations", label: "Cancellations" },
   { id: "pauses", label: "Pauses" },
+  { id: "attendance", label: "Attendance" },
 ];
 
 export function isInboxTab(value: string | null): value is InboxTab {
