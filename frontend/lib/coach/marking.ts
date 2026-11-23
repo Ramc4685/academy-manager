@@ -156,3 +156,45 @@ export function withoutUnconfirmedMark<T extends { pending: boolean; error?: str
   delete next[student_id];
   return next;
 }
+
+/**
+ * The coach's next class that has not started yet, from the upcoming schedule
+ * (`GET /coach/sessions`). Used by Today's empty state.
+ */
+export function nextUpcomingClass<T extends { start_at: string }>(
+  schedule: readonly T[],
+  now: Date = new Date(),
+): T | null {
+  const nowMs = now.getTime();
+  let best: T | null = null;
+  let bestMs = Infinity;
+  for (const entry of schedule) {
+    const ms = new Date(entry.start_at).getTime();
+    if (Number.isNaN(ms) || ms <= nowMs || ms >= bestMs) continue;
+    best = entry;
+    bestMs = ms;
+  }
+  return best;
+}
+
+/**
+ * The most recent class of the last 48 hours whose recap still names no
+ * taught skill (`recap_saved` from `/coach/today`). Cancelled classes and
+ * empty rosters never need a recap. Same window as "recent, not fully marked".
+ */
+export function latestUnfinishedRecap<
+  T extends MarkableSession & { recap_saved?: boolean | null },
+>(sessions: readonly T[], now: Date = new Date()): T | null {
+  const nowMs = now.getTime();
+  const floor = nowMs - RECENT_UNMARKED_WINDOW_MS;
+  let best: T | null = null;
+  let bestMs = -Infinity;
+  for (const session of sessions) {
+    if (session.recap_saved || isCancelled(session) || session.roster.length === 0) continue;
+    const started = new Date(session.start_at).getTime();
+    if (Number.isNaN(started) || started > nowMs || started < floor || started <= bestMs) continue;
+    best = session;
+    bestMs = started;
+  }
+  return best;
+}

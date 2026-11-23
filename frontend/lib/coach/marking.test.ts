@@ -4,8 +4,10 @@ import {
   coachSessionHref,
   correctionWindowClosed,
   isCancelled,
+  latestUnfinishedRecap,
   markingNotOpenYet,
   markProgress,
+  nextUpcomingClass,
   recentUnmarkedSessions,
   withoutUnconfirmedMark,
 } from "./marking";
@@ -193,5 +195,49 @@ describe("withoutUnconfirmedMark", () => {
   it("keeps a confirmed save and other rows", () => {
     const marks = { st1: entry(false), st2: entry(true) };
     expect(withoutUnconfirmedMark(marks, "st1")).toBe(marks);
+  });
+});
+
+describe("nextUpcomingClass", () => {
+  const now = new Date("2026-11-22T15:00:00Z");
+
+  it("picks the earliest class that has not started, in any input order", () => {
+    const schedule = [
+      { occurrence_id: "later", start_at: "2026-11-25T23:00:00Z" },
+      { occurrence_id: "past", start_at: "2026-11-21T23:00:00Z" },
+      { occurrence_id: "soon", start_at: "2026-11-23T23:00:00Z" },
+    ];
+    expect(nextUpcomingClass(schedule, now)?.occurrence_id).toBe("soon");
+  });
+
+  it("returns null when nothing is upcoming", () => {
+    expect(nextUpcomingClass([{ start_at: "2026-11-21T23:00:00Z" }], now)).toBeNull();
+    expect(nextUpcomingClass([], now)).toBeNull();
+  });
+});
+
+describe("latestUnfinishedRecap", () => {
+  const now = new Date("2026-11-22T15:00:00Z");
+  const kid = [{ student_id: "st1", attendance_status: "present" }];
+
+  it("picks the most recent past class whose recap is still empty", () => {
+    const sessions = [
+      session("older", "2026-11-21T00:00:00Z", kid, { recap_saved: false }),
+      session("newer", "2026-11-21T23:00:00Z", kid, { recap_saved: false }),
+      session("done", "2026-11-22T01:00:00Z", kid, { recap_saved: true }),
+    ];
+    expect((latestUnfinishedRecap(sessions, now) as { occurrence_id: string } | null)?.occurrence_id).toBe(
+      "newer",
+    );
+  });
+
+  it("skips cancelled, empty, future and out-of-window classes", () => {
+    const sessions = [
+      session("cancelled", "2026-11-21T23:00:00Z", kid, { status: "cancelled" }),
+      session("empty", "2026-11-21T23:00:00Z", []),
+      session("future", "2026-11-22T18:00:00Z", kid),
+      session("old", "2026-11-19T23:00:00Z", kid),
+    ];
+    expect(latestUnfinishedRecap(sessions, now)).toBeNull();
   });
 });

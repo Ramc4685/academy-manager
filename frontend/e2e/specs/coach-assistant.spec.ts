@@ -195,7 +195,9 @@ test.describe("Real coach keeps the lead surfaces", () => {
     await expect(page.getByTestId("billing-toggle-st1")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Announcements" })).toBeVisible();
 
+    // No statements exist to open yet, so even a lead coach sees no pay card.
     await page.goto("/coach/profile");
-    await expect(page.getByTestId("coach-pay-card")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Profile" }).first()).toBeVisible();
+    await expect(page.getByTestId("coach-pay-card")).toHaveCount(0);
   });
 });

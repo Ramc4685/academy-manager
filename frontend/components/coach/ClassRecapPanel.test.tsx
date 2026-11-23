@@ -87,6 +87,15 @@ describe("ClassRecapPanel", () => {
     expect(box).not.toContain("checked");
   });
 
+  it("keeps the AI option folded away so the standard report stays the main path", () => {
+    const html = render();
+    const details = /<details[^>]*data-testid="recap-ai-options"[^>]*>/.exec(html)?.[0] ?? "";
+    expect(details).not.toBe("");
+    expect(details).not.toContain("open");
+    expect(html).toContain("More options: AI reading");
+    expect(html).toContain("recap-report-submit");
+  });
+
   it("blocks a report while the recap has unsaved edits, so it cannot overwrite them", () => {
     const html = renderToStaticMarkup(
       <QueryClientProvider client={new QueryClient()}>

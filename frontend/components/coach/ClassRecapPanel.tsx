@@ -437,8 +437,13 @@ export function ClassReportForm({
         className="mt-2 w-full rounded-md border border-rally-line p-2 text-sm"
       />
       {view.ai_enabled ? (
-        <div className="mt-2 rounded-md bg-rally-paper p-2">
-          <label className="flex items-start gap-2 text-sm text-rally-ink">
+        // Optional AI reading sits behind a disclosure: the standard report is
+        // the whole job, and the consent text is long.
+        <details className="mt-2 rounded-md bg-rally-paper p-2" data-testid="recap-ai-options">
+          <summary className="min-h-touch cursor-pointer content-center text-sm font-medium text-rally-ink">
+            More options: AI reading
+          </summary>
+          <label className="mt-2 flex items-start gap-2 text-sm text-rally-ink">
             <input
               type="checkbox"
               data-testid="recap-report-use-ai"
@@ -456,7 +461,7 @@ export function ClassReportForm({
             as a question. Passes are never recorded from a report. Leave it unticked and the report
             goes to the owner, who enters it by hand.
           </p>
-        </div>
+        </details>
       ) : (
         <p className="mt-2 text-xs text-rally-muted" data-testid="recap-ai-off-note">
           This report goes to the owner, who adds it to the recap by hand.
