@@ -95,7 +95,6 @@ class AdminMissingAttendanceView(BaseModel):
     session_name: str
     start_at: datetime
     enrolled_count: int
-    href: str
 
 
 class AdminAttendanceCorrectionView(BaseModel):
@@ -114,7 +113,11 @@ class AdminAttendanceCorrectionView(BaseModel):
 
 
 class AdminAttendanceReviewView(BaseModel):
-    """Class dates with no marks (actionable) and recent corrections (review)."""
+    """Class dates with no marks (actionable) and recent corrections (review).
+
+    A missing row carries no href: the client links it to the coach marking
+    screen (admins mark as coach supervisors), which needs the academy-local date.
+    """
 
     missing: list[AdminMissingAttendanceView]
     corrections: list[AdminAttendanceCorrectionView]
@@ -139,10 +142,7 @@ async def admin_inbox_attendance(
     result = await review.execute()  # type: ignore[attr-defined]
     return AdminAttendanceReviewView(
         missing=[
-            AdminMissingAttendanceView(
-                **row.model_dump(exclude={"status", "marked_count"}),
-                href=class_date_href(row.session_id, row.occurrence_id),
-            )
+            AdminMissingAttendanceView(**row.model_dump(exclude={"status", "marked_count"}))
             for row in result.missing
         ],
         corrections=[

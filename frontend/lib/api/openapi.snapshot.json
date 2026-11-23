@@ -981,7 +981,7 @@
         "type": "object"
       },
       "AdminAttendanceReviewView": {
-        "description": "Class dates with no marks (actionable) and recent corrections (review).",
+        "description": "Class dates with no marks (actionable) and recent corrections (review).\n\nA missing row carries no href: the client links it to the coach marking\nscreen (admins mark as coach supervisors), which needs the academy-local date.",
         "properties": {
           "corrections": {
             "items": {
@@ -3552,10 +3552,6 @@
             "title": "Enrolled Count",
             "type": "integer"
           },
-          "href": {
-            "title": "Href",
-            "type": "string"
-          },
           "occurrence_id": {
             "title": "Occurrence Id",
             "type": "string"
@@ -3579,8 +3575,7 @@
           "session_id",
           "session_name",
           "start_at",
-          "enrolled_count",
-          "href"
+          "enrolled_count"
         ],
         "title": "AdminMissingAttendanceView",
         "type": "object"

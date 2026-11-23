@@ -23,7 +23,7 @@ class _FakeReview:
         return self._review
 
 
-def _missing(occurrence_id: str = "occ 1/a") -> ReviewOccurrence:
+def _missing(occurrence_id: str = "occ-1") -> ReviewOccurrence:
     return ReviewOccurrence(
         occurrence_id=occurrence_id,
         session_id="sess-juniors",
@@ -38,7 +38,7 @@ def _missing(occurrence_id: str = "occ 1/a") -> ReviewOccurrence:
 def _correction() -> ReviewCorrection:
     return ReviewCorrection(
         attendance_id="att-1",
-        occurrence_id="occ-2",
+        occurrence_id="occ 2/a",
         session_id="sess-juniors",
         session_name="Juniors",
         start_at=START - timedelta(days=1),
@@ -52,7 +52,7 @@ def _correction() -> ReviewCorrection:
     )
 
 
-def test_attendance_tab_lists_items_with_class_date_links(admin_client):
+def test_attendance_tab_lists_missing_dates_and_linked_corrections(admin_client):
     admin_client.use_cases.list_attendance_review = _FakeReview([_missing()], [_correction()])
 
     r = admin_client.get("/api/v2/admin/inbox/attendance")
@@ -62,13 +62,13 @@ def test_attendance_tab_lists_items_with_class_date_links(admin_client):
     [missing] = body["missing"]
     assert missing["session_name"] == "Juniors"
     assert missing["enrolled_count"] == 6
-    # Ids are URL-encoded so an odd id cannot break out of the query string.
-    assert missing["href"] == "/admin/sessions/sess-juniors?tab=dates&occurrence=occ%201%2Fa"
+    assert "href" not in missing  # the client builds the coach marking link
     [correction] = body["corrections"]
     assert correction["student_name"] == "Ava Pine"
     assert (correction["previous_status"], correction["status"]) == ("present", "absent")
     assert correction["corrected_by_name"] == "Coach Lee"
-    assert correction["href"] == "/admin/sessions/sess-juniors?tab=dates&occurrence=occ-2"
+    # Ids are URL-encoded so an odd id cannot break out of the query string.
+    assert correction["href"] == "/admin/sessions/sess-juniors?tab=dates&occurrence=occ%202%2Fa"
     assert "student_id" not in correction
 
 

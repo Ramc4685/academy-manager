@@ -140,7 +140,7 @@ export default function AdminSessionDetailPage() {
     DETAIL_TABS.find((t) => t.id === searchParams.get("tab"))?.id ?? "roster",
   );
   // The Welcome email tab keeps unsaved edits, so once opened it stays mounted (hidden) on other tabs.
-  const [welcomeOpened, setWelcomeOpened] = useState(false);
+  const [welcomeOpened, setWelcomeOpened] = useState(() => searchParams.get("tab") === "welcome");
   const [rosterView, setRosterView] = useState<RosterView>("active");
   const [showAllDates, setShowAllDates] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);

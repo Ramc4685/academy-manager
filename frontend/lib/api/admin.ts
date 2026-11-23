@@ -3592,8 +3592,6 @@ export interface AdminMissingAttendanceRow {
   session_name: string;
   start_at: string;
   enrolled_count: number;
-  /** Sessions -> class -> Class dates, with that date's Attendance open. */
-  href: string;
 }
 
 /** A mark changed or voided after it was first recorded (review only). */

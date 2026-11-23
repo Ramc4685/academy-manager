@@ -56,8 +56,9 @@ class MongoAttendanceReviewReadModel(TenantScopedRepository):
                 )
             ]
         )
-        # shortcut: counts only active enrollments (the recurring roster), not
-        # one-time make-up/trial roster entries; a date with only those is not flagged.
+        # shortcut: counts only enrollments active *now* (the recurring roster), not
+        # one-time make-up/trial roster entries, so a date with only those, or a class
+        # whose roster was withdrawn since, is not flagged; needs a departure timestamp to fix.
         enrolled_at_by_session: dict[str, list[datetime | None]] = {}
         async for doc in self._find_many_in_collection(
             "enrollments",

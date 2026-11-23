@@ -11,6 +11,7 @@ import { AttendanceTab } from "./AttendanceTab";
 function render(review: AdminAttendanceReview): string {
   const client = new QueryClient();
   client.setQueryData(queryKeys.admin.inboxAttendance(), review);
+  client.setQueryData(queryKeys.admin.academy(), { timezone: "America/Chicago" });
   return renderToStaticMarkup(
     createElement(QueryClientProvider, { client }, createElement(AttendanceTab)),
   );
@@ -22,9 +23,9 @@ const REVIEW: AdminAttendanceReview = {
       occurrence_id: "occ-1",
       session_id: "sess-1",
       session_name: "Juniors Tuesday",
-      start_at: "2026-11-18T22:00:00Z",
+      // 9pm Tuesday in Chicago is already Wednesday in UTC.
+      start_at: "2026-11-19T03:00:00Z",
       enrolled_count: 6,
-      href: "/admin/sessions/sess-1?tab=dates&occurrence=occ-1",
     },
   ],
   corrections: [
@@ -46,9 +47,9 @@ const REVIEW: AdminAttendanceReview = {
 };
 
 describe("AttendanceTab", () => {
-  it("links each missing date straight to that class date's attendance", () => {
+  it("links each missing date to the coach marking screen on the academy-local day", () => {
     const html = render(REVIEW);
-    expect(html).toContain('href="/admin/sessions/sess-1?tab=dates&amp;occurrence=occ-1"');
+    expect(html).toContain('href="/coach/sessions/occ-1?date=2026-11-18"');
     expect(html).toContain("Juniors Tuesday");
     expect(html).toContain("6 students on the roster, no marks");
     expect(html).toContain("NOT MARKED");

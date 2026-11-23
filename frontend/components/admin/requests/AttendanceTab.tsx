@@ -2,8 +2,9 @@
 
 /**
  * Admin Inbox "Attendance" tab: class dates nobody took attendance for (past
- * the coach's 48h window) and marks changed or voided after the fact. Every
- * row links straight to that class date with its Attendance open.
+ * the coach's 48h window) and marks changed or voided after the fact. A
+ * missing date opens the coach marking screen, where an admin marks as a coach
+ * supervisor; a correction opens that class date with its Attendance open.
  *
  * One list layout at every width: each row is already two short lines, so a
  * phone and a desktop read the same thing.
@@ -17,7 +18,13 @@ import {
   type AdminAttendanceCorrectionRow,
   type AdminMissingAttendanceRow,
 } from "@/lib/api/admin";
-import { formatAcademyDateTime } from "@/lib/format/academy-time";
+import { coachSessionHref } from "@/lib/coach/marking";
+import {
+  academyDateISO,
+  formatAcademyDateTime,
+  parseAcademyInstant,
+} from "@/lib/format/academy-time";
+import { useAcademyTimezone } from "@/components/admin/use-academy-today";
 import { queryKeys } from "@/lib/query/keys";
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
@@ -37,17 +44,18 @@ function statusVariant(status: string): ChipVariant {
   return "denied";
 }
 
-function MissingRow({ row }: { row: AdminMissingAttendanceRow }) {
+function MissingRow({ row, timezone }: { row: AdminMissingAttendanceRow; timezone: string | null }) {
+  const href = coachSessionHref(row.occurrence_id, academyDateISO(timezone, parseAcademyInstant(row.start_at)));
   return (
     <PhoneListRow
       data-testid={`admin-attendance-missing-${row.occurrence_id}`}
       title={row.session_name}
-      href={row.href as Route}
+      href={href as Route}
       titleTestId={`admin-attendance-missing-link-${row.occurrence_id}`}
       primary={<Chip variant="pending" label="NOT MARKED" />}
       secondary={
         <>
-          <div>{formatAcademyDateTime(row.start_at, null)}</div>
+          <div>{formatAcademyDateTime(row.start_at, timezone)}</div>
           <div>
             {row.enrolled_count} student{row.enrolled_count === 1 ? "" : "s"} on the roster, no
             marks
@@ -58,7 +66,7 @@ function MissingRow({ row }: { row: AdminMissingAttendanceRow }) {
   );
 }
 
-function CorrectionRow({ row }: { row: AdminAttendanceCorrectionRow }) {
+function CorrectionRow({ row, timezone }: { row: AdminAttendanceCorrectionRow; timezone: string | null }) {
   const from = row.previous_status ? (STATUS_LABEL[row.previous_status] ?? row.previous_status) : "—";
   return (
     <PhoneListRow
@@ -73,10 +81,10 @@ function CorrectionRow({ row }: { row: AdminAttendanceCorrectionRow }) {
         <>
           <div>
             {row.session_name}
-            {row.start_at ? ` · ${formatAcademyDateTime(row.start_at, null)}` : ""}
+            {row.start_at ? ` · ${formatAcademyDateTime(row.start_at, timezone)}` : ""}
           </div>
           <div>
-            Was {from}. Changed {formatAcademyDateTime(row.corrected_at, null)}
+            Was {from}. Changed {formatAcademyDateTime(row.corrected_at, timezone)}
             {row.corrected_by_name ? ` by ${row.corrected_by_name}` : ""}
           </div>
           {row.reason ? <div className="break-words">Reason: {row.reason}</div> : null}
@@ -87,6 +95,7 @@ function CorrectionRow({ row }: { row: AdminAttendanceCorrectionRow }) {
 }
 
 export function AttendanceTab() {
+  const timezone = useAcademyTimezone();
   const { data, isLoading, isError } = useQuery({
     queryKey: queryKeys.admin.inboxAttendance(),
     queryFn: getAdminAttendanceReview,
@@ -110,7 +119,7 @@ export function AttendanceTab() {
           </h2>
           <p className="text-sm text-rally-subtle">
             Classes from the last 30 days with students on the roster and no attendance, once the
-            coach&apos;s 48-hour window has passed.
+            coach&apos;s 48-hour window has passed. Open one to mark it.
           </p>
         </div>
         {data.missing.length === 0 ? (
@@ -119,7 +128,7 @@ export function AttendanceTab() {
           <Card p={0}>
             <PhoneList aria-label="Class dates with no attendance" data-testid="admin-attendance-missing-list">
               {data.missing.map((row) => (
-                <MissingRow key={row.occurrence_id} row={row} />
+                <MissingRow key={row.occurrence_id} row={row} timezone={timezone} />
               ))}
             </PhoneList>
           </Card>
@@ -139,7 +148,7 @@ export function AttendanceTab() {
           <Card p={0}>
             <PhoneList aria-label="Attendance corrections" data-testid="admin-attendance-corrections-list">
               {data.corrections.map((row) => (
-                <CorrectionRow key={row.attendance_id} row={row} />
+                <CorrectionRow key={row.attendance_id} row={row} timezone={timezone} />
               ))}
             </PhoneList>
           </Card>

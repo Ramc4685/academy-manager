@@ -8404,6 +8404,9 @@ export interface components {
         /**
          * AdminAttendanceReviewView
          * @description Class dates with no marks (actionable) and recent corrections (review).
+         *
+         *     A missing row carries no href: the client links it to the coach marking
+         *     screen (admins mark as coach supervisors), which needs the academy-local date.
          */
         AdminAttendanceReviewView: {
             /** Corrections */
@@ -9366,8 +9369,6 @@ export interface components {
         AdminMissingAttendanceView: {
             /** Enrolled Count */
             enrolled_count: number;
-            /** Href */
-            href: string;
             /** Occurrence Id */
             occurrence_id: string;
             /** Session Id */

@@ -1,8 +1,9 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 /**
- * Admin Inbox "Attendance" tab: class dates nobody marked and marks changed
- * after the fact, each one tap from the class date with Attendance open.
+ * Admin Inbox "Attendance" tab: class dates nobody marked (one tap from the
+ * coach marking screen) and marks changed after the fact (one tap from the
+ * class date with Attendance open).
  * Stub-based; every name here is fake.
  */
 
@@ -15,7 +16,10 @@ const ADMIN_ME = {
 
 const SESSION_ID = "sess-juniors";
 const OCCURRENCE_ID = "sess-juniors:2026-11-18:16:00";
-const DATE_HREF = `/admin/sessions/${SESSION_ID}?tab=dates&occurrence=${encodeURIComponent(OCCURRENCE_ID)}`;
+// 4pm Tuesday in Chicago; admins mark it as coach supervisors.
+const MARK_HREF = `/coach/sessions/${encodeURIComponent(OCCURRENCE_ID)}?date=2026-11-18`;
+const CORRECTED_ID = "occ-earlier";
+const CORRECTION_HREF = `/admin/sessions/${SESSION_ID}?tab=dates&occurrence=${CORRECTED_ID}`;
 
 const REVIEW = {
   missing: [
@@ -25,13 +29,12 @@ const REVIEW = {
       session_name: "Juniors Tuesday",
       start_at: "2026-11-18T22:00:00Z",
       enrolled_count: 6,
-      href: DATE_HREF,
     },
   ],
   corrections: [
     {
       attendance_id: "att-1",
-      occurrence_id: "occ-earlier",
+      occurrence_id: CORRECTED_ID,
       session_id: SESSION_ID,
       session_name: "Juniors Tuesday",
       start_at: "2026-11-11T22:00:00Z",
@@ -41,7 +44,7 @@ const REVIEW = {
       corrected_at: "2026-11-20T15:00:00Z",
       corrected_by_name: "Test Owner",
       reason: "Marked the wrong class",
-      href: `/admin/sessions/${SESSION_ID}?tab=dates&occurrence=occ-earlier`,
+      href: CORRECTION_HREF,
     },
   ],
 };
@@ -131,6 +134,7 @@ async function stubAdmin(page: Page) {
         // Many dates, so the linked one sits outside the default window.
         return fulfillJson(route, {
           occurrences: [
+            occurrenceRow(CORRECTED_ID, "2026-11-11T22:00:00Z"),
             occurrenceRow(OCCURRENCE_ID, "2026-11-18T22:00:00Z"),
             ...Array.from({ length: 10 }, (_, i) => {
               const day = String(i + 1).padStart(2, "0");
@@ -138,8 +142,24 @@ async function stubAdmin(page: Page) {
             }),
           ],
         });
-      case `/api/v2/admin/session-occurrences/${OCCURRENCE_ID}/attendance`:
-        return fulfillJson(route, { attendance: [] });
+      case `/api/v2/admin/session-occurrences/${CORRECTED_ID}/attendance`:
+        return fulfillJson(route, {
+          attendance: [
+            {
+              attendance_id: "att-1",
+              occurrence_id: CORRECTED_ID,
+              session_id: SESSION_ID,
+              student_id: "stu-1",
+              status: "voided",
+              previous_status: "present",
+              corrected_by: "admin-attendance-e2e",
+              corrected_at: "2026-11-20T15:00:00Z",
+              correction_reason: "Marked the wrong class",
+              marked_by: "coach-1",
+              marked_at: "2026-11-11T22:05:00Z",
+            },
+          ],
+        });
       case `/api/v2/admin/sessions/${SESSION_ID}/enrollments`:
         return fulfillJson(route, { enrollments: [] });
       case `/api/v2/admin/sessions/${SESSION_ID}/waitlist`:
@@ -152,7 +172,7 @@ async function stubAdmin(page: Page) {
   });
 }
 
-test("attendance tab lists missing and corrected dates, each linked to its class date", async ({
+test("attendance tab links missing dates to marking and corrections to the class date", async ({
   page,
 }) => {
   await stubAdmin(page);
@@ -162,13 +182,17 @@ test("attendance tab lists missing and corrected dates, each linked to its class
   const missing = page.getByTestId(`admin-attendance-missing-${OCCURRENCE_ID}`);
   await expect(missing.getByText("Juniors Tuesday")).toBeVisible();
   await expect(missing.getByText("6 students on the roster, no marks")).toBeVisible();
+  await expect(page.getByTestId(`admin-attendance-missing-link-${OCCURRENCE_ID}`)).toHaveAttribute(
+    "href",
+    MARK_HREF,
+  );
 
   const correction = page.getByTestId("admin-attendance-correction-att-1");
   await expect(correction.getByText("Test Kid Alpha")).toBeVisible();
   await expect(correction.getByText("Reason: Marked the wrong class")).toBeVisible();
   await expect(page.getByTestId("admin-attendance-correction-link-att-1")).toHaveAttribute(
     "href",
-    `/admin/sessions/${SESSION_ID}?tab=dates&occurrence=occ-earlier`,
+    CORRECTION_HREF,
   );
 
   // The tab fits a phone: no sideways scroll.
@@ -177,10 +201,10 @@ test("attendance tab lists missing and corrected dates, each linked to its class
   );
   expect(overflow).toBeLessThanOrEqual(1);
 
-  await page.getByTestId(`admin-attendance-missing-link-${OCCURRENCE_ID}`).click();
+  await page.getByTestId("admin-attendance-correction-link-att-1").click();
 
-  await expect(page).toHaveURL(DATE_HREF);
+  await expect(page).toHaveURL(CORRECTION_HREF);
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Attendance", { exact: true })).toBeVisible();
-  await expect(dialog.getByText("No attendance was recorded for this date.")).toBeVisible();
+  await expect(dialog.getByTestId("attendance-status-stu-1")).toHaveText("voided");
 });
