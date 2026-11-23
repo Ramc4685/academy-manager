@@ -2072,7 +2072,7 @@ export function voidOccurrenceStudentAttendance(
   );
 }
 
-/** Front desk / admin confirms a parent-reported drop-off (writes the Present mark). */
+/** Admin confirms a parent-reported drop-off (writes the Present mark). */
 export function confirmOccurrenceDropoff(
   occurrenceId: string,
   studentId: string

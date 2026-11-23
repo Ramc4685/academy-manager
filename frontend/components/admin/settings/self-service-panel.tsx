@@ -202,8 +202,8 @@ export function SelfServicePanel() {
                 }
               />
               <p className="mt-1 text-xs text-rally-muted">
-                Parents tap &quot;I&apos;ve arrived&quot; for a class; a coach or the front desk
-                confirms, and only that confirmation marks the child present.
+                Parents tap &quot;I&apos;ve arrived&quot; for a class; a coach or an admin
+                confirms, and only a Present mark checks the child in.
               </p>
               {form.dropoff_checkin_enabled && (
                 <div className="mt-4 grid gap-4 md:grid-cols-2">

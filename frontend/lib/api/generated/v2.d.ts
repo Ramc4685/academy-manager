@@ -13427,6 +13427,10 @@ export interface components {
             coach_id?: string | null;
             /** Coach Name */
             coach_name?: string | null;
+            /** Dropoff Window Closes At */
+            dropoff_window_closes_at?: string | null;
+            /** Dropoff Window Opens At */
+            dropoff_window_opens_at?: string | null;
             /**
              * End At
              * Format: date-time

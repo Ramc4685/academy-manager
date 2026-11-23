@@ -104,6 +104,9 @@ export interface CoachSession {
   trial_guests?: CoachTrialGuest[];
   /** True once this class's recap names a taught skill (Today's recap shortcut). */
   recap_saved?: boolean;
+  /** Drop-off check-in window for this date; null when the academy has it off. */
+  dropoff_window_opens_at?: string | null;
+  dropoff_window_closes_at?: string | null;
 }
 
 /** The coach sees the parent's name and the player's age only. */

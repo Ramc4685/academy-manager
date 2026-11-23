@@ -46,7 +46,7 @@ import {
   parseAcademyInstant,
   resolveAcademyTimeZone,
 } from "@/lib/format/academy-time";
-import { checkinActorLine } from "@/lib/dropoff/checkin";
+import { checkinActorLine, confirmFailureMessage } from "@/lib/dropoff/checkin";
 
 /**
  * A date the server will refuse to cancel (#671).
@@ -475,12 +475,14 @@ export function OccurrenceAttendanceDialog({
     queryKey: ["admin", "occurrence-attendance", occurrenceId],
     queryFn: () => listOccurrenceStudentAttendance(occurrenceId as string),
     enabled: open && Boolean(occurrenceId),
+    // Open with drop-off on: pick up new parent reports while staff watch.
+    refetchInterval: (query) => (query.state.data?.dropoff?.enabled ? 30_000 : false),
   });
 
   const rows: AdminStudentAttendanceView[] = attendanceQuery.data?.attendance ?? [];
   const dropoff = attendanceQuery.data?.dropoff;
 
-  // Front desk / admin confirms a parent's "I've arrived": the server writes
+  // Admin confirms a parent's "I've arrived": the server writes
   // (or links to) the one Present mark, so a retry never doubles it.
   const confirmMutation = useMutation({
     mutationFn: (studentId: string) => {
@@ -493,7 +495,8 @@ export function OccurrenceAttendanceDialog({
       setError(null);
       await attendanceQuery.refetch();
     },
-    onError: (err: Error) => setError(err.message ?? "Could not confirm this drop-off."),
+    onError: (err: Error) =>
+      setError(confirmFailureMessage(err) ?? err.message ?? "Could not confirm this drop-off."),
   });
 
   const mutation = useMutation({

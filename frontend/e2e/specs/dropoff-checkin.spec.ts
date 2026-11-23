@@ -7,6 +7,7 @@
  *    replayed when the phone reconnects; Retry re-sends it.
  *  - Coach: the arrived badge is not a Present mark; one tap confirms and the
  *    server's single mark shows, with no extra attendance POST.
+ *  - Coach: an existing Absent mark is refused with "correct the mark".
  *  - Admin: Expected / Arrived / Checked-in breakdown, Confirm drop-off, and
  *    who reported / confirmed at what academy time.
  *  - Feature off: no button anywhere; manual marking works as before.
@@ -56,6 +57,9 @@ async function stubParent(page: Page, opts: { enabled?: boolean } = {}) {
   const reported = new Map<string, State>();
   const arrivalPosts: string[] = [];
   let failNext = false;
+  // The server refuses the next tap because the window just closed, and
+  // later schedule reads no longer offer the button.
+  let closeWindow = false;
   // Route stubs still answer while the context is offline, so model an
   // unreachable server here: the request never arrives and is not recorded.
   let unreachable = false;
@@ -105,7 +109,7 @@ async function stubParent(page: Page, opts: { enabled?: boolean } = {}) {
     const studentId = new URL(route.request().url()).pathname.split("/")[5];
     const entry = (occurrenceId: string, title: string, start: string, open: boolean) => {
       const state = reported.get(`${studentId}/${occurrenceId}`) ?? "none";
-      const canReport = enabled && open && state === "none";
+      const canReport = enabled && open && !closeWindow && state === "none";
       return {
         occurrence_id: occurrenceId,
         session_id: `sess-${occurrenceId}`,
@@ -137,6 +141,18 @@ async function stubParent(page: Page, opts: { enabled?: boolean } = {}) {
       failNext = false;
       return route.abort("internetdisconnected");
     }
+    if (closeWindow) {
+      return route.fulfill({
+        status: 409,
+        json: {
+          error: {
+            code: "Coaching.DropoffWindowClosed",
+            message: "the arrival window for this class has closed",
+            details: { reason: "closed" },
+          },
+        },
+      });
+    }
     reported.set(`${studentId}/${occurrenceId}`, "pending");
     return route.fulfill({ json: checkinView(studentId, occurrenceId, "pending", false) });
   });
@@ -146,6 +162,9 @@ async function stubParent(page: Page, opts: { enabled?: boolean } = {}) {
     reported,
     failNextPost: () => {
       failNext = true;
+    },
+    closeWindow: () => {
+      closeWindow = true;
     },
     setUnreachable: (value: boolean) => {
       unreachable = value;
@@ -214,6 +233,33 @@ test.describe("parent drop-off check-in", () => {
     expect(backend.arrivalPosts).toHaveLength(2);
   });
 
+  test("a tap refused because the window closed keeps saying staff were not told", async ({
+    page,
+  }) => {
+    const backend = await stubParent(page);
+    await page.goto("/parent/children");
+    const avaToday = `arrival-${AVA.student_id}-occ-today-${AVA.student_id}`;
+    await expect(page.getByTestId(`${avaToday}-report`)).toBeVisible();
+    backend.closeWindow();
+    await page.getByTestId(`${avaToday}-report`).click();
+    const alert = page.getByTestId(`${avaToday}-error`);
+    await expect(alert).toContainText("Check-in has closed");
+    await expect(alert).toContainText("Staff have NOT received");
+    // Retrying cannot help, and the message does not flash away.
+    await expect(page.getByTestId(`${avaToday}-retry`)).toHaveCount(0);
+    await page.waitForTimeout(1500);
+    await expect(alert).toBeVisible();
+  });
+
+  test("a report nobody confirmed says so after the window", async ({ page }) => {
+    const backend = await stubParent(page);
+    backend.reported.set(`${AVA.student_id}/occ-today-${AVA.student_id}`, "expired");
+    await page.goto("/parent/children");
+    await expect(
+      page.getByTestId(`arrival-${AVA.student_id}-occ-today-${AVA.student_id}-expired`),
+    ).toHaveText("Arrival not confirmed · Please tell a coach in person");
+  });
+
   test("a confirmed arrival reads Checked in", async ({ page }) => {
     const backend = await stubParent(page);
     backend.reported.set(`${AVA.student_id}/occ-today-${AVA.student_id}`, "confirmed");
@@ -276,6 +322,38 @@ test.describe("coach drop-off confirmation", () => {
     expect(mock.attendanceCalls).toHaveLength(0);
   });
 
+  test("an existing Absent mark is refused with a correct-the-mark message", async ({ page, mock }) => {
+    await stubInboxes(page);
+    const session = mock.today.sessions[0];
+    session.roster[0].checkin = {
+      ...checkinView("st1", session.occurrence_id, "pending", false),
+      reported_by: "parent-1",
+      reported_by_name: null,
+      confirmed_by: null,
+      confirmed_by_name: null,
+      attendance_id: null,
+      reconciled_with_existing_mark: false,
+    };
+    await page.route("**/api/v2/coach/occurrences/*/checkins/*/confirm", (route) =>
+      route.fulfill({
+        status: 409,
+        json: {
+          error: {
+            code: "Coaching.ConflictAttendanceExists",
+            message: "this child already has an attendance mark; correct it to Present",
+            details: { existing_status: "absent", existing_attendance_id: "manual-1" },
+          },
+        },
+      }),
+    );
+    await page.goto(`/coach/sessions/${session.occurrence_id}`);
+    await page.getByRole("button", { name: "Confirm drop-off for Alice" }).click();
+    await expect(page.getByTestId("confirm-dropoff-error-st1")).toContainText(
+      "already marked Absent. Correct the mark to Present",
+    );
+    await expect(page.getByTestId("dropoff-confirmed-st1")).toHaveCount(0);
+  });
+
   test("feature off: no badge, and manual marking still works", async ({ page, mock }) => {
     await stubInboxes(page);
     await page.goto(`/coach/sessions/${mock.today.sessions[0].occurrence_id}`);
@@ -291,7 +369,7 @@ test.describe("admin drop-off breakdown", () => {
   const SESSION_ID = "sess-dropoff";
   const OCC_ID = "occ-dropoff";
 
-  test("shows counts and actors, and front-desk staff confirm a pending arrival", async ({ page, mock }) => {
+  test("shows counts and actors, and an admin confirms a pending arrival", async ({ page, mock }) => {
     mock.me = { ...mock.me, user_id: "user-admin-e2e", roles: ["admin", "owner"] };
     const start = iso(-10 * MIN);
     let avaConfirmed = false;

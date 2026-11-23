@@ -47,33 +47,18 @@ export function ArrivalCheckin({
           : prev,
       );
     },
-    onError: (err) => {
-      // Window closed / class cancelled: refetch so the button goes away.
-      if (!arrivalFailure(err).retryable) void queryClient.invalidateQueries({ queryKey: scheduleKey });
-    },
+    // No refetch on error: the failure message (without Retry when retrying
+    // cannot help) already replaces the button, and a refetch could drop the
+    // row and the "NOT received" message with it.
   });
 
   const view = parentArrivalView(entry);
   const testId = `arrival-${studentId}-${entry.occurrence_id}`;
 
-  if (view === "confirmed") {
-    return (
-      <p role="status" data-testid={`${testId}-confirmed`} className="text-sm font-semibold text-status-green-800">
-        Checked in
-      </p>
-    );
-  }
-  if (view === "pending") {
-    return (
-      <p role="status" data-testid={`${testId}-pending`} className="text-sm font-semibold text-rally-cobalt-700">
-        Arrival sent · Waiting for staff
-      </p>
-    );
-  }
-  if (view === "hidden") return null;
-
+  // Before the "hidden" return: a refused send refetches the schedule, which
+  // hides the row, and the "staff have NOT received" alert must outlive that.
   const failure = mutation.isError ? arrivalFailure(mutation.error) : null;
-  if (failure) {
+  if (failure && view !== "pending" && view !== "confirmed") {
     return (
       <div className="space-y-2">
         <p role="alert" data-testid={`${testId}-error`} className="text-sm font-semibold text-status-red-800">
@@ -94,6 +79,29 @@ export function ArrivalCheckin({
       </div>
     );
   }
+
+  if (view === "confirmed") {
+    return (
+      <p role="status" data-testid={`${testId}-confirmed`} className="text-sm font-semibold text-status-green-800">
+        Checked in
+      </p>
+    );
+  }
+  if (view === "pending") {
+    return (
+      <p role="status" data-testid={`${testId}-pending`} className="text-sm font-semibold text-rally-cobalt-700">
+        Arrival sent · Waiting for staff
+      </p>
+    );
+  }
+  if (view === "expired") {
+    return (
+      <p role="status" data-testid={`${testId}-expired`} className="text-sm font-semibold text-status-red-800">
+        Arrival not confirmed · Please tell a coach in person
+      </p>
+    );
+  }
+  if (view === "hidden") return null;
 
   return (
     <Button

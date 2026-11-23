@@ -14652,6 +14652,30 @@
             ],
             "title": "Coach Name"
           },
+          "dropoff_window_closes_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dropoff Window Closes At"
+          },
+          "dropoff_window_opens_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dropoff Window Opens At"
+          },
           "end_at": {
             "format": "date-time",
             "title": "End At",

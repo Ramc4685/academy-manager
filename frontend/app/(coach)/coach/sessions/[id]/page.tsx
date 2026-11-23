@@ -21,6 +21,7 @@ import {
   type StaffDropoffCheckinView,
 } from "@/lib/api/coach";
 import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
+import { confirmFailureMessage, dropoffRefetchInterval } from "@/lib/dropoff/checkin";
 import { ClassRecapPanel } from "@/components/coach/ClassRecapPanel";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
 import { SessionDetailTabs, SessionNextStep } from "@/components/coach/SessionDetailTabs";
@@ -160,6 +161,20 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     queryKey: queryKeys.coach.today(date),
     queryFn: () => getCoachToday(date),
     staleTime: 5 * 60 * 1000,
+    // While this class's drop-off window is open, pick up new parent reports.
+    // shortcut: the service worker answers coach/today stale-while-revalidate
+    // (kept for the offline roster), so a report shows on the second poll
+    // (<= 60 s), not the first; bypass the SW cache if that proves too slow.
+    refetchInterval: (query) =>
+      dropoffRefetchInterval(
+        (query.state.data?.sessions ?? [])
+          .filter((s) => s.occurrence_id === decodedId || s.session_id === decodedId)
+          .map((s) => ({
+            opensAt: s.dropoff_window_opens_at,
+            closesAt: s.dropoff_window_closes_at,
+            done: s.status === "cancelled",
+          })),
+      ),
   });
 
   const session = useMemo(
@@ -1038,7 +1053,8 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
                 }
                 dropoffError={
                   dropoffMutation.isError && dropoffMutation.variables === student.student_id
-                    ? formatApiError(dropoffMutation.error)
+                    ? (confirmFailureMessage(dropoffMutation.error) ??
+                      formatApiError(dropoffMutation.error))
                     : null
                 }
               />
