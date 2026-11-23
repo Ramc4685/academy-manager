@@ -188,6 +188,7 @@ from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_
     ListParentAvailableSessions,
 )
 from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
+    DescribeAbsenceMakeups,
     ListEligibleMakeupTargets,
     ListMakeupCandidates,
     ListParentMakeups,
@@ -447,6 +448,8 @@ class ParentComposition:
     calendar_feed: object = None
     # #1037/#1041: parent makeup picker candidates (server-eligible missed classes).
     list_makeup_candidates: ListMakeupCandidates | None = None
+    # Makeup state of each reported absence (Reported / eligible / booked ...).
+    describe_absence_makeups: DescribeAbsenceMakeups | None = None
 
 
 class _MongoTransactionRunner:
@@ -981,6 +984,14 @@ def compose_parent(
         enrollments=enrollments_query,
         occurrences=occurrences_query,
         sessions=sessions_query,
+        notices=absence_notices_repo,
+        makeups=makeup_requests_repo,
+        policies=self_service_policies_repo,
+        attendance=student_presence,
+    )
+    describe_absence_makeups = DescribeAbsenceMakeups(
+        occurrences=occurrences_query,
+        enrollments=enrollments_query,
         notices=absence_notices_repo,
         makeups=makeup_requests_repo,
         policies=self_service_policies_repo,
@@ -3125,6 +3136,7 @@ def compose_parent(
         list_parent_makeups=list_parent_makeups,
         list_eligible_makeup_targets=list_eligible_makeup_targets,
         list_makeup_candidates=list_makeup_candidates,
+        describe_absence_makeups=describe_absence_makeups,
         submit_trial_request=submit_trial_request,
         list_parent_trial_requests=list_parent_trial_requests,
         preview_self_cancel=preview_self_cancel,

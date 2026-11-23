@@ -18,9 +18,10 @@ lapsed ``pending`` requests to ``expired`` so they never linger silently.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel
 
@@ -439,6 +440,111 @@ class ListMakeupCandidates:
         if notice is None:
             return None
         return "late_notice" if reason == "notice_required" else str(reason)
+
+
+#: Where a reported absence stands with makeups. "requested" is a pending
+#: request awaiting the academy; the others are the parent-facing labels.
+AbsenceMakeupState = Literal["reported", "eligible", "requested", "booked", "expired"]
+
+
+class AbsenceMakeupStatus(BaseModel):
+    """One reported absence's makeup state, decided by ``MakeupEligibility``."""
+
+    model_config = {"frozen": True}
+
+    state: AbsenceMakeupState
+    #: When a makeup can no longer be requested (eligible) or the pending
+    #: request lapses (requested).
+    expires_at: datetime | None = None
+    #: The class the makeup was booked onto (booked only).
+    booked_occurrence_id: str | None = None
+    #: Why a past class can't be made up, in plain words (reported only).
+    reason: str | None = None
+
+
+class AbsenceOccurrenceQuery(Protocol):
+    async def get(self, occurrence_id: str) -> SessionOccurrence | None: ...
+
+
+class DescribeAbsenceMakeups:
+    """The makeup state of each reported absence (child + class date).
+
+    Never a second statement of the rules: an existing request decides
+    booked / requested / expired, otherwise the same ``MakeupEligibility``
+    check ``SubmitMakeupRequest`` runs decides eligible / expired / reported.
+    Callers pass only the parent's own notice keys; every read is in-tenant.
+    """
+
+    def __init__(
+        self,
+        *,
+        occurrences: AbsenceOccurrenceQuery,
+        enrollments: SubmitterEnrollmentQuery,
+        notices: AbsenceNoticeQuery,
+        makeups: MakeupRequestRepository,
+        policies: SelfServicePolicyRepository,
+        attendance: StudentPresenceQuery,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._occurrences = occurrences
+        self._makeups = makeups
+        self._policies = policies
+        self._now = clock
+        self._eligibility = MakeupEligibility(
+            enrollments=enrollments, notices=notices, makeups=makeups, attendance=attendance
+        )
+
+    async def execute(
+        self, keys: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], AbsenceMakeupStatus]:
+        """``keys`` are ``(student_id, occurrence_id)`` pairs."""
+        policy = await self._policies.get_or_default()
+        now = self._now()
+        unique = list(dict.fromkeys(keys))
+        # Independent reads per absence; gather copies the tenant ContextVar.
+        statuses = await asyncio.gather(
+            *(self._describe(policy, student_id, occ_id, now) for student_id, occ_id in unique)
+        )
+        return dict(zip(unique, statuses, strict=True))
+
+    async def _describe(
+        self, policy: ParentSelfServicePolicy, student_id: str, occurrence_id: str, now: datetime
+    ) -> AbsenceMakeupStatus:
+        request = await self._makeups.find_active_for_missed_occurrence(occurrence_id, student_id)
+        if request is not None:
+            if (
+                request.status in ("approved", "completed")
+                and request.approved_target_occurrence_id
+            ):
+                return AbsenceMakeupStatus(
+                    state="booked", booked_occurrence_id=request.approved_target_occurrence_id
+                )
+            if request.status == "pending":
+                return AbsenceMakeupStatus(state="requested")
+            if request.status == "expired":
+                return AbsenceMakeupStatus(state="expired")
+        missed = await self._occurrences.get(occurrence_id)
+        if missed is None or not policy.can_request_makeup:
+            return AbsenceMakeupStatus(state="reported")
+        if missed.status != "cancelled" and now > missed.start_at + timedelta(
+            days=policy.makeup_expiry_days
+        ):
+            # Past the window: expired whatever else is true (e.g. a dropped
+            # child), so skip the enrollment / notice / attendance reads.
+            return AbsenceMakeupStatus(state="expired")
+        try:
+            expires_at = await self._eligibility.check(
+                policy=policy, student_id=student_id, missed=missed, now=now
+            )
+        except MakeupWindowExpired:
+            # Raised both for a class still ahead and for one past its window.
+            return AbsenceMakeupStatus(state="expired" if missed.start_at < now else "reported")
+        except DomainError as exc:
+            reason = exc.details.get("reason")
+            # Every described class carries a notice, so "notice required" means late.
+            key = "late_notice" if reason == "notice_required" else reason
+            return AbsenceMakeupStatus(state="reported", reason=_INELIGIBLE_REASONS.get(str(key)))
+        return AbsenceMakeupStatus(state="eligible", expires_at=expires_at)
 
 
 class ListParentMakeups:

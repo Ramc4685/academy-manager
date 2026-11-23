@@ -17,6 +17,7 @@ from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle impor
 from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
     ESIGN_CONSENT_TEXT,
 )
+from backend.v2.interfaces.parent.absence_makeup import AbsenceMakeupView
 
 # --- Onboarding ---
 
@@ -512,6 +513,8 @@ class ParentScheduleEntryView(BaseModel):
     cancellation_reason: str | None = None
     # The child already has an absence notice for this date.
     absence_reported: bool = False
+    # That absence's makeup state; only set when absence_reported.
+    absence_makeup: AbsenceMakeupView | None = None
 
 
 class ParentScheduleResponse(BaseModel):
