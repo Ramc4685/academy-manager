@@ -398,16 +398,24 @@ class ConfirmDropoff:
                     raise
             else:
                 attendance_id, reconciled = result.attendance_id, False
+                # A replay (concurrent or retried confirm) returns the row an
+                # earlier staffer wrote; credit whoever actually wrote it.
+                written = await self._marks.find_existing(row.occurrence_id, row.student_id)
+                confirmed_by = written.marked_by if written is not None else staff_id
         if existing is not None:
             _refuse_non_present(existing, row)
             attendance_id = existing.attendance_id
             reconciled = attendance_id != mutation_id
+            # Our own mark: its writer confirmed. A linked manual mark: the
+            # staffer confirming now did.
+            confirmed_by = staff_id if reconciled else existing.marked_by
         finished = await self._checkins.finish_confirm(
             row.occurrence_id,
             row.student_id,
             attendance_id=attendance_id,
             reconciled=reconciled,
             confirmed_at=self._now(),
+            confirmed_by=confirmed_by,
         )
         if finished is None:  # pragma: no cover - rows are never deleted
             raise DropoffCheckinNotFound("no arrival report to confirm")

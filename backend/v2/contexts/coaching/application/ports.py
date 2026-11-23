@@ -196,6 +196,7 @@ class DropoffCheckinRepository(Protocol):
         attendance_id: str,
         reconciled: bool,
         confirmed_at: datetime,
+        confirmed_by: str,
     ) -> DropoffCheckin | None:
         """Move ``confirming`` -> ``confirmed``; a no-op on any other status.
         Returns the row after the attempt."""

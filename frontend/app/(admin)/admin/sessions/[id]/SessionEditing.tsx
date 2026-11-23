@@ -489,6 +489,8 @@ export function OccurrenceAttendanceDialog({
       if (!occurrenceId) throw new Error("No class date selected.");
       return confirmOccurrenceDropoff(occurrenceId, studentId);
     },
+    // Online-only (docs/offline-policy.md): fail now, never resume on reconnect.
+    networkMode: "always",
     retry: (count, err) => (err as { code?: string }).code === "request_in_flight" && count < 2,
     retryDelay: 800,
     onSuccess: async () => {
@@ -536,7 +538,8 @@ export function OccurrenceAttendanceDialog({
       overline="Class date"
     >
       {error && <DialogError message={error} />}
-      {dropoff?.enabled && (
+      {/* Reports made before the feature was switched off stay confirmable. */}
+      {dropoff && (dropoff.enabled || dropoff.checkins.length > 0) && (
         <section
           data-testid="dropoff-breakdown"
           aria-label="Drop-off check-in"

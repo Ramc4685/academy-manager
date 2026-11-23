@@ -347,6 +347,9 @@ async def test_two_concurrent_confirms_write_exactly_one_mark(parent, real_db, a
     ids = {s.checkin.attendance_id for s in [*snapshots, final] if s.checkin}
     assert final.state == "confirmed" and len(ids) == 1
     assert await real_db["attendance"].count_documents({}) == 1
+    mark = await real_db["attendance"].find_one({"student_id": STUDENT})
+    row = await real_db["dropoff_checkins"].find_one({"student_id": STUDENT})
+    assert row["confirmed_by"] == mark["marked_by"]
 
 
 async def test_failure_after_the_mark_is_saved_is_finished_by_a_retry(
@@ -378,6 +381,10 @@ async def test_failure_after_the_mark_is_saved_is_finished_by_a_retry(
     assert done.checkin and done.checkin.attendance_id == row["confirm_mutation_id"]
     assert done.checkin.reconciled_with_existing_mark is False
     assert await real_db["attendance"].count_documents({}) == 1
+    # Attribution follows the saved mark, not whoever happened to finish.
+    mark = await real_db["attendance"].find_one({"student_id": STUDENT})
+    final = await real_db["dropoff_checkins"].find_one({"student_id": STUDENT})
+    assert mark["marked_by"] == COACH and final["confirmed_by"] == COACH
 
 
 async def _manual_mark(db: Any, status: str, *, attendance_id: str = "manual-1") -> None:
@@ -412,6 +419,8 @@ async def test_an_existing_present_mark_is_linked_not_duplicated(
     assert (body["attendance_id"], body["reconciled_with_existing_mark"]) == ("manual-1", True)
     [mark] = await real_db["attendance"].find({}).to_list(None)
     assert mark["status"] == existing_status  # untouched
+    row = await real_db["dropoff_checkins"].find_one({"student_id": STUDENT})
+    assert row["confirmed_by"] == COACH  # the staffer who confirmed
 
 
 @pytest.mark.parametrize("existing_status", ["absent", "voided"])

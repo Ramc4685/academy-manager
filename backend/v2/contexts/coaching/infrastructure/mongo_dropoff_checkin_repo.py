@@ -95,6 +95,7 @@ class MongoDropoffCheckinRepository(TenantScopedRepository):
         attendance_id: str,
         reconciled: bool,
         confirmed_at: datetime,
+        confirmed_by: str,
     ) -> DropoffCheckin | None:
         doc = await self._find_one_and_update(
             {**self._key(occurrence_id, student_id), "status": "confirming"},
@@ -104,6 +105,7 @@ class MongoDropoffCheckinRepository(TenantScopedRepository):
                     "attendance_id": attendance_id,
                     "reconciled_with_existing_mark": reconciled,
                     "confirmed_at": confirmed_at,
+                    "confirmed_by": confirmed_by,
                 }
             },
         )
