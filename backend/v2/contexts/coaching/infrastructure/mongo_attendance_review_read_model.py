@@ -47,13 +47,12 @@ class MongoAttendanceReviewReadModel(TenantScopedRepository):
         occurrence_ids = [str(doc["occurrence_id"]) for doc in occurrences]
         session_ids = {occurrence_session_id(doc) for doc in occurrences}
 
-        # A voided mark counts as unmarked everywhere downstream (#554).
+        # Voided marks count here: someone took this register and an admin annulled
+        # it on purpose. It shows under corrections, and nothing can re-mark it.
         marked = Counter(
             [
                 str(doc["occurrence_id"])
-                async for doc in self._find_many(
-                    {"occurrence_id": {"$in": occurrence_ids}, "status": {"$ne": "voided"}}
-                )
+                async for doc in self._find_many({"occurrence_id": {"$in": occurrence_ids}})
             ]
         )
         # shortcut: counts only enrollments active *now* (the recurring roster), not

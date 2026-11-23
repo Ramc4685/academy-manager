@@ -153,8 +153,9 @@ async def test_missing_attendance_and_corrections_are_the_request_academys(
     with tenant_scope(DEMO):
         review = await review_uc.execute()
 
-    # Voided-only counts as unmarked; cancelled and in-grace dates never show.
-    assert sorted(row.occurrence_id for row in review.missing) == ["occ-unmarked", "occ-voided"]
+    # A voided-only date was taken then annulled, so it is a correction, not missing;
+    # cancelled and in-grace dates never show.
+    assert [row.occurrence_id for row in review.missing] == ["occ-unmarked"]
     unmarked = next(row for row in review.missing if row.occurrence_id == "occ-unmarked")
     assert unmarked.session_id == SESSION
     assert unmarked.session_name == f"Juniors {DEMO}"
