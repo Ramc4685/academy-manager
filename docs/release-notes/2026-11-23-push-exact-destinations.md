@@ -1,6 +1,6 @@
 # push-exact-destinations
 
-PR: TBD
+PR: #1232
 
 ## What changed
 Tapping a push now opens the exact thing it is about. Message pushes (direct
