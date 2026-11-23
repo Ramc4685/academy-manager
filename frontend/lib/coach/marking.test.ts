@@ -40,7 +40,12 @@ describe("markProgress", () => {
       { student_id: "c", attendance_status: null },
       { student_id: "d" },
     ]);
-    expect(progress).toEqual({ marked: 2, total: 4, complete: false, label: "2/4 marked" });
+    expect(progress).toEqual({
+      marked: 2,
+      total: 4,
+      complete: false,
+      label: "2/4 marked",
+    });
   });
 
   it("is complete when every student is marked", () => {
@@ -54,7 +59,12 @@ describe("markProgress", () => {
 
   it("treats an empty roster as nothing to mark, not as needing marks", () => {
     const progress = markProgress([]);
-    expect(progress).toEqual({ marked: 0, total: 0, complete: true, label: "0/0 marked" });
+    expect(progress).toEqual({
+      marked: 0,
+      total: 0,
+      complete: true,
+      label: "0/0 marked",
+    });
   });
 
   it("counts an extra locally-marked student id", () => {
@@ -101,9 +111,14 @@ describe("recentUnmarkedSessions", () => {
         ]),
         session("occ-old", "2026-09-10T18:00:00Z", [{ student_id: "a" }]),
         session("occ-future", "2026-09-13T18:00:00Z", [{ student_id: "a" }]),
-        session("occ-cancelled", "2026-09-12T20:00:00Z", [{ student_id: "a" }], {
-          status: "cancelled",
-        }),
+        session(
+          "occ-cancelled",
+          "2026-09-12T20:00:00Z",
+          [{ student_id: "a" }],
+          {
+            status: "cancelled",
+          },
+        ),
         session("occ-empty", "2026-09-12T21:00:00Z", []),
       ],
       now,
@@ -140,7 +155,12 @@ describe("voided and held rows", () => {
       { student_id: "a", attendance_status: "present" },
       { student_id: "b", attendance_status: "voided" },
     ]);
-    expect(progress).toEqual({ marked: 1, total: 2, complete: false, label: "1/2 marked" });
+    expect(progress).toEqual({
+      marked: 1,
+      total: 2,
+      complete: false,
+      label: "1/2 marked",
+    });
   });
 
   it("does not owe a mark for an unmarked held seat (#1040)", () => {
@@ -148,12 +168,21 @@ describe("voided and held rows", () => {
       { student_id: "a", attendance_status: "present" },
       { student_id: "b", attendance_status: null, enrollment_status: "held" },
     ] as never);
-    expect(progress).toEqual({ marked: 1, total: 1, complete: true, label: "1/1 marked" });
+    expect(progress).toEqual({
+      marked: 1,
+      total: 1,
+      complete: true,
+      label: "1/1 marked",
+    });
   });
 
   it("still counts a held seat that was marked", () => {
     const progress = markProgress([
-      { student_id: "b", attendance_status: "absent", enrollment_status: "held" },
+      {
+        student_id: "b",
+        attendance_status: "absent",
+        enrollment_status: "held",
+      },
     ] as never);
     expect(progress.total).toBe(1);
     expect(progress.complete).toBe(true);
@@ -189,7 +218,9 @@ describe("withoutUnconfirmedMark", () => {
   });
 
   it("drops an errored entry", () => {
-    expect(withoutUnconfirmedMark({ st1: entry(false, "boom") }, "st1")).toEqual({});
+    expect(
+      withoutUnconfirmedMark({ st1: entry(false, "boom") }, "st1"),
+    ).toEqual({});
   });
 
   it("keeps a confirmed save and other rows", () => {
@@ -211,7 +242,9 @@ describe("nextUpcomingClass", () => {
   });
 
   it("returns null when nothing is upcoming", () => {
-    expect(nextUpcomingClass([{ start_at: "2026-11-21T23:00:00Z" }], now)).toBeNull();
+    expect(
+      nextUpcomingClass([{ start_at: "2026-11-21T23:00:00Z" }], now),
+    ).toBeNull();
     expect(nextUpcomingClass([], now)).toBeNull();
   });
 });
@@ -226,17 +259,23 @@ describe("latestUnfinishedRecap", () => {
       session("newer", "2026-11-21T23:00:00Z", kid, { recap_saved: false }),
       session("done", "2026-11-22T01:00:00Z", kid, { recap_saved: true }),
     ];
-    expect((latestUnfinishedRecap(sessions, now) as { occurrence_id: string } | null)?.occurrence_id).toBe(
-      "newer",
-    );
+    expect(
+      (latestUnfinishedRecap(sessions, now) as { occurrence_id: string } | null)
+        ?.occurrence_id,
+    ).toBe("newer");
   });
 
-  it("skips cancelled, empty, future and out-of-window classes", () => {
+  it("skips cancelled, empty, all-absent, future and out-of-window classes", () => {
     const sessions = [
-      session("cancelled", "2026-11-21T23:00:00Z", kid, { status: "cancelled" }),
+      session("cancelled", "2026-11-21T23:00:00Z", kid, {
+        status: "cancelled",
+      }),
       session("empty", "2026-11-21T23:00:00Z", []),
       session("future", "2026-11-22T18:00:00Z", kid),
       session("old", "2026-11-19T23:00:00Z", kid),
+      session("all-absent", "2026-11-21T23:00:00Z", [
+        { student_id: "st1", attendance_status: "absent" },
+      ]),
     ];
     expect(latestUnfinishedRecap(sessions, now)).toBeNull();
   });

@@ -35,7 +35,10 @@ function trackLeadOnlyCalls(page: Page): string[] {
   const calls: string[] = [];
   page.on("request", (request) => {
     const url = request.url();
-    if (/\/api\/v2\/coach\/messages/.test(url) || /\/api\/v2\/coach\/.*announcements/.test(url)) {
+    if (
+      /\/api\/v2\/coach\/messages/.test(url) ||
+      /\/api\/v2\/coach\/.*announcements/.test(url)
+    ) {
       calls.push(url);
     }
   });
@@ -53,7 +56,9 @@ test.describe("Assistant coach shell", () => {
     await stubProfile(page);
   });
 
-  test("today shows the assistant banner and no Messages link", async ({ page }) => {
+  test("today shows the assistant banner and no Messages link", async ({
+    page,
+  }) => {
     const leadOnlyCalls = trackLeadOnlyCalls(page);
     await page.goto("/coach/today");
     await expect(page.getByTestId("coach-today")).toBeVisible();
@@ -62,7 +67,9 @@ test.describe("Assistant coach shell", () => {
     );
     await expect(page.getByTestId("coach-supervisor-banner")).toHaveCount(0);
     await expect(page.getByTestId("nav-messages")).toHaveCount(0);
-    await expect(page.getByTestId("session-s-today-1")).toContainText("Junior A");
+    await expect(page.getByTestId("session-s-today-1")).toContainText(
+      "Junior A",
+    );
     expect(leadOnlyCalls).toEqual([]);
   });
 
@@ -77,7 +84,9 @@ test.describe("Assistant coach shell", () => {
     await expect(page.getByTestId("mark-all-present")).toBeVisible();
     // Issue #774: no coach sees a billing surface any more, assistant or lead.
     await expect(page.getByTestId("billing-toggle-st1")).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: "Announcements" })).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "Announcements" }),
+    ).toHaveCount(0);
 
     await page.getByTestId("mark-st1-present").click();
     await expect.poll(() => mock.attendanceCalls.length).toBe(1);
@@ -103,16 +112,25 @@ test.describe("Assistant coach shell", () => {
       visibility: "shared",
     });
     await page.goto("/coach/sessions/s-today-1");
-    await page.getByTestId("roster-st1").getByRole("button", { name: "Note", exact: true }).click();
+    await page
+      .getByTestId("roster-st1")
+      .getByRole("button", { name: "Note", exact: true })
+      .click();
     await expect(page.getByTestId("note-private-hint")).toContainText(
       "stay private to coaches",
     );
     await expect(page.getByTestId("note-share-st1")).toHaveCount(0);
     // Existing notes still list with their audience, but nothing can flip it.
-    await expect(page.getByTestId("note-visibility-note-lead")).toHaveText(/shared with parent/i);
-    await expect(page.getByTestId("note-share-toggle-note-lead")).toHaveCount(0);
+    await expect(page.getByTestId("note-visibility-note-lead")).toHaveText(
+      /shared with parent/i,
+    );
+    await expect(page.getByTestId("note-share-toggle-note-lead")).toHaveCount(
+      0,
+    );
 
-    await page.getByPlaceholder("Progress note for Alice…").fill("Worked on grip");
+    await page
+      .getByPlaceholder("Progress note for Alice…")
+      .fill("Worked on grip");
     await page.getByRole("button", { name: "Save note" }).click();
     await expect.poll(() => mock.progressNoteCalls.length).toBe(1);
     expect(mock.progressNoteCalls[0]).toEqual({
@@ -122,7 +140,10 @@ test.describe("Assistant coach shell", () => {
     });
   });
 
-  test("skill notes panel has no share control for an assistant", async ({ page, mock }) => {
+  test("skill notes panel has no share control for an assistant", async ({
+    page,
+    mock,
+  }) => {
     mock.skillNotes.push({
       note_id: "skill-note-lead",
       academy_id: "academy-e2e",
@@ -136,13 +157,22 @@ test.describe("Assistant coach shell", () => {
     });
     await page.goto("/coach/students/st1/passport?student_name=Alice");
     await expect(page.getByTestId("coach-student-passport")).toBeVisible();
-    await page.getByTestId("passport-skill-skill-backhand").getByRole("button", { name: "Notes" }).click();
-    await expect(page.getByTestId("skill-note-skill-note-lead")).toContainText("Backhand improving");
+    await page
+      .getByTestId("passport-skill-skill-backhand")
+      .getByRole("button", { name: "Notes" })
+      .click();
+    await expect(page.getByTestId("skill-note-skill-note-lead")).toContainText(
+      "Backhand improving",
+    );
     await expect(page.getByTestId("skill-note-private-hint")).toBeVisible();
     await expect(page.getByTestId("skill-note-share")).toHaveCount(0);
-    await expect(page.getByTestId("skill-note-share-toggle-skill-note-lead")).toHaveCount(0);
+    await expect(
+      page.getByTestId("skill-note-share-toggle-skill-note-lead"),
+    ).toHaveCount(0);
 
-    await page.getByPlaceholder("Add a note about this skill...").fill("Keep the elbow up");
+    await page
+      .getByPlaceholder("Add a note about this skill...")
+      .fill("Keep the elbow up");
     await page.getByRole("button", { name: "Add Note" }).click();
     await expect.poll(() => mock.skillNoteCalls.length).toBe(1);
     expect(mock.skillNoteCalls[0]).toEqual({
@@ -157,10 +187,12 @@ test.describe("Assistant coach shell", () => {
     await expect(page.getByTestId("coach-profile")).toBeVisible();
     await expect(page.getByText("Asha Assistant")).toBeVisible();
     await expect(page.getByText("Assistant coach access")).toBeVisible();
-    await expect(page.getByTestId("coach-pay-card")).toHaveCount(0);
+    await expect(page.getByText("Pay & statements")).toHaveCount(0);
   });
 
-  test("/coach/messages shows the denied notice instead of an inbox", async ({ page }) => {
+  test("/coach/messages shows the denied notice instead of an inbox", async ({
+    page,
+  }) => {
     const leadOnlyCalls = trackLeadOnlyCalls(page);
     await page.goto("/coach/messages");
     await expect(page.getByTestId("coach-assistant-denied")).toContainText(
@@ -193,11 +225,15 @@ test.describe("Real coach keeps the lead surfaces", () => {
     await expect(page.getByTestId("coach-assistant-banner")).toHaveCount(0);
     await expect(page.getByTestId("nav-messages")).toBeVisible();
     await expect(page.getByTestId("billing-toggle-st1")).toHaveCount(0);
-    await expect(page.getByRole("heading", { name: "Announcements" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Announcements" }),
+    ).toBeVisible();
 
     // No statements exist to open yet, so even a lead coach sees no pay card.
     await page.goto("/coach/profile");
-    await expect(page.getByRole("heading", { name: "Profile" }).first()).toBeVisible();
-    await expect(page.getByTestId("coach-pay-card")).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "Profile" }).first(),
+    ).toBeVisible();
+    await expect(page.getByText("Pay & statements")).toHaveCount(0);
   });
 });

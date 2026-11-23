@@ -23,7 +23,10 @@ export function isRecordedMark(status: string | null | undefined): boolean {
 }
 
 /** Seats the server refuses to mark (#1040): they cannot make a register incomplete. */
-const UNMARKABLE_ENROLLMENT: ReadonlySet<string> = new Set(["held", "reclaim_pending"]);
+const UNMARKABLE_ENROLLMENT: ReadonlySet<string> = new Set([
+  "held",
+  "reclaim_pending",
+]);
 
 /** How long a coach may change their own mark; after that only an admin can. */
 export const COACH_CORRECTION_WINDOW_MS = 48 * 60 * 60 * 1000;
@@ -41,7 +44,10 @@ export function correctionWindowClosed(
 }
 
 /** True when the class is still too far in the future to take attendance. */
-export function markingNotOpenYet(startAt: string, now: Date = new Date()): boolean {
+export function markingNotOpenYet(
+  startAt: string,
+  now: Date = new Date(),
+): boolean {
   const start = new Date(startAt).getTime();
   return !Number.isNaN(start) && start - now.getTime() > MARK_LEAD_TIME_MS;
 }
@@ -78,7 +84,9 @@ export function markProgress(
   // A held seat with no mark is shown for context but cannot be marked, so it
   // is not owed a mark; once marked it counts like any other row.
   const owed = roster.filter(
-    (entry) => isMarked(entry) || !UNMARKABLE_ENROLLMENT.has(entry.enrollment_status ?? ""),
+    (entry) =>
+      isMarked(entry) ||
+      !UNMARKABLE_ENROLLMENT.has(entry.enrollment_status ?? ""),
   );
   const total = owed.length;
   const marked = owed.filter(isMarked).length;
@@ -104,7 +112,10 @@ export function isCancelled(session: { status?: string | null }): boolean {
  * `/coach/sessions/<session_id>`) lands on the wrong day or on "Session not
  * found."
  */
-export function coachSessionHref(occurrenceId: string, dateISO?: string | null): string {
+export function coachSessionHref(
+  occurrenceId: string,
+  dateISO?: string | null,
+): string {
   const path = `/coach/sessions/${encodeURIComponent(occurrenceId)}`;
   return dateISO ? `${path}?date=${dateISO}` : path;
 }
@@ -135,10 +146,13 @@ export function recentUnmarkedSessions<T extends MarkableSession>(
       if (isCancelled(session)) return false;
       if (session.roster.length === 0) return false;
       const started = new Date(session.start_at).getTime();
-      if (Number.isNaN(started) || started > nowMs || started < floor) return false;
+      if (Number.isNaN(started) || started > nowMs || started < floor)
+        return false;
       return !markProgress(session.roster).complete;
     })
-    .sort((a, b) => new Date(b.start_at).getTime() - new Date(a.start_at).getTime());
+    .sort(
+      (a, b) => new Date(b.start_at).getTime() - new Date(a.start_at).getTime(),
+    );
 }
 
 /**
@@ -146,10 +160,9 @@ export function recentUnmarkedSessions<T extends MarkableSession>(
  * (an error, or an optimistic tap still `pending` when the request died) so
  * the queued state is what the row shows. A confirmed save is kept.
  */
-export function withoutUnconfirmedMark<T extends { pending: boolean; error?: string }>(
-  marks: Record<string, T>,
-  student_id: string,
-): Record<string, T> {
+export function withoutUnconfirmedMark<
+  T extends { pending: boolean; error?: string },
+>(marks: Record<string, T>, student_id: string): Record<string, T> {
   const entry = marks[student_id];
   if (!entry || !(entry.error || entry.pending)) return marks;
   const next = { ...marks };
@@ -190,9 +203,23 @@ export function latestUnfinishedRecap<
   let best: T | null = null;
   let bestMs = -Infinity;
   for (const session of sessions) {
-    if (session.recap_saved || isCancelled(session) || session.roster.length === 0) continue;
+    if (
+      session.recap_saved ||
+      isCancelled(session) ||
+      session.roster.length === 0
+    )
+      continue;
+    // Everyone marked absent: there is no class to recap.
+    if (session.roster.every((row) => row.attendance_status === "absent"))
+      continue;
     const started = new Date(session.start_at).getTime();
-    if (Number.isNaN(started) || started > nowMs || started < floor || started <= bestMs) continue;
+    if (
+      Number.isNaN(started) ||
+      started > nowMs ||
+      started < floor ||
+      started <= bestMs
+    )
+      continue;
     best = session;
     bestMs = started;
   }
