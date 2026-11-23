@@ -182,6 +182,31 @@ async def test_default_range_excludes_past_occurrences() -> None:
 
 
 @pytest.mark.asyncio
+async def test_include_started_within_keeps_a_class_that_just_began() -> None:
+    """Drop-off check-in: a class that started 10 minutes ago stays listed
+    while its window is open; one from yesterday still does not."""
+    student = _student("st-1")
+    session = _session("sess-1")
+    just_started = _occurrence("occ-now", "sess-1", _NOW - timedelta(minutes=10))
+    occ_past = _occurrence("occ-past", "sess-1", _YESTERDAY)
+    uc = _make_uc(
+        [student], [_enrollment("e1", "st-1", "sess-1")], [just_started, occ_past], [session]
+    )
+    default, _ = await uc.execute("parent-1", "st-1", frm=None, to=None, limit=50, offset=0)
+    assert [e.occurrence_id for e in default] == []
+    widened, _ = await uc.execute(
+        "parent-1",
+        "st-1",
+        frm=None,
+        to=None,
+        limit=50,
+        offset=0,
+        include_started_within=timedelta(minutes=15),
+    )
+    assert [e.occurrence_id for e in widened] == ["occ-now"]
+
+
+@pytest.mark.asyncio
 async def test_default_range_excludes_occurrences_beyond_30_days() -> None:
     student = _student("st-1")
     session = _session("sess-1")

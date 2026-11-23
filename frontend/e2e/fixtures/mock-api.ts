@@ -58,6 +58,8 @@ export interface MockState {
         hold_return_on?: string | null;
         /** #866: a parent filed an absence notice for this occurrence. */
         expected_absence?: boolean;
+        /** Parent drop-off check-in for this date (StaffDropoffCheckinView). */
+        checkin?: Record<string, unknown> | null;
       }>;
     }>;
   };

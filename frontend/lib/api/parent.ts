@@ -284,8 +284,26 @@ export interface ParentScheduleEntry {
   cancellation_reason?: string | null;
   /** The child already has an absence notice for this date. Absent on older responses. */
   absence_reported?: boolean;
+  /** Drop-off check-in for this date; null when the academy has the feature off. */
+  checkin?: DropoffCheckinView | null;
+  /** Server-computed: the "I've arrived" button may be shown right now. */
+  can_report_arrival?: boolean;
   /** That absence's makeup state (only when reported). */
   absence_makeup?: AbsenceMakeupView | null;
+}
+
+export type DropoffCheckinView = components["schemas"]["DropoffCheckinView"];
+
+/**
+ * Tell staff the child has been dropped off for this class date. Idempotent on
+ * the server (a repeat tap returns the same row), so a manual Retry is safe.
+ * Never queued offline: a stale arrival sent later would be wrong.
+ */
+export function reportArrival(studentId: string, occurrenceId: string): Promise<DropoffCheckinView> {
+  return apiFetch(
+    `/parent/children/${encodeURIComponent(studentId)}/occurrences/${encodeURIComponent(occurrenceId)}/arrival`,
+    { method: "POST" },
+  );
 }
 
 export type ParentScheduleSource = "regular" | "makeup" | "trial";
@@ -577,6 +595,7 @@ export interface ParentSelfServiceSwitches {
   // Reflects the Public page "Accept free trial requests" toggle, not a
   // duplicate switch — see backend/v2/interfaces/parent/views.py.
   can_request_trial: boolean;
+  dropoff_checkin_enabled?: boolean;
 }
 
 export const DEFAULT_PARENT_SELF_SERVICE_SWITCHES: ParentSelfServiceSwitches = {

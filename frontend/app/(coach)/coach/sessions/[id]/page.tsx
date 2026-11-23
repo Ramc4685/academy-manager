@@ -7,6 +7,7 @@ import { ulid } from "ulid";
 
 import {
   bulkMarkAttendance,
+  confirmDropoff,
   correctAttendance,
   createProgressNote,
   getCoachToday,
@@ -17,8 +18,10 @@ import {
   type CoachRosterEntry,
   type NoteVisibility,
   type ProgressNote,
+  type StaffDropoffCheckinView,
 } from "@/lib/api/coach";
 import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
+import { confirmFailureMessage, dropoffRefetchInterval } from "@/lib/dropoff/checkin";
 import { ClassRecapPanel } from "@/components/coach/ClassRecapPanel";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
 import { SessionDetailTabs, SessionNextStep } from "@/components/coach/SessionDetailTabs";
@@ -109,6 +112,11 @@ const ATTENDANCE_ERROR_MESSAGES: Record<string, string> = {
   "Coaching.OccurrenceNotStarted": "This class hasn't started yet. Mark it once it begins.",
   "Coaching.AttendanceNotFound":
     "No recorded mark was found to change. Refresh and try again.",
+  "Coaching.DropoffCheckinNotFound":
+    "There's no parent arrival to confirm for this student. Refresh the roster.",
+  "Coaching.DropoffWindowClosed":
+    "This drop-off report has expired. Mark attendance by hand instead.",
+  request_in_flight: "Still saving the last tap. Try again in a moment.",
 };
 
 function formatApiError(err: unknown): string {
@@ -153,6 +161,20 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     queryKey: queryKeys.coach.today(date),
     queryFn: () => getCoachToday(date),
     staleTime: 5 * 60 * 1000,
+    // While this class's drop-off window is open, pick up new parent reports.
+    // shortcut: the service worker answers coach/today stale-while-revalidate
+    // (kept for the offline roster), so a report shows on the second poll
+    // (<= 60 s), not the first; bypass the SW cache if that proves too slow.
+    refetchInterval: (query) =>
+      dropoffRefetchInterval(
+        (query.state.data?.sessions ?? [])
+          .filter((s) => s.occurrence_id === decodedId || s.session_id === decodedId)
+          .map((s) => ({
+            opensAt: s.dropoff_window_opens_at,
+            closesAt: s.dropoff_window_closes_at,
+            done: s.status === "cancelled",
+          })),
+      ),
   });
 
   const session = useMemo(
@@ -456,6 +478,48 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
         },
       }));
     },
+  });
+
+  // Parent drop-off check-in: one tap writes (or links to) the official
+  // Present mark on the server. Online only — never queued for replay.
+  const dropoffMutation = useMutation({
+    mutationFn: (studentId: string) => confirmDropoff(occurrenceId, studentId),
+    networkMode: "always",
+    // A same-staff double tap can 409 request_in_flight; the call is idempotent.
+    retry: (count, err) => (err as { code?: string }).code === "request_in_flight" && count < 2,
+    retryDelay: 800,
+    onSuccess: (checkin: StaffDropoffCheckinView) => {
+      const key = queryKeys.coach.today(date);
+      queryClient.setQueryData<typeof today>(
+        key,
+        (prev) =>
+          prev && {
+            ...prev,
+            sessions: prev.sessions.map((s) =>
+              s.occurrence_id !== occurrenceId
+                ? s
+                : {
+                    ...s,
+                    roster: s.roster.map((r) =>
+                      r.student_id !== checkin.student_id
+                        ? r
+                        : {
+                            ...r,
+                            checkin,
+                            // Linked to an earlier manual mark: that mark stands as recorded.
+                            attendance_status: checkin.reconciled_with_existing_mark
+                              ? r.attendance_status
+                              : "present",
+                            attendance_marked_at: r.attendance_marked_at ?? checkin.confirmed_at,
+                          },
+                    ),
+                  },
+            ),
+          },
+        { updatedAt: queryClient.getQueryState(key)?.dataUpdatedAt },
+      );
+    },
+    meta: { suppressGlobalError: true },
   });
 
   const attendanceMutation = useMutation({
@@ -983,6 +1047,16 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
                     : null
                 }
                 noteVisibilityFailed={noteVisibilityMutation.isError}
+                onConfirmDropoff={() => dropoffMutation.mutate(student.student_id)}
+                dropoffPending={
+                  dropoffMutation.isPending && dropoffMutation.variables === student.student_id
+                }
+                dropoffError={
+                  dropoffMutation.isError && dropoffMutation.variables === student.student_id
+                    ? (confirmFailureMessage(dropoffMutation.error) ??
+                      formatApiError(dropoffMutation.error))
+                    : null
+                }
               />
             ))}
           </ul>
@@ -1227,6 +1301,9 @@ function RosterRow({
   onNoteVisibility,
   noteVisibilityPendingId,
   noteVisibilityFailed,
+  onConfirmDropoff,
+  dropoffPending,
+  dropoffError,
 }: {
   student: CoachRosterEntry;
   sessionId: string;
@@ -1256,6 +1333,9 @@ function RosterRow({
   noteVisibilityPendingId: string | null;
   /** The last visibility change failed — the chip silently reverted, so say so. */
   noteVisibilityFailed: boolean;
+  onConfirmDropoff: () => void;
+  dropoffPending: boolean;
+  dropoffError: string | null;
 }) {
   // Optimistic local state wins; then a mark queued on this phone; otherwise
   // fall back to the server-recorded mark so a reload doesn't render a marked
@@ -1291,6 +1371,8 @@ function RosterRow({
   });
   const passportHref = `/coach/students/${encodeURIComponent(student.student_id)}/passport?${passportParams.toString()}`;
   const noteBody = noteText.trim();
+  // A parent said "I've arrived": staff confirm with one tap. Manual marks still work.
+  const dropoffState = student.checkin?.state;
 
   return (
     <li
@@ -1338,6 +1420,16 @@ function RosterRow({
                 />
               </span>
             )}
+          {dropoffState === "pending" && (
+            <span data-testid={`dropoff-pending-${student.student_id}`}>
+              <Chip variant="pending" label="ARRIVED · AWAITING CONFIRMATION" />
+            </span>
+          )}
+          {dropoffState === "confirmed" && (
+            <span data-testid={`dropoff-confirmed-${student.student_id}`}>
+              <Chip variant="present" label="CHECKED IN" />
+            </span>
+          )}
           {queued && (
             <span
               data-testid={`mark-queued-${student.student_id}`}
@@ -1498,6 +1590,35 @@ function RosterRow({
           studentName={student.full_name}
           outcome={student.trial_outcome}
         />
+      )}
+
+      {dropoffState === "pending" && (
+        <div className="mt-2">
+          <button
+            type="button"
+            data-testid={`confirm-dropoff-${student.student_id}`}
+            disabled={dropoffPending || !online}
+            aria-label={`Confirm drop-off for ${student.full_name}`}
+            onClick={onConfirmDropoff}
+            className="min-h-[44px] w-full rounded-md border-2 px-3 text-sm font-semibold transition-colors disabled:opacity-50"
+            style={{ background: "#065f46", borderColor: "#065f46", color: "#fff" }}
+          >
+            {dropoffPending
+              ? "Confirming…"
+              : online
+                ? "Confirm drop-off"
+                : "Confirm drop-off (needs a connection)"}
+          </button>
+          {dropoffError && (
+            <p
+              role="alert"
+              data-testid={`confirm-dropoff-error-${student.student_id}`}
+              className="mt-1.5 text-xs text-red-600"
+            >
+              {dropoffError}
+            </p>
+          )}
+        </div>
       )}
 
       {(voided || windowClosed) && !local?.error && (

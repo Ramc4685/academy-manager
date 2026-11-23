@@ -54,6 +54,8 @@ import {
   scheduleSourceLabel,
 } from "@/lib/parent/schedule-events";
 import { OneTimeClassChip } from "@/components/parent/one-time-class";
+import { ArrivalCheckin } from "@/components/parent/arrival-checkin";
+import { dropoffRefetchInterval, parentArrivalView } from "@/lib/dropoff/checkin";
 import { AbsenceMakeupStatus } from "@/components/parent/absence-makeup-status";
 
 // Avatar gradients are shared with the kid-first Home cards so the same child
@@ -157,6 +159,16 @@ function ChildCard({
   const { data: scheduleData } = useQuery({
     queryKey: ["parent", "child-schedule", child.student_id],
     queryFn: () => getChildSchedule(child.student_id),
+    // Drop-off: refetch when a window opens and while it is open, so the
+    // button appears and "Waiting for staff" turns into "Checked in".
+    refetchInterval: (query) =>
+      dropoffRefetchInterval(
+        (query.state.data?.entries ?? []).map((e) => ({
+          opensAt: e.checkin?.window_opens_at,
+          closesAt: e.checkin?.window_closes_at,
+          done: e.checkin?.state === "confirmed" || e.status === "cancelled",
+        })),
+      ),
   });
 
   const sessions = scheduleData?.entries ?? [];
@@ -221,6 +233,7 @@ function ChildCard({
               <SessionRow
                 key={s.occurrence_id}
                 studentId={child.student_id}
+                childName={child.full_name}
                 entry={s}
                 academyTimezone={academyTimezone}
                 canReportAbsence={canReportAbsence}
@@ -271,11 +284,13 @@ function ChildCard({
 
 function SessionRow({
   studentId,
+  childName,
   entry,
   academyTimezone,
   canReportAbsence,
 }: {
   studentId: string;
+  childName: string;
   entry: ParentScheduleEntry;
   academyTimezone: string | null;
   canReportAbsence: boolean;
@@ -290,6 +305,9 @@ function SessionRow({
   const cancelled = entry.status === "cancelled";
   // #1038: an approved make-up / trial sits alongside regular classes.
   const sourceLabel = scheduleSourceLabel(entry.source);
+  // A child already dropped off is not absent: no "Report absence" beside it.
+  const arrival = parentArrivalView(entry);
+  const arrived = arrival === "pending" || arrival === "confirmed";
 
   const absenceMutation = useMutation({
     mutationFn: submitAbsenceNotice,
@@ -343,13 +361,15 @@ function SessionRow({
         </div>
       </div>
 
+      <ArrivalCheckin studentId={studentId} childName={childName} entry={entry} />
+
       {absenceMutation.isError && (
         <p role="alert" className="text-xs text-status-red-800">
           {absenceMutation.error instanceof Error ? absenceMutation.error.message : "Could not report absence."}
         </p>
       )}
 
-      {cancelled || !canReportAbsence ? null : submitted || entry.absence_reported ? (
+      {cancelled || !canReportAbsence || arrived ? null : submitted || entry.absence_reported ? (
         <div>
           {/* Text, not a disabled button: a disabled button is skipped by Tab,
               so keyboard and screen-reader users would never hear it. */}
