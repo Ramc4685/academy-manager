@@ -394,14 +394,14 @@ class MongoUserRepository:
     async def list_users(
         self,
         role: Role | None = None,
-        academy_id: str | None = None,
         *,
+        academy_id: str,
         exclude_role: Role | None = None,
         roles: Sequence[Role] | None = None,
     ) -> list[AdminUserSummary]:
         # Tenant scope first, then each optional filter as its own ``$and``
         # clause so the planner can still lead with ``academy_id``.
-        clauses: list[dict[str, object]] = [{"academy_id": academy_id or self._default_academy_id}]
+        clauses: list[dict[str, object]] = [{"academy_id": academy_id}]
         if role:
             clauses.append(self._role_filter(role))
         if roles:

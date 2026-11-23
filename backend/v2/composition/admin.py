@@ -2908,7 +2908,9 @@ def compose_admin(
 
     async def _occurrence_row(occurrence) -> dict[str, Any]:
         attendance_cursor = db.attendance.find(
-            {"academy_id": academy_id, "occurrence_id": occurrence.occurrence_id},
+            # Request tenant, not the boot academy: the Demo Academy's class
+            # dates read 0 marks and hid the Attendance action.
+            {"academy_id": request_academy_id(), "occurrence_id": occurrence.occurrence_id},
             sort=[("marked_at", -1)],
         )
         marked_by: set[str] = set()
