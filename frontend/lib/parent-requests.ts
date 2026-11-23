@@ -107,13 +107,13 @@ export interface AbsenceMakeupDisplay {
  * Display only: the state, dates and reason all come from the server.
  */
 export function absenceMakeupDisplay(
-  makeup: AbsenceMakeupView | null | undefined,
+  makeup: AbsenceMakeupView,
   ids: { studentId: string; occurrenceId: string },
   academyTimezone: string | null,
 ): AbsenceMakeupDisplay {
   const until = (iso: string | null | undefined) =>
     iso ? formatAcademyDate(iso, academyTimezone) : "";
-  switch (makeup?.state) {
+  switch (makeup.state) {
     case "eligible":
       return {
         label: "Makeup eligible",
@@ -148,7 +148,7 @@ export function absenceMakeupDisplay(
       return {
         label: "Reported",
         chip: "approved",
-        detail: makeup?.reason ?? null,
+        detail: makeup.reason ?? null,
         bookHref: null,
       };
   }

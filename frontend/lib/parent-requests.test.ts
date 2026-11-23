@@ -118,11 +118,6 @@ describe("absenceMakeupDisplay", () => {
     ).toBe("Marked present for this class.");
   });
 
-  it("falls back to Reported when the server sent no state", () => {
-    expect(absenceMakeupDisplay(null, ids, tz).label).toBe("Reported");
-    expect(absenceMakeupDisplay(undefined, ids, tz).bookHref).toBeNull();
-  });
-
   it("links an eligible makeup straight to booking with the class pre-selected", () => {
     const display = absenceMakeupDisplay(
       { state: "eligible", expires_at: "2026-12-14T15:00:00Z" },

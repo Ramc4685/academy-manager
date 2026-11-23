@@ -1,6 +1,6 @@
 # parent-absence-makeup-states
 
-PR: TBD
+PR: #1229
 
 ## What changed
 Parents now see where each reported absence stands with makeups on Requests → Absences and on the Children class list: Reported, Makeup eligible (with a "Book a makeup" link that opens the Makeups tab with that class pre-selected), Makeup requested, Makeup booked (with the makeup class and date) or Makeup expired. The state is decided on the server by the same eligibility check a makeup request already runs; no makeup rules changed.

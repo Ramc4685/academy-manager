@@ -758,7 +758,7 @@ export type AbsenceMakeupState = "reported" | "eligible" | "requested" | "booked
 
 export interface AbsenceMakeupView {
   state: AbsenceMakeupState;
-  /** eligible: last day to request; requested: when the request lapses. */
+  /** eligible: last day to request a makeup. */
   expires_at?: string | null;
   /** reported: why a past class can't be made up. */
   reason?: string | null;

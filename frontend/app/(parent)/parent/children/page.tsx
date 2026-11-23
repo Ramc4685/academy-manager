@@ -360,8 +360,11 @@ function SessionRow({
           >
             {submitted ? "Absence reported" : ALREADY_REPORTED_LABEL}
           </p>
-          {/* A reported date also shows where it stands with makeups. */}
-          {!submitted && entry.absence_makeup && (
+          {/* A reported date also shows where it stands with makeups; a plain
+              "reported" adds nothing to "Already reported". */}
+          {!submitted &&
+            entry.absence_makeup &&
+            !(entry.absence_makeup.state === "reported" && !entry.absence_makeup.reason) && (
             <AbsenceMakeupStatus
               makeup={entry.absence_makeup}
               studentId={studentId}

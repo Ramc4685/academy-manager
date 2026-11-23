@@ -133,7 +133,6 @@ async def test_pending_request_is_requested_not_offered_again() -> None:
     ).execute([KEY])
 
     assert result[KEY].state == "requested"
-    assert result[KEY].expires_at == NOW + timedelta(days=20)
 
 
 @pytest.mark.asyncio
@@ -176,3 +175,76 @@ async def test_makeups_turned_off_reports_every_absence() -> None:
     ).execute([KEY])
 
     assert result[KEY].state == "reported"
+
+
+class _CountingEnrollments(_Enrollments):
+    def __init__(self, rows):
+        super().__init__(rows)
+        self.calls = 0
+
+    async def is_active_or_paused(self, session_id, student_id):
+        self.calls += 1
+        return await super().is_active_or_paused(session_id, student_id)
+
+
+@pytest.mark.asyncio
+async def test_past_the_window_is_expired_before_the_eligibility_reads() -> None:
+    """A dropped child's old absence reads expired, not a blank "Reported",
+    and no enrollment / notice / attendance read runs."""
+    enrollments = _CountingEnrollments([])  # child no longer enrolled
+    describe = DescribeAbsenceMakeups(
+        occurrences=_FakeOccurrences([_occurrence(start_at=NOW - timedelta(days=45))]),
+        enrollments=enrollments,
+        notices=_FakeNotices([_absence_notice()]),
+        makeups=_FakeMakeups(),
+        policies=_FakePolicies(),
+        attendance=_Presence(),
+        clock=_now,
+    )
+
+    result = await describe.execute([KEY])
+
+    assert result[KEY].state == "expired"
+    assert enrollments.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_class_past_the_window_still_reads_credited() -> None:
+    result = await _use_case(
+        occurrence=_occurrence(start_at=NOW - timedelta(days=45), status="cancelled")
+    ).execute([KEY])
+
+    assert result[KEY].state == "reported"
+    assert result[KEY].reason is not None and "credited" in result[KEY].reason
+
+
+@pytest.mark.asyncio
+async def test_several_absences_are_described_together_and_keyed_per_child_and_date() -> None:
+    describe = DescribeAbsenceMakeups(
+        occurrences=_FakeOccurrences(
+            [
+                _occurrence(occurrence_id="occ-a", start_at=NOW - timedelta(days=2)),
+                _occurrence(occurrence_id="occ-b", start_at=NOW + timedelta(days=2)),
+            ]
+        ),
+        enrollments=_Enrollments([_enrollment()]),
+        notices=_FakeNotices(
+            [
+                _absence_notice(occurrence_id="occ-a"),
+                _absence_notice(occurrence_id="occ-b"),
+            ]
+        ),
+        makeups=_FakeMakeups(),
+        policies=_FakePolicies(),
+        attendance=_Presence(),
+        clock=_now,
+    )
+
+    result = await describe.execute(
+        [("student-1", "occ-a"), ("student-1", "occ-b"), ("student-1", "occ-a")]
+    )
+
+    assert {k: v.state for k, v in result.items()} == {
+        ("student-1", "occ-a"): "eligible",
+        ("student-1", "occ-b"): "reported",
+    }

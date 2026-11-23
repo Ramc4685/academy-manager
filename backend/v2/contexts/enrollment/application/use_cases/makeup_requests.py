@@ -18,6 +18,7 @@ lapsed ``pending`` requests to ``expired`` so they never linger silently.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
@@ -499,12 +500,12 @@ class DescribeAbsenceMakeups:
         """``keys`` are ``(student_id, occurrence_id)`` pairs."""
         policy = await self._policies.get_or_default()
         now = self._now()
-        return {
-            (student_id, occurrence_id): await self._describe(
-                policy, student_id, occurrence_id, now
-            )
-            for student_id, occurrence_id in dict.fromkeys(keys)
-        }
+        unique = list(dict.fromkeys(keys))
+        # Independent reads per absence; gather copies the tenant ContextVar.
+        statuses = await asyncio.gather(
+            *(self._describe(policy, student_id, occ_id, now) for student_id, occ_id in unique)
+        )
+        return dict(zip(unique, statuses, strict=True))
 
     async def _describe(
         self, policy: ParentSelfServicePolicy, student_id: str, occurrence_id: str, now: datetime
@@ -519,12 +520,18 @@ class DescribeAbsenceMakeups:
                     state="booked", booked_occurrence_id=request.approved_target_occurrence_id
                 )
             if request.status == "pending":
-                return AbsenceMakeupStatus(state="requested", expires_at=request.expires_at)
+                return AbsenceMakeupStatus(state="requested")
             if request.status == "expired":
                 return AbsenceMakeupStatus(state="expired")
         missed = await self._occurrences.get(occurrence_id)
         if missed is None or not policy.can_request_makeup:
             return AbsenceMakeupStatus(state="reported")
+        if missed.status != "cancelled" and now > missed.start_at + timedelta(
+            days=policy.makeup_expiry_days
+        ):
+            # Past the window: expired whatever else is true (e.g. a dropped
+            # child), so skip the enrollment / notice / attendance reads.
+            return AbsenceMakeupStatus(state="expired")
         try:
             expires_at = await self._eligibility.check(
                 policy=policy, student_id=student_id, missed=missed, now=now
