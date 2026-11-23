@@ -187,11 +187,12 @@ function NotesList({ notes }: { notes: ParentProgressNote[] }) {
  * ---------------------------------------------------------------------- */
 
 function SkillProgressSection() {
-  const { data: childrenData } = useQuery({
+  const childrenQuery = useQuery({
     queryKey: queryKeys.parent.children(),
     queryFn: listParentChildren,
   });
 
+  const childrenData = childrenQuery.data;
   const children = useMemo(() => childrenData?.children ?? [], [childrenData]);
 
   // Home's child cards and the evening win email deep-link here as
@@ -217,8 +218,29 @@ function SkillProgressSection() {
     sectionRef.current?.focus({ preventScroll: true });
   }, [requestedChildId, children]);
 
-  const activeChild = children[activeChildIdx];
-  if (!activeChild) return null;
+  // Notes live under a child tab, so the roster's states must stay visible
+  // rather than leaving the page blank.
+  if (childrenQuery.isLoading) return <JourneySkeleton />;
+  if (childrenQuery.isError) {
+    return (
+      <ErrorNotice
+        message="Could not load your children."
+        onRetry={() => void childrenQuery.refetch()}
+        retrying={childrenQuery.isFetching}
+      />
+    );
+  }
+  const activeChild = children[activeChildIdx] ?? children[0];
+  if (!activeChild) {
+    return (
+      <div className="rounded-2xl p-10 bg-white border border-rally-line animate-fade-in-up">
+        <EmptyState
+          title="No progress notes yet"
+          description="Progress and notes from coaches will appear here once a child is enrolled"
+        />
+      </div>
+    );
+  }
 
   return (
     <div

@@ -799,6 +799,40 @@ test.describe("parent self-service — progress", () => {
   });
 });
 
+test.describe("parent self-service — progress roster states", () => {
+  test("a failed roster load shows an error with retry, not a blank page", async ({ page }) => {
+    await stubParentIdentity(page);
+    await stubAcademyAndChildren(page);
+    // A 4xx skips the query client's retries, so the error state shows at once.
+    await page.route("**/api/v2/parent/children", (route: Route) =>
+      route.request().method() !== "GET"
+        ? route.fallback()
+        : route.fulfill({ status: 403, contentType: "application/json", body: "{}" }),
+    );
+
+    await page.goto("/parent/progress");
+    await expect(page.getByText("Could not load your children.")).toBeVisible();
+    await expect(page.getByRole("button", { name: /retry|try again/i })).toBeVisible();
+  });
+
+  test("an empty roster shows an empty state", async ({ page }) => {
+    await stubParentIdentity(page);
+    await stubAcademyAndChildren(page);
+    await page.route("**/api/v2/parent/children", (route: Route) =>
+      route.request().method() !== "GET"
+        ? route.fallback()
+        : route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ children: [] }),
+          }),
+    );
+
+    await page.goto("/parent/progress");
+    await expect(page.getByText("No progress notes yet")).toBeVisible();
+  });
+});
+
 test.describe("parent self-service — re-enrol a departed child (#827)", () => {
   test("offers 'Enroll in a class' on the departed row, with the child pre-bound", async ({
     page,
