@@ -130,8 +130,13 @@ class GetChildSchedule:
         to: date | None,
         limit: int,
         offset: int,
+        include_started_within: timedelta = timedelta(0),
     ) -> tuple[list[ChildScheduleEntry], int]:
-        """Return (page_entries, total_count) where total_count is the unsliced size."""
+        """Return (page_entries, total_count) where total_count is the unsliced size.
+
+        ``include_started_within`` (no ``frm`` only) keeps classes that began
+        that recently, e.g. while a drop-off check-in window is still open.
+        """
         student = await self._students.get_for_parent(parent_id, student_id)
         if student is None:
             raise StudentNotOwnedByParent(
@@ -140,7 +145,9 @@ class GetChildSchedule:
 
         now = self._clock()
         start_dt: datetime = (
-            datetime(frm.year, frm.month, frm.day, 0, 0, 0, tzinfo=UTC) if frm is not None else now
+            datetime(frm.year, frm.month, frm.day, 0, 0, 0, tzinfo=UTC)
+            if frm is not None
+            else now - include_started_within
         )
         end_dt: datetime = (
             datetime(to.year, to.month, to.day, tzinfo=UTC) + timedelta(days=1)

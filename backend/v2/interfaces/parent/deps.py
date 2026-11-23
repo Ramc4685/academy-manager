@@ -21,6 +21,7 @@ from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_
     ListParentAvailableSessions,
 )
 from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
+    DescribeAbsenceMakeups,
     ListEligibleMakeupTargets,
     ListMakeupCandidates,
     ListParentMakeups,
@@ -103,6 +104,7 @@ class ParentUseCases:
     self_cancel_enrollment: SelfCancelEnrollment | None = None
     # #1037/#1041; optional so fixtures predating it still construct this.
     list_makeup_candidates: ListMakeupCandidates | None = None
+    describe_absence_makeups: DescribeAbsenceMakeups | None = None
     get_registration_waiver: object = None  # callable -> Waiver | None
     get_registration_waivers: Callable[[str | None], Awaitable[tuple[list[Any], bool]]] | None = (
         None

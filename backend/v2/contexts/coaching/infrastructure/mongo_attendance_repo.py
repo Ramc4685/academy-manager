@@ -111,6 +111,13 @@ class MongoAttendanceRepository(TenantScopedRepository):
         cursor = self._find_many({"occurrence_id": occurrence_id}, sort=[("marked_at", 1)])
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def list_for_occurrences(self, occurrence_ids: list[str]) -> list[Attendance]:
+        """Rows for several occurrences, voided included (drop-off state)."""
+        if not occurrence_ids:
+            return []
+        cursor = self._find_many({"occurrence_id": {"$in": occurrence_ids}})
+        return [self._to_domain(doc) async for doc in cursor]
+
 
 class MongoCoachAttendanceRepository(TenantScopedRepository):
     collection_name = "coach_attendance"

@@ -28,6 +28,7 @@ from .dashboard_routes import router as dashboard_router
 from .departure_policy_routes import router as departure_policy_router
 from .departures_routes import router as departures_router
 from .directory_routes import router as directory_router
+from .dropoff_routes import router as dropoff_router
 from .dues_routes import router as dues_router
 from .enrollment_billing_routes import router as enrollment_billing_router
 from .families_routes import router as families_router
@@ -80,6 +81,7 @@ router.include_router(people_reports_router)
 router.include_router(reports_router)
 router.include_router(month_close_router)
 router.include_router(sessions_router)
+router.include_router(dropoff_router)
 router.include_router(public_page_router)
 router.include_router(teaching_plan_router)
 router.include_router(session_type_router)

@@ -147,6 +147,8 @@ TENANT_OWNED_COLLECTIONS = {
     # Referral programme (migration 0238, L9 C2): codes and referrals.
     "referral_codes",
     "referrals",
+    # Parent drop-off check-ins (migration 0246), one per child per class.
+    "dropoff_checkins",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are

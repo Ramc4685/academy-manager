@@ -18,6 +18,7 @@ from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle impor
     PersonLifecycle,
 )
 from backend.v2.contexts.identity.application.update_academy_use_case import validate_https_url
+from backend.v2.interfaces.dropoff_views import StaffDropoffCheckinView
 from backend.v2.shared.auth.claims import Role
 from backend.v2.shared.comms import MAX_ANNOUNCEMENT_BODY
 from backend.v2.shared.comms.colour import _HEX as _HEX_COLOR_RE
@@ -530,8 +531,23 @@ class AdminStudentAttendanceView(BaseModel):
     marked_at: datetime | None = None
 
 
+class AdminOccurrenceDropoffView(BaseModel):
+    """Drop-off breakdown for the class date. Expected = roster (active
+    enrollments plus make-up / trial rows); ``checkins`` are every parent
+    report with its state, actor names and server timestamps."""
+
+    enabled: bool
+    expected_student_ids: list[str]
+    expected_count: int
+    pending_count: int
+    confirmed_count: int
+    checkins: list[StaffDropoffCheckinView]
+
+
 class AdminStudentAttendanceList(BaseModel):
     attendance: list[AdminStudentAttendanceView]
+    # None when drop-off check-in is not composed (or the date is unknown).
+    dropoff: AdminOccurrenceDropoffView | None = None
 
 
 def _validated_group_link(value: str | None) -> str | None:

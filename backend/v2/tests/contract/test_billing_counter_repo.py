@@ -49,6 +49,9 @@ async def test_tenant_isolation_counters_do_not_leak_across_academies(db, acad, 
 
 
 async def test_next_value_is_race_safe_under_concurrency(db, acad) -> None:
+    # The contract db runs no migrations; without 0136's unique index two
+    # concurrent first upserts each insert a counter doc (seq 1 twice).
+    await db["billing_counters"].create_index([("academy_id", 1), ("scope", 1)], unique=True)
     repo = MongoBillingCounterRepository(db)
 
     results = await asyncio.gather(*(repo.next_value(scope="invoice_number") for _ in range(20)))

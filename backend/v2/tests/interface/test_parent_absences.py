@@ -203,3 +203,63 @@ def test_get_absences_names_the_missed_class_per_occurrence() -> None:
     assert rows["n-1"]["missed_class"]["start_at"].startswith("2026-11-28T15:00:00")
     # Unresolvable occurrence degrades to no details, not a 500.
     assert rows["n-2"]["missed_class"] is None
+
+
+def test_get_absences_carries_each_notices_makeup_state_and_booked_class() -> None:
+    from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
+        AbsenceMakeupStatus,
+    )
+
+    use_cases = _ParentUseCases(
+        list_result=[
+            _notice(notice_id="n-1", occurrence_id="occ-1"),
+            _notice(notice_id="n-2", occurrence_id="occ-2"),
+        ]
+    )
+    asked: list[list[tuple[str, str]]] = []
+
+    class _Describe:
+        async def execute(self, keys):
+            asked.append(keys)
+            return {
+                ("student-1", "occ-1"): AbsenceMakeupStatus(
+                    state="booked", booked_occurrence_id="occ-target"
+                ),
+                ("student-1", "occ-2"): AbsenceMakeupStatus(
+                    state="eligible", expires_at=datetime(2026, 12, 1, tzinfo=UTC)
+                ),
+            }
+
+    async def _resolver(occurrence_ids: list[str]) -> dict[str, dict[str, object]]:
+        return {
+            oid: {
+                "occurrence_id": oid,
+                "session_id": "s",
+                "session_title": "Saturday Makeup",
+                "start_at": "2026-12-05T15:00:00Z",
+                "end_at": "2026-12-05T16:00:00Z",
+                "status": "scheduled",
+            }
+            for oid in occurrence_ids
+        }
+
+    use_cases.describe_absence_makeups = _Describe()  # type: ignore[attr-defined]
+    use_cases.resolve_assigned_classes = _resolver  # type: ignore[attr-defined]
+    with _make_client(use_cases=use_cases) as client:
+        response = client.get("/api/v2/parent/absences")
+
+    assert response.status_code == 200, response.text
+    rows = {n["notice_id"]: n for n in response.json()["notices"]}
+    assert asked == [[("student-1", "occ-1"), ("student-1", "occ-2")]]
+    assert rows["n-1"]["makeup"]["state"] == "booked"
+    assert rows["n-1"]["makeup"]["booked_class"]["session_title"] == "Saturday Makeup"
+    assert rows["n-2"]["makeup"]["state"] == "eligible"
+    assert rows["n-2"]["makeup"]["booked_class"] is None
+
+
+def test_get_absences_without_the_describer_still_lists_notices() -> None:
+    with _make_client() as client:
+        response = client.get("/api/v2/parent/absences")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["notices"][0]["makeup"] is None

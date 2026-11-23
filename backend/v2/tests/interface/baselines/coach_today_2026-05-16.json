@@ -22,7 +22,8 @@
           "trial_outcome": null,
           "pending_cancellation_at": null,
           "hold_return_on": null,
-          "payment_due_cents": null
+          "payment_due_cents": null,
+          "checkin": null
         },
         {
           "student_id": "st2",
@@ -36,7 +37,8 @@
           "trial_outcome": null,
           "pending_cancellation_at": null,
           "hold_return_on": null,
-          "payment_due_cents": null
+          "payment_due_cents": null,
+          "checkin": null
         }
       ],
       "coach_id": "coach-1",
@@ -44,7 +46,9 @@
       "status": "scheduled",
       "cancellation_reason": null,
       "trial_guests": [],
-      "recap_saved": false
+      "recap_saved": false,
+      "dropoff_window_opens_at": null,
+      "dropoff_window_closes_at": null
     },
     {
       "session_id": "s-today-2",
@@ -60,7 +64,9 @@
       "status": "scheduled",
       "cancellation_reason": null,
       "trial_guests": [],
-      "recap_saved": false
+      "recap_saved": false,
+      "dropoff_window_opens_at": null,
+      "dropoff_window_closes_at": null
     }
   ]
 }
