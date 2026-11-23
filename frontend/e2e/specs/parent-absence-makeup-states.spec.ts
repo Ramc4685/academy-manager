@@ -149,11 +149,17 @@ test.describe("parent absences — makeup states", () => {
     await expect(state("occ-old")).toContainText("MAKEUP EXPIRED");
     await expect(state("occ-old").getByRole("link")).toHaveCount(0);
 
-    await state("occ-elig").getByRole("link", { name: "Book a makeup" }).click();
-
-    await expect(page).toHaveURL(/\/parent\/requests\?tab=makeups&makeup=st-1%3Aocc-elig$/);
-    await expect(page.getByRole("tab", { name: "Makeups" })).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByLabel("Missed class")).toHaveValue(`${KID}:occ-elig`);
-    await expect(page.getByRole("button", { name: "Request makeup" })).toBeEnabled();
+    const book = state("occ-elig").getByRole("link", { name: "Book a makeup" });
+    await expect(book).toHaveAttribute("href", "/parent/requests?tab=makeups&makeup=st-1%3Aocc-elig");
+    const makeupsTab = page.getByRole("tab", { name: "Makeups" });
+    for (const attempt of [1, 2]) {
+      await book.click();
+      await expect(makeupsTab, `attempt ${attempt}`).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByLabel("Missed class")).toHaveValue(`${KID}:occ-elig`);
+      await expect(page.getByRole("button", { name: "Request makeup" })).toBeEnabled();
+      // The link is consumed, so the same link clicked again still navigates.
+      await expect(page).toHaveURL(/\/parent\/requests$/);
+      await page.getByRole("tab", { name: "Absences" }).click();
+    }
   });
 });

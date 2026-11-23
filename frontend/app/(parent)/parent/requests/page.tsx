@@ -1,7 +1,7 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Card } from "@/components/ds/card";
@@ -68,13 +68,17 @@ function ParentRequests() {
   // "Book a makeup" links here with ?tab=makeups&makeup=<child>:<class date>.
   const linkedMakeup = searchParams.get("makeup") ?? "";
   const linkedRequestTab = ALL_TABS.find((t) => t.id === linkedTab)?.id ?? null;
+  const router = useRouter();
   const [tab, setTab] = useState<RequestTab>(linkedRequestTab ?? "absences");
-  // The link is in-page (Absences → Makeups), so follow a changed ?tab= too.
-  const [seenLinkedTab, setSeenLinkedTab] = useState(linkedRequestTab);
-  if (linkedRequestTab !== seenLinkedTab) {
-    setSeenLinkedTab(linkedRequestTab);
-    if (linkedRequestTab) setTab(linkedRequestTab);
-  }
+  const [makeupKey, setMakeupKey] = useState(linkedMakeup);
+  // The link is in-page (Absences → Makeups): apply it, then drop it from the
+  // URL so the same link clicked again is a new navigation.
+  useEffect(() => {
+    if (!linkedRequestTab) return;
+    setTab(linkedRequestTab);
+    setMakeupKey(linkedMakeup);
+    router.replace("/parent/requests", { scroll: false });
+  }, [linkedRequestTab, linkedMakeup, router]);
   const academyQuery = useQuery({
     queryKey: queryKeys.parent.academy(),
     queryFn: getParentAcademy,
@@ -134,7 +138,7 @@ function ParentRequests() {
       ) : (
         <>
           {activeTab === "absences" && <AbsencesPanel />}
-          {activeTab === "makeups" && <MakeupsPanel initialKey={linkedMakeup} />}
+          {activeTab === "makeups" && <MakeupsPanel key={makeupKey} initialKey={makeupKey} />}
           {activeTab === "trials" && <TrialsPanel />}
         </>
       )}

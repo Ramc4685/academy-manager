@@ -23,6 +23,9 @@ export function AbsenceMakeupStatus({
   occurrenceId: string;
   academyTimezone: string | null;
 }) {
+  // No state from the server (lookup failed, older response): show nothing
+  // rather than guess "Reported".
+  if (!makeup) return null;
   const display = absenceMakeupDisplay(makeup, { studentId, occurrenceId }, academyTimezone);
   return (
     <div data-testid={`absence-makeup-${studentId}-${occurrenceId}`} className="mt-2 space-y-1">
