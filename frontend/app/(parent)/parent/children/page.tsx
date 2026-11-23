@@ -12,6 +12,7 @@ import { Chip } from "@/components/ds/chip";
 import { EmptyState } from "@/components/ds/empty-state";
 import { useToast } from "@/components/ds/toast";
 import { PauseEnrollmentForm } from "@/components/parent/pause-enrollment-form";
+import { EnrollmentActions } from "@/components/parent/enrollment-actions";
 import { queryKeys } from "@/lib/query/keys";
 import {
   getCancellationPreview,
@@ -47,7 +48,11 @@ import {
 } from "@/lib/format/hold-copy";
 import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 import { reEnrollHref } from "@/lib/parent/re-enroll";
-import { noClassReason, scheduleSourceLabel } from "@/lib/parent/schedule-events";
+import {
+  ALREADY_REPORTED_LABEL,
+  noClassReason,
+  scheduleSourceLabel,
+} from "@/lib/parent/schedule-events";
 import { OneTimeClassChip } from "@/components/parent/one-time-class";
 
 // Avatar gradients are shared with the kid-first Home cards so the same child
@@ -291,6 +296,7 @@ function SessionRow({
       setSubmitted(true);
       toast({ kind: "success", title: "Absence reported" });
       void queryClient.invalidateQueries({ queryKey: queryKeys.parent.absences() });
+      void queryClient.invalidateQueries({ queryKey: ["parent", "child-schedule", studentId] });
     },
   });
 
@@ -342,9 +348,15 @@ function SessionRow({
         </p>
       )}
 
-      {cancelled || !canReportAbsence ? null : submitted ? (
-        <p role="status" className="text-xs font-semibold text-status-green-800">
-          Absence reported
+      {cancelled || !canReportAbsence ? null : submitted || entry.absence_reported ? (
+        // Text, not a disabled button: a disabled button is skipped by Tab,
+        // so keyboard and screen-reader users would never hear it.
+        <p
+          role="status"
+          data-testid={`absence-reported-${entry.occurrence_id}`}
+          className="text-xs font-semibold text-status-green-800"
+        >
+          {submitted ? "Absence reported" : ALREADY_REPORTED_LABEL}
         </p>
       ) : (
         <Button
@@ -388,9 +400,11 @@ function EnrollmentRow({
 
   return (
     <li className="rounded-xl p-3 bg-rally-paper">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold truncate text-rally-ink">{enrollment.session_title}</p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          {/* The full class name wraps; cut short beside two inline buttons it
+              left "Junior Beginners" as a 17 px sliver on a 390 px phone. */}
+          <p className="text-sm font-semibold break-words text-rally-ink">{enrollment.session_title}</p>
           <p className="text-xs mt-0.5 text-rally-muted">
             {departed
               ? "Your child has left this class"
@@ -436,30 +450,24 @@ function EnrollmentRow({
             Enroll in a class
           </Link>
         )}
-        {!departed && !held && !pendingLabel && (canRequestPause || canRequestCancel) && (
-          <div className="flex shrink-0 items-center gap-2">
-            {canRequestPause && (
-              <Button
-                variant="secondary"
-                size="sm"
-                data-testid={`enrollment-pause-${enrollment.enrollment_id}`}
-                aria-expanded={pausing}
-                onClick={() => setPausing((open) => !open)}
-              >
-                Pause enrollment
-              </Button>
-            )}
-            {canRequestCancel && (
-              <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
-                Cancel enrollment…
-              </Button>
-            )}
-          </div>
+        {!departed && !held && !pendingLabel && (
+          <EnrollmentActions
+            enrollmentId={enrollment.enrollment_id}
+            sessionTitle={enrollment.session_title}
+            childName={enrollment.student_name}
+            canRequestPause={canRequestPause}
+            canRequestCancel={canRequestCancel}
+            pausing={pausing}
+            onPause={() => setPausing((open) => !open)}
+            onCancel={() => setConfirming(true)}
+          />
         )}
       </div>
       {pausing && canRequestPause && (
         <PauseEnrollmentForm
           enrollmentId={enrollment.enrollment_id}
+          childName={enrollment.student_name}
+          sessionTitle={enrollment.session_title}
           onCancel={() => setPausing(false)}
         />
       )}
@@ -516,7 +524,7 @@ function CancelEnrollmentDialog({
     <Modal
       open
       onClose={onClose}
-      title={`Cancel enrollment in ${enrollment.session_title}`}
+      title={`Cancel ${enrollment.student_name}'s enrollment in ${enrollment.session_title}`}
       dismissable={!cancelMutation.isPending}
     >
       {previewQuery.isError ? (

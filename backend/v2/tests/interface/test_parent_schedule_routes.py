@@ -181,3 +181,18 @@ def test_schedule_exposes_the_one_time_source_label() -> None:
         ("occ-makeup", "makeup"),
         ("occ-trial", "trial"),
     ]
+
+
+def test_schedule_exposes_already_reported_dates() -> None:
+    entries = [
+        _entry("occ-reported", 1).model_copy(update={"absence_reported": True}),
+        _entry("occ-open", 2),
+    ]
+    with _make_client(entries=entries) as client:
+        response = client.get("/api/v2/parent/children/student-1/schedule")
+
+    assert response.status_code == 200, response.text
+    assert [(e["occurrence_id"], e["absence_reported"]) for e in response.json()["entries"]] == [
+        ("occ-reported", True),
+        ("occ-open", False),
+    ]

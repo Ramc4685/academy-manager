@@ -246,6 +246,7 @@ export const queryKeys = {
     // Same arrays the Requests page and shell already use inline.
     academy: () => ["parent", "academy"] as const,
     children: () => ["parent", "children"] as const,
+    childProgressNotes: (studentId: string) => ["parent", "progress", studentId] as const,
     progressJourney: (studentId: string) =>
       ["parent", "progress-journey", studentId] as const,
     classRecaps: (studentId: string) => ["parent", "class-recaps", studentId] as const,

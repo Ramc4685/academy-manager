@@ -17400,6 +17400,11 @@ export interface components {
         };
         /** ParentScheduleEntryView */
         ParentScheduleEntryView: {
+            /**
+             * Absence Reported
+             * @default false
+             */
+            absence_reported: boolean;
             /** Cancellation Reason */
             cancellation_reason?: string | null;
             /** Coach Name */
@@ -34617,6 +34622,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
+                student_id?: string | null;
             };
             header?: never;
             path?: never;

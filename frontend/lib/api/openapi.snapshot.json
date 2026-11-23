@@ -25886,6 +25886,11 @@
       },
       "ParentScheduleEntryView": {
         "properties": {
+          "absence_reported": {
+            "default": false,
+            "title": "Absence Reported",
+            "type": "boolean"
+          },
           "cancellation_reason": {
             "anyOf": [
               {
@@ -56928,6 +56933,23 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "student_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Student Id"
             }
           }
         ],

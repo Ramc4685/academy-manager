@@ -510,6 +510,8 @@ class ParentScheduleEntryView(BaseModel):
     # approved attendance (issue #1038).
     source: Literal["regular", "makeup", "trial"] = "regular"
     cancellation_reason: str | None = None
+    # The child already has an absence notice for this date.
+    absence_reported: bool = False
 
 
 class ParentScheduleResponse(BaseModel):

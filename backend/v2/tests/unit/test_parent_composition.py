@@ -2985,6 +2985,16 @@ async def test_parent_progress_feed_lists_only_shared_notes() -> None:
     assert rows[0]["session_title"] == "Juniors"
     assert "visibility" not in rows[0], "response shape is unchanged"
 
+    with tenant_scope("acad"):
+        # One child's tab: that child's rows only; a child of another family
+        # reads as empty rather than leaking its notes.
+        one_rows, one_total = await parent.list_progress_for_parent("parent-1", student_id="stu-1")
+        foreign_rows, foreign_total = await parent.list_progress_for_parent(
+            "parent-1", student_id="stu-other-parent"
+        )
+    assert one_total == 2 and {r["student_id"] for r in one_rows} == {"stu-1"}
+    assert (foreign_rows, foreign_total) == ([], 0)
+
 
 # --- GET /parent/home aggregator (kid-first Home, slice 4) ---------------------
 
@@ -3940,3 +3950,35 @@ async def test_billing_portal_available_needs_a_stripe_customer(
     with tenant_scope("acad"):
         assert await parent.billing_portal_available("parent-1") is expected  # type: ignore[misc]
     assert seen == ["parent-1"]
+
+
+@pytest.mark.asyncio
+async def test_parent_child_schedule_flags_dates_with_an_absence_notice() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-schedule-absence-reported"]
+    await _seed_home_db(db)
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_home_schedule(db, now)
+    notice = {
+        "student_id": "st-1",
+        "occurrence_id": "occ-next",
+        "session_id": "s-1",
+        "submitted_by": "parent-1",
+        "submitted_at": now,
+        "notice_window_met": True,
+    }
+    await db["absence_notices"].insert_many(
+        [
+            {**notice, "notice_id": "an-1", "academy_id": "acad"},
+            # Same child and date id in another academy: must not flag.
+            {**notice, "notice_id": "an-foreign", "academy_id": "other-acad", "occurrence_id": "x"},
+        ]
+    )
+    parent = _compose_home_parent(db, now=now)
+
+    with tenant_scope("acad"):
+        entries, _total = await parent.get_child_schedule(parent_id="parent-1", student_id="st-1")
+
+    flags = {e.occurrence_id: e.absence_reported for e in entries}
+    assert flags.get("occ-next") is True
+    assert not any(v for k, v in flags.items() if k != "occ-next")

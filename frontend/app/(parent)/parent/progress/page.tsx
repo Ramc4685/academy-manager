@@ -7,9 +7,10 @@ import { Skeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import {
-  listParentProgress,
+  listParentChildProgress,
   listParentChildren,
   getParentProgressJourney,
+  type ParentProgressNote,
 } from "@/lib/api/parent";
 import { getParentStudentCertificates } from "@/lib/api/curriculum";
 import { queryKeys } from "@/lib/query/keys";
@@ -23,6 +24,7 @@ import {
   MilestoneList,
   RecentWins,
   SkillChecklist,
+  notesForChild,
 } from "./journey";
 
 // Per-note left-border accents are derived from the note id hash — genuinely
@@ -39,25 +41,35 @@ function noteAccent(id: string) {
 }
 
 export default function ParentProgressPage() {
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ["parent", "progress"],
-    queryFn: listParentProgress,
-  });
-
-  const notes = data?.notes ?? [];
-
   return (
     <section data-testid="parent-progress">
       <h1 className="sr-only">Progress</h1>
 
-      {/* The evening win email lands here, so the journey leads. */}
+      {/* The evening win email lands here, so the journey leads. Coach notes
+          sit under the same child tab, so switching child switches both. */}
       <Suspense fallback={null}>
         <SkillProgressSection />
       </Suspense>
+    </section>
+  );
+}
 
+/** Coach notes for the selected child only. The family-wide feed under one
+ * child's tab put Sam's note under Alex's skills, so the server now scopes by
+ * `student_id`. The client filter stays because the Worker frontend can ship
+ * before the API, and an older API ignores the parameter. */
+function ChildNotes({ studentId, firstName }: { studentId: string; firstName: string }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: queryKeys.parent.childProgressNotes(studentId),
+    queryFn: () => listParentChildProgress(studentId),
+  });
+  const notes = notesForChild(data?.notes ?? [], studentId);
+
+  return (
+    <div data-testid="parent-progress-notes">
       <div className="mt-8 mb-4">
         <h2 className="font-display text-xl font-bold tracking-tight text-rally-ink">
-          Notes from coaches
+          Notes from coaches about {firstName}
         </h2>
       </div>
 
@@ -66,11 +78,11 @@ export default function ParentProgressPage() {
       ) : isLoading ? (
         <NotesSkeleton />
       ) : notes.length === 0 ? (
-        <EmptyNotes />
+        <EmptyNotes firstName={firstName} />
       ) : (
-        <NotesList notes={notes as NoteEntry[]} />
+        <NotesList notes={notes} />
       )}
-    </section>
+    </div>
   );
 }
 
@@ -97,27 +109,18 @@ function NotesSkeleton() {
   );
 }
 
-function EmptyNotes() {
+function EmptyNotes({ firstName }: { firstName: string }) {
   return (
     <div className="rounded-2xl p-10 bg-white border border-rally-line animate-fade-in-up">
       <EmptyState
         title="No progress notes yet"
-        description="Notes from coaches will appear here"
+        description={`Notes from ${firstName}'s coaches will appear here`}
       />
     </div>
   );
 }
 
-interface NoteEntry {
-  note_id: string;
-  coach_name: string | null;
-  student_name: string;
-  created_at: string;
-  session_title?: string | null;
-  body: string;
-}
-
-function NotesList({ notes }: { notes: NoteEntry[] }) {
+function NotesList({ notes }: { notes: ParentProgressNote[] }) {
   return (
     <ul className="space-y-3 stagger-children">
       {notes.map((note) => {
@@ -249,6 +252,10 @@ function SkillProgressSection() {
         key={activeChild.student_id}
         studentId={activeChild.student_id}
         childName={activeChild.full_name}
+      />
+      <ChildNotes
+        studentId={activeChild.student_id}
+        firstName={activeChild.full_name.split(" ")[0] || activeChild.full_name}
       />
     </div>
   );
