@@ -1,6 +1,6 @@
 # parent-release-defects
 
-PR: TBD
+PR: #1227
 
 ## What changed
 Parent Children → Enrollments: the class name now wraps in full, and on phones one "Manage enrollment" menu replaces the inline Pause and Cancel buttons (desktop keeps them). Both the pause step and the cancel confirmation now name the child and the class. Requests → Absences and the Children session rows now show a date the child already has an absence notice for as "Already reported" and disabled, instead of letting the parent submit a duplicate the backend then refuses. Progress shows coach notes for the selected child only, under "Notes from coaches about <name>", so switching child switches both the skill journey and the notes (a sibling's note used to appear under the other child's skills).
