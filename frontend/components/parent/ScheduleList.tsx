@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useRef, type ReactNode } from "react";
+
 import { Card } from "@/components/ds/card";
 import type { ParentScheduleEntry } from "@/lib/api/parent";
 import { formatAcademyTimeRange, monthLabel } from "@/lib/format/academy-time";
@@ -16,6 +18,8 @@ interface Props {
   timeZone: string;
   publishedThrough: string | null | undefined;
   now?: Date;
+  /** `?occurrence=` from a cancellation push: that date is scrolled to and outlined. */
+  highlightOccurrenceId?: string | null;
 }
 
 /**
@@ -24,16 +28,37 @@ interface Props {
  * academy has not published yet says so, so nobody plans around a tentative
  * date as if it were final.
  */
-export function ScheduleList({ rows, timeZone, publishedThrough, now = new Date() }: Props) {
+export function ScheduleList({
+  rows,
+  timeZone,
+  publishedThrough,
+  now = new Date(),
+  highlightOccurrenceId = null,
+}: Props) {
   const upcoming = rows
     .filter((row) => new Date(row.entry.end_at).getTime() >= now.getTime())
     .sort((a, b) => a.entry.start_at.localeCompare(b.entry.start_at));
+  // Rows are this family's own schedule, so another family's or a past date
+  // matches nothing and the note below says so instead of a dead end.
+  const highlightMissing =
+    Boolean(highlightOccurrenceId) &&
+    !upcoming.some((row) => row.entry.occurrence_id === highlightOccurrenceId);
+  const missingNote = highlightMissing ? (
+    <Card p={12}>
+      <p data-testid="schedule-occurrence-missing" role="status" className="text-sm text-rally-muted">
+        That class date isn&apos;t on your upcoming schedule any more.
+      </p>
+    </Card>
+  ) : null;
 
   if (upcoming.length === 0) {
     return (
-      <Card p={16}>
-        <p className="text-sm text-rally-subtle">No upcoming classes on the schedule yet.</p>
-      </Card>
+      <div className="space-y-4">
+        {missingNote}
+        <Card p={16}>
+          <p className="text-sm text-rally-subtle">No upcoming classes on the schedule yet.</p>
+        </Card>
+      </div>
     );
   }
 
@@ -45,6 +70,7 @@ export function ScheduleList({ rows, timeZone, publishedThrough, now = new Date(
 
   return (
     <div className="space-y-4" data-testid="parent-schedule-list">
+      {missingNote}
       {[...months.entries()].map(([month, monthRows]) => {
         const published = isMonthPublished(month, publishedThrough);
         return (
@@ -70,10 +96,9 @@ export function ScheduleList({ rows, timeZone, publishedThrough, now = new Date(
               {monthRows.map(({ entry, childName }) => {
                 const cancelled = entry.status === "cancelled";
                 return (
-                  <li
+                  <ScheduleRow
                     key={`${entry.occurrence_id}:${childName}`}
-                    className="flex items-start justify-between gap-3 py-2.5"
-                    data-testid="schedule-row"
+                    highlighted={entry.occurrence_id === highlightOccurrenceId}
                   >
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-rally-ink">
@@ -98,7 +123,7 @@ export function ScheduleList({ rows, timeZone, publishedThrough, now = new Date(
                     >
                       {cancelled ? "No class" : "Class"}
                     </span>
-                  </li>
+                  </ScheduleRow>
                 );
               })}
             </ul>
@@ -106,5 +131,30 @@ export function ScheduleList({ rows, timeZone, publishedThrough, now = new Date(
         );
       })}
     </div>
+  );
+}
+
+function ScheduleRow({
+  highlighted,
+  children,
+}: {
+  highlighted: boolean;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (highlighted) ref.current?.scrollIntoView({ block: "center" });
+  }, [highlighted]);
+  return (
+    <li
+      ref={ref}
+      className={`flex items-start justify-between gap-3 py-2.5${
+        highlighted ? " -mx-2 rounded px-2 ring-2 ring-rally-cobalt-600" : ""
+      }`}
+      data-testid="schedule-row"
+      data-highlighted={highlighted || undefined}
+    >
+      {children}
+    </li>
   );
 }

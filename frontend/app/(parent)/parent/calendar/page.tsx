@@ -17,6 +17,7 @@ import { CalendarTimeZoneUnavailable } from "@/components/calendar/CalendarTimeZ
 import { AddToCalendar } from "@/components/parent/AddToCalendar";
 import { ScheduleList, type ScheduleListRow } from "@/components/parent/ScheduleList";
 import { academyMonthKey } from "@/lib/format/academy-time";
+import { useLinkedParam } from "@/lib/navigation/use-linked-param";
 
 /** This month through two months ahead, on the academy's calendar. */
 function scheduleRange(timeZone: string | null | undefined) {
@@ -30,10 +31,15 @@ function scheduleRange(timeZone: string | null | undefined) {
 
 type View = "list" | "month";
 
-/** Phones open on the list; a month grid is hard to read at 400px. */
+/**
+ * Phones open on the list; a month grid is hard to read at 400px. A linked
+ * date (`?occurrence=` from a cancellation push) always opens the list, where
+ * that date is outlined.
+ */
 function useDefaultView(): [View, (view: View) => void] {
   const [view, setView] = useState<View>("list");
   useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("occurrence")) return;
     if (window.matchMedia?.("(min-width: 768px)").matches) setView("month");
   }, []);
   return [view, setView];
@@ -80,6 +86,7 @@ export default function ParentCalendarPage() {
     })),
   });
   const [view, setView] = useDefaultView();
+  const linkedOccurrenceId = useLinkedParam("occurrence");
 
   const isLoading =
     childrenLoading || academyQuery.isLoading || scheduleQueries.some((q) => q.isLoading);
@@ -193,6 +200,7 @@ export default function ParentCalendarPage() {
           rows={listRows}
           timeZone={calendarZone.timeZone}
           publishedThrough={academyQuery.data?.schedule_published_through}
+          highlightOccurrenceId={linkedOccurrenceId}
         />
       ) : calendarZone.status === "ready" ? (
         <PersonaCalendarView events={events} timeZone={calendarZone.timeZone} monthFirst />

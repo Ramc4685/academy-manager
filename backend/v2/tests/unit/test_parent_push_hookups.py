@@ -103,7 +103,29 @@ async def test_a_cancelled_class_date_pushes_each_family_after_the_email() -> No
     assert sent["title"] == "BLNO Badminton"
     assert sent["body"].startswith("Beginner Badminton on ")
     assert sent["body"].endswith("is cancelled.")
-    assert sent["data"] == {"url": "/parent"}
+    # The tap opens the family's calendar on exactly this date.
+    assert sent["data"] == {"url": "/parent/calendar?occurrence=occ-1"}
+
+
+@pytest.mark.asyncio
+async def test_an_academy_closure_push_opens_the_family_calendar() -> None:
+    from backend.v2.contexts.enrollment.application.ports import ClosedClassDate
+
+    push = RecordingPush()
+    with tenant_scope(ACADEMY):
+        await _roster_adapter(push).academy_closed(
+            dates=[
+                ClosedClassDate(
+                    session_id="sess-1",
+                    start_at=datetime(2026, 9, 3, 23, 0, tzinfo=UTC),
+                    one_time_student_ids=("st-1",),
+                )
+            ],
+            reason="Holiday",
+            actor_id="admin-1",
+        )
+    # Several dates, no single occurrence: the calendar itself, not /parent.
+    assert [row["data"] for row in push.sent] == [{"url": "/parent/calendar"}]
 
 
 @pytest.mark.asyncio
@@ -172,7 +194,7 @@ async def test_an_urgent_announcement_pushes_every_family_and_a_routine_one_does
             session_id="sess-1", author_id="adm-1", author_persona="admin", body="Routine note."
         )
         assert push.sent == []
-        await service.post(
+        posted = await service.post(
             session_id="sess-1",
             author_id="adm-1",
             author_persona="admin",
@@ -185,7 +207,7 @@ async def test_an_urgent_announcement_pushes_every_family_and_a_routine_one_does
     assert sent["title"] == "Junior A"
     assert sent["body"].startswith("No class tonight. The gym lost power.")
     assert len(sent["body"]) <= 140 and sent["body"].endswith("…")
-    assert sent["data"] == {"url": "/parent/messages"}
+    assert sent["data"] == {"url": f"/parent/messages?message={posted.message.message_id}"}
 
 
 class _DuesAcademies:
