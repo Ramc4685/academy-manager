@@ -628,3 +628,45 @@ async def test_one_time_read_is_capped_and_window_bounded() -> None:
     assert [e.occurrence_id for e in entries] == ["b1"]
     assert roster.limits == [ONE_TIME_ROSTER_READ_LIMIT]
     assert occurrence_query.batch_calls == [["b1"]]
+
+
+class _FakeNotice:
+    def __init__(self, student_id: str, occurrence_id: str) -> None:
+        self.student_id = student_id
+        self.occurrence_id = occurrence_id
+
+
+class FakeAbsenceNoticeQuery:
+    def __init__(self, notices: list[_FakeNotice]) -> None:
+        self._notices = notices
+
+    async def list_for_student(self, student_id: str) -> list[_FakeNotice]:
+        return [n for n in self._notices if n.student_id == student_id]
+
+
+@pytest.mark.asyncio
+async def test_dates_with_an_absence_notice_are_flagged_for_that_child_only() -> None:
+    # Alex reported occ-1; Sam (same class) reported occ-2. Alex's schedule
+    # must flag occ-1 only, so the parent UI disables just that date.
+    alex, sam = _student("st-alex"), _student("st-sam")
+    occ_1 = _occurrence("occ-1", "sess-1", _IN_2_DAYS)
+    occ_2 = _occurrence("occ-2", "sess-1", _IN_10_DAYS)
+    uc = GetChildSchedule(
+        enrollments=FakeEnrollmentQuery(
+            [_enrollment("e1", "st-alex", "sess-1"), _enrollment("e2", "st-sam", "sess-1")]
+        ),
+        occurrences=FakeOccurrenceQuery([occ_1, occ_2]),
+        sessions=FakeSessionQuery([_session("sess-1")]),
+        students=FakeStudentQuery([alex, sam]),
+        absence_notices=FakeAbsenceNoticeQuery(
+            [_FakeNotice("st-alex", "occ-1"), _FakeNotice("st-sam", "occ-2")]
+        ),
+        clock=lambda: _NOW,
+    )
+
+    entries, _ = await uc.execute("parent-1", "st-alex", frm=None, to=None, limit=50, offset=0)
+
+    assert [(e.occurrence_id, e.absence_reported) for e in entries] == [
+        ("occ-1", True),
+        ("occ-2", False),
+    ]

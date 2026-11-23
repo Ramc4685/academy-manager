@@ -17,6 +17,7 @@ import {
   makeupEmptyMessage,
   requestStatusChipVariant,
 } from "@/lib/parent-requests";
+import { ALREADY_REPORTED_LABEL } from "@/lib/parent/schedule-events";
 import {
   formatAcademyDate,
   formatAcademyDateTime,
@@ -157,6 +158,7 @@ function AbsencesPanel() {
       setLastWarning(notice.notice_window_met === false);
       setOccurrenceId("");
       void queryClient.invalidateQueries({ queryKey: queryKeys.parent.absences() });
+      void queryClient.invalidateQueries({ queryKey: ["parent", "child-schedule", studentId] });
     },
   });
 
@@ -240,7 +242,13 @@ function AbsencesPanel() {
                       : "Select a class"}
               </option>
               {occurrences.map((o: ParentScheduleEntry) => (
-                <option key={o.occurrence_id} value={o.occurrence_id}>
+                <option
+                  key={o.occurrence_id}
+                  value={o.occurrence_id}
+                  disabled={o.absence_reported}
+                >
+                  {/* Label first: a phone cuts the end off a long option. */}
+                  {o.absence_reported ? `${ALREADY_REPORTED_LABEL} · ` : ""}
                   {o.session_title} — {formatAcademyTimeRange(o.start_at, o.end_at, academyTimezone)}
                 </option>
               ))}

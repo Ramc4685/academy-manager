@@ -282,6 +282,8 @@ export interface ParentScheduleEntry {
   source?: ParentScheduleSource;
   /** Why a cancelled date is off ("Gym not available"); null for a class. */
   cancellation_reason?: string | null;
+  /** The child already has an absence notice for this date. Absent on older responses. */
+  absence_reported?: boolean;
 }
 
 export type ParentScheduleSource = "regular" | "makeup" | "trial";
@@ -515,6 +517,15 @@ export function listParentAttendance(): Promise<{
 
 export function listParentProgress(): Promise<{ notes: ParentProgressNote[] }> {
   return apiFetch("/parent/progress", { method: "GET" });
+}
+
+/** One child's coach notes; the server scopes to the parent's own children. */
+export function listParentChildProgress(
+  studentId: string,
+): Promise<{ notes: ParentProgressNote[] }> {
+  return apiFetch(`/parent/progress?student_id=${encodeURIComponent(studentId)}&limit=200`, {
+    method: "GET",
+  });
 }
 
 export function getParentProgressJourney(

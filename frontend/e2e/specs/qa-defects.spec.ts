@@ -494,7 +494,12 @@ test.describe("QA defect regressions", () => {
     const resumeOn = futureDateInput(14);
 
     await page.goto("/parent/children");
-    await page.getByTestId("enrollment-pause-enr-qa-1").click();
+    await page.getByTestId("enrollment-manage-enr-qa-1").click();
+    await page.getByRole("menuitem", { name: "Pause enrollment" }).click();
+    // The pause step names the child and the class before it is submitted.
+    await expect(
+      page.getByRole("heading", { name: "Pause Nila Rao's enrollment in Thursday Beginner" }),
+    ).toBeVisible();
     await page.getByLabel("Resume date").fill(resumeOn);
     await page.getByLabel("Reason").fill("Summer travel");
 

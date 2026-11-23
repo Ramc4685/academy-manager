@@ -947,6 +947,7 @@ def compose_parent(
         # #1038: approved make-up / trial attendance (one-time roster rows).
         occurrence_roster=occurrence_roster_repo,
         one_time_occurrences=occurrences_query,
+        absence_notices=absence_notices_repo,
     )
     resolve_assigned_occurrences_uc = ResolveAssignedOccurrences(
         occurrences=occurrences_query,
@@ -1890,11 +1891,15 @@ def compose_parent(
         return rows, total
 
     async def list_progress_for_parent(
-        parent_id: str, *, limit: int = 50, offset: int = 0
+        parent_id: str, *, limit: int = 50, offset: int = 0, student_id: str | None = None
     ) -> tuple[list[dict[str, Any]], int]:
         academy_id = current_academy_id()  # request-time tenant (C4)
         students = await _parent_students(parent_id)
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
+        # One child's notes (the Progress tab). A child outside this family
+        # reads as empty, never as another family's notes.
+        if student_id is not None:
+            by_id = {student_id: by_id[student_id]} if student_id in by_id else {}
         if not by_id:
             return [], 0
         query = {"academy_id": academy_id, "student_id": {"$in": list(by_id)}}

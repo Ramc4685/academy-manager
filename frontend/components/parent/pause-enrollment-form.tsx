@@ -17,10 +17,15 @@ import { createParentPauseRequest } from "@/lib/api/parent";
  */
 export function PauseEnrollmentForm({
   enrollmentId,
+  childName,
+  sessionTitle,
   onDone,
   onCancel,
 }: {
   enrollmentId: string;
+  /** Named before the parent submits, so the right child and class are paused. */
+  childName: string;
+  sessionTitle: string;
   onDone?: () => void;
   onCancel: () => void;
 }) {
@@ -54,6 +59,9 @@ export function PauseEnrollmentForm({
       data-testid="pause-enrollment-form"
       className="mt-3 rounded-xl border border-rally-line bg-white p-3"
     >
+      <h3 className="mb-1 text-sm font-bold break-words text-rally-ink">
+        Pause {childName}&apos;s enrollment in {sessionTitle}
+      </h3>
       <p className="mb-3 text-xs text-rally-muted">
         This pauses your child&apos;s class enrollment (and its billing) — it does not change
         your autopay payment method.

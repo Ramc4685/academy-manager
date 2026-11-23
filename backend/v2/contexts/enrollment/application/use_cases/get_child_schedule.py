@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from typing import Literal, Protocol
 
@@ -36,6 +36,15 @@ class _OccurrenceRosterQuery(Protocol):
     ) -> list[OccurrenceRosterEntry]: ...
 
 
+class _AbsenceNoticeRef(Protocol):
+    @property
+    def occurrence_id(self) -> str: ...
+
+
+class _AbsenceNoticeQuery(Protocol):
+    async def list_for_student(self, student_id: str) -> Sequence[_AbsenceNoticeRef]: ...
+
+
 class _OneTimeOccurrenceQuery(Protocol):
     """Batch read of specific occurrences, bounded to a start window."""
 
@@ -64,6 +73,9 @@ class ChildScheduleEntry(BaseModel):
     source: ScheduleEntrySource = "regular"
     #: Why a cancelled date is off ("Gym not available"); None for a class.
     cancellation_reason: str | None = None
+    #: The child already has an absence notice for this date, so the parent
+    #: UI shows "Already reported" instead of offering a duplicate notice.
+    absence_reported: bool = False
 
 
 class GetChildSchedule:
@@ -95,6 +107,7 @@ class GetChildSchedule:
         students: _StudentQuery,
         occurrence_roster: _OccurrenceRosterQuery | None = None,
         one_time_occurrences: _OneTimeOccurrenceQuery | None = None,
+        absence_notices: _AbsenceNoticeQuery | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         if (occurrence_roster is None) != (one_time_occurrences is None):
@@ -105,6 +118,7 @@ class GetChildSchedule:
         self._occurrences = occurrences
         self._sessions = sessions
         self._students = students
+        self._absence_notices = absence_notices
         self._clock = clock or (lambda: datetime.now(UTC))
 
     async def execute(
@@ -215,7 +229,22 @@ class GetChildSchedule:
 
         all_entries.sort(key=lambda e: e.start_at)
         total = len(all_entries)
-        return all_entries[offset : offset + limit], total
+        page = all_entries[offset : offset + limit]
+        reported = await self._reported_occurrence_ids(student_id) if page else set()
+        if reported:
+            page = [
+                e.model_copy(update={"absence_reported": True})
+                if e.occurrence_id in reported
+                else e
+                for e in page
+            ]
+        return page, total
+
+    async def _reported_occurrence_ids(self, student_id: str) -> set[str]:
+        if self._absence_notices is None:
+            return set()
+        notices = await self._absence_notices.list_for_student(student_id)
+        return {n.occurrence_id for n in notices}
 
     async def _one_time_occurrences(
         self, student_id: str, start_dt: datetime, end_dt: datetime
