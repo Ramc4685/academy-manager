@@ -122,6 +122,9 @@ class CoachSession(BaseModel):
     status: Literal["scheduled", "cancelled", "completed"] = "scheduled"
     cancellation_reason: str | None = None
     trial_guests: list[CoachTrialGuest] = []
+    # True once the class recap names at least one taught skill, so Today can
+    # point the coach at the latest class whose recap is still empty.
+    recap_saved: bool = False
 
 
 class CoachTodayResponse(BaseModel):

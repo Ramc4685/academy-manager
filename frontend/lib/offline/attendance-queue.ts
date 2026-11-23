@@ -3,7 +3,7 @@
 import { ulid } from "ulid";
 
 import type { AttendanceStatus, MarkAttendanceRequest } from "@/lib/api/coach";
-import { dropById, enqueue, listQueued, update, type QueuedMutation } from "./queue";
+import { dropById, enqueue, listNeedsReview, listQueued, update, type QueuedMutation } from "./queue";
 
 /**
  * Attendance-specific view over the offline mutation queue (lib/offline/queue.ts).
@@ -124,4 +124,9 @@ export async function queuedMarksFor(occurrenceId: string): Promise<Record<strin
     out[m.payload.student_id] = { status: m.payload.status, mutation_id: m.mutation_id };
   }
   return out;
+}
+
+/** How many of this occurrence's queued marks the sync parked in the Needs-review tray. */
+export async function needsReviewCountFor(occurrenceId: string): Promise<number> {
+  return (await listNeedsReview()).filter((m) => isMarkFor(m, occurrenceId)).length;
 }

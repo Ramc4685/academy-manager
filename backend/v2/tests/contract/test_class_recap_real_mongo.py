@@ -226,3 +226,21 @@ async def test_migration_0243_indexes_back_the_repository_claims(real_db: Any) -
         ("resolved_at", 1),
         ("submitted_at", -1),
     ]
+
+
+async def test_coach_today_recap_lookup_counts_only_recaps_with_a_taught_skill(
+    real_db: Any,
+) -> None:
+    from backend.v2.composition.coach import _recapped_occurrence_ids
+
+    repo = MongoClassRecapRepository(real_db)
+    lookup = _recapped_occurrence_ids(real_db)
+    with tenant_scope(ACADEMY):
+        assert await repo.save(_recap(1), expected_revision=0)
+        assert await repo.save(
+            _recap(1, recap_id="rc-2", occurrence_id="occ-2", taught_skill_ids=(), practice=()),
+            expected_revision=0,
+        )
+        assert await lookup(["occ-1", "occ-2", "occ-3"]) == {"occ-1"}
+    with tenant_scope(OTHER):
+        assert await lookup(["occ-1"]) == set()

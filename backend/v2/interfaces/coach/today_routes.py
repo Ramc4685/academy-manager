@@ -159,6 +159,15 @@ async def get_today(
     if callable(overdue_reader):
         overdue_cents = await _read_overdue_cents(overdue_reader, rosters, target_date)
 
+    recapped: set[str] = set()
+    recapped_reader = use_cases.recapped_occurrence_ids
+    if recapped_reader is not None and sessions:
+        try:
+            recapped = await recapped_reader([s.occurrence_id for s in sessions])
+        except Exception:
+            # A nicety for the Today shortcut; never worth failing the day.
+            log.warning("coach recap lookup failed; treating recaps as unsaved", exc_info=True)
+
     out = [
         CoachSession(
             session_id=s.session_id,
@@ -206,6 +215,7 @@ async def get_today(
                 )
                 for g in session_guests
             ],
+            recap_saved=s.occurrence_id in recapped,
         )
         for s, roster, session_guests in zip(sessions, rosters, guests, strict=False)
     ]

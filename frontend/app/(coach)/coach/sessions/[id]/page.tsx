@@ -21,11 +21,17 @@ import {
 import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
 import { ClassRecapPanel } from "@/components/coach/ClassRecapPanel";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
-import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
+import { SessionDetailTabs, SessionNextStep } from "@/components/coach/SessionDetailTabs";
 import { TrialOutcomeControl } from "@/components/coach/trial-outcome-control";
 import { Chip } from "@/components/ds/chip";
 import { formatCents } from "@/lib/money";
-import { queueMark, queuedMarksFor, type QueuedMark } from "@/lib/offline/attendance-queue";
+import {
+  needsReviewCountFor,
+  queueMark,
+  queuedMarksFor,
+  type QueuedMark,
+} from "@/lib/offline/attendance-queue";
+import { CLASS_SYNC_LABELS, classSyncStatus } from "@/lib/offline/sync-status";
 import { isBulkMarkEligible } from "@/lib/coach/bulk-eligibility";
 import { BulkMarkUndoWindow } from "@/lib/coach/bulk-mark-undo";
 import {
@@ -58,7 +64,7 @@ function todayISO(): string {
 
 interface PageProps {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ date?: string }>;
+  searchParams: Promise<{ date?: string; recap?: string }>;
 }
 
 type MarkStatus = AttendanceStatus;
@@ -130,7 +136,7 @@ function formatSyncReason(code: string | undefined): string {
 
 export default function SessionDetailPage({ params, searchParams }: PageProps) {
   const { id } = use(params);
-  const { date: dateParam } = use(searchParams);
+  const { date: dateParam, recap: recapParam } = use(searchParams);
   const decodedId = decodeURIComponent(id);
   const queryClient = useQueryClient();
   const online = useOnline();
@@ -205,6 +211,8 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   // Marks saved on this phone while offline, waiting for the sync
   // (lib/offline/attendance-queue.ts). Hydrated from IndexedDB.
   const [queuedMarks, setQueuedMarks] = useState<Record<string, QueuedMark>>({});
+  // This class's marks parked in the Needs-review tray (survive a reload).
+  const [trayCount, setTrayCount] = useState(0);
   const [queueingAll, setQueueingAll] = useState(false);
   // #846: "Mark rest present" is HELD on this phone for a few seconds before
   // anything is sent. These are the students in the held batch — their rows
@@ -260,7 +268,16 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
    * the composer open, which is right for the surface it is on.
    */
   const [announcementsOpen, setAnnouncementsOpen] = useState(false);
-  const [recapOpen, setRecapOpen] = useState(false);
+  // `recap=open` (Today's shortcut, the skills screen's next step) lands on
+  // the recap already open and scrolled into view.
+  const [recapOpen, setRecapOpen] = useState(recapParam === "open");
+  const recapRef = useRef<HTMLElement>(null);
+  const recapScrolled = useRef(false);
+  useEffect(() => {
+    if (recapParam !== "open" || recapScrolled.current || !recapRef.current) return;
+    recapScrolled.current = true;
+    recapRef.current.scrollIntoView({ block: "start" });
+  });
 
   const progressNotesKey = queryKeys.coach.progressNotes(sessionId);
   const { data: notesData } = useQuery({
@@ -289,6 +306,9 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     if (!sessionOccurrenceId) return;
     void queuedMarksFor(sessionOccurrenceId)
       .then((marks) => setQueuedMarks(marks))
+      .catch(() => undefined);
+    void needsReviewCountFor(sessionOccurrenceId)
+      .then((count) => setTrayCount(count))
       .catch(() => undefined);
   }, [sessionOccurrenceId]);
   useEffect(() => {
@@ -633,6 +653,16 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     .map((student) => student.student_id);
   const queuedCount = Object.keys(queuedMarks).length;
   const anySavedMark = roster.some(hasServerMark);
+  const localEntries = Object.values(localMarks);
+  const syncStatus = classSyncStatus({
+    needsAttention: trayCount > 0 || localEntries.some((m) => Boolean(m.error)),
+    waiting:
+      queuedCount > 0 ||
+      pendingBulkIds.length > 0 ||
+      queueingAll ||
+      localEntries.some((m) => m.pending),
+    saved: anySavedMark || localEntries.some((m) => m.status !== null && !m.pending && !m.error),
+  });
   // Issue #777: "am I done marking" needs a fraction, not a student count.
   // Marks made on this phone (optimistic or queued offline) count too, so the
   // header keeps up with the coach's own thumb.
@@ -791,6 +821,31 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
           >
             {session.title}
           </h1>
+          {syncStatus && (
+            <p
+              data-testid="sync-status"
+              data-status={syncStatus}
+              role="status"
+              className={`mt-1 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${
+                syncStatus === "saved"
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                  : syncStatus === "waiting"
+                    ? "border-amber-300 bg-amber-50 text-amber-800"
+                    : "border-red-300 bg-red-50 text-red-800"
+              }`}
+            >
+              <span aria-hidden="true">
+                {syncStatus === "saved" ? "✓" : syncStatus === "waiting" ? "↻" : "!"}
+              </span>
+              {syncStatus === "attention" && trayCount > 0 ? (
+                <Link href="/coach/needs-review" className="underline">
+                  {CLASS_SYNC_LABELS.attention}
+                </Link>
+              ) : (
+                CLASS_SYNC_LABELS[syncStatus]
+              )}
+            </p>
+          )}
           <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
             {session.location} ·{" "}
             {formatSessionTimeRange(session.start_at, session.end_at, session.timezone)}
@@ -964,8 +1019,12 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
       </section>
 
       {/* Collapsed and fetched on open, so it reads the roster's latest marks. */}
+      {roster.length > 0 && !notOpenYet && (
+        <SessionNextStep occurrenceId={session.occurrence_id} date={date} to="skills" />
+      )}
+
       {!notOpenYet && online && (
-        <section className="mt-6">
+        <section className="mt-6" ref={recapRef}>
           <h2 className="mb-2">
             <button
               type="button"

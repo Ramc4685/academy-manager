@@ -13,7 +13,7 @@ import {
 } from "@/lib/api/coach";
 import { updateSkillStatus, type SkillStatus } from "@/lib/api/curriculum";
 import { queryKeys } from "@/lib/query/keys";
-import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
+import { SessionDetailTabs, SessionNextStep } from "@/components/coach/SessionDetailTabs";
 import { SKILL_STATUS_LABELS } from "@/components/skills/SkillStatusChip";
 import { RetryButton } from "@/components/coach/RetryButton";
 import { TapSkillsWorkspace } from "@/components/coach/TapSkillsWorkspace";
@@ -130,6 +130,7 @@ export default function CoachSessionSkillsPage({ params, searchParams }: PagePro
               onUpdated={() => void queryClient.invalidateQueries({ queryKey })}
             />
           )}
+          <SessionNextStep occurrenceId={occurrenceId} date={date} to="recap" />
         </>
       )}
     </section>

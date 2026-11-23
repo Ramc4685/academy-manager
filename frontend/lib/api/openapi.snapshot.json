@@ -14600,6 +14600,11 @@
             "title": "Occurrence Id",
             "type": "string"
           },
+          "recap_saved": {
+            "default": false,
+            "title": "Recap Saved",
+            "type": "boolean"
+          },
           "roster": {
             "items": {
               "$ref": "#/components/schemas/CoachRosterEntry"
