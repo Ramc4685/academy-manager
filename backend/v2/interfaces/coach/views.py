@@ -20,6 +20,7 @@ from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_
     UnplacedStudent,
 )
 from backend.v2.contexts.coaching.application.use_cases.session_notes import NoteVisibility
+from backend.v2.interfaces.dropoff_views import StaffDropoffCheckinView
 from backend.v2.shared.comms import MAX_ANNOUNCEMENT_BODY
 
 # Client-generated ULID (Crockford base32, 26 chars). Constrained because it is
@@ -90,6 +91,9 @@ class CoachRosterEntry(BaseModel):
     # and deliberately nothing else: the billing drawer and the coach billing
     # routes were deleted in the same change.
     payment_due_cents: int | None = None
+    # Parent drop-off check-in for this date; None when no parent reported.
+    # "pending" shows "Arrived · Awaiting confirmation" + Confirm drop-off.
+    checkin: StaffDropoffCheckinView | None = None
 
 
 class CoachTrialGuest(BaseModel):

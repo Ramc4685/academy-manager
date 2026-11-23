@@ -6,9 +6,12 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.v2.composition.dropoff_checkins import DropoffCheckinComposition
+from backend.v2.contexts.coaching.application.use_cases.dropoff_checkin import OccurrenceRef
 from backend.v2.contexts.enrollment.application.use_cases.get_child_schedule import (
     StudentNotOwnedByParent,
 )
+from backend.v2.interfaces.dropoff_views import DropoffCheckinView, optional_dropoff_checkins
 from backend.v2.interfaces.parent.deps import ParentUseCases, get_parent_use_cases
 from backend.v2.interfaces.parent.views import ParentScheduleEntryView, ParentScheduleResponse
 from backend.v2.shared.auth.claims import AuthClaims
@@ -30,6 +33,7 @@ async def get_child_schedule(
     offset: int = Query(default=0, ge=0),
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
+    dropoff: DropoffCheckinComposition | None = Depends(optional_dropoff_checkins),
 ) -> ParentScheduleResponse:
     try:
         entries, total = await use_cases.get_child_schedule(  # type: ignore[operator]
@@ -43,9 +47,29 @@ async def get_child_schedule(
     except StudentNotOwnedByParent as err:
         raise HTTPException(status_code=404, detail="Not found") from err
 
+    checkins = (
+        await dropoff.reads.for_student(
+            student_id,
+            [
+                OccurrenceRef(occurrence_id=e.occurrence_id, starts_at=e.start_at, status=e.status)
+                for e in entries
+            ],
+        )
+        if dropoff is not None and entries
+        else None
+    ) or {}
+
     return ParentScheduleResponse(
         entries=[
             ParentScheduleEntryView(
+                checkin=(
+                    DropoffCheckinView.from_snapshot(checkins[e.occurrence_id])
+                    if e.occurrence_id in checkins
+                    else None
+                ),
+                can_report_arrival=(
+                    e.occurrence_id in checkins and checkins[e.occurrence_id].can_report_arrival
+                ),
                 occurrence_id=e.occurrence_id,
                 session_id=e.session_id,
                 session_title=e.session_title,

@@ -2684,6 +2684,7 @@ def compose_parent(
             "can_request_cancel": policy.can_request_cancel,
             "can_claim_waitlist_offer": policy.can_claim_waitlist_offer,
             "can_request_trial": trials_open,
+            "dropoff_checkin_enabled": policy.dropoff_checkin_enabled,
         }
         if not doc:
             return {

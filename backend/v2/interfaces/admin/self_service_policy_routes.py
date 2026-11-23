@@ -39,6 +39,9 @@ class _PolicyLike(Protocol):
     can_claim_waitlist_offer: bool
     payment_instructions: str
     welcome_email_absence_policy_default: str
+    dropoff_checkin_enabled: bool
+    dropoff_checkin_opens_minutes_before: int
+    dropoff_checkin_closes_minutes_after: int
 
 
 class SelfServicePolicyView(BaseModel):
@@ -55,6 +58,9 @@ class SelfServicePolicyView(BaseModel):
     can_claim_waitlist_offer: bool
     payment_instructions: str
     welcome_email_absence_policy_default: str
+    dropoff_checkin_enabled: bool
+    dropoff_checkin_opens_minutes_before: int
+    dropoff_checkin_closes_minutes_after: int
 
     @staticmethod
     def from_domain(policy: _PolicyLike) -> SelfServicePolicyView:
@@ -72,6 +78,9 @@ class SelfServicePolicyView(BaseModel):
             can_claim_waitlist_offer=policy.can_claim_waitlist_offer,
             payment_instructions=policy.payment_instructions,
             welcome_email_absence_policy_default=policy.welcome_email_absence_policy_default,
+            dropoff_checkin_enabled=policy.dropoff_checkin_enabled,
+            dropoff_checkin_opens_minutes_before=policy.dropoff_checkin_opens_minutes_before,
+            dropoff_checkin_closes_minutes_after=policy.dropoff_checkin_closes_minutes_after,
         )
 
 
@@ -100,6 +109,10 @@ class UpdateSelfServicePolicyRequest(BaseModel):
     can_claim_waitlist_offer: bool | None = None
     payment_instructions: str | None = Field(default=None, max_length=1000)
     welcome_email_absence_policy_default: str | None = Field(default=None, max_length=1000)
+    dropoff_checkin_enabled: bool | None = None
+    #: 0..60: the window must open inside the 60-minute attendance lead time.
+    dropoff_checkin_opens_minutes_before: int | None = Field(default=None, ge=0, le=60)
+    dropoff_checkin_closes_minutes_after: int | None = Field(default=None, ge=0, le=240)
 
 
 #: The three fields Billing rules owns. Self-service (now Family policies)

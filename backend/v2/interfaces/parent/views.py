@@ -17,6 +17,7 @@ from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle impor
 from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
     ESIGN_CONSENT_TEXT,
 )
+from backend.v2.interfaces.dropoff_views import DropoffCheckinView
 
 # --- Onboarding ---
 
@@ -512,6 +513,10 @@ class ParentScheduleEntryView(BaseModel):
     cancellation_reason: str | None = None
     # The child already has an absence notice for this date.
     absence_reported: bool = False
+    # Drop-off check-in state; None when the academy has the feature off.
+    checkin: DropoffCheckinView | None = None
+    # Server-computed: show "I've arrived" now.
+    can_report_arrival: bool = False
 
 
 class ParentScheduleResponse(BaseModel):
@@ -588,6 +593,8 @@ class ParentSelfServiceSwitchesView(BaseModel):
     can_request_cancel: bool = True
     can_claim_waitlist_offer: bool = True
     can_request_trial: bool = True
+    #: Drop-off check-in is opt-in per academy, so it defaults to False.
+    dropoff_checkin_enabled: bool = False
 
 
 class ParentAcademyView(BaseModel):

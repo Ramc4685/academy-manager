@@ -17,7 +17,8 @@ Two tiers open routes:
   its scope tiles and one family's record row). Owner, admin, billing or
   front desk; the routes redact money per caller with
   ``money_visibility.family_money_view`` (front desk gets the "owes money"
-  flag, never an amount). Front desk has no money write anywhere.
+  flag, never an amount). Front desk also confirms a parent's drop-off
+  report (a present mark, no money). Front desk has no money write anywhere.
 
 Owner and admin keep every route here, so existing tokens behave exactly as
 before.
@@ -63,6 +64,12 @@ STAFF_TIER_ROUTE_PATHS: Final[dict[StaffTier, frozenset[tuple[str, str]]]] = {
             ("GET", f"{_ADMIN}/families"),
             ("GET", f"{_ADMIN}/families/summary"),
             ("GET", f"{_ADMIN}/families/{{family_id}}/record"),
+            # dropoff_routes.py: confirm a parent's drop-off report (writes a
+            # present mark through MarkAttendance; moves no money)
+            (
+                "POST",
+                f"{_ADMIN}/session-occurrences/{{occurrence_id}}/checkins/{{student_id}}/confirm",
+            ),
         }
     ),
 }

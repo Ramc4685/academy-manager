@@ -126,13 +126,30 @@ def test_no_staff_tier_reaches_a_money_moving_route(key: tuple[str, str]) -> Non
     assert all(key not in keys for keys in STAFF_TIER_ROUTE_PATHS.values())
 
 
+#: The one write front desk may make: confirming a parent's drop-off report,
+#: which records a present mark and moves no money.
+FRONT_DESK_DROPOFF_CONFIRM = (
+    "POST",
+    f"{_ADMIN}/session-occurrences/{{occurrence_id}}/checkins/{{student_id}}/confirm",
+)
+
+
 def test_front_desk_records_no_payment_and_opens_only_family_index_reads() -> None:
     assert "front_desk" not in PAYMENT_RECORDER_ROLES
-    front_desk = STAFF_TIER_ROUTE_PATHS["front_desk"]
+    front_desk = STAFF_TIER_ROUTE_PATHS["front_desk"] - {FRONT_DESK_DROPOFF_CONFIRM}
     assert front_desk
     assert all(method == "GET" for method, _ in front_desk)
     assert all(path.startswith(f"{_ADMIN}/families") for _, path in front_desk)
     assert not front_desk & set(MONEY_VIEWER_ONLY_READS)
+
+
+def test_front_desk_dropoff_confirm_is_the_front_desk_tier_and_not_money() -> None:
+    routes = _admin_routes()
+    assert FRONT_DESK_DROPOFF_CONFIRM in routes
+    assert _staff_tiers(routes[FRONT_DESK_DROPOFF_CONFIRM]) == {"front_desk"}
+    assert "admin" not in _personas(routes[FRONT_DESK_DROPOFF_CONFIRM])
+    assert FRONT_DESK_DROPOFF_CONFIRM not in OWNER_ONLY_ROUTE_PATHS
+    assert FRONT_DESK_DROPOFF_CONFIRM not in MONEY_MOVING_ROUTES
 
 
 #: Reads that carry amounts and stay closed to front desk.

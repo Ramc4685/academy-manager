@@ -609,6 +609,25 @@ def _seed_docs(academy: str) -> dict[str, list[dict[str, Any]]]:
                 "resolved_at": None,
             }
         ],
+        # A parent's drop-off report awaiting staff (migration 0246), so the
+        # coach/admin confirm routes hit a real B row when called from A.
+        "dropoff_checkins": [
+            {
+                "checkin_id": f"{academy}-dropoff-checkin-1",
+                "academy_id": academy,
+                "occurrence_id": ids["occurrence_id"],
+                "session_id": ids["session_id"],
+                "student_id": ids["student_id"],
+                "reported_by": ids["parent_id"],
+                "reported_at": NOW,
+                "status": "reported",
+                "confirm_mutation_id": None,
+                "confirmed_by": None,
+                "confirmed_at": None,
+                "attendance_id": None,
+                "reconciled_with_existing_mark": False,
+            }
+        ],
         "billing_settings": [
             {
                 "academy_id": academy,
