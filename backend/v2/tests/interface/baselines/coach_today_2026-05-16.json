@@ -22,7 +22,8 @@
           "trial_outcome": null,
           "pending_cancellation_at": null,
           "hold_return_on": null,
-          "payment_due_cents": null
+          "payment_due_cents": null,
+          "checkin": null
         },
         {
           "student_id": "st2",
@@ -36,7 +37,8 @@
           "trial_outcome": null,
           "pending_cancellation_at": null,
           "hold_return_on": null,
-          "payment_due_cents": null
+          "payment_due_cents": null,
+          "checkin": null
         }
       ],
       "coach_id": "coach-1",
