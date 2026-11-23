@@ -43,7 +43,8 @@
       "coach_name": null,
       "status": "scheduled",
       "cancellation_reason": null,
-      "trial_guests": []
+      "trial_guests": [],
+      "recap_saved": false
     },
     {
       "session_id": "s-today-2",
@@ -58,7 +59,8 @@
       "coach_name": null,
       "status": "scheduled",
       "cancellation_reason": null,
-      "trial_guests": []
+      "trial_guests": [],
+      "recap_saved": false
     }
   ]
 }

@@ -13363,6 +13363,11 @@ export interface components {
             location: string;
             /** Occurrence Id */
             occurrence_id: string;
+            /**
+             * Recap Saved
+             * @default false
+             */
+            recap_saved: boolean;
             /** Roster */
             roster: components["schemas"]["CoachRosterEntry"][];
             /** Session Id */
