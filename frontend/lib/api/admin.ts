@@ -116,7 +116,12 @@ export interface AdminStudentAttendanceView {
 
 export interface AdminStudentAttendanceList {
   attendance: AdminStudentAttendanceView[];
+  /** Drop-off check-in breakdown; null when the academy has the feature off. */
+  dropoff?: AdminOccurrenceDropoffView | null;
 }
+
+export type AdminOccurrenceDropoffView = components["schemas"]["AdminOccurrenceDropoffView"];
+export type StaffDropoffCheckinView = components["schemas"]["StaffDropoffCheckinView"];
 
 export interface UpdateSessionOccurrenceCoachRequest {
   actual_coach_id?: string | null;
@@ -2067,6 +2072,19 @@ export function voidOccurrenceStudentAttendance(
   );
 }
 
+/** Front desk / admin confirms a parent-reported drop-off (writes the Present mark). */
+export function confirmOccurrenceDropoff(
+  occurrenceId: string,
+  studentId: string
+): Promise<StaffDropoffCheckinView> {
+  return apiFetch<StaffDropoffCheckinView>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/checkins/${encodeURIComponent(
+      studentId
+    )}/confirm`,
+    { method: "POST" }
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Enrollments
 // ---------------------------------------------------------------------------
@@ -3669,6 +3687,10 @@ export interface SelfServicePolicyView {
   //: make-ups" text (Settings overhaul Phase 3 PR 10). Used only when the
   //: class leaves its own field empty.
   welcome_email_absence_policy_default: string;
+  // Parent drop-off check-in (off by default) and its window around class start.
+  dropoff_checkin_enabled: boolean;
+  dropoff_checkin_opens_minutes_before: number;
+  dropoff_checkin_closes_minutes_after: number;
 }
 
 /**

@@ -155,3 +155,45 @@ test("the Absences card has the welcome-email default field", () => {
   assert.match(panel, /welcome_email_absence_policy_default/);
   assert.match(panel, /Welcome email absence &amp; makeup policy \(default\)/);
 });
+
+// --- Parent drop-off check-in (off by default) ---
+
+const WITH_DROPOFF = {
+  ...STORED,
+  dropoff_checkin_enabled: false,
+  dropoff_checkin_opens_minutes_before: 30,
+  dropoff_checkin_closes_minutes_after: 15,
+};
+
+test("drop-off check-in defaults to off and sends only what changed", () => {
+  assert.equal(policyToForm(null).dropoff_checkin_enabled, false);
+  const form = {
+    ...policyToForm(WITH_DROPOFF),
+    dropoff_checkin_enabled: true,
+    dropoff_checkin_opens_minutes_before: "20",
+  };
+  const { payload, errors } = policyPatch(WITH_DROPOFF, form);
+  assert.deepEqual(errors, {});
+  assert.deepEqual(payload, {
+    dropoff_checkin_enabled: true,
+    dropoff_checkin_opens_minutes_before: 20,
+  });
+});
+
+test("drop-off window minutes outside the allowed range are errors", () => {
+  const form = {
+    ...policyToForm(WITH_DROPOFF),
+    dropoff_checkin_opens_minutes_before: "61",
+    dropoff_checkin_closes_minutes_after: "241",
+  };
+  const { payload, errors } = policyPatch(WITH_DROPOFF, form);
+  assert.deepEqual(payload, {});
+  assert.match(errors.dropoff_checkin_opens_minutes_before, /0 to 60/);
+  assert.match(errors.dropoff_checkin_closes_minutes_after, /0 to 240/);
+});
+
+test("the parent actions card has the drop-off check-in switch and window fields", () => {
+  assert.match(panel, /Drop-off check-in/);
+  assert.match(panel, /dropoff_checkin_opens_minutes_before/);
+  assert.match(panel, /dropoff_checkin_closes_minutes_after/);
+});

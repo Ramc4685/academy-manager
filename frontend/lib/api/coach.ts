@@ -7,6 +7,7 @@
  */
 
 import { apiFetch, type ApiError } from "./client";
+import type { components } from "./generated/v2";
 import type { TechniqueObservationDraft } from "@/lib/coach/technique-observation";
 import {
   coachDayHubPath,
@@ -61,6 +62,24 @@ export interface CoachRosterEntry {
    * sees — the per-row billing drawer was removed in the same change.
    */
   payment_due_cents?: number | null;
+  /** Set only when a parent reported a drop-off for this class date. */
+  checkin?: StaffDropoffCheckinView | null;
+}
+
+export type StaffDropoffCheckinView = components["schemas"]["StaffDropoffCheckinView"];
+
+/**
+ * Confirm a parent-reported drop-off: the server writes (or links to) the one
+ * official Present mark. Safe to retry; online only, never queued.
+ */
+export function confirmDropoff(
+  occurrenceId: string,
+  studentId: string,
+): Promise<StaffDropoffCheckinView> {
+  return apiFetch(
+    `/coach/occurrences/${encodeURIComponent(occurrenceId)}/checkins/${encodeURIComponent(studentId)}/confirm`,
+    { method: "POST" },
+  );
 }
 
 export interface CoachSession {

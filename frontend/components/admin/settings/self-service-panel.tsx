@@ -190,6 +190,45 @@ export function SelfServicePanel() {
               />
             </div>
 
+            {/* Parent drop-off check-in: off by default. A parent's "I've
+                arrived" is never attendance; staff confirm it, and that
+                confirmation writes the Present mark. */}
+            <div className="mt-6 border-t border-rally-line pt-4" data-testid="dropoff-checkin-settings">
+              <SwitchField
+                label="Drop-off check-in"
+                checked={form.dropoff_checkin_enabled}
+                onChange={(checked) =>
+                  setForm((prev) => ({ ...prev, dropoff_checkin_enabled: checked }))
+                }
+              />
+              <p className="mt-1 text-xs text-rally-muted">
+                Parents tap &quot;I&apos;ve arrived&quot; for a class; a coach or the front desk
+                confirms, and only that confirmation marks the child present.
+              </p>
+              {form.dropoff_checkin_enabled && (
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <NumberField
+                    label="Opens (minutes before class)"
+                    hint="0 to 60. The button appears this long before the class starts."
+                    value={form.dropoff_checkin_opens_minutes_before}
+                    error={patch.errors.dropoff_checkin_opens_minutes_before}
+                    onChange={(value) =>
+                      setForm((prev) => ({ ...prev, dropoff_checkin_opens_minutes_before: value }))
+                    }
+                  />
+                  <NumberField
+                    label="Closes (minutes after start)"
+                    hint="0 to 240. After this, an unconfirmed report expires and never counts."
+                    value={form.dropoff_checkin_closes_minutes_after}
+                    error={patch.errors.dropoff_checkin_closes_minutes_after}
+                    onChange={(value) =>
+                      setForm((prev) => ({ ...prev, dropoff_checkin_closes_minutes_after: value }))
+                    }
+                  />
+                </div>
+              )}
+            </div>
+
             <Footer
               dirty={dirty && !hasErrors}
               pending={mutation.isPending}

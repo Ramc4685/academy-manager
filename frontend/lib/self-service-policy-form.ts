@@ -38,6 +38,9 @@ export interface SelfServicePolicy {
   //: Academy-level fallback for a class's welcome-email "Absences and
   //: make-ups" text; used only when the class leaves its own field empty.
   welcome_email_absence_policy_default: string;
+  dropoff_checkin_enabled: boolean;
+  dropoff_checkin_opens_minutes_before: number;
+  dropoff_checkin_closes_minutes_after: number;
 }
 
 export type PolicyForm = {
@@ -50,6 +53,9 @@ export type PolicyForm = {
   can_request_cancel: boolean;
   can_claim_waitlist_offer: boolean;
   welcome_email_absence_policy_default: string;
+  dropoff_checkin_enabled: boolean;
+  dropoff_checkin_opens_minutes_before: string;
+  dropoff_checkin_closes_minutes_after: string;
 };
 
 /** What Family policies may write: never the Billing rules cancellation terms. */
@@ -62,10 +68,14 @@ export type PolicyPatch = Partial<
   >
 >;
 
-/** Whole-number fields and the smallest value each accepts. */
-const WHOLE_NUMBER_MINIMUMS = {
-  absence_notice_min_hours: 0,
-  makeup_expiry_days: 1,
+/** Whole-number fields and the [min, max] each accepts (the server enforces the same). */
+const WHOLE_NUMBER_BOUNDS = {
+  absence_notice_min_hours: [0, Infinity],
+  makeup_expiry_days: [1, Infinity],
+  // Opens at most 60 min early so a confirmation always lands inside the
+  // attendance marking window.
+  dropoff_checkin_opens_minutes_before: [0, 60],
+  dropoff_checkin_closes_minutes_after: [0, 240],
 } as const;
 
 export function policyToForm(data: SelfServicePolicy | null | undefined): PolicyForm {
@@ -79,6 +89,9 @@ export function policyToForm(data: SelfServicePolicy | null | undefined): Policy
     can_request_cancel: data?.can_request_cancel ?? true,
     can_claim_waitlist_offer: data?.can_claim_waitlist_offer ?? true,
     welcome_email_absence_policy_default: data?.welcome_email_absence_policy_default ?? "",
+    dropoff_checkin_enabled: data?.dropoff_checkin_enabled ?? false,
+    dropoff_checkin_opens_minutes_before: data?.dropoff_checkin_opens_minutes_before?.toString() ?? "",
+    dropoff_checkin_closes_minutes_after: data?.dropoff_checkin_closes_minutes_after?.toString() ?? "",
   };
 }
 
@@ -86,11 +99,11 @@ export function isPolicyDirty(original: PolicyForm, form: PolicyForm): boolean {
   return (Object.keys(form) as Array<keyof PolicyForm>).some((key) => form[key] !== original[key]);
 }
 
-function parseWholeNumber(raw: string, min: number): number | null {
+function parseWholeNumber(raw: string, min: number, max: number): number | null {
   const trimmed = raw.trim();
   if (!/^\d+$/.test(trimmed)) return null;
   const value = Number(trimmed);
-  return value >= min ? value : null;
+  return value >= min && value <= max ? value : null;
 }
 
 /**
@@ -104,20 +117,27 @@ export function policyPatch(
   const payload: PolicyPatch = {};
   const errors: Record<string, string> = {};
 
-  for (const [key, min] of Object.entries(WHOLE_NUMBER_MINIMUMS) as Array<
-    [keyof typeof WHOLE_NUMBER_MINIMUMS, number]
+  for (const [key, [min, max]] of Object.entries(WHOLE_NUMBER_BOUNDS) as Array<
+    [keyof typeof WHOLE_NUMBER_BOUNDS, readonly [number, number]]
   >) {
     // Untouched is never an error, even if the stored value is out of bounds
     // (e.g. a 0 saved by the old cleared-box bug): it must not lock Save.
-    if (stored && form[key].trim() === String(stored[key])) continue;
-    const value = parseWholeNumber(form[key], min);
+    // A field an older response did not carry (undefined) left blank is untouched too.
+    if (stored && form[key].trim() === String(stored[key] ?? "")) continue;
+    const value = parseWholeNumber(form[key], min, max);
     if (value === null) {
-      errors[key] = `Enter a whole number of at least ${min}.`;
+      errors[key] =
+        max === Infinity
+          ? `Enter a whole number of at least ${min}.`
+          : `Enter a whole number from ${min} to ${max}.`;
     } else if (value !== stored?.[key]) {
       payload[key] = value;
     }
   }
 
+  if (form.dropoff_checkin_enabled !== (stored?.dropoff_checkin_enabled ?? false)) {
+    payload.dropoff_checkin_enabled = form.dropoff_checkin_enabled;
+  }
   if (form.makeup_requires_notice !== stored?.makeup_requires_notice) {
     payload.makeup_requires_notice = form.makeup_requires_notice;
   }

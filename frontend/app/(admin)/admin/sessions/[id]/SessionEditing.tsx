@@ -6,6 +6,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   addSessionReplacement,
   cancelSessionOccurrence,
+  confirmOccurrenceDropoff,
   listAdminUsers,
   listOccurrenceStudentAttendance,
   voidOccurrenceStudentAttendance,
@@ -45,6 +46,7 @@ import {
   parseAcademyInstant,
   resolveAcademyTimeZone,
 } from "@/lib/format/academy-time";
+import { checkinActorLine } from "@/lib/dropoff/checkin";
 
 /**
  * A date the server will refuse to cancel (#671).
@@ -56,6 +58,17 @@ import {
  */
 function hasStarted(occurrence: AdminSessionOccurrenceView): boolean {
   return parseAcademyInstant(occurrence.start_at).getTime() <= Date.now();
+}
+
+/**
+ * Around class time a parent drop-off may be waiting for confirmation before
+ * any mark exists. The widest window settings allow is 60 min before to
+ * 240 min after the start.
+ */
+function isAroundClassTime(occurrence: AdminSessionOccurrenceView): boolean {
+  const start = parseAcademyInstant(occurrence.start_at).getTime();
+  const now = Date.now();
+  return occurrence.status === "scheduled" && now >= start - 60 * 60_000 && now <= start + 240 * 60_000;
 }
 
 function isCancellable(occurrence: AdminSessionOccurrenceView): boolean {
@@ -188,7 +201,8 @@ export function ReplacementCoachTable({
         {/* Issue #554: attendance can only be corrected or voided on a date
             that was actually marked, so the action only appears where there is
             something to act on. */}
-        {onViewAttendance && occurrence.attendance_marked_count > 0 && (
+        {onViewAttendance &&
+          (occurrence.attendance_marked_count > 0 || isAroundClassTime(occurrence)) && (
           <Button
             variant="secondary"
             size="sm"
@@ -464,6 +478,23 @@ export function OccurrenceAttendanceDialog({
   });
 
   const rows: AdminStudentAttendanceView[] = attendanceQuery.data?.attendance ?? [];
+  const dropoff = attendanceQuery.data?.dropoff;
+
+  // Front desk / admin confirms a parent's "I've arrived": the server writes
+  // (or links to) the one Present mark, so a retry never doubles it.
+  const confirmMutation = useMutation({
+    mutationFn: (studentId: string) => {
+      if (!occurrenceId) throw new Error("No class date selected.");
+      return confirmOccurrenceDropoff(occurrenceId, studentId);
+    },
+    retry: (count, err) => (err as { code?: string }).code === "request_in_flight" && count < 2,
+    retryDelay: 800,
+    onSuccess: async () => {
+      setError(null);
+      await attendanceQuery.refetch();
+    },
+    onError: (err: Error) => setError(err.message ?? "Could not confirm this drop-off."),
+  });
 
   const mutation = useMutation({
     mutationFn: () => {
@@ -502,6 +533,75 @@ export function OccurrenceAttendanceDialog({
       overline="Class date"
     >
       {error && <DialogError message={error} />}
+      {dropoff?.enabled && (
+        <section
+          data-testid="dropoff-breakdown"
+          aria-label="Drop-off check-in"
+          className="mb-4 rounded-lg border border-rally-line p-3"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide text-rally-muted">
+            Drop-off check-in
+          </p>
+          <dl className="mt-2 grid grid-cols-3 gap-2 text-center">
+            {(
+              [
+                ["Expected", dropoff.expected_count, "dropoff-expected-count"],
+                ["Arrived", dropoff.pending_count, "dropoff-pending-count"],
+                ["Checked in", dropoff.confirmed_count, "dropoff-confirmed-count"],
+              ] as const
+            ).map(([label, count, testId]) => (
+              <div key={label}>
+                <dt className="text-xs text-rally-muted">{label}</dt>
+                <dd data-testid={testId} className="text-lg font-semibold text-rally-ink">
+                  {count}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          {dropoff.checkins.length > 0 && (
+            <ul className="mt-3 space-y-2">
+              {dropoff.checkins.map((c) => (
+                <li
+                  key={c.student_id}
+                  data-testid={`dropoff-row-${c.student_id}`}
+                  className="border-t border-rally-line/60 pt-2"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-rally-ink">
+                      {studentNameById.get(c.student_id) ?? c.student_id}
+                      <span className="ml-2 text-xs font-normal text-rally-muted">
+                        {c.state === "confirmed"
+                          ? "Checked in"
+                          : c.state === "pending"
+                            ? "Arrived · Awaiting confirmation"
+                            : "Report expired · not counted"}
+                      </span>
+                    </p>
+                    {c.state === "pending" && (
+                      <Button
+                        variant="primary"
+                        size="lg"
+                        type="button"
+                        data-testid={`confirm-dropoff-${c.student_id}`}
+                        aria-label={`Confirm drop-off for ${studentNameById.get(c.student_id) ?? c.student_id}`}
+                        disabled={confirmMutation.isPending}
+                        onClick={() => confirmMutation.mutate(c.student_id)}
+                      >
+                        {confirmMutation.isPending && confirmMutation.variables === c.student_id
+                          ? "Confirming..."
+                          : "Confirm drop-off"}
+                      </Button>
+                    )}
+                  </div>
+                  <p data-testid={`dropoff-actors-${c.student_id}`} className="mt-1 text-xs text-rally-subtle">
+                    {checkinActorLine(c, timezone)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
       {attendanceQuery.isLoading ? (
         <p className="text-sm text-rally-subtle">Loading marks...</p>
       ) : rows.length === 0 ? (
