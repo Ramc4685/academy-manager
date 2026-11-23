@@ -1,0 +1,12 @@
+# parent-dropoff-checkin
+
+PR: #TBD
+
+## What changed
+Academies can switch on parent drop-off check-in under Settings → Family policies → "What parents can do in the app". It is off by default, and the window opens 0–60 minutes before class (default 30) and closes 0–240 minutes after the start (default 15). When it is on, a parent's class row on My children shows "I've arrived" only while the window is open. After the tap it reads "Arrival sent · Waiting for staff", and after staff confirm it reads "Checked in". Both states come from the server, so they survive a refresh. Each sibling is checked in on their own. If the phone is offline or the request fails, the row says staff have NOT received the arrival and offers Retry. The request is never queued or replayed later. On the coach class screen, a reported child shows "Arrived · Awaiting confirmation" with a one-tap "Confirm drop-off", and manual marking is unchanged. The admin class-date Attendance dialog adds an Expected / Arrived / Checked in breakdown, a "Confirm drop-off" button and "Reported by X at T · Confirmed by Y at T" in academy time. The dialog is also offered around class time before any mark exists. A parent's report is never attendance: only the staff confirmation writes the Present mark, through the existing attendance path, and it links to an existing manual mark instead of writing a second one. A report nobody confirmed expires when the window closes and never counts.
+
+## Deploy notes
+Migration `0246_dropoff_checkins` adds the `dropoff_checkins` collection with a unique `(academy_id, occurrence_id, student_id)` index and is applied by the release command. There are no new env vars. The new policy fields default to off, so no academy sees a change until an admin enables it. New endpoints: parent `POST /parent/children/{student_id}/occurrences/{occurrence_id}/arrival`, coach `POST /coach/occurrences/{id}/checkins/{student_id}/confirm`, and admin/front desk `POST /admin/session-occurrences/{id}/checkins/{student_id}/confirm`. The parent schedule, coach today and admin attendance reads gain additive fields, which older cached PWA clients ignore.
+
+## Risk / rollback
+Confirmation writes attendance, and attendance feeds payroll and make-ups. It reuses MarkAttendance with a deterministic id, so concurrent or repeated confirms converge on one mark. To stop the feature, switch it off per academy: reports already pending stay unconfirmed and never count. To remove it entirely, revert the PR. The collection can stay, because nothing else reads it.
