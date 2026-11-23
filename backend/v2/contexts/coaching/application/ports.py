@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from backend.v2.contexts.coaching.domain.models import (
     Attendance,
     AttendanceEntrySource,
+    AttendanceStatus,
     CoachAttendance,
     CoachAttendanceAuditEntry,
     CoachSkillNote,
@@ -129,3 +130,45 @@ class SkillNoteRepository(Protocol):
     async def set_visibility(
         self, student_id: str, note_id: str, visibility: NoteVisibility
     ) -> CoachSkillNote | None: ...
+
+
+# --- Admin attendance review (Inbox "Attendance" tab) ---
+
+
+class ReviewOccurrence(BaseModel):
+    """One past class date with its roster size and recorded (non-voided) marks."""
+
+    model_config = {"frozen": True}
+
+    occurrence_id: str
+    session_id: str
+    session_name: str
+    start_at: datetime
+    status: str
+    enrolled_count: int
+    marked_count: int
+
+
+class ReviewCorrection(BaseModel):
+    model_config = {"frozen": True}
+
+    attendance_id: str
+    occurrence_id: str
+    session_id: str
+    session_name: str
+    start_at: datetime | None
+    student_id: str
+    student_name: str
+    status: AttendanceStatus
+    previous_status: AttendanceStatus | None
+    corrected_at: datetime
+    corrected_by_name: str | None
+    reason: str | None
+
+
+class AttendanceReviewReader(Protocol):
+    async def occurrences_between(self, start: datetime, end: datetime) -> list[ReviewOccurrence]:
+        """Non-cancelled class dates starting in ``[start, end)``."""
+        ...
+
+    async def corrections_since(self, since: datetime) -> list[ReviewCorrection]: ...

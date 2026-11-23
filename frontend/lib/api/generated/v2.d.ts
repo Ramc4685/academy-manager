@@ -2246,6 +2246,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/inbox/attendance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admin Inbox Attendance */
+        get: operations["admin_inbox_attendance_api_v2_admin_inbox_attendance_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/inbox/counts": {
         parameters: {
             query?: never;
@@ -8354,6 +8371,46 @@ export interface components {
             /** Children */
             children: components["schemas"]["AiVideoConsentRow"][];
         };
+        /** AdminAttendanceCorrectionView */
+        AdminAttendanceCorrectionView: {
+            /** Attendance Id */
+            attendance_id: string;
+            /**
+             * Corrected At
+             * Format: date-time
+             */
+            corrected_at: string;
+            /** Corrected By Name */
+            corrected_by_name: string | null;
+            /** Href */
+            href: string;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Previous Status */
+            previous_status: string | null;
+            /** Reason */
+            reason: string | null;
+            /** Session Id */
+            session_id: string;
+            /** Session Name */
+            session_name: string;
+            /** Start At */
+            start_at: string | null;
+            /** Status */
+            status: string;
+            /** Student Name */
+            student_name: string;
+        };
+        /**
+         * AdminAttendanceReviewView
+         * @description Class dates with no marks (actionable) and recent corrections (review).
+         */
+        AdminAttendanceReviewView: {
+            /** Corrections */
+            corrections: components["schemas"]["AdminAttendanceCorrectionView"][];
+            /** Missing */
+            missing: components["schemas"]["AdminMissingAttendanceView"][];
+        };
         /** AdminAttentionItemView */
         AdminAttentionItemView: {
             /** Attention Id */
@@ -8371,7 +8428,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "pending_registrations" | "overdue_dues" | "autopay_failure" | "dunning_exhaustion" | "autopay_stuck" | "bank_return_review" | "pause_requests" | "scheduled_resume_blocked" | "scheduled_action_failed" | "billing_deferrals" | "waivers" | "session_pressure";
+            kind: "pending_registrations" | "overdue_dues" | "autopay_failure" | "dunning_exhaustion" | "autopay_stuck" | "bank_return_review" | "pause_requests" | "scheduled_resume_blocked" | "scheduled_action_failed" | "billing_deferrals" | "waivers" | "session_pressure" | "missing_attendance";
             /**
              * Severity
              * @enum {string}
@@ -9304,6 +9361,24 @@ export interface components {
              * Format: date-time
              */
             sent_at: string;
+        };
+        /** AdminMissingAttendanceView */
+        AdminMissingAttendanceView: {
+            /** Enrolled Count */
+            enrolled_count: number;
+            /** Href */
+            href: string;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Session Id */
+            session_id: string;
+            /** Session Name */
+            session_name: string;
+            /**
+             * Start At
+             * Format: date-time
+             */
+            start_at: string;
         };
         /** AdminMonthCloseAutopayRun */
         AdminMonthCloseAutopayRun: {
@@ -25869,6 +25944,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImportBatchView"];
+                };
+            };
+        };
+    };
+    admin_inbox_attendance_api_v2_admin_inbox_attendance_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminAttendanceReviewView"];
                 };
             };
         };

@@ -14,6 +14,10 @@ Each probe is isolated: one unreadable queue is reported in ``unavailable``
 Only queues that hold an admin decision are counted (owner decision,
 2026-11-15). Absence notices and parent self-cancellations are history with no
 action to take, so their tabs list them without a badge.
+
+The Attendance tab counts class dates nobody took attendance for (past the
+coach's 48h window); its corrections list is review-only and uncounted, like
+absences.
 """
 
 from __future__ import annotations
@@ -21,7 +25,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -43,6 +49,7 @@ INBOX_QUEUE_IDS: tuple[str, ...] = (
     "makeups",
     "trials",
     "pauses",
+    "attendance",
 )
 
 
@@ -72,6 +79,7 @@ async def admin_inbox_counts(
         ("makeups", lambda: _pending_self_service(use_cases, "list_makeup_requests_for_admin")),
         ("trials", lambda: _pending_self_service(use_cases, "list_trial_requests_for_admin")),
         ("pauses", lambda: _pending_pauses(use_cases)),
+        ("attendance", lambda: missing_attendance_count(use_cases)),
     )
     values = await asyncio.gather(*(_safe_count(label, probe) for label, probe in probes))
     counts = {
@@ -79,6 +87,79 @@ async def admin_inbox_counts(
     }
     unavailable = [label for (label, _), value in zip(probes, values, strict=True) if value is None]
     return AdminInboxCountsView(counts=counts, total=sum(counts.values()), unavailable=unavailable)
+
+
+class AdminMissingAttendanceView(BaseModel):
+    occurrence_id: str
+    session_id: str
+    session_name: str
+    start_at: datetime
+    enrolled_count: int
+    href: str
+
+
+class AdminAttendanceCorrectionView(BaseModel):
+    attendance_id: str
+    occurrence_id: str
+    session_id: str
+    session_name: str
+    start_at: datetime | None
+    student_name: str
+    status: str
+    previous_status: str | None
+    corrected_at: datetime
+    corrected_by_name: str | None
+    reason: str | None
+    href: str
+
+
+class AdminAttendanceReviewView(BaseModel):
+    """Class dates with no marks (actionable) and recent corrections (review)."""
+
+    missing: list[AdminMissingAttendanceView]
+    corrections: list[AdminAttendanceCorrectionView]
+
+
+def class_date_href(session_id: str, occurrence_id: str) -> str:
+    """Sessions -> class -> Class dates, with that date's Attendance open."""
+    return (
+        f"/admin/sessions/{quote(session_id, safe='')}"
+        f"?tab=dates&occurrence={quote(occurrence_id, safe='')}"
+    )
+
+
+@router.get("/inbox/attendance", response_model=AdminAttendanceReviewView)
+async def admin_inbox_attendance(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> AdminAttendanceReviewView:
+    review = use_cases.list_attendance_review
+    if review is None:
+        return AdminAttendanceReviewView(missing=[], corrections=[])
+    result = await review.execute()  # type: ignore[attr-defined]
+    return AdminAttendanceReviewView(
+        missing=[
+            AdminMissingAttendanceView(
+                **row.model_dump(exclude={"status", "marked_count"}),
+                href=class_date_href(row.session_id, row.occurrence_id),
+            )
+            for row in result.missing
+        ],
+        corrections=[
+            AdminAttendanceCorrectionView(
+                **row.model_dump(exclude={"student_id"}),
+                href=class_date_href(row.session_id, row.occurrence_id),
+            )
+            for row in result.corrections
+        ],
+    )
+
+
+async def missing_attendance_count(use_cases: AdminUseCases) -> int:
+    review = getattr(use_cases, "list_attendance_review", None)
+    if review is None:
+        return 0
+    return len(await review.missing())
 
 
 async def _safe_count(label: str, probe: Callable[[], Awaitable[int]]) -> int | None:
