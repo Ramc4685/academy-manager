@@ -1,9 +1,8 @@
-"""Admin / front desk confirm a parent's drop-off report.
+"""Admin confirms a parent's drop-off report.
 
-Front desk may confirm (``require_staff_tier("front_desk")``: owner, admin,
-billing or front desk). Confirming writes a ``present`` mark through
-``MarkAttendance`` as a supervisor, so the coach-assignment check is the
-only rule skipped; it moves no money.
+Admin persona only, like the attendance dialog that lists the reports.
+Confirming writes a ``present`` mark through ``MarkAttendance`` as a
+supervisor, so the coach-assignment check is the only rule skipped.
 """
 
 from __future__ import annotations
@@ -14,10 +13,10 @@ from backend.v2.composition.dropoff_checkins import DropoffCheckinComposition
 from backend.v2.contexts.coaching.application.use_cases.dropoff_checkin import (
     ConfirmDropoffCommand,
 )
-from backend.v2.interfaces.admin.staff_tier import require_staff_tier
 from backend.v2.interfaces.admin.views import AdminOccurrenceDropoffView
 from backend.v2.interfaces.dropoff_views import StaffDropoffCheckinView, dropoff_checkins
 from backend.v2.shared.auth.claims import AuthClaims
+from backend.v2.shared.http import require_persona
 
 router = APIRouter(tags=["admin.dropoff"])
 
@@ -55,7 +54,7 @@ async def admin_dropoff_view(
 async def confirm_dropoff(
     occurrence_id: str,
     student_id: str,
-    claims: AuthClaims = Depends(require_staff_tier("front_desk")),
+    claims: AuthClaims = Depends(require_persona("admin")),
     dropoff: DropoffCheckinComposition = Depends(dropoff_checkins),
 ) -> StaffDropoffCheckinView:
     snapshot = await dropoff.confirm.execute(

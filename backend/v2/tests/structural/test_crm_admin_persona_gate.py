@@ -128,11 +128,7 @@ def test_family_index_reads_are_the_front_desk_tier_and_nothing_wider() -> None:
         # The admin persona gate would 404 a billing or front-desk member.
         assert "admin" not in _personas(route), key
         assert not _is_owner_guarded(route), key
-    # Plus the drop-off confirm (not a CRM route; pinned in
-    # test_money_route_staff_tiers.py).
-    assert STAFF_TIER_ROUTE_PATHS["front_desk"] - FAMILY_INDEX_READS == {
-        ("POST", "/api/v2/admin/session-occurrences/{occurrence_id}/checkins/{student_id}/confirm")
-    }
+    assert STAFF_TIER_ROUTE_PATHS["front_desk"] == FAMILY_INDEX_READS
 
 
 def test_no_other_crm_route_admits_a_staff_tier() -> None:

@@ -86,13 +86,15 @@ def compose_dropoff_checkins(
             guardians=StudentGuardianLookup(MongoStudentRepository(db)),
             occurrence_lookup=occurrences,
             enrollment_lookup=enrollments,
+            marks=attendance,
             academy_id=current_academy_id,
         ),
         confirm=ConfirmDropoff(
             checkins=checkins,
             policies=policies,
             occurrence_lookup=occurrences,
-            attendance_repo=attendance,
+            enrollment_lookup=enrollments,
+            marks=attendance,
             mark_attendance=MarkAttendance(
                 attendance_repo=attendance,
                 occurrence_lookup=occurrences,
@@ -109,6 +111,7 @@ def compose_dropoff_checkins(
             expected_roster=EnrollmentExpectedRosterLookup(
                 enrollment_repo, MongoOccurrenceRosterRepository(db)
             ),
+            marks=attendance,
         ),
         resolve_user_names=resolve_user_names,
     )

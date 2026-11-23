@@ -14,8 +14,15 @@ Confirm runs in three steps so a crash between them is retryable:
 3. ``confirming -> confirmed`` with the ``attendance_id``.
 
 A row left ``confirming`` (step 2 or 3 failed) is finished by the next
-confirm. If a mark already exists (``ConflictAttendanceExists``, voided marks
-included) confirm links the check-in to it and writes nothing else.
+confirm. If a present/late mark already exists confirm links the check-in to
+it and writes nothing else. An Absent or voided mark is refused with
+``ConflictAttendanceExists`` (409): staff correct it to Present through the
+normal correction path, which keeps its own rules, and that mark then reads
+as confirmed. Everything ``MarkAttendance`` would refuse (eligibility, an
+existing non-present mark) is checked BEFORE the claim, so a row is never
+left ``confirming`` by a refusal.
+
+The state callers show is derived from the mark (see ``checkin_state``).
 """
 
 from __future__ import annotations
@@ -26,8 +33,8 @@ from datetime import UTC, datetime
 from pydantic import BaseModel
 
 from backend.v2.contexts.coaching.application.ports import (
-    AttendanceRepository,
     DropoffCheckinRepository,
+    DropoffMarkReader,
     DropoffPolicy,
     DropoffPolicyLookup,
     EnrollmentLookup,
@@ -42,6 +49,7 @@ from backend.v2.contexts.coaching.application.use_cases.mark_attendance import (
     is_assigned_to_occurrence,
 )
 from backend.v2.contexts.coaching.domain.dropoff import (
+    PRESENT_STATUSES,
     DropoffCheckin,
     DropoffCheckinState,
     DropoffWindow,
@@ -57,6 +65,7 @@ from backend.v2.contexts.coaching.domain.errors import (
     SessionNotAssigned,
     StudentNotEnrolled,
 )
+from backend.v2.contexts.coaching.domain.models import Attendance
 from backend.v2.shared.ids import new_ulid
 
 DROPOFF_CLIENT_APP_VERSION = "dropoff-checkin"
@@ -95,6 +104,23 @@ def _window(policy: DropoffPolicy, starts_at: datetime) -> DropoffWindow:
     )
 
 
+def _is_present(mark: Attendance | None) -> bool:
+    return mark is not None and mark.status in PRESENT_STATUSES
+
+
+def _refuse_non_present(mark: Attendance, row: DropoffCheckin) -> None:
+    """An Absent or voided mark is the official record; confirm never papers
+    over it. Staff correct it (correction keeps its 48h/admin rules)."""
+    if not _is_present(mark):
+        raise ConflictAttendanceExists(
+            "this child already has an attendance mark; correct it to Present",
+            occurrence_id=row.occurrence_id,
+            student_id=row.student_id,
+            existing_attendance_id=mark.attendance_id,
+            existing_status=mark.status,
+        )
+
+
 def _snapshot(
     *,
     occurrence_id: str,
@@ -103,8 +129,9 @@ def _snapshot(
     row: DropoffCheckin | None,
     window: DropoffWindow,
     now: datetime,
+    marked_present: bool,
 ) -> DropoffCheckinSnapshot:
-    state = checkin_state(row, window, now)
+    state = checkin_state(row, window, now, marked_present=marked_present)
     return DropoffCheckinSnapshot(
         occurrence_id=occurrence_id,
         student_id=student_id,
@@ -140,6 +167,7 @@ class ReportArrival:
         guardians: GuardianLookup,
         occurrence_lookup: OccurrenceLookup,
         enrollment_lookup: EnrollmentLookup,
+        marks: DropoffMarkReader,
         academy_id: Callable[[], str],
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -148,6 +176,7 @@ class ReportArrival:
         self._guardians = guardians
         self._occurrences = occurrence_lookup
         self._enrollments = enrollment_lookup
+        self._marks = marks
         self._academy_id = academy_id
         self._now = clock
 
@@ -218,6 +247,9 @@ class ReportArrival:
             row=existing,
             window=window,
             now=now,
+            marked_present=_is_present(
+                await self._marks.find_existing(cmd.occurrence_id, cmd.student_id)
+            ),
         )
 
 
@@ -228,14 +260,16 @@ class ConfirmDropoff:
         checkins: DropoffCheckinRepository,
         policies: DropoffPolicyLookup,
         occurrence_lookup: OccurrenceLookup,
-        attendance_repo: AttendanceRepository,
+        enrollment_lookup: EnrollmentLookup,
+        marks: DropoffMarkReader,
         mark_attendance: MarkAttendance,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._checkins = checkins
         self._policies = policies
         self._occurrences = occurrence_lookup
-        self._attendance = attendance_repo
+        self._enrollments = enrollment_lookup
+        self._marks = marks
         self._mark = mark_attendance
         self._now = clock
 
@@ -271,6 +305,11 @@ class ConfirmDropoff:
             row = await self._claim(row, occurrence, window, staff_id)
         if row.status == "confirming":
             row = await self._finish(row, occurrence, staff_id, supervisor)
+        # Already confirmed earlier, but the mark has since been voided or
+        # corrected away from Present: say so instead of a silent no-op.
+        mark = await self._marks.find_existing(cmd.occurrence_id, cmd.student_id)
+        if mark is not None:
+            _refuse_non_present(mark, row)
         return _snapshot(
             occurrence_id=cmd.occurrence_id,
             student_id=cmd.student_id,
@@ -278,6 +317,7 @@ class ConfirmDropoff:
             row=row,
             window=window,
             now=self._now(),
+            marked_present=_is_present(mark),
         )
 
     async def _claim(
@@ -291,12 +331,31 @@ class ConfirmDropoff:
             raise DropoffWindowClosed(
                 "this class was cancelled", occurrence_id=row.occurrence_id, reason="cancelled"
             )
-        if checkin_state(row, window, self._now()) == "expired":
-            raise DropoffWindowClosed(
-                "this arrival report has expired; mark attendance instead",
+        existing = await self._marks.find_existing(row.occurrence_id, row.student_id)
+        if existing is not None:
+            # Present/late links below; anything else is refused unclaimed.
+            _refuse_non_present(existing, row)
+        else:
+            if self._now() > window.closes_at:
+                raise DropoffWindowClosed(
+                    "this arrival report has expired; mark attendance instead",
+                    occurrence_id=row.occurrence_id,
+                    reason="expired",
+                )
+            # MarkAttendance's own eligibility rule, checked before the claim
+            # so a withdrawn/paused child never strands the row ``confirming``.
+            eligibility = await self._enrollments.attendance_eligibility(
                 occurrence_id=row.occurrence_id,
-                reason="expired",
+                session_id=occurrence.session_id,
+                template_session_id=occurrence.template_session_id,
+                student_id=row.student_id,
             )
+            if eligibility is None:
+                raise StudentNotEnrolled(
+                    "student is not on this class's roster",
+                    occurrence_id=row.occurrence_id,
+                    student_id=row.student_id,
+                )
         claimed = await self._checkins.begin_confirm(
             row.occurrence_id,
             row.student_id,
@@ -315,30 +374,34 @@ class ConfirmDropoff:
         supervisor: bool,
     ) -> DropoffCheckin:
         mutation_id = row.confirm_mutation_id or confirm_mutation_id_for(row.checkin_id)
-        try:
-            result = await self._mark.execute(
-                MarkAttendanceCommand(
-                    mutation_id=mutation_id,
-                    occurrence_id=row.occurrence_id,
-                    session_id=occurrence.session_id,
-                    student_id=row.student_id,
-                    status="present",
-                    client_app_version=DROPOFF_CLIENT_APP_VERSION,
-                ),
-                staff_id,
-                supervisor=supervisor,
-            )
-            attendance_id, reconciled = result.attendance_id, False
-        except ConflictAttendanceExists as exc:
-            # A mark already exists (manual, or voided). Link to it; its status
-            # and correction rules stay exactly as they are.
-            existing_id = exc.details.get("existing_attendance_id")
-            if not existing_id:
-                existing = await self._attendance.find_existing(row.occurrence_id, row.student_id)
-                existing_id = existing.attendance_id if existing else None
-            if not existing_id:
-                raise
-            attendance_id, reconciled = str(existing_id), existing_id != mutation_id
+        # A mark already there (ours from a half-finished confirm, or a manual
+        # one) is linked, never rewritten; only a present/late one qualifies.
+        existing = await self._marks.find_existing(row.occurrence_id, row.student_id)
+        if existing is None:
+            try:
+                result = await self._mark.execute(
+                    MarkAttendanceCommand(
+                        mutation_id=mutation_id,
+                        occurrence_id=row.occurrence_id,
+                        session_id=occurrence.session_id,
+                        student_id=row.student_id,
+                        status="present",
+                        client_app_version=DROPOFF_CLIENT_APP_VERSION,
+                    ),
+                    staff_id,
+                    supervisor=supervisor,
+                )
+            except ConflictAttendanceExists:
+                # Someone marked the child between our read and the write.
+                existing = await self._marks.find_existing(row.occurrence_id, row.student_id)
+                if existing is None:
+                    raise
+            else:
+                attendance_id, reconciled = result.attendance_id, False
+        if existing is not None:
+            _refuse_non_present(existing, row)
+            attendance_id = existing.attendance_id
+            reconciled = attendance_id != mutation_id
         finished = await self._checkins.finish_confirm(
             row.occurrence_id,
             row.student_id,
@@ -373,12 +436,14 @@ class DropoffCheckinReads:
         policies: DropoffPolicyLookup,
         occurrence_lookup: OccurrenceLookup,
         expected_roster: ExpectedRosterLookup,
+        marks: DropoffMarkReader,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._checkins = checkins
         self._policies = policies
         self._occurrences = occurrence_lookup
         self._expected = expected_roster
+        self._marks = marks
         self._now = clock
 
     async def occurrence_summary(self, occurrence_id: str) -> OccurrenceDropoffSummary | None:
@@ -402,8 +467,22 @@ class DropoffCheckinReads:
             checkins=list(by_student.values()),
         )
 
+    async def _present_keys(self, occurrence_ids: list[str]) -> set[tuple[str, str]]:
+        """(occurrence_id, student_id) pairs with a present/late mark."""
+        if not occurrence_ids:
+            return set()
+        marks = await self._marks.list_for_occurrences(occurrence_ids)
+        return {(m.occurrence_id, m.student_id) for m in marks if _is_present(m)}
+
     async def policy(self) -> DropoffPolicy:
         return await self._policies.get()
+
+    async def windows(self, occurrences: Sequence[OccurrenceRef]) -> dict[str, DropoffWindow]:
+        """Each occurrence's check-in window; empty when the feature is off."""
+        policy = await self._policies.get()
+        if not policy.enabled:
+            return {}
+        return {o.occurrence_id: _window(policy, o.starts_at) for o in occurrences}
 
     async def for_student(
         self, student_id: str, occurrences: Sequence[OccurrenceRef]
@@ -417,6 +496,7 @@ class DropoffCheckinReads:
             student_id, [o.occurrence_id for o in occurrences]
         )
         by_occurrence = {r.occurrence_id: r for r in rows}
+        present = await self._present_keys(list(by_occurrence))
         now = self._now()
         return {
             o.occurrence_id: _snapshot(
@@ -426,6 +506,7 @@ class DropoffCheckinReads:
                 row=by_occurrence.get(o.occurrence_id),
                 window=_window(policy, o.starts_at),
                 now=now,
+                marked_present=(o.occurrence_id, student_id) in present,
             )
             for o in occurrences
         }
@@ -442,6 +523,7 @@ class DropoffCheckinReads:
         policy = await self._policies.get()
         refs = {o.occurrence_id: o for o in occurrences}
         rows = await self._checkins.list_for_occurrences(list(refs))
+        present = await self._present_keys(sorted({r.occurrence_id for r in rows}))
         now = self._now()
         out: dict[str, dict[str, DropoffCheckinSnapshot]] = {o: {} for o in refs}
         for row in rows:
@@ -455,5 +537,6 @@ class DropoffCheckinReads:
                 row=row,
                 window=_window(policy, ref.starts_at),
                 now=now,
+                marked_present=(row.occurrence_id, row.student_id) in present,
             )
         return out

@@ -164,6 +164,14 @@ class ExpectedRosterLookup(Protocol):
         ...
 
 
+class DropoffMarkReader(Protocol):
+    """The attendance marks a check-in's displayed state is derived from."""
+
+    async def find_existing(self, occurrence_id: str, student_id: str) -> Attendance | None: ...
+
+    async def list_for_occurrences(self, occurrence_ids: list[str]) -> list[Attendance]: ...
+
+
 class DropoffCheckinRepository(Protocol):
     async def report(self, checkin: DropoffCheckin) -> DropoffCheckin:
         """Insert unless a row exists for (occurrence, student); return the

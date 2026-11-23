@@ -173,17 +173,18 @@ async def get_today(
             log.warning("coach recap lookup failed; treating recaps as unsaved", exc_info=True)
 
     checkins: dict[str, dict[str, Any]] = {}
+    windows: dict[str, Any] = {}
     if dropoff is not None and sessions:
-        checkins = await dropoff.reads.for_occurrences(
-            [
-                OccurrenceRef(
-                    occurrence_id=s.occurrence_id,
-                    starts_at=s.start_at,
-                    status=getattr(s, "status", "scheduled"),
-                )
-                for s in sessions
-            ]
-        )
+        refs = [
+            OccurrenceRef(
+                occurrence_id=s.occurrence_id,
+                starts_at=s.start_at,
+                status=getattr(s, "status", "scheduled"),
+            )
+            for s in sessions
+        ]
+        checkins = await dropoff.reads.for_occurrences(refs)
+        windows = await dropoff.reads.windows(refs)
 
     out = [
         CoachSession(
@@ -198,6 +199,8 @@ async def get_today(
             coach_name=coach_names.get(getattr(s, "coach_id", None) or ""),
             status=getattr(s, "status", "scheduled"),
             cancellation_reason=getattr(s, "cancellation_reason", None),
+            dropoff_window_opens_at=(w := windows.get(s.occurrence_id)) and w.opens_at,
+            dropoff_window_closes_at=w and w.closes_at,
             roster=[
                 CoachRosterEntry(
                     student_id=r.student_id,

@@ -21,6 +21,7 @@ from backend.v2.composition.dropoff_checkins import (
     DropoffCheckinComposition,
     compose_dropoff_checkins,
 )
+from backend.v2.composition.parent import compose_parent
 from backend.v2.contexts.coaching.application.use_cases.dropoff_checkin import (
     ConfirmDropoffCommand,
     OccurrenceRef,
@@ -75,6 +76,13 @@ def _client(db: Any, *, user_id: str, roles: tuple[str, ...]) -> httpx.AsyncClie
     )  # type: ignore[arg-type]
     app.dependency_overrides[get_auth_claims] = lambda: claims
     app.state.dropoff_checkins = _compose(db)
+    app.state.parent = compose_parent(
+        db,
+        outbox=MongoOutbox(db),
+        idempotency_store=MongoIdempotencyStore(db),
+        stripe=object(),  # type: ignore[arg-type]
+        academy_id=ACADEMY,
+    )
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
 
 
@@ -179,7 +187,7 @@ async def coach(real_db, acad) -> AsyncIterator[httpx.AsyncClient]:
 
 @pytest.fixture
 async def desk(real_db, acad) -> AsyncIterator[httpx.AsyncClient]:
-    async with _client(real_db, user_id="u-desk", roles=("front_desk",)) as client:
+    async with _client(real_db, user_id="u-desk", roles=("admin",)) as client:
         yield client
 
 
@@ -363,7 +371,7 @@ async def test_failure_after_the_mark_is_saved_is_finished_by_a_retry(
     row = await real_db["dropoff_checkins"].find_one({"student_id": STUDENT})
     assert row["status"] == "confirming"
     assert await real_db["attendance"].count_documents({}) == 1
-    # Still pending to everyone (never expires mid-write); a different staff
+    # Still pending inside the window; a different staff
     # member's retry finishes the job without a second mark.
     done = await comp.confirm.execute(cmd, staff_id="u-admin", supervisor=True)
     assert done.state == "confirmed"
@@ -372,15 +380,10 @@ async def test_failure_after_the_mark_is_saved_is_finished_by_a_retry(
     assert await real_db["attendance"].count_documents({}) == 1
 
 
-@pytest.mark.parametrize("existing_status", ["absent", "voided"])
-async def test_an_existing_manual_mark_is_reconciled_not_duplicated(
-    parent, coach, real_db, existing_status: str
-) -> None:
-    await _seed(real_db)
-    await parent.post(_arrival())
-    await real_db["attendance"].insert_one(
+async def _manual_mark(db: Any, status: str, *, attendance_id: str = "manual-1") -> None:
+    await db["attendance"].insert_one(
         {
-            "attendance_id": "manual-1",
+            "attendance_id": attendance_id,
             "academy_id": ACADEMY,
             "occurrence_id": OCC,
             "session_id": SESSION,
@@ -388,11 +391,20 @@ async def test_an_existing_manual_mark_is_reconciled_not_duplicated(
             "marked_by": COACH,
             "marked_at": _now(),
             "marked_at_client": None,
-            "status": existing_status,
+            "status": status,
             "client_app_version": "test",
             "entry_source": "enrollment",
         }
     )
+
+
+@pytest.mark.parametrize("existing_status", ["present", "late"])
+async def test_an_existing_present_mark_is_linked_not_duplicated(
+    parent, coach, real_db, existing_status: str
+) -> None:
+    await _seed(real_db)
+    await parent.post(_arrival())
+    await _manual_mark(real_db, existing_status)
     resp = await coach.post(_confirm_coach())
     assert resp.status_code == 200
     body = resp.json()
@@ -400,6 +412,112 @@ async def test_an_existing_manual_mark_is_reconciled_not_duplicated(
     assert (body["attendance_id"], body["reconciled_with_existing_mark"]) == ("manual-1", True)
     [mark] = await real_db["attendance"].find({}).to_list(None)
     assert mark["status"] == existing_status  # untouched
+
+
+@pytest.mark.parametrize("existing_status", ["absent", "voided"])
+async def test_an_absent_or_voided_mark_is_refused_not_papered_over(
+    parent, coach, real_db, acad, existing_status: str
+) -> None:
+    """Roll call marked the child Absent before they arrived: confirm must
+    not say "Checked in" while the official record says absent."""
+    await _seed(real_db)
+    await parent.post(_arrival())
+    await _manual_mark(real_db, existing_status)
+    resp = await coach.post(_confirm_coach())
+    assert (resp.status_code, _code(resp)) == (409, "Coaching.ConflictAttendanceExists")
+    assert resp.json()["error"]["details"]["existing_status"] == existing_status
+    # Not claimed: the row stays reported and simply expires if nobody acts.
+    row = await real_db["dropoff_checkins"].find_one({"student_id": STUDENT})
+    assert row["status"] == "reported"
+    [mark] = await real_db["attendance"].find({}).to_list(None)
+    assert mark["status"] == existing_status
+    summary = await _compose(real_db).reads.occurrence_summary(OCC)
+    assert summary is not None and [s.state for s in summary.checkins] == ["pending"]
+    # Staff correct the mark to Present: the report now reads as confirmed.
+    await real_db["attendance"].update_one(
+        {"attendance_id": "manual-1"}, {"$set": {"status": "present"}}
+    )
+    summary = await _compose(real_db).reads.occurrence_summary(OCC)
+    assert summary is not None and [s.state for s in summary.checkins] == ["confirmed"]
+
+
+async def test_a_manual_present_mark_resolves_a_pending_report(parent, real_db, acad) -> None:
+    """Coach taps "Mark all present" instead of Confirm: parents see Checked in."""
+    await _seed(real_db)
+    await parent.post(_arrival())
+    comp = _compose(real_db)
+    await comp.confirm._mark.execute(
+        MarkAttendanceCommand(
+            mutation_id="bulk-1",
+            occurrence_id=OCC,
+            session_id=SESSION,
+            student_id=STUDENT,
+            status="present",
+        ),
+        COACH,
+    )
+    ref = OccurrenceRef(
+        occurrence_id=OCC, starts_at=_now() + timedelta(minutes=10), status="scheduled"
+    )
+    mine = await comp.reads.for_student(STUDENT, [ref])
+    assert mine and mine[OCC].state == "confirmed"
+    staff = await comp.reads.for_occurrences([ref])
+    assert staff[OCC][STUDENT].state == "confirmed"
+
+
+async def test_a_voided_dropoff_mark_no_longer_reads_checked_in(
+    parent, coach, real_db, acad
+) -> None:
+    await _seed(real_db)
+    await parent.post(_arrival())
+    body = (await coach.post(_confirm_coach())).json()
+    assert body["state"] == "confirmed"
+    await real_db["attendance"].update_one(
+        {"attendance_id": body["attendance_id"]}, {"$set": {"status": "voided"}}
+    )
+    summary = await _compose(real_db).reads.occurrence_summary(OCC)
+    assert summary is not None and [s.state for s in summary.checkins] == ["pending"]
+    again = await coach.post(_confirm_coach())
+    assert (again.status_code, _code(again)) == (409, "Coaching.ConflictAttendanceExists")
+
+
+async def test_a_withdrawn_child_is_refused_before_the_claim(parent, real_db, acad) -> None:
+    """Enrollment withdrawn after the report: confirm refuses and the row is
+    not stranded ``confirming`` (it stays reported and expires)."""
+    await _seed(real_db)
+    await parent.post(_arrival())
+    await real_db["enrollments"].update_one(
+        {"student_id": STUDENT}, {"$set": {"status": "withdrawn"}}
+    )
+    async with _client(real_db, user_id=COACH, roles=("coach",)) as coach:
+        resp = await coach.post(_confirm_coach())
+    assert (resp.status_code, _code(resp)) == (409, "Coaching.StudentNotEnrolled")
+    row = await real_db["dropoff_checkins"].find_one({"student_id": STUDENT})
+    assert row["status"] == "reported"
+    assert await real_db["attendance"].count_documents({}) == 0
+
+
+async def test_parent_schedule_still_lists_a_started_class_with_its_checkin(
+    parent, coach, real_db
+) -> None:
+    """Class began 5 minutes ago (window open until +15): the parent's
+    default schedule read still carries it, report and confirmation."""
+    await _seed(real_db, start_in=timedelta(minutes=-5))
+    schedule = f"/api/v2/parent/children/{STUDENT}/schedule"
+    [entry] = [
+        e for e in (await parent.get(schedule)).json()["entries"] if e["occurrence_id"] == OCC
+    ]
+    assert entry["can_report_arrival"] is True
+    assert (await parent.post(_arrival())).status_code == 200
+    assert (await coach.post(_confirm_coach())).status_code == 200
+    [entry] = [
+        e for e in (await parent.get(schedule)).json()["entries"] if e["occurrence_id"] == OCC
+    ]
+    assert entry["checkin"]["state"] == "confirmed"
+    # Feature off: the default read is upcoming-only again.
+    await _policy(real_db, enabled=False)
+    entries = (await parent.get(schedule)).json()["entries"]
+    assert OCC not in {e["occurrence_id"] for e in entries}
 
 
 async def test_unassigned_coach_is_refused(parent, real_db) -> None:
@@ -411,7 +529,7 @@ async def test_unassigned_coach_is_refused(parent, real_db) -> None:
     assert await real_db["attendance"].count_documents({}) == 0
 
 
-async def test_front_desk_confirms_and_sees_names(parent, desk, real_db) -> None:
+async def test_admin_confirms_and_sees_names(parent, desk, real_db) -> None:
     await _seed(real_db)
     await parent.post(_arrival())
     resp = await desk.post(_confirm_admin())
@@ -422,11 +540,17 @@ async def test_front_desk_confirms_and_sees_names(parent, desk, real_db) -> None
     assert await real_db["attendance"].count_documents({"status": "present"}) == 1
 
 
-async def test_parent_and_coach_cannot_use_the_admin_confirm(parent, coach, real_db) -> None:
+async def test_parent_coach_and_front_desk_cannot_use_the_admin_confirm(
+    parent, coach, real_db
+) -> None:
     await _seed(real_db)
     await parent.post(_arrival())
     assert (await parent.post(_confirm_admin())).status_code == 404
     assert (await coach.post(_confirm_admin())).status_code == 404
+    # Front desk cannot open the attendance dialog, so it gets no blind write.
+    async with _client(real_db, user_id="u-fd", roles=("front_desk",)) as front_desk:
+        assert (await front_desk.post(_confirm_admin())).status_code == 404
+    assert await real_db["attendance"].count_documents({}) == 0
 
 
 async def test_confirm_without_a_report_is_404(coach, real_db) -> None:
@@ -472,6 +596,9 @@ async def test_staff_summary_lists_expected_and_reports(parent, real_db, acad) -
     [only] = summary.checkins
     assert (only.student_id, only.state) == (STUDENT, "pending")
     assert await _compose(real_db).reads.occurrence_summary("occ-missing") is None
+    ref = OccurrenceRef(occurrence_id=OCC, starts_at=_now(), status="scheduled")
+    window = (await _compose(real_db).reads.windows([ref]))[OCC]
+    assert window.closes_at - window.opens_at == timedelta(minutes=45)
 
 
 async def test_feature_off_leaves_the_attendance_flow_unchanged(real_db, acad) -> None:
@@ -483,6 +610,7 @@ async def test_feature_off_leaves_the_attendance_flow_unchanged(real_db, acad) -
     )
     assert await comp.reads.for_student(STUDENT, [ref]) is None
     assert await comp.reads.for_occurrences([ref]) == {OCC: {}}
+    assert await comp.reads.windows([ref]) == {}  # coach roster does not poll
     with pytest.raises(DropoffCheckinDisabled):
         await comp.report.execute(
             ReportArrivalCommand(parent_id=PARENT, student_id=STUDENT, occurrence_id=OCC)

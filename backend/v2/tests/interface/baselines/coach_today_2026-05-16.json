@@ -46,7 +46,9 @@
       "status": "scheduled",
       "cancellation_reason": null,
       "trial_guests": [],
-      "recap_saved": false
+      "recap_saved": false,
+      "dropoff_window_opens_at": null,
+      "dropoff_window_closes_at": null
     },
     {
       "session_id": "s-today-2",
@@ -62,7 +64,9 @@
       "status": "scheduled",
       "cancellation_reason": null,
       "trial_guests": [],
-      "recap_saved": false
+      "recap_saved": false,
+      "dropoff_window_opens_at": null,
+      "dropoff_window_closes_at": null
     }
   ]
 }

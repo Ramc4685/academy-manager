@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -35,6 +35,15 @@ async def get_child_schedule(
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
     dropoff: DropoffCheckinComposition | None = Depends(optional_dropoff_checkins),
 ) -> ParentScheduleResponse:
+    # With drop-off on, a class that started stays listed through its
+    # check-in window and an hour after, so "I've arrived", "Checked in" and
+    # "not confirmed" stay reachable after the start time.
+    policy = await dropoff.reads.policy() if dropoff is not None else None
+    started_within = (
+        timedelta(minutes=policy.closes_minutes_after + 60)
+        if policy is not None and policy.enabled
+        else timedelta(0)
+    )
     try:
         entries, total = await use_cases.get_child_schedule(  # type: ignore[operator]
             parent_id=claims.user_id,
@@ -43,6 +52,7 @@ async def get_child_schedule(
             to=to,
             limit=limit,
             offset=offset,
+            include_started_within=started_within,
         )
     except StudentNotOwnedByParent as err:
         raise HTTPException(status_code=404, detail="Not found") from err

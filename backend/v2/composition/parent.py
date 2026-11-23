@@ -7,7 +7,7 @@ import hashlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol, TypeVar
 from zoneinfo import ZoneInfo
 
@@ -2722,6 +2722,7 @@ def compose_parent(
         to: date | None = None,
         limit: int = 50,
         offset: int = 0,
+        include_started_within: timedelta = timedelta(0),
     ):
         return await get_child_schedule_uc.execute(
             parent_id,
@@ -2730,6 +2731,7 @@ def compose_parent(
             to=to,
             limit=limit,
             offset=offset,
+            include_started_within=include_started_within,
         )
 
     async def resolve_assigned_classes(occurrence_ids: list[str]) -> dict[str, dict[str, Any]]:

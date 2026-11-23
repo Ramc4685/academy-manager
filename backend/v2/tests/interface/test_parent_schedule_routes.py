@@ -58,6 +58,7 @@ class _FakeParentUseCases:
         to,
         limit: int,
         offset: int,
+        include_started_within: timedelta = timedelta(0),
     ) -> tuple[list[ChildScheduleEntry], int]:
         if student_id not in self._owned_ids:
             raise StudentNotOwnedByParent("not owned")

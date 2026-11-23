@@ -129,6 +129,10 @@ class CoachSession(BaseModel):
     # True once the class recap names at least one taught skill, so Today can
     # point the coach at the latest class whose recap is still empty.
     recap_saved: bool = False
+    # Drop-off check-in window for this class date; None when the academy
+    # has it off. The roster refreshes itself while it is open.
+    dropoff_window_opens_at: datetime | None = None
+    dropoff_window_closes_at: datetime | None = None
 
 
 class CoachTodayResponse(BaseModel):

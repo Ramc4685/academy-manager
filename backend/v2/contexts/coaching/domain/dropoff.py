@@ -2,9 +2,13 @@
 class, staff confirm they have the child, and the confirmation writes the
 official attendance mark through ``MarkAttendance``.
 
-A check-in is never attendance by itself. Only ``confirmed`` (which carries
-the ``attendance_id`` of the mark) means the child was there. ``expired`` is
-derived, never stored: a report still ``reported`` after the window closes.
+A check-in is never attendance by itself, and the state callers show is
+derived from the attendance mark, not from the stored status: ``confirmed``
+means a non-voided present/late mark exists for that (occurrence, student),
+however it was written (this confirm, a manual tap or "Mark all present").
+A later void, or an Absent mark, therefore never reads as "Checked in".
+``expired`` is never stored: a report with no present mark after the window
+closes.
 """
 
 from __future__ import annotations
@@ -38,8 +42,8 @@ class DropoffCheckin(BaseModel):
     confirmed_by: str | None = None
     confirmed_at: datetime | None = None
     attendance_id: str | None = None
-    #: True when a mark already existed (a manual mark, voided or not), so the
-    #: confirmation linked to it instead of writing a second one.
+    #: True when a present/late mark already existed, so the confirmation
+    #: linked to it instead of writing a second one.
     reconciled_with_existing_mark: bool = False
 
 
@@ -74,15 +78,21 @@ def dropoff_window(
     )
 
 
+#: Attendance statuses that mean the child was there.
+PRESENT_STATUSES = frozenset({"present", "late"})
+
+
 def checkin_state(
-    row: DropoffCheckin | None, window: DropoffWindow, now: datetime
+    row: DropoffCheckin | None, window: DropoffWindow, now: datetime, *, marked_present: bool
 ) -> DropoffCheckinState:
+    """``marked_present``: a non-voided present/late mark exists."""
     if row is None:
         return "none"
-    if row.status == "confirmed":
+    if marked_present:
         return "confirmed"
-    # A ``confirming`` row is mid-write: staff already acted, so it never
-    # lapses; a retry finishes it.
-    if row.status == "reported" and now > window.closes_at:
+    # A ``confirming`` row past the window still finishes on a staff retry
+    # (ConfirmDropoff does not re-check the window for it); it just stops
+    # reading as pending, so nothing hangs on "Waiting for staff" forever.
+    if now > window.closes_at:
         return "expired"
     return "pending"
