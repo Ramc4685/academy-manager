@@ -4323,6 +4323,7 @@ def compose_admin(
         correct_attendance=attendance_corrections.correct,
         void_attendance=attendance_corrections.void,
         list_occurrence_attendance=attendance_corrections.list_for_occurrence,
+        list_attendance_review=attendance_corrections.review,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,

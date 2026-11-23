@@ -946,6 +946,129 @@
         "title": "AdminAiVideoConsentList",
         "type": "object"
       },
+      "AdminAttendanceCorrectionView": {
+        "properties": {
+          "attendance_id": {
+            "title": "Attendance Id",
+            "type": "string"
+          },
+          "corrected_at": {
+            "format": "date-time",
+            "title": "Corrected At",
+            "type": "string"
+          },
+          "corrected_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrected By Name"
+          },
+          "href": {
+            "title": "Href",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "previous_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "session_name": {
+            "title": "Session Name",
+            "type": "string"
+          },
+          "start_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attendance_id",
+          "occurrence_id",
+          "session_id",
+          "session_name",
+          "start_at",
+          "student_name",
+          "status",
+          "previous_status",
+          "corrected_at",
+          "corrected_by_name",
+          "reason",
+          "href"
+        ],
+        "title": "AdminAttendanceCorrectionView",
+        "type": "object"
+      },
+      "AdminAttendanceReviewView": {
+        "description": "Class dates with no marks (actionable) and recent corrections (review).\n\nA missing row carries no href: the client links it to the coach marking\nscreen (admins mark as coach supervisors), which needs the academy-local date.",
+        "properties": {
+          "corrections": {
+            "items": {
+              "$ref": "#/components/schemas/AdminAttendanceCorrectionView"
+            },
+            "title": "Corrections",
+            "type": "array"
+          },
+          "missing": {
+            "items": {
+              "$ref": "#/components/schemas/AdminMissingAttendanceView"
+            },
+            "title": "Missing",
+            "type": "array"
+          }
+        },
+        "required": [
+          "missing",
+          "corrections"
+        ],
+        "title": "AdminAttendanceReviewView",
+        "type": "object"
+      },
       "AdminAttentionItemView": {
         "properties": {
           "attention_id": {
@@ -978,7 +1101,8 @@
               "scheduled_action_failed",
               "billing_deferrals",
               "waivers",
-              "session_pressure"
+              "session_pressure",
+              "missing_attendance"
             ],
             "title": "Kind",
             "type": "string"
@@ -3484,6 +3608,40 @@
           "is_broadcast"
         ],
         "title": "AdminMessageView",
+        "type": "object"
+      },
+      "AdminMissingAttendanceView": {
+        "properties": {
+          "enrolled_count": {
+            "title": "Enrolled Count",
+            "type": "integer"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "session_name": {
+            "title": "Session Name",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "session_id",
+          "session_name",
+          "start_at",
+          "enrolled_count"
+        ],
+        "title": "AdminMissingAttendanceView",
         "type": "object"
       },
       "AdminMonthCloseAutopayRun": {
@@ -44569,6 +44727,27 @@
         "tags": [
           "admin.families",
           "admin.imports"
+        ]
+      }
+    },
+    "/api/v2/admin/inbox/attendance": {
+      "get": {
+        "operationId": "admin_inbox_attendance_api_v2_admin_inbox_attendance_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAttendanceReviewView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Admin Inbox Attendance",
+        "tags": [
+          "admin.inbox"
         ]
       }
     },

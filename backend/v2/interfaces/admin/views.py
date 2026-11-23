@@ -1973,6 +1973,8 @@ AdminAttentionKind = Literal[
     "billing_deferrals",
     "waivers",
     "session_pressure",
+    # A past class date with students on the roster and no marks at all.
+    "missing_attendance",
 ]
 
 

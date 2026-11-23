@@ -501,6 +501,7 @@ class AdminUseCases:
     # for fixtures that predate them; real admin composition always sets both.
     void_attendance: object | None = None  # VoidAttendance
     list_occurrence_attendance: object | None = None  # (occurrence_id) -> list[Attendance]
+    list_attendance_review: object | None = None  # ListAttendanceReview (Inbox Attendance tab)
     # Departures / holds (issue #697). Wired in composition/enrollment_holds.py
     # (never composition/admin.py — see that module's docstring) and attached
     # onto this already-built object in main.py, mirroring

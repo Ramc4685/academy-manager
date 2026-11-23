@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Request
 
 from backend.v2.interfaces.admin.academy_clock import academy_today
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
+from backend.v2.interfaces.admin.inbox_routes import missing_attendance_count
 from backend.v2.interfaces.admin.views import (
     AdminAttentionItemView,
     AdminAttentionList,
@@ -39,6 +40,7 @@ _SOURCE_LABELS: dict[str, str] = {
     "billing_deferral_warnings": "paused billing",
     "waivers": "waivers",
     "sessions": "today's classes",
+    "missing_attendance": "missing attendance",
 }
 
 
@@ -98,6 +100,25 @@ async def dashboard_attention(
                 severity="high",
                 href="/admin/inbox?tab=registrations",
                 count=pending_registrations,
+            )
+        )
+
+    # A class date that ended over 48h ago with nobody marked: the coach's own
+    # "Recent, not fully marked" reminder has stopped showing it.
+    missing_attendance = await read("missing_attendance", missing_attendance_count, 0, use_cases)
+    if missing_attendance:
+        items.append(
+            AdminAttentionItemView(
+                attention_id="missing-attendance",
+                kind="missing_attendance",
+                title="Attendance not taken",
+                detail=(
+                    f"{missing_attendance} class date{'s' if missing_attendance != 1 else ''} "
+                    f"{'have' if missing_attendance != 1 else 'has'} no attendance marks."
+                ),
+                severity="medium",
+                href="/admin/inbox?tab=attendance",
+                count=missing_attendance,
             )
         )
 
