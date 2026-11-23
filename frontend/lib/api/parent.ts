@@ -288,6 +288,8 @@ export interface ParentScheduleEntry {
   checkin?: DropoffCheckinView | null;
   /** Server-computed: the "I've arrived" button may be shown right now. */
   can_report_arrival?: boolean;
+  /** That absence's makeup state (only when reported). */
+  absence_makeup?: AbsenceMakeupView | null;
 }
 
 export type DropoffCheckinView = components["schemas"]["DropoffCheckinView"];
@@ -763,6 +765,24 @@ export interface AbsenceNoticeView {
   submitted_at: string;
   notice_window_met: boolean;
   missed_class?: AssignedClassView | null;
+  /** Where this absence stands with makeups; null when it couldn't be resolved. */
+  makeup?: AbsenceMakeupView | null;
+}
+
+/**
+ * Server-derived makeup state of a reported absence. "requested" is a pending
+ * request awaiting the academy. The client only displays it.
+ */
+export type AbsenceMakeupState = "reported" | "eligible" | "requested" | "booked" | "expired";
+
+export interface AbsenceMakeupView {
+  state: AbsenceMakeupState;
+  /** eligible: last day to request a makeup. */
+  expires_at?: string | null;
+  /** reported: why a past class can't be made up. */
+  reason?: string | null;
+  /** booked: the makeup class. */
+  booked_class?: AssignedClassView | null;
 }
 
 export function listParentAbsences(): Promise<{ notices: AbsenceNoticeView[] }> {

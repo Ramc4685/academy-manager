@@ -8088,6 +8088,24 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AbsenceMakeupView
+         * @description Where a reported absence stands: reported, makeup eligible, requested,
+         *     booked (with the makeup class) or expired. Decided server-side by the
+         *     same eligibility check a makeup request runs; the client only displays it.
+         */
+        AbsenceMakeupView: {
+            booked_class?: components["schemas"]["AssignedClassView"] | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "reported" | "eligible" | "requested" | "booked" | "expired";
+        };
         /** AbsenceNoticeAdminRow */
         AbsenceNoticeAdminRow: {
             /** Notice Id */
@@ -8121,6 +8139,7 @@ export interface components {
         };
         /** AbsenceNoticeView */
         AbsenceNoticeView: {
+            makeup?: components["schemas"]["AbsenceMakeupView"] | null;
             missed_class?: components["schemas"]["AssignedClassView"] | null;
             /** Notice Id */
             notice_id: string;
@@ -17513,6 +17532,7 @@ export interface components {
         };
         /** ParentScheduleEntryView */
         ParentScheduleEntryView: {
+            absence_makeup?: components["schemas"]["AbsenceMakeupView"] | null;
             /**
              * Absence Reported
              * @default false

@@ -18,6 +18,7 @@ from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers
     ESIGN_CONSENT_TEXT,
 )
 from backend.v2.interfaces.dropoff_views import DropoffCheckinView
+from backend.v2.interfaces.parent.absence_makeup import AbsenceMakeupView
 
 # --- Onboarding ---
 
@@ -517,6 +518,8 @@ class ParentScheduleEntryView(BaseModel):
     checkin: DropoffCheckinView | None = None
     # Server-computed: show "I've arrived" now.
     can_report_arrival: bool = False
+    # That absence's makeup state; only set when absence_reported.
+    absence_makeup: AbsenceMakeupView | None = None
 
 
 class ParentScheduleResponse(BaseModel):

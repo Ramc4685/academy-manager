@@ -56,6 +56,7 @@ import {
 import { OneTimeClassChip } from "@/components/parent/one-time-class";
 import { ArrivalCheckin } from "@/components/parent/arrival-checkin";
 import { dropoffRefetchInterval, parentArrivalView } from "@/lib/dropoff/checkin";
+import { AbsenceMakeupStatus } from "@/components/parent/absence-makeup-status";
 
 // Avatar gradients are shared with the kid-first Home cards so the same child
 // wears the same colour on both screens (lib/avatar-gradient.ts).
@@ -369,15 +370,29 @@ function SessionRow({
       )}
 
       {cancelled || !canReportAbsence || arrived ? null : submitted || entry.absence_reported ? (
-        // Text, not a disabled button: a disabled button is skipped by Tab,
-        // so keyboard and screen-reader users would never hear it.
-        <p
-          role="status"
-          data-testid={`absence-reported-${entry.occurrence_id}`}
-          className="text-xs font-semibold text-status-green-800"
-        >
-          {submitted ? "Absence reported" : ALREADY_REPORTED_LABEL}
-        </p>
+        <div>
+          {/* Text, not a disabled button: a disabled button is skipped by Tab,
+              so keyboard and screen-reader users would never hear it. */}
+          <p
+            role="status"
+            data-testid={`absence-reported-${entry.occurrence_id}`}
+            className="text-xs font-semibold text-status-green-800"
+          >
+            {submitted ? "Absence reported" : ALREADY_REPORTED_LABEL}
+          </p>
+          {/* A reported date also shows where it stands with makeups; a plain
+              "reported" adds nothing to "Already reported". */}
+          {!submitted &&
+            entry.absence_makeup &&
+            !(entry.absence_makeup.state === "reported" && !entry.absence_makeup.reason) && (
+            <AbsenceMakeupStatus
+              makeup={entry.absence_makeup}
+              studentId={studentId}
+              occurrenceId={entry.occurrence_id}
+              academyTimezone={academyTimezone}
+            />
+          )}
+        </div>
       ) : (
         <Button
           variant="secondary"

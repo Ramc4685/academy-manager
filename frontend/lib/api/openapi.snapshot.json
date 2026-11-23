@@ -1,6 +1,60 @@
 {
   "components": {
     "schemas": {
+      "AbsenceMakeupView": {
+        "description": "Where a reported absence stands: reported, makeup eligible, requested,\nbooked (with the makeup class) or expired. Decided server-side by the\nsame eligibility check a makeup request runs; the client only displays it.",
+        "properties": {
+          "booked_class": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssignedClassView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "state": {
+            "enum": [
+              "reported",
+              "eligible",
+              "requested",
+              "booked",
+              "expired"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "AbsenceMakeupView",
+        "type": "object"
+      },
       "AbsenceNoticeAdminRow": {
         "properties": {
           "notice_id": {
@@ -87,6 +141,16 @@
       },
       "AbsenceNoticeView": {
         "properties": {
+          "makeup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AbsenceMakeupView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "missed_class": {
             "anyOf": [
               {
@@ -26050,6 +26114,16 @@
       },
       "ParentScheduleEntryView": {
         "properties": {
+          "absence_makeup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AbsenceMakeupView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "absence_reported": {
             "default": false,
             "title": "Absence Reported",

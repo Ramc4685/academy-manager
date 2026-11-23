@@ -12,6 +12,7 @@ from backend.v2.contexts.enrollment.application.use_cases.get_child_schedule imp
     StudentNotOwnedByParent,
 )
 from backend.v2.interfaces.dropoff_views import DropoffCheckinView, optional_dropoff_checkins
+from backend.v2.interfaces.parent.absence_makeup import describe_absence_makeups
 from backend.v2.interfaces.parent.deps import ParentUseCases, get_parent_use_cases
 from backend.v2.interfaces.parent.views import ParentScheduleEntryView, ParentScheduleResponse
 from backend.v2.shared.auth.claims import AuthClaims
@@ -69,6 +70,10 @@ async def get_child_schedule(
         else None
     ) or {}
 
+    # Only dates this (ownership-checked) child already reported.
+    makeups = await describe_absence_makeups(
+        use_cases, [(student_id, e.occurrence_id) for e in entries if e.absence_reported]
+    )
     return ParentScheduleResponse(
         entries=[
             ParentScheduleEntryView(
@@ -91,6 +96,7 @@ async def get_child_schedule(
                 source=e.source,
                 cancellation_reason=e.cancellation_reason,
                 absence_reported=e.absence_reported,
+                absence_makeup=makeups.get((student_id, e.occurrence_id)),
             )
             for e in entries
         ],
