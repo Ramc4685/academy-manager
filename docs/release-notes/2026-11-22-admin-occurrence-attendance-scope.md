@@ -1,6 +1,6 @@
 # admin-occurrence-attendance-scope
 
-PR: TBD
+PR: #1226
 
 ## What changed
 Admin → Sessions → class → Class dates now shows the Attendance action for a date the coach has marked in any academy, not only the primary one. The class-date row counted attendance marks against the academy the server booted with (`primary_academy_id` / `default_academy_id`), so every other academy (the Demo Academy included) saw 0 marks and no Attendance action, and with colliding occurrence ids could see the boot academy's count instead. The count, the marked-by coaches and the last-marked time now come from the requesting academy. Dates with no marks still show no Attendance action. The admin user list (`ListAdminUsers` / `MongoUserRepository.list_users`) now requires an academy id instead of falling back to the boot academy when one is omitted; every caller already passed it.
