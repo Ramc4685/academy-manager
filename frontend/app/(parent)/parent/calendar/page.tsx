@@ -31,15 +31,10 @@ function scheduleRange(timeZone: string | null | undefined) {
 
 type View = "list" | "month";
 
-/**
- * Phones open on the list; a month grid is hard to read at 400px. A linked
- * date (`?occurrence=` from a cancellation push) always opens the list, where
- * that date is outlined.
- */
+/** Phones open on the list; a month grid is hard to read at 400px. */
 function useDefaultView(): [View, (view: View) => void] {
   const [view, setView] = useState<View>("list");
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("occurrence")) return;
     if (window.matchMedia?.("(min-width: 768px)").matches) setView("month");
   }, []);
   return [view, setView];
@@ -85,8 +80,11 @@ export default function ParentCalendarPage() {
       enabled: children.length > 0 && academyQuery.isSuccess,
     })),
   });
-  const [view, setView] = useDefaultView();
+  const [defaultView, setView] = useDefaultView();
+  // A cancellation push (`?occurrence=`) opens the list, where that date is outlined.
   const linkedOccurrenceId = useLinkedParam("occurrence");
+  const [picked, setPicked] = useState(false);
+  const view: View = linkedOccurrenceId && !picked ? "list" : defaultView;
 
   const isLoading =
     childrenLoading || academyQuery.isLoading || scheduleQueries.some((q) => q.isLoading);
@@ -137,7 +135,10 @@ export default function ParentCalendarPage() {
               key={option}
               type="button"
               aria-pressed={view === option}
-              onClick={() => setView(option)}
+              onClick={() => {
+                setPicked(true);
+                setView(option);
+              }}
               className={`rounded-md px-3 py-1 text-sm font-semibold ${
                 view === option ? "bg-rally-ink text-white" : "text-rally-muted"
               }`}
@@ -200,7 +201,8 @@ export default function ParentCalendarPage() {
           rows={listRows}
           timeZone={calendarZone.timeZone}
           publishedThrough={academyQuery.data?.schedule_published_through}
-          highlightOccurrenceId={linkedOccurrenceId}
+          // A failed schedule read must not claim the linked date is gone.
+          highlightOccurrenceId={isError ? null : linkedOccurrenceId}
         />
       ) : calendarZone.status === "ready" ? (
         <PersonaCalendarView events={events} timeZone={calendarZone.timeZone} monthFirst />

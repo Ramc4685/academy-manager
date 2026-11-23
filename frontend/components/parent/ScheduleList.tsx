@@ -46,7 +46,7 @@ export function ScheduleList({
   const missingNote = highlightMissing ? (
     <Card p={12}>
       <p data-testid="schedule-occurrence-missing" role="status" className="text-sm text-rally-muted">
-        That class date isn&apos;t on your upcoming schedule any more.
+        That class date isn&apos;t among the upcoming dates shown here. It may have passed or be further out.
       </p>
     </Card>
   ) : null;
