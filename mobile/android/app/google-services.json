@@ -22,11 +22,43 @@
           }
         },
         {
+          "client_id": "953230788846-0bbng6h8t50qi7alh2f3828q5kbt7719.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.courtmastr.academy",
+            "certificate_hash": "ef7a3ad5d7ffbc04631466f4c655a18e51d770df"
+          }
+        },
+        {
+          "client_id": "953230788846-fadt2f7o55qlb1ma8nevlajf6ibvrovk.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.courtmastr.academy",
+            "certificate_hash": "d6515990a676388d845d449b0a787cf4ce35b2e4"
+          }
+        },
+        {
+          "client_id": "953230788846-nav0ke88bm7ihharusf5iofgkldou4jn.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.courtmastr.academy",
+            "certificate_hash": "24324e890332377fc48a8ddeed923432aba92d5e"
+          }
+        },
+        {
           "client_id": "953230788846-nq17aoum0ad7m5j3ujnf0mj2g423570l.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.courtmastr.academy",
             "certificate_hash": "11d4e22ce20beaf8ff84c9e24453c037a89a530f"
+          }
+        },
+        {
+          "client_id": "953230788846-rj1oc6s1g785a0qjr92o64ei7u1pul74.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.courtmastr.academy",
+            "certificate_hash": "8f9647add5e7ff185ae92461dd079d17a36f136b"
           }
         },
         {
