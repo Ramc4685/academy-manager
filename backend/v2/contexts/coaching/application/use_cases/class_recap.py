@@ -47,6 +47,7 @@ from backend.v2.contexts.coaching.domain.class_recap import (
     merge_practice,
     resolve_report,
 )
+from backend.v2.contexts.coaching.domain.class_recap import MAX_GROUPS as MAX_GROUPS
 
 # Explicit re-exports: interfaces build commands and views from these without
 # importing the domain (tests/structural/test_layering.py).
@@ -60,6 +61,7 @@ from backend.v2.contexts.coaching.domain.class_recap import (
 from backend.v2.contexts.coaching.domain.class_recap import ChildPass as ChildPass
 from backend.v2.contexts.coaching.domain.class_recap import ChildPractice as ChildPractice
 from backend.v2.contexts.coaching.domain.class_recap import ClassReport as ClassReport
+from backend.v2.contexts.coaching.domain.class_recap import GroupLesson as GroupLesson
 from backend.v2.contexts.coaching.domain.class_recap import PassClaim as PassClaim
 from backend.v2.contexts.coaching.domain.errors import (
     RecapConflict,
@@ -160,6 +162,23 @@ class SkillOption(BaseModel):
     skill_id: str
     name: str
     level_name: str = ""
+
+
+class RecapGroup(BaseModel):
+    """A proficiency group in the class: the children on one level."""
+
+    model_config = {"frozen": True}
+
+    level_id: str
+    name: str
+    sequence: int
+    student_ids: list[str]
+
+
+class RecapGroupLookup(Protocol):
+    async def for_students(self, student_ids: list[str]) -> list[RecapGroup]:
+        """The level groups these children form, lowest level first."""
+        ...
 
 
 class RecapSkillCatalog(Protocol):
@@ -309,6 +328,29 @@ class ClassDemonstrationWriter(Protocol):
         ...
 
 
+def _group_lessons(
+    cmd: SaveClassRecapCommand, current: ClassRecap | None, taught: list[str]
+) -> tuple[GroupLesson, ...]:
+    if cmd.group_lessons is None:
+        # Kept as recorded, less any skill this save no longer teaches.
+        kept = current.group_lessons if current is not None else ()
+        trimmed = (
+            row.model_copy(update={"skill_ids": tuple(s for s in row.skill_ids if s in taught)})
+            for row in kept
+        )
+        return tuple(row for row in trimmed if row.skill_ids)
+    levels = [row.level_id for row in cmd.group_lessons]
+    if len(set(levels)) != len(levels):
+        raise RecapInvalid("one lesson per group", level_ids=sorted(levels))
+    untaught = sorted({s for row in cmd.group_lessons for s in row.skill_ids} - set(taught))
+    if untaught:
+        raise RecapInvalid("a group's skills must be taught in this class", skill_ids=untaught)
+    return tuple(
+        row.model_copy(update={"skill_ids": tuple(dict.fromkeys(row.skill_ids))})
+        for row in cmd.group_lessons
+    )
+
+
 async def _pass_receipts(
     writer: ClassDemonstrationWriter, occurrence_id: str, passes: tuple[ChildPass, ...]
 ) -> dict[tuple[str, str], PassReceipt]:
@@ -334,6 +376,8 @@ class SaveClassRecapCommand(BaseModel):
     practice: list[ChildPractice] = Field(default_factory=list, max_length=MAX_PARTICIPANTS)
     #: The class's passes, all of them; None keeps the current ones (a report).
     passes: list[PassClaim] | None = Field(default=None, max_length=MAX_PASSES)
+    #: What each level group worked on, all of them; None keeps the current ones.
+    group_lessons: list[GroupLesson] | None = Field(default=None, max_length=MAX_GROUPS)
     source: RecapSource = "direct"
     source_report_id: str | None = None
 
@@ -416,16 +460,19 @@ class SaveClassRecap:
             receipts = await _pass_receipts(self._writer, occ.occurrence_id, current.passes)
             uncounted = {pair for pair, r in receipts.items() if r == "not_recorded"}
         passes = self._passes(cmd, current, taught, marks, revision + 1, uncounted)
+        group_lessons = _group_lessons(cmd, current, taught)
 
         recap = ClassRecap(
             recap_id=current.recap_id if current is not None else str(new_ulid()),
             academy_id=self._academy_id(),
             occurrence_id=occ.occurrence_id,
-            session_id=occ.session_id,
+            # The batch the teaching plan reads history by (a term clone's template).
+            session_id=occ.template_session_id or occ.session_id,
             class_starts_at=occ.starts_at,
             taught_skill_ids=tuple(taught),
             practice=practice,
             passes=passes,
+            group_lessons=group_lessons,
             revision=revision + 1,
             last_mutation_id=cmd.mutation_id,
             source=cmd.source,
@@ -541,6 +588,8 @@ class ClassRecapState(BaseModel):
     reports: list[ClassReport]
     #: ``(student_id, skill_id) -> receipt`` for each of the recap's passes.
     pass_receipts: dict[tuple[str, str], PassReceipt] = Field(default_factory=dict)
+    #: The class's level groups, for recording what each worked on.
+    groups: list[RecapGroup] = Field(default_factory=list)
 
 
 class GetClassRecap:
@@ -554,7 +603,9 @@ class GetClassRecap:
         skills: RecapSkillCatalog,
         names: StudentNames,
         writer: ClassDemonstrationWriter | None = None,
+        groups: RecapGroupLookup | None = None,
     ) -> None:
+        self._groups = groups
         self._recaps = recaps
         self._reports = reports
         self._occurrences = occurrences
@@ -593,6 +644,11 @@ class GetClassRecap:
                 await _pass_receipts(self._writer, occurrence_id, recap.passes)
                 if self._writer is not None and recap is not None and recap.passes
                 else {}
+            ),
+            groups=(
+                await self._groups.for_students([r.student_id for r in roster])
+                if can_edit and self._groups is not None and roster
+                else []
             ),
         )
 

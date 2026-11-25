@@ -17,6 +17,7 @@ from backend.v2.contexts.coaching.application.use_cases.class_recap import (
     ListChildClassRecaps,
     ListOpenClassReportHandoffs,
     RecapActor,
+    RecapGroup,
     ResolveClassReport,
     SaveClassRecap,
     SaveClassRecapCommand,
@@ -28,6 +29,7 @@ from backend.v2.contexts.coaching.domain.class_recap import (
     ChildPractice,
     ClassRecap,
     ClassReport,
+    GroupLesson,
     PassClaim,
     PassStatement,
     PracticeClaim,
@@ -301,7 +303,7 @@ class World:
         )
         self.writer = writer
 
-    def get(self) -> GetClassRecap:
+    def get(self, groups: Any = None) -> GetClassRecap:
         return GetClassRecap(
             recaps=self.recaps,
             reports=self.reports,
@@ -310,6 +312,7 @@ class World:
             skills=Catalog(),
             names=Names(),
             writer=self.writer,
+            groups=groups,
         )
 
     def submit(
@@ -553,6 +556,70 @@ def _recap(**kw: Any) -> ClassRecap:
 
 
 # --- SaveClassRecap --------------------------------------------------------
+
+
+def _lesson(level_id: str, *skills: str) -> GroupLesson:
+    return GroupLesson(level_id=level_id, skill_ids=skills)
+
+
+async def test_group_lessons_are_saved_deduped_and_kept_when_omitted() -> None:
+    w = World()
+    saved = await w.save.execute(
+        _cmd(
+            taught_skill_ids=[GRIP, SMASH],
+            group_lessons=[_lesson("lvl-1", GRIP, GRIP), _lesson("lvl-3", SMASH)],
+        ),
+        LEAD_ACTOR,
+    )
+    assert saved.group_lessons == (_lesson("lvl-1", GRIP), _lesson("lvl-3", SMASH))
+    kept = await w.save.execute(
+        _cmd(mutation_id="m-2", expected_revision=1, taught_skill_ids=[GRIP, SMASH]), LEAD_ACTOR
+    )
+    assert kept.group_lessons == saved.group_lessons
+    # Un-teaching a skill drops it from the kept lessons, and an empty one goes.
+    trimmed = await w.save.execute(_cmd(mutation_id="m-3", expected_revision=2), LEAD_ACTOR)
+    assert trimmed.group_lessons == (_lesson("lvl-1", GRIP),)
+
+
+async def test_a_term_clone_recap_is_filed_under_its_template_batch() -> None:
+    # The teaching plan reads a batch's history by the template session.
+    plain = await World().save.execute(_cmd(), LEAD_ACTOR)
+    clone = await World(template_session_id="tmpl-1").save.execute(_cmd(), LEAD_ACTOR)
+    assert (plain.session_id, clone.session_id) == (SESSION, "tmpl-1")
+
+
+@pytest.mark.parametrize(
+    "lessons",
+    [
+        [_lesson("lvl-1", GRIP), _lesson("lvl-1", GRIP)],  # one lesson per group
+        [_lesson("lvl-1", SMASH)],  # not taught in this class
+    ],
+)
+async def test_a_group_lesson_needs_its_own_group_and_taught_skills(
+    lessons: list[GroupLesson],
+) -> None:
+    w = World()
+    with pytest.raises(RecapInvalid):
+        await w.save.execute(_cmd(group_lessons=lessons), LEAD_ACTOR)
+    assert w.recaps.saves == 0
+
+
+class Groups:
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    async def for_students(self, student_ids: list[str]) -> list[RecapGroup]:
+        self.calls.append(student_ids)
+        return [RecapGroup(level_id="lvl-1", name="Level 1", sequence=1, student_ids=["maya"])]
+
+
+async def test_the_class_groups_are_read_once_for_an_editor_only() -> None:
+    w, groups = World(), Groups()
+    lead = await w.get(groups).execute(OCC, LEAD_ACTOR)
+    assistant = await w.get(groups).execute(OCC, ASSIST_ACTOR)
+    assert [g.level_id for g in lead.groups] == ["lvl-1"]
+    assert assistant.groups == []
+    assert [sorted(c) for c in groups.calls] == [[r.student_id for r in lead.roster]]
 
 
 async def test_direct_entry_records_split_practice_and_other_level_skill() -> None:

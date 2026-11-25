@@ -77,6 +77,7 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_criterion_repo import (
 from backend.v2.contexts.curriculum.infrastructure.mongo_lesson_card_repo import (
     MongoLessonCardRepository,
 )
+from backend.v2.contexts.curriculum.infrastructure.mongo_level_repo import MongoLevelRepository
 from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
     MongoCurriculumVideoRefRepository,
 )
@@ -563,6 +564,8 @@ def compose_coach(
         criteria=MongoCriterionRepository(db),
         # The plan teaches the day's class, the same roster the register shows.
         occurrence_roster=get_occurrence_roster,
+        recap_history=MongoClassRecapRepository(db),
+        levels=MongoLevelRepository(db),
     )
 
     # Attendance eligibility reads the same one-time roster the coach sees (#672).

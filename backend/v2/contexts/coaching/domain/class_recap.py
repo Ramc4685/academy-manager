@@ -8,6 +8,9 @@ One recap per occurrence.
 * ``practice`` holds practised skills PER CHILD (Maya only practised X, Leo
   only Y). Every practised skill is also taught, and every credited child must
   be marked present (or late) for that occurrence.
+* ``group_lessons`` holds what each proficiency group (a curriculum level)
+  actually worked on, so the next class's plan rotates from real delivery.
+  Its skills are also taught skills; it credits no child.
 * A recap never passes a skill. Passes belong to the existing pass pipeline
   (tap-to-master / test attempts); a report's pass claim is a follow-up only.
 
@@ -64,6 +67,18 @@ class ChildPass(BaseModel):
     settled: bool = False
 
 
+MAX_GROUPS = 12
+
+
+class GroupLesson(BaseModel):
+    """What one proficiency group (the children on ``level_id``) worked on."""
+
+    model_config = {"frozen": True}
+
+    level_id: str = Field(min_length=1, max_length=64)
+    skill_ids: tuple[str, ...] = Field(min_length=1, max_length=MAX_TAUGHT_SKILLS)
+
+
 class ClassRecap(BaseModel):
     model_config = {"frozen": True}
 
@@ -75,6 +90,7 @@ class ClassRecap(BaseModel):
     taught_skill_ids: tuple[str, ...] = ()
     practice: tuple[ChildPractice, ...] = ()
     passes: tuple[ChildPass, ...] = ()
+    group_lessons: tuple[GroupLesson, ...] = ()
     revision: int = Field(default=0, ge=0)
     last_mutation_id: str | None = None
     source: RecapSource = "direct"

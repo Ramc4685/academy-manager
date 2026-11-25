@@ -16,10 +16,16 @@ from backend.v2.contexts.coaching.application.use_cases.class_recap import (
     ChildRecapPage,
     ChildRecapSkill,
     ClassRecapState,
+    RecapGroup,
     RecapRosterEntry,
     SkillOption,
 )
-from backend.v2.contexts.coaching.domain.class_recap import ChildPractice, ClassRecap, ClassReport
+from backend.v2.contexts.coaching.domain.class_recap import (
+    ChildPractice,
+    ClassRecap,
+    ClassReport,
+    GroupLesson,
+)
 from backend.v2.contexts.coaching.domain.errors import RecapWriteForbidden
 from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.coach.router import router as coach_router
@@ -49,6 +55,7 @@ RECAP = ClassRecap(
     revision=3,
     updated_by="coach-1",
     updated_at=NOW,
+    group_lessons=(GroupLesson(level_id="lvl-1", skill_ids=("skill-l1",)),),
 )
 REPORT = ClassReport(
     report_id="r-1",
@@ -99,6 +106,7 @@ class GetSpy(Spy):
             skill_options=[SkillOption(skill_id="skill-l1", name="Forehand grip", level_name="L1")],
             skill_names={"skill-l1": "Forehand grip", "skill-l3": "Jump smash"},
             reports=[REPORT],
+            groups=[RecapGroup(level_id="lvl-1", name="Level 1", sequence=1, student_ids=["maya"])],
         )
 
 
@@ -261,3 +269,20 @@ def test_parent_sees_only_own_child_view_without_report_text() -> None:
 
 def test_coach_cannot_use_the_parent_route() -> None:
     assert _client(("coach",)).get("/api/v2/parent/students/maya/class-recaps").status_code == 404
+
+
+def test_group_lessons_round_trip_and_omitting_them_keeps_the_recorded_ones() -> None:
+    client = _client(("coach",))
+    base = {"class_starts_at": WHEN, "mutation_id": "m-1", "expected_revision": 3}
+    body = client.put(
+        RECAP_ROUTE,
+        json={**base, "group_lessons": [{"level_id": "lvl-1", "skill_ids": ["skill-l1"]}]},
+    ).json()
+    assert body["groups"] == [{"level_id": "lvl-1", "name": "Level 1", "student_ids": ["maya"]}]
+    assert body["group_lessons"] == [{"level_id": "lvl-1", "skill_ids": ["skill-l1"]}]
+    client.put(RECAP_ROUTE, json={**base, "mutation_id": "m-2"})
+    sent, kept = (c[0] for c in client.composition.save.calls)  # type: ignore[attr-defined]
+    assert [(g.level_id, g.skill_ids) for g in sent.group_lessons] == [("lvl-1", ("skill-l1",))]
+    assert kept.group_lessons is None
+    empty = {**base, "group_lessons": [{"level_id": "lvl-1", "skill_ids": []}]}
+    assert client.put(RECAP_ROUTE, json=empty).status_code == 422

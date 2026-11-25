@@ -30,6 +30,7 @@ from backend.v2.contexts.coaching.application.use_cases.class_recap import (
     ListChildClassRecaps,
     ListOpenClassReportHandoffs,
     PassReceipt,
+    RecapGroup,
     ResolveClassReport,
     SaveClassRecap,
     SkillOption,
@@ -80,6 +81,9 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
 from backend.v2.contexts.student_progress.application.use_cases.mark_skill_mastered import (
     MarkSkillMastered,
     MarkSkillMasteredCommand,
+)
+from backend.v2.contexts.student_progress.infrastructure.mongo_level_progress_repo import (
+    MongoStudentLevelProgressRepository,
 )
 from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_repo import (
     MongoStudentSkillProgressRepository,
@@ -135,6 +139,38 @@ class CurriculumRecapSkills:
             for s in await self._skills.list_by_ids(skill_ids)
             if s.is_active or not active_only
         }
+
+
+class ActiveLevelGroups:
+    """``RecapGroupLookup``: children grouped by their active level in the
+    default program (one bulk read); unplaced children form no group."""
+
+    def __init__(self, *, level_progress: Any, levels: Any, resolve_default_program: Any) -> None:
+        self._level_progress = level_progress
+        self._levels = levels
+        self._resolve_default_program = resolve_default_program
+
+    async def for_students(self, student_ids: list[str]) -> list[RecapGroup]:
+        try:
+            program = await self._resolve_default_program.execute()
+        except DomainError:
+            return []
+        program_id = str(program.program_id)
+        members: dict[str, list[str]] = {}
+        for row in await self._level_progress.list_active_for_students(student_ids, program_id):
+            members.setdefault(str(row.level_id), []).append(str(row.student_id))
+        levels = {str(lvl.level_id): lvl for lvl in await self._levels.list_for_program(program_id)}
+        groups = [
+            RecapGroup(
+                level_id=lid,
+                name=str(levels[lid].name),
+                sequence=int(levels[lid].sequence),
+                student_ids=sorted(ids),
+            )
+            for lid, ids in members.items()
+            if lid in levels
+        ]
+        return sorted(groups, key=lambda g: (g.sequence, g.level_id))
 
 
 class EnrollmentStudentNames:
@@ -344,10 +380,10 @@ def compose_class_recap(
     occurrence_rows = MongoSessionOccurrenceRepository(db)
     occurrences = EnrollmentOccurrenceLookup(occurrence_rows)
     attendance = MongoAttendanceRepository(db)
+    levels = MongoLevelRepository(db)
+    resolve_program = ResolveDefaultActiveProgram(programs=MongoProgramRepository(db))
     skills = CurriculumRecapSkills(
-        skills=MongoSkillRepository(db),
-        levels=MongoLevelRepository(db),
-        resolve_default_program=ResolveDefaultActiveProgram(programs=MongoProgramRepository(db)),
+        skills=MongoSkillRepository(db), levels=levels, resolve_default_program=resolve_program
     )
     students = MongoStudentRepository(db)
     names = EnrollmentStudentNames(students)
@@ -396,6 +432,11 @@ def compose_class_recap(
             skills=skills,
             names=names,
             writer=writer,
+            groups=ActiveLevelGroups(
+                level_progress=MongoStudentLevelProgressRepository(db),
+                levels=levels,
+                resolve_default_program=resolve_program,
+            ),
         ),
         save=save,
         submit_report=SubmitClassReport(

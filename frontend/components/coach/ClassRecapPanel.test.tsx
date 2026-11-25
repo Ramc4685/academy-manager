@@ -125,6 +125,23 @@ describe("ClassRecapPanel", () => {
     expect(html).not.toContain('data-testid="pass-leo-');
   });
 
+  it("records what each level group worked on, over the taught skills", () => {
+    const groups = [
+      { level_id: "l1", name: "Level 1", student_ids: ["maya"] },
+      { level_id: "l3", name: "Level 3", student_ids: ["leo"] },
+    ];
+    const html = render({
+      groups,
+      group_lessons: [{ level_id: "l1", skill_ids: ["sk-x"] }],
+    });
+    expect(html).toContain("What each group worked on");
+    expect(pressed(html, "group-l1-sk-x")).toBe("true");
+    expect(pressed(html, "group-l1-sk-y")).toBe("false");
+    expect(pressed(html, "group-l3-sk-y")).toBe("false");
+    expect(render({ can_edit: false, groups })).not.toContain("recap-groups");
+    expect(render({ groups: [] })).not.toContain("recap-groups");
+  });
+
   it("never offers practice for an absent child", () => {
     const html = render();
     expect(html).not.toContain("practice-ana-");

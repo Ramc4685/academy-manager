@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from backend.v2.composition.class_recap import ClassRecapComposition
 from backend.v2.contexts.coaching.application.use_cases.class_recap import (
+    MAX_GROUPS,
     MAX_PARTICIPANTS,
     MAX_PASSES,
     MAX_TAUGHT_SKILLS,
@@ -28,6 +29,7 @@ from backend.v2.contexts.coaching.application.use_cases.class_recap import (
     ChildPractice,
     ClassRecapState,
     ClassReport,
+    GroupLesson,
     PassClaim,
     RecapActor,
     SaveClassRecapCommand,
@@ -69,6 +71,17 @@ class ChildPassView(BaseModel):
     added_revision: int
 
 
+class GroupLessonView(BaseModel):
+    level_id: str = Field(min_length=1, max_length=64)
+    skill_ids: list[str] = Field(min_length=1, max_length=MAX_TAUGHT_SKILLS)
+
+
+class RecapGroupView(BaseModel):
+    level_id: str
+    name: str
+    student_ids: list[str]
+
+
 class ClassReportView(BaseModel):
     report_id: str
     is_mine: bool
@@ -97,6 +110,9 @@ class ClassRecapView(BaseModel):
     roster: list[RecapRosterView]
     skill_options: list[RecapSkillView]
     reports: list[ClassReportView]
+    #: The class's level groups and what each worked on.
+    groups: list[RecapGroupView]
+    group_lessons: list[GroupLessonView]
 
 
 class SaveClassRecapBody(BaseModel):
@@ -107,6 +123,8 @@ class SaveClassRecapBody(BaseModel):
     practice: list[ChildPracticeView] = Field(default_factory=list, max_length=MAX_PARTICIPANTS)
     #: Every pass of this class; omitted keeps the recorded ones.
     passes: list[PassClaimView] | None = Field(default=None, max_length=MAX_PASSES)
+    #: What each level group worked on; omitted keeps the recorded lessons.
+    group_lessons: list[GroupLessonView] | None = Field(default=None, max_length=MAX_GROUPS)
 
 
 class SubmitClassReportBody(BaseModel):
@@ -181,6 +199,14 @@ def _view(state: ClassRecapState, *, ai_enabled: bool, actor: RecapActor) -> Cla
         roster=[RecapRosterView(**r.model_dump()) for r in state.roster],
         skill_options=[RecapSkillView(**o.model_dump()) for o in state.skill_options],
         reports=[_report_view(r, actor.user_id) for r in state.reports],
+        groups=[
+            RecapGroupView(level_id=g.level_id, name=g.name, student_ids=g.student_ids)
+            for g in state.groups
+        ],
+        group_lessons=[
+            GroupLessonView(level_id=g.level_id, skill_ids=list(g.skill_ids))
+            for g in (recap.group_lessons if recap is not None else ())
+        ],
     )
 
 
@@ -218,6 +244,14 @@ async def save_class_recap(
                 None
                 if body.passes is None
                 else [PassClaim(student_id=p.student_id, skill_id=p.skill_id) for p in body.passes]
+            ),
+            group_lessons=(
+                None
+                if body.group_lessons is None
+                else [
+                    GroupLesson(level_id=g.level_id, skill_ids=tuple(g.skill_ids))
+                    for g in body.group_lessons
+                ]
             ),
         ),
         actor,

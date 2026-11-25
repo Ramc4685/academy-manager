@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   creditEveryone,
+  lessonsWithoutSkill,
   nextReportAttempt,
   practiceEligible,
+  toggleGroupSkill,
   togglePractice,
   withoutSkill,
 } from "./class-recap";
@@ -82,5 +84,26 @@ describe("class recap practice helpers", () => {
       attendance,
     }));
     expect(practiceEligible(roster).map((r) => r.student_id)).toEqual(["s0", "s1"]);
+  });
+});
+
+describe("group lessons", () => {
+  it("toggles one group's skill and drops a group left with none", () => {
+    const one = toggleGroupSkill([], "l1", "grip");
+    expect(one).toEqual([{ level_id: "l1", skill_ids: ["grip"] }]);
+    const two = toggleGroupSkill(one, "l2", "clear");
+    expect(toggleGroupSkill(two, "l1", "grip")).toEqual([
+      { level_id: "l2", skill_ids: ["clear"] },
+    ]);
+  });
+
+  it("removes an un-taught skill from every group", () => {
+    const lessons = [
+      { level_id: "l1", skill_ids: ["grip", "clear"] },
+      { level_id: "l2", skill_ids: ["clear"] },
+    ];
+    expect(lessonsWithoutSkill(lessons, "clear")).toEqual([
+      { level_id: "l1", skill_ids: ["grip"] },
+    ]);
   });
 });

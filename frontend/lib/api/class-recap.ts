@@ -38,6 +38,19 @@ export interface ChildPassView extends ClassPass {
   added_revision: number;
 }
 
+/** What one level group of the class worked on. */
+export interface GroupLesson {
+  level_id: string;
+  skill_ids: string[];
+}
+
+/** A level group in the class: the present children on one level. */
+export interface RecapGroup {
+  level_id: string;
+  name: string;
+  student_ids: string[];
+}
+
 export interface RecapRosterEntry {
   student_id: string;
   name: string;
@@ -74,6 +87,8 @@ export interface ClassRecapView {
   roster: RecapRosterEntry[];
   skill_options: RecapSkill[];
   reports: ClassReport[];
+  groups?: RecapGroup[];
+  group_lessons?: GroupLesson[];
 }
 
 export interface SaveClassRecapBody {
@@ -84,6 +99,8 @@ export interface SaveClassRecapBody {
   practice: ChildPractice[];
   /** Every pass of this class: saved ones must stay listed. */
   passes: ClassPass[];
+  /** What each level group worked on; feeds the next class's teaching plan. */
+  group_lessons: GroupLesson[];
 }
 
 export interface SubmitClassReportBody {

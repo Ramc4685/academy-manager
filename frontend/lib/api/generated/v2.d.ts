@@ -13127,6 +13127,10 @@ export interface components {
              * Format: date-time
              */
             class_starts_at: string;
+            /** Group Lessons */
+            group_lessons: components["schemas"]["GroupLessonView"][];
+            /** Groups */
+            groups: components["schemas"]["RecapGroupView"][];
             /** Occurrence Id */
             occurrence_id: string;
             /** Passes */
@@ -15680,6 +15684,13 @@ export interface components {
              */
             period_start: string;
         };
+        /** GroupLessonView */
+        GroupLessonView: {
+            /** Level Id */
+            level_id: string;
+            /** Skill Ids */
+            skill_ids: string[];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -16194,6 +16205,12 @@ export interface components {
         };
         /** LevelTeachingGroup */
         LevelTeachingGroup: {
+            assignment?: components["schemas"]["TeachingAssignment"] | null;
+            /**
+             * History Known
+             * @default false
+             */
+            history_known: boolean;
             lesson_card?: components["schemas"]["LessonCardView"] | null;
             /** Level Id */
             level_id: string;
@@ -16201,6 +16218,7 @@ export interface components {
             level_name: string;
             /** Level Sequence */
             level_sequence: number;
+            reinforcement?: components["schemas"]["TeachingAssignment"] | null;
             /** Students */
             students?: components["schemas"]["StudentFocusView"][];
             /** Youtube Links */
@@ -19080,6 +19098,15 @@ export interface components {
             /** Label */
             label: string | null;
         };
+        /** RecapGroupView */
+        RecapGroupView: {
+            /** Level Id */
+            level_id: string;
+            /** Name */
+            name: string;
+            /** Student Ids */
+            student_ids: string[];
+        };
         /** RecapRosterView */
         RecapRosterView: {
             /** Attendance */
@@ -19685,6 +19712,8 @@ export interface components {
             class_starts_at: string;
             /** Expected Revision */
             expected_revision: number;
+            /** Group Lessons */
+            group_lessons?: components["schemas"]["GroupLessonView"][] | null;
             /** Mutation Id */
             mutation_id: string;
             /** Passes */
@@ -20628,6 +20657,20 @@ export interface components {
             /** Total */
             total: number;
         };
+        /**
+         * StudentVariation
+         * @description A child in the group whose own next skill the drill does not cover.
+         */
+        StudentVariation: {
+            /** Skill Id */
+            skill_id: string;
+            /** Skill Name */
+            skill_name: string;
+            /** Student Id */
+            student_id: string;
+            /** Student Name */
+            student_name: string;
+        };
         /** SubmitClassReportBody */
         SubmitClassReportBody: {
             /**
@@ -20796,6 +20839,26 @@ export interface components {
             provider: string;
             /** Reason */
             reason: string;
+        };
+        /** TeachingAssignment */
+        TeachingAssignment: {
+            card: components["schemas"]["LessonCardView"];
+            /** Cue */
+            cue?: string | null;
+            /**
+             * Is Repeat
+             * @default false
+             */
+            is_repeat: boolean;
+            /** Last Taught At */
+            last_taught_at?: string | null;
+            /**
+             * Need Count
+             * @default 0
+             */
+            need_count: number;
+            /** Variations */
+            variations?: components["schemas"]["StudentVariation"][];
         };
         /** TechniqueObservationBody */
         TechniqueObservationBody: {

@@ -36,6 +36,9 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_ledger_repo import
 from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_plan import (
     GenerateDailyTeachingPlan,
 )
+from backend.v2.contexts.coaching.infrastructure.mongo_class_recap_repo import (
+    MongoClassRecapRepository,
+)
 from backend.v2.contexts.communications.application.digest_renderer import ExpectedAbsence
 from backend.v2.contexts.communications.application.parent_digest_view import (
     ChildDigestView,
@@ -438,6 +441,8 @@ def _build_digest_parts(db: AsyncIOMotorDatabase[Any]) -> _DigestParts:
         lesson_cards=MongoLessonCardRepository(db),
         video_refs=MongoCurriculumVideoRefRepository(db),
         criteria=MongoCriterionRepository(db),
+        recap_history=MongoClassRecapRepository(db),
+        levels=MongoLevelRepository(db),
     )
     plan_provider = _CoachDigestPlanProvider(generate=generate, curriculum=curriculum)
 

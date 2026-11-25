@@ -12,23 +12,35 @@ from __future__ import annotations
 
 import importlib
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from backend.v2.composition.class_recap import CurriculumRecapSkills, SkillProgressPasses
+from backend.v2.composition.class_recap import (
+    ActiveLevelGroups,
+    CurriculumRecapSkills,
+    SkillProgressPasses,
+)
 from backend.v2.contexts.coaching.domain.class_recap import (
     ChildPass,
     ChildPractice,
     ClassRecap,
     ClassReport,
+    GroupLesson,
 )
 from backend.v2.contexts.coaching.infrastructure.mongo_class_recap_repo import (
     MongoClassRecapRepository,
     MongoClassReportRepository,
     StudentConfirmedAttendance,
 )
+from backend.v2.contexts.curriculum.domain.models import Level
+from backend.v2.contexts.curriculum.infrastructure.mongo_level_repo import MongoLevelRepository
 from backend.v2.contexts.curriculum.infrastructure.mongo_skill_repo import MongoSkillRepository
+from backend.v2.contexts.student_progress.domain.models import StudentLevelProgress
+from backend.v2.contexts.student_progress.infrastructure.mongo_level_progress_repo import (
+    MongoStudentLevelProgressRepository,
+)
 from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_repo import (
     MongoStudentSkillProgressRepository,
 )
@@ -316,3 +328,110 @@ async def test_coach_today_recap_lookup_counts_only_recaps_with_a_taught_skill(
         assert await lookup(["occ-1", "occ-2", "occ-3"]) == {"occ-1"}
     with tenant_scope(OTHER):
         assert await lookup(["occ-1"]) == set()
+
+
+async def test_group_lessons_round_trip_and_a_batch_reads_its_earlier_recaps(
+    real_db: Any,
+) -> None:
+    """The teaching plan's history read: one batch, strictly before the
+    class, newest first, capped, tenant scoped; group lessons persist."""
+    repo = MongoClassRecapRepository(real_db)
+    lessons = (
+        GroupLesson(level_id="lvl-1", skill_ids=("skill-a",)),
+        GroupLesson(level_id="lvl-2", skill_ids=("skill-b",)),
+    )
+    with tenant_scope(ACADEMY):
+        for day in range(4):
+            await repo.save(
+                _recap(
+                    1,
+                    recap_id=f"rc-{day}",
+                    occurrence_id=f"occ-{day}",
+                    class_starts_at=NOW - timedelta(days=day),
+                    group_lessons=lessons if day == 1 else (),
+                ),
+                expected_revision=0,
+            )
+        await repo.save(
+            _recap(1, recap_id="rc-x", occurrence_id="occ-x", session_id="sess-2"),
+            expected_revision=0,
+        )
+        assert (await repo.get("occ-1")).group_lessons == lessons  # type: ignore[union-attr]
+        earlier = await repo.list_for_session_before("sess-1", before=NOW, limit=2)
+        assert [r.occurrence_id for r in earlier] == ["occ-1", "occ-2"]
+        assert earlier[0].group_lessons == lessons
+    with tenant_scope(OTHER):
+        assert await repo.list_for_session_before("sess-1", before=NOW, limit=5) == []
+
+
+async def test_migration_0248_backs_the_batch_history_read(real_db: Any) -> None:
+    migration = importlib.import_module("backend.v2.migrations.0248_class_recaps_session_index")
+    await migration.up(real_db)  # re-running is a no-op
+    await migration.up(real_db)
+    index = (await real_db["class_recaps"].index_information())["class_recaps_session_idx"]
+    assert index["key"] == [("academy_id", 1), ("session_id", 1), ("class_starts_at", -1)]
+    plan = (
+        await real_db["class_recaps"]
+        .find({"academy_id": ACADEMY, "session_id": "sess-1", "class_starts_at": {"$lt": NOW}})
+        .sort([("class_starts_at", -1)])
+        .explain()
+    )
+    assert "class_recaps_session_idx" in str(plan["queryPlanner"]["winningPlan"])
+
+
+async def test_recap_groups_are_the_childrens_active_levels_lowest_first(real_db: Any) -> None:
+    levels, progress = MongoLevelRepository(real_db), MongoStudentLevelProgressRepository(real_db)
+    with tenant_scope(ACADEMY):
+        for seq, level_id, active in ((2, "lvl-2", True), (1, "lvl-1", True), (3, "lvl-3", False)):
+            await levels.save(
+                Level(
+                    level_id=level_id,
+                    program_id="prog-1",
+                    academy_id=ACADEMY,
+                    sequence=seq,
+                    name=f"Level {seq}",
+                    is_active=active,
+                    created_at=NOW,
+                    updated_at=NOW,
+                    created_by="owner",
+                )
+            )
+        for student, level_id, status in (
+            ("maya", "lvl-2", "active"),
+            ("leo", "lvl-1", "active"),
+            ("ada", "lvl-1", "active"),
+            ("old", "lvl-1", "completed"),  # moved on: no longer in that group
+            ("ret", "lvl-3", "active"),  # retired level: no group
+            ("new", "lvl-1", "active"),  # not in this class
+        ):
+            await progress.save(
+                StudentLevelProgress(
+                    progress_id=f"lp-{student}",
+                    academy_id=ACADEMY,
+                    student_id=student,
+                    program_id="prog-1",
+                    level_id=level_id,
+                    status=status,  # type: ignore[arg-type]
+                    started_at=NOW,
+                    created_at=NOW,
+                )
+            )
+
+        class _Program:
+            async def execute(self) -> Any:
+                return SimpleNamespace(program_id="prog-1")
+
+        groups = await ActiveLevelGroups(
+            level_progress=progress, levels=levels, resolve_default_program=_Program()
+        ).for_students(["maya", "leo", "ada", "old", "ret"])
+    assert [(g.level_id, g.name, g.student_ids) for g in groups] == [
+        ("lvl-1", "Level 1", ["ada", "leo"]),
+        ("lvl-2", "Level 2", ["maya"]),
+    ]
+    with tenant_scope(OTHER):
+        assert (
+            await ActiveLevelGroups(
+                level_progress=progress, levels=levels, resolve_default_program=_Program()
+            ).for_students(["maya"])
+            == []
+        )

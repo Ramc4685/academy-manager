@@ -21,6 +21,7 @@ from backend.v2.contexts.coaching.domain.class_recap import (
     ChildPractice,
     ClassRecap,
     ClassReport,
+    GroupLesson,
     PassClaim,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository
@@ -51,6 +52,10 @@ class MongoClassRecapRepository(TenantScopedRepository):
                 )
                 for row in doc.get("passes") or ()
             ),
+            group_lessons=tuple(
+                GroupLesson(level_id=str(row["level_id"]), skill_ids=tuple(row["skill_ids"]))
+                for row in doc.get("group_lessons") or ()
+            ),
             revision=int(doc.get("revision") or 0),
             last_mutation_id=doc.get("last_mutation_id"),
             source=doc.get("source") or "direct",
@@ -71,6 +76,10 @@ class MongoClassRecapRepository(TenantScopedRepository):
             for row in recap.practice
         ]
         body["passes"] = [row.model_dump() for row in recap.passes]
+        body["group_lessons"] = [
+            {"level_id": row.level_id, "skill_ids": list(row.skill_ids)}
+            for row in recap.group_lessons
+        ]
         if expected_revision == 0:
             try:
                 await self._insert_one(body)
@@ -82,6 +91,16 @@ class MongoClassRecapRepository(TenantScopedRepository):
             {"$set": body},
         )
         return bool(result.matched_count)
+
+    async def list_for_session_before(
+        self, session_id: str, *, before: datetime, limit: int
+    ) -> list[ClassRecap]:
+        cursor = self._find_many(
+            {"session_id": session_id, "class_starts_at": {"$lt": before}},
+            sort=[("class_starts_at", -1)],  # one recap per class: no tie to break
+            limit=limit,
+        )
+        return [self._to_domain(doc) async for doc in cursor]
 
     async def settle_passes(
         self, occurrence_id: str, *, revision: int, pairs: list[tuple[str, str]]
