@@ -5741,3 +5741,49 @@ async def test_reopened_due_date_counts_from_the_academy_local_date() -> None:
     assert await HandleWebhookEvent._academy_today(uc, "acad") == date(2026, 11, 15)  # type: ignore[arg-type]
     uc._academy_timezone = None
     assert await HandleWebhookEvent._academy_today(uc, "acad") == date(2026, 11, 16)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Issue #983: invoice / subscription hydration reads the event's account
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "object_id", "reads_attr"),
+    [
+        ("invoice.paid", "in_connect", "retrieved_invoices"),
+        ("customer.subscription.updated", "sub_connect", "retrieved_subscriptions"),
+    ],
+)
+async def test_hydration_reads_invoice_and_subscription_on_the_events_account(
+    event_type: str, object_id: str, reads_attr: str
+) -> None:
+    stripe = FakeStripeGateway()
+    stripe.register_object(object_id, stripe_account="acct_b")
+    uc = _build_ingest_handler(FakeDedup())
+    uc._stripe = stripe
+    event = {
+        "id": "evt_h",
+        "type": event_type,
+        "account": "acct_b",
+        "data": {"object": {"id": object_id}},
+    }
+
+    await uc._hydrate_current_stripe_object(event_type, event)
+
+    assert getattr(stripe, reads_attr) == [(object_id, "acct_b")]
+
+
+@pytest.mark.asyncio
+async def test_fake_gateway_refuses_a_platform_read_of_a_connected_invoice() -> None:
+    """Mirrors Stripe's resource_missing, so a dropped account kwarg fails tests."""
+    from backend.v2.contexts.billing.application.ports import StripeResourceNotFound
+
+    stripe = FakeStripeGateway()
+    stripe.register_object("in_connect", stripe_account="acct_b")
+
+    with pytest.raises(StripeResourceNotFound):
+        await stripe.retrieve_invoice("in_connect")
+    with pytest.raises(StripeResourceNotFound):
+        await stripe.retrieve_subscription("in_connect")

@@ -167,7 +167,8 @@ async def test_a_family_retry_with_a_changed_total_parks_instead_of_charging_aga
     real_db, acad
 ) -> None:
     """The family key carries no amount: a retry whose total moved reuses the key,
-    Stripe refuses it (different params), and the group parks with no new charge."""
+    Stripe refuses it (different params), and the group parks for review with no
+    new charge: an earlier request under that key exists, which is not an outage."""
     await _seed(real_db, "inv-a")
     await _seed(real_db, "inv-b", cents=8_000)
     stripe = _CrashOnceStripe()
@@ -181,11 +182,90 @@ async def test_a_family_retry_with_a_changed_total_parks_instead_of_charging_aga
         ["inv-a", "inv-b"], charge_group_id="g1", retry_scopes=scopes
     )
 
-    assert result.result is not None and result.result.decline_code == "stripe_unavailable"
+    assert result.result is not None
+    assert result.result.decline_code == "existing_charge_needs_review"
     assert len(stripe.off_session_payment_intents) == 1
     (pi,) = stripe.off_session_payment_intents
     assert pi["idempotency_key"].startswith("autopay-family:")
     assert not pi["idempotency_key"].endswith(":18000")
+    assert await _payments(real_db) == []
+
+
+async def test_a_single_retry_stripe_refuses_parks_for_review_not_as_an_outage(
+    real_db, acad
+) -> None:
+    """Same for one invoice: the reused key with another amount is Stripe's
+    IdempotencyError, which parks the rung for review instead of retrying hourly."""
+    await _seed(real_db, "inv-a")
+    stripe = _CrashOnceStripe()
+
+    await _tick(real_db, stripe, FakeOutbox())
+    await _set_balance(real_db, "inv-a", 7_000)
+    await _tick(real_db, stripe, FakeOutbox(), at=NOW + timedelta(hours=1))
+
+    assert len(stripe.off_session_payment_intents) == 1
+    state = await real_db["dunning_states"].find_one({"academy_id": ACAD, "invoice_id": "inv-a"})
+    assert state is not None
+    assert state["suppression_reason"] == "existing_charge_needs_review"
+    assert await _payments(real_db) == []
+
+
+async def test_a_refused_key_settles_the_earlier_charge_when_it_cleanly_matches(
+    real_db, acad
+) -> None:
+    """Stripe refuses the retry (its metadata moved) but the first charge went
+    through for exactly this invoice: it is recorded, not parked or charged again."""
+    await _seed(real_db, "inv-a")
+    stripe = _CrashOnceStripe()
+    charge = _charge(real_db, stripe)
+
+    with pytest.raises(RuntimeError):
+        await charge.execute("inv-a", retry_scope="r1")
+    result = await charge.execute("inv-a", retry_scope="r1", actor_id="admin-1")
+
+    assert result.success and result.status == "paid"
+    (pi,) = stripe.off_session_payment_intents
+    assert [p["payment_id"] for p in await _payments(real_db)] == [f"ledger-pay-autopay:{pi['id']}"]
+
+
+async def test_a_refused_family_key_settles_the_earlier_family_charge(real_db, acad) -> None:
+    await _seed(real_db, "inv-a")
+    await _seed(real_db, "inv-b", cents=8_000)
+    stripe = _CrashOnceStripe()
+    scopes = {"inv-a": "r1", "inv-b": "r1"}
+    charge = _charge(real_db, stripe)
+
+    with pytest.raises(RuntimeError):
+        await charge.execute_family(["inv-a", "inv-b"], charge_group_id="g1", retry_scopes=scopes)
+    # A new tick's group id changes the metadata, so Stripe refuses the key.
+    family = await charge.execute_family(
+        ["inv-a", "inv-b"], charge_group_id="g2", retry_scopes=scopes
+    )
+
+    assert family.result is not None and family.result.success
+    assert len(stripe.off_session_payment_intents) == 1
+    for invoice_id in ("inv-a", "inv-b"):
+        assert (await _invoice(real_db, invoice_id))["status"] == "paid"
+    assert len(await _payments(real_db)) == 1
+
+
+async def test_a_refused_family_key_that_cannot_be_matched_parks_for_review(real_db, acad) -> None:
+    await _seed(real_db, "inv-a")
+    await _seed(real_db, "inv-b", cents=8_000)
+    stripe = _CrashOnceStripe()
+    scopes = {"inv-a": "r1", "inv-b": "r1"}
+    charge = _charge(real_db, stripe)
+
+    with pytest.raises(RuntimeError):
+        await charge.execute_family(["inv-a", "inv-b"], charge_group_id="g1", retry_scopes=scopes)
+    await _set_balance(real_db, "inv-a", 9_000)
+    family = await charge.execute_family(
+        ["inv-a", "inv-b"], charge_group_id="g2", retry_scopes=scopes
+    )
+
+    assert family.result is not None
+    assert family.result.decline_code == "existing_charge_needs_review"
+    assert len(stripe.off_session_payment_intents) == 1
     assert await _payments(real_db) == []
 
 

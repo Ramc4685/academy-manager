@@ -100,7 +100,6 @@ describe("public screens pad for the iOS status bar", () => {
     "(marketing)/login/login-client.tsx",
     "(marketing)/register/register-client.tsx",
     "(marketing)/auth/action/page.tsx",
-    "(marketing)/auth/magic/page.tsx",
     "(marketing)/unsubscribe/page.tsx",
   ])("%s pads its top edge", (rel) => {
     expect(source(rel)).toContain(TW_SAFE_TOP);

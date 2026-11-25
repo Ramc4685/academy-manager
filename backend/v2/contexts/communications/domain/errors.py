@@ -29,6 +29,14 @@ class EmptyAudienceError(CommunicationsError):
     """
 
 
+class AudienceChangedError(CommunicationsError):
+    """The audience no longer matches what the admin reviewed (#1031).
+
+    Raised before anything is claimed or sent, so the admin re-reviews the
+    updated recipient list and confirms again.
+    """
+
+
 class InvalidProviderSignature(CommunicationsError):
     """Raised when an inbound provider webhook fails signature verification.
 

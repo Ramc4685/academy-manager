@@ -28,6 +28,7 @@ from backend.v2.contexts.billing.application.billing_health import (
     LastReconciliationRun,
     evaluate_billing_health,
 )
+from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
 from backend.v2.contexts.billing.application.ports import StripeGateway
 from backend.v2.contexts.billing.application.use_cases.match_legacy_invoices import (
     ConfirmLegacyMatch,
@@ -332,9 +333,41 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
         stripe_payment_intent: dict[str, Any] = {}
         stripe_customer_id: str | None = None
 
+        # One equality lookup per id, not a single ``$or``: production's planner
+        # scans the academy's ledger payments for the ``$or`` form (#878).
+        # Read before Stripe: the row records which account holds the objects.
+        ledger_payment = None
+
+        async def _find_ledger_payment() -> None:
+            nonlocal ledger_payment
+            for field, value in (
+                ("stripe_invoice_id", stripe_invoice_id),
+                ("stripe_payment_intent_id", payment_intent_id),
+            ):
+                if value and ledger_payment is None:
+                    ledger_payment = await db["ledger_payments"].find_one(
+                        {"academy_id": request_academy_id, field: value}
+                    )
+
+        await _find_ledger_payment()
+        # #983: a direct charge lives on the academy's connected account. A
+        # recorded payment names its account (none = platform); otherwise use
+        # this academy's current route. Never an account from the request.
+        if ledger_payment is not None:
+            row_account = ledger_payment.get("stripe_account_id")
+            on_account = {"stripe_account": row_account} if row_account else {}
+        else:
+            on_account = (
+                await resolve_charge_route(
+                    connected_accounts=connected_accounts_repo,
+                    settings=billing_settings_repo,
+                    context="billing_reconciliation_report",
+                )
+            ).on_account_kwargs()
+
         retrieve_invoice = getattr(stripe, "retrieve_invoice", None)
         if stripe_invoice_id and retrieve_invoice is not None:
-            stripe_invoice = await retrieve_invoice(stripe_invoice_id)
+            stripe_invoice = await retrieve_invoice(stripe_invoice_id, **on_account)
             payment_intent_id = (
                 payment_intent_id or str(stripe_invoice.get("payment_intent") or "") or None
             )
@@ -342,7 +375,7 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
 
         retrieve_payment_intent = getattr(stripe, "retrieve_payment_intent", None)
         if payment_intent_id and retrieve_payment_intent is not None:
-            stripe_payment_intent = await retrieve_payment_intent(payment_intent_id)
+            stripe_payment_intent = await retrieve_payment_intent(payment_intent_id, **on_account)
             stripe_customer_id = (
                 stripe_customer_id or str(stripe_payment_intent.get("customer") or "") or None
             )
@@ -388,17 +421,8 @@ def compose_admin_billing_health(db: Any, stripe: StripeGateway) -> AdminBilling
                     if duplicate_obligation_invoice is not None:
                         local_invoice = duplicate_obligation_invoice
 
-        # One equality lookup per id, not a single ``$or``: production's planner
-        # scans the academy's ledger payments for the ``$or`` form (#878).
-        ledger_payment = None
-        for field, value in (
-            ("stripe_invoice_id", stripe_invoice_id),
-            ("stripe_payment_intent_id", payment_intent_id),
-        ):
-            if value and ledger_payment is None:
-                ledger_payment = await db["ledger_payments"].find_one(
-                    {"academy_id": request_academy_id, field: value}
-                )
+        # The invoice read may have surfaced the payment intent.
+        await _find_ledger_payment()
 
         allocation = None
         if ledger_payment is not None:

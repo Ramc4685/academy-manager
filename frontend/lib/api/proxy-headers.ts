@@ -69,6 +69,10 @@ export function buildProxyResponseHeaders(
   for (const header of HOP_BY_HOP_HEADERS) {
     headers.delete(header);
   }
+  // fetch() has already decoded the body we re-stream, so the upstream
+  // encoding and length describe bytes the browser never receives (#1067).
+  headers.delete("content-encoding");
+  headers.delete("content-length");
   // The backend echoes X-Request-ID; if it did not (e.g. an edge 502 before
   // the app saw the request) fall back to the id we sent so the browser
   // always gets one to show as a reference.

@@ -165,9 +165,6 @@ from backend.v2.contexts.identity.application.use_cases.list_account_deletions i
 from backend.v2.contexts.identity.application.use_cases.load_auth_claims import (
     LoadAuthClaims,
 )
-from backend.v2.contexts.identity.application.use_cases.magic_link import (
-    ConsumeMagicLink,
-)
 from backend.v2.contexts.identity.application.use_cases.register_public_parent import (
     RegisterPublicParent,
 )
@@ -207,9 +204,6 @@ from backend.v2.contexts.identity.infrastructure.mongo_bootstrap_store import (
 from backend.v2.contexts.identity.infrastructure.mongo_login_audit_recorder import (
     MongoLoginAuditRecorder,
 )
-from backend.v2.contexts.identity.infrastructure.mongo_magic_link_repo import (
-    MongoMagicLinkRepository,
-)
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
@@ -246,7 +240,6 @@ from backend.v2.interfaces.admin.router import router as admin_router
 from backend.v2.interfaces.calendar_feed_routes import router as calendar_feed_router
 from backend.v2.interfaces.coach.router import router as coach_router
 from backend.v2.interfaces.email_webhook_routes import router as email_webhook_router
-from backend.v2.interfaces.magic_link_routes import router as magic_link_router
 from backend.v2.interfaces.me_routes import router as me_router
 from backend.v2.interfaces.owner.router import router as owner_router
 from backend.v2.interfaces.parent.router import router as parent_router
@@ -800,14 +793,6 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         store=MongoTenantBootstrapStore(db),
         invoice_prefix_assigner=compose_invoice_prefix_assigner(db),
     )
-    # Public parent magic-link consume. Tenant is resolved per-request from the
-    # host; the use case itself checks the token's academy binding against it.
-    app.state.consume_magic_link = ConsumeMagicLink(
-        links=MongoMagicLinkRepository(db),
-        tokens=get_firebase_admin_adapter(),
-        users=users_repo,
-        memberships=membership_repo,
-    )
 
     # Recipient email preferences (#555). Both the public token-authenticated
     # unsubscribe routes and the logged-in parent routes read these off
@@ -1189,6 +1174,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.ai_win_back = compose_ai_win_back(db, app.state.ai, app.state.win_back)
     app.state.ai_technique = compose_ai_technique(db, app.state.ai)
+    # Class recap: shared taught-skills record per occurrence, with the coach's
+    # report read by AI when a model is wired (manual entry otherwise).
+    from backend.v2.composition.class_recap import compose_class_recap
+
+    app.state.class_recap = compose_class_recap(db, app.state.ai)
+    # Parent drop-off check-in: parent reports arrival, staff confirm, and the
+    # confirmation writes the attendance mark through MarkAttendance.
+    from backend.v2.composition.dropoff_checkins import compose_dropoff_checkins
+
+    app.state.dropoff_checkins = compose_dropoff_checkins(db, outbox, idempotency_store)
     # B5 month-close narrator (paid AI): the gated LlmPort over the month-close reader.
     from backend.v2.composition.ai_reports import compose_ai_reports
 
@@ -1727,7 +1722,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         await _run_isolated_per_academy(
             "process_stripe_webhook_events",
-            await _scheduler_academy_ids(MongoAcademyRepository(db), scheduler_fallback_academy_id),
+            await _scheduler_academy_ids(
+                MongoAcademyRepository(db), scheduler_fallback_academy_id, include_suspended=True
+            ),
             _drain,
         )
         if totals["processed"] or totals["failed"] or totals["quarantined"]:
@@ -1768,7 +1765,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         await _run_isolated_per_academy(
             "reconcile_stripe_payment_intents",
-            await _scheduler_academy_ids(MongoAcademyRepository(db), scheduler_fallback_academy_id),
+            await _scheduler_academy_ids(
+                MongoAcademyRepository(db), scheduler_fallback_academy_id, include_suspended=True
+            ),
             _reconcile,
         )
         if totals["repaired"] or totals["quarantined"] or totals["failed"]:
@@ -1930,6 +1929,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             or totals["invoices_emailed"]
             or totals["invoice_autopay_notices_sent"]
             or totals["invoice_emails_failed"]
+            # #1033: a failed pass is a signal, not an idle tick, even on a
+            # retry-only tick that generated nothing and emailed nothing.
+            or totals["invoice_email_pass_failed"]
+            or totals["invoice_mint_send_failed"]
+            or totals["generation_failed"]
         ):
             return
         counts = {key: value for key, value in totals.items() if key != "created"}
@@ -2872,6 +2876,9 @@ async def _run_monthly_invoice_generation(
         # send_invoices itself raised (per-invoice failures are
         # invoice_emails_failed).
         "invoice_email_pass_failed": 0,
+        # #1033: the notify-on-mint pass inside generation raised. Not a retry
+        # reason: the sweep right after it re-selects every undelivered invoice.
+        "invoice_mint_send_failed": 0,
     }
     log = logging.getLogger("backend.v2.scheduler")
     for academy_id in academy_ids:
@@ -2914,6 +2921,14 @@ async def _run_monthly_invoice_generation(
                 ran_any = True
                 generated_periods.append(run_period)
                 totals["period_run_count"] += 1
+                # #1033: the notify-on-mint pass already sent these; the sweep
+                # below only finds what it left undelivered, so each invoice's
+                # email outcome is counted exactly once across the two.
+                mint_send = getattr(result, "mint_send", None)
+                if mint_send is not None:
+                    _fold_send_counts(totals, mint_send)
+                if getattr(result, "mint_send_failed", False):
+                    totals["invoice_mint_send_failed"] += 1
                 created = int(getattr(result, "created", 0) or 0)
                 failed_repair = int(getattr(result, "failed_repair", 0) or 0)
                 if failed_repair:
@@ -2997,6 +3012,19 @@ async def _run_monthly_invoice_generation(
     return totals
 
 
+def _fold_send_counts(totals: dict[str, int], outcome: Any) -> None:
+    """Add one send pass's outcome (mint-time or sweep) to the run totals."""
+    for total_key, outcome_key in (
+        ("invoices_emailed", "emailed"),
+        ("invoice_emails_failed", "email_failed"),
+        ("invoice_emails_skipped_autopay", "skipped_autopay"),
+        # Autopay parents get a pre-charge notice, not an invoice email; without
+        # this the digest showed "0 emailed" for a fully notified run.
+        ("invoice_autopay_notices_sent", "autopay_notified"),
+    ):
+        totals[total_key] += int(_outcome_count(outcome, outcome_key))
+
+
 async def _email_generated_invoices(
     *,
     send_invoices: Callable[[str], Awaitable[Any]],
@@ -3021,15 +3049,7 @@ async def _email_generated_invoices(
             run_period,
         )
         return
-    for total_key, outcome_key in (
-        ("invoices_emailed", "emailed"),
-        ("invoice_emails_failed", "email_failed"),
-        ("invoice_emails_skipped_autopay", "skipped_autopay"),
-        # Autopay parents get a pre-charge notice, not an invoice email; without
-        # this the digest showed "0 emailed" for a fully notified run.
-        ("invoice_autopay_notices_sent", "autopay_notified"),
-    ):
-        totals[total_key] += int(_outcome_count(outcome, outcome_key))
+    _fold_send_counts(totals, outcome)
 
 
 def _monthly_generation_retry_reason(totals: dict[str, int]) -> str | None:
@@ -3086,16 +3106,39 @@ async def _due_periods(
     return due
 
 
+#: Tenant lifecycle states whose scheduled work stops. A DENYLIST on purpose:
+#: a missing or unknown status keeps running, so a legacy academy row never
+#: silently loses its billing loops.
+SCHEDULER_SKIPPED_TENANT_STATUSES = frozenset({"suspended", "cancelled"})
+
+
 async def _scheduler_academy_ids(
     academies: MongoAcademyRepository,
     default_academy_id: str,
+    *,
+    include_suspended: bool = False,
 ) -> list[str]:
+    """Academies a scheduled job runs for.
+
+    Suspended and cancelled tenants are skipped unless ``include_suspended``:
+    only the inbound-truth jobs (webhook drain, PaymentIntent reconcile) keep
+    them, so money Stripe already moved still lands in the ledger. The
+    fallback academy is added only when it has no ``academies`` row at all,
+    so a suspended one is not re-added through the back door.
+    """
     academy_ids: list[str] = []
     seen: set[str] = set()
-    for academy_id in await academies.list_ids():
-        if academy_id and academy_id not in seen:
-            academy_ids.append(academy_id)
-            seen.add(academy_id)
+    skipped: list[str] = []
+    for academy_id, status in await academies.list_ids_with_status():
+        if not academy_id or academy_id in seen:
+            continue
+        seen.add(academy_id)
+        if not include_suspended and status in SCHEDULER_SKIPPED_TENANT_STATUSES:
+            skipped.append(academy_id)
+            continue
+        academy_ids.append(academy_id)
+    if skipped:
+        log.info("scheduler_skipped_inactive_tenants", extra={"academy_ids": skipped})
     if default_academy_id and default_academy_id not in seen:
         academy_ids.append(default_academy_id)
     return academy_ids
@@ -3156,7 +3199,6 @@ def create_app() -> FastAPI:
     # Persona route packages.
     app.include_router(me_router, prefix="/api/v2")
     app.include_router(registration_router, prefix="/api/v2")
-    app.include_router(magic_link_router, prefix="/api/v2")
     app.include_router(password_reset_router, prefix="/api/v2")
     app.include_router(unsubscribe_router, prefix="/api/v2")
     app.include_router(calendar_feed_router, prefix="/api/v2")

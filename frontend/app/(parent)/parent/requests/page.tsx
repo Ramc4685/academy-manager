@@ -1,7 +1,7 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Card } from "@/components/ds/card";
@@ -10,8 +10,15 @@ import { Button } from "@/components/ds/button";
 import { EmptyState } from "@/components/ds/empty-state";
 import { WaitlistOffers } from "@/components/parent/waitlist-offers";
 import { AssignedClassDetails } from "@/components/parent/one-time-class";
+import { AbsenceMakeupStatus } from "@/components/parent/absence-makeup-status";
 import { queryKeys } from "@/lib/query/keys";
-import { requestStatusChipVariant } from "@/lib/parent-requests";
+import {
+  makeupCandidateKey,
+  makeupCandidateLabel,
+  makeupEmptyMessage,
+  requestStatusChipVariant,
+} from "@/lib/parent-requests";
+import { ALREADY_REPORTED_LABEL } from "@/lib/parent/schedule-events";
 import {
   formatAcademyDate,
   formatAcademyDateTime,
@@ -22,6 +29,7 @@ import {
   getParentAcademy,
   listAvailableParentSessions,
   listEligibleMakeupTargets,
+  listMakeupCandidates,
   listParentAbsences,
   listParentChildren,
   listParentMakeups,
@@ -46,7 +54,31 @@ const ALL_TABS: { id: RequestTab; label: string }[] = [
 ];
 
 export default function ParentRequestsPage() {
-  const [tab, setTab] = useState<RequestTab>("absences");
+  // useSearchParams needs a Suspense boundary (deep links from absences).
+  return (
+    <Suspense fallback={null}>
+      <ParentRequests />
+    </Suspense>
+  );
+}
+
+function ParentRequests() {
+  const searchParams = useSearchParams();
+  const linkedTab = searchParams.get("tab");
+  // "Book a makeup" links here with ?tab=makeups&makeup=<child>:<class date>.
+  const linkedMakeup = searchParams.get("makeup") ?? "";
+  const linkedRequestTab = ALL_TABS.find((t) => t.id === linkedTab)?.id ?? null;
+  const router = useRouter();
+  const [tab, setTab] = useState<RequestTab>(linkedRequestTab ?? "absences");
+  const [makeupKey, setMakeupKey] = useState(linkedMakeup);
+  // The link is in-page (Absences → Makeups): apply it, then drop it from the
+  // URL so the same link clicked again is a new navigation.
+  useEffect(() => {
+    if (!linkedRequestTab) return;
+    setTab(linkedRequestTab);
+    setMakeupKey(linkedMakeup);
+    router.replace("/parent/requests", { scroll: false });
+  }, [linkedRequestTab, linkedMakeup, router]);
   const academyQuery = useQuery({
     queryKey: queryKeys.parent.academy(),
     queryFn: getParentAcademy,
@@ -106,7 +138,7 @@ export default function ParentRequestsPage() {
       ) : (
         <>
           {activeTab === "absences" && <AbsencesPanel />}
-          {activeTab === "makeups" && <MakeupsPanel />}
+          {activeTab === "makeups" && <MakeupsPanel key={makeupKey} initialKey={makeupKey} />}
           {activeTab === "trials" && <TrialsPanel />}
         </>
       )}
@@ -151,6 +183,7 @@ function AbsencesPanel() {
       setLastWarning(notice.notice_window_met === false);
       setOccurrenceId("");
       void queryClient.invalidateQueries({ queryKey: queryKeys.parent.absences() });
+      void queryClient.invalidateQueries({ queryKey: ["parent", "child-schedule", studentId] });
     },
   });
 
@@ -234,7 +267,13 @@ function AbsencesPanel() {
                       : "Select a class"}
               </option>
               {occurrences.map((o: ParentScheduleEntry) => (
-                <option key={o.occurrence_id} value={o.occurrence_id}>
+                <option
+                  key={o.occurrence_id}
+                  value={o.occurrence_id}
+                  disabled={o.absence_reported}
+                >
+                  {/* Label first: a phone cuts the end off a long option. */}
+                  {o.absence_reported ? `${ALREADY_REPORTED_LABEL} · ` : ""}
                   {o.session_title} — {formatAcademyTimeRange(o.start_at, o.end_at, academyTimezone)}
                 </option>
               ))}
@@ -272,14 +311,29 @@ function AbsencesPanel() {
                       <p className="text-xs font-semibold text-rally-subtle">
                         {nameById.get(n.student_id) ?? "Your child"}
                       </p>
-                      <p className="text-sm font-semibold text-rally-ink">
-                        {formatAcademyDateTime(n.submitted_at, academyTimezone)}
+                      <p data-testid={`absence-class-${n.notice_id}`} className="text-sm font-semibold text-rally-ink">
+                        {n.missed_class
+                          ? `${n.missed_class.session_title} — ${formatAcademyTimeRange(
+                              n.missed_class.start_at,
+                              n.missed_class.end_at,
+                              n.missed_class.timezone ?? academyTimezone,
+                            )}`
+                          : "Class details unavailable"}
+                      </p>
+                      <p className="mt-0.5 text-xs text-rally-subtle">
+                        Submitted {formatAcademyDateTime(n.submitted_at, academyTimezone)}
                       </p>
                       {n.notice_window_met === false && (
                         <p className="mt-1 text-xs text-status-amber-800">
                           Submitted inside the notice window
                         </p>
                       )}
+                      <AbsenceMakeupStatus
+                        makeup={n.makeup}
+                        studentId={n.student_id}
+                        occurrenceId={n.occurrence_id}
+                        academyTimezone={academyTimezone}
+                      />
                     </div>
                     <Chip variant={n.notice_window_met ? "approved" : "pending"} label={n.notice_window_met ? "ON TIME" : "LATE"} />
                   </div>
@@ -295,9 +349,9 @@ function AbsencesPanel() {
 
 // --- Makeups ---
 
-function MakeupsPanel() {
+function MakeupsPanel({ initialKey = "" }: { initialKey?: string }) {
   const queryClient = useQueryClient();
-  const [selectedAbsence, setSelectedAbsence] = useState<AbsenceNoticeView | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string>(initialKey);
   const [targetOccurrenceId, setTargetOccurrenceId] = useState<string>("");
 
   const academyQuery = useQuery({
@@ -308,45 +362,52 @@ function MakeupsPanel() {
     queryKey: ["parent", "children"],
     queryFn: listParentChildren,
   });
-  const absencesQuery = useQuery({
-    queryKey: queryKeys.parent.absences(),
-    queryFn: listParentAbsences,
+  // #1041: the server's own eligibility (notice rule, expiry window, an
+  // active request already open), so a class needs no notice when the
+  // academy doesn't require one, and a denied request can be asked again.
+  const candidatesQuery = useQuery({
+    queryKey: queryKeys.parent.makeupCandidates(),
+    queryFn: listMakeupCandidates,
   });
   const makeupsQuery = useQuery({
     queryKey: queryKeys.parent.makeups(),
     queryFn: listParentMakeups,
   });
+
+  const candidates = candidatesQuery.data?.candidates ?? [];
+  const ineligible = candidatesQuery.data?.ineligible ?? [];
+  const selected = candidates.find((c) => makeupCandidateKey(c) === selectedKey) ?? null;
+
   const targetsQuery = useQuery({
-    queryKey: selectedAbsence
-      ? queryKeys.parent.makeupTargets(selectedAbsence.student_id, selectedAbsence.occurrence_id)
+    queryKey: selected
+      ? queryKeys.parent.makeupTargets(selected.student_id, selected.occurrence_id)
       : queryKeys.parent.makeupTargets("none", "none"),
     queryFn: () =>
       listEligibleMakeupTargets({
-        student_id: selectedAbsence!.student_id,
-        missed_occurrence_id: selectedAbsence!.occurrence_id,
+        student_id: selected!.student_id,
+        missed_occurrence_id: selected!.occurrence_id,
       }),
-    enabled: Boolean(selectedAbsence),
+    enabled: Boolean(selected),
   });
 
   const submitMutation = useMutation({
     mutationFn: submitMakeupRequest,
     onSuccess: () => {
-      setSelectedAbsence(null);
+      setSelectedKey("");
       setTargetOccurrenceId("");
+      // Prefix match also refreshes the candidate list under ["parent","makeups"].
       void queryClient.invalidateQueries({ queryKey: queryKeys.parent.makeups() });
+      // The absence now reads "Makeup requested".
+      void queryClient.invalidateQueries({ queryKey: queryKeys.parent.absences() });
+      void queryClient.invalidateQueries({ queryKey: ["parent", "child-schedule"] });
     },
   });
 
   const academyTimezone = academyQuery.data?.timezone ?? null;
   const children = childrenQuery.data?.children ?? [];
   const nameById = new Map(children.map((c: ParentChild) => [c.student_id, c.full_name]));
-  const absences = absencesQuery.data?.notices ?? [];
   const makeups = makeupsQuery.data?.makeups ?? [];
   const targets = targetsQuery.data?.targets ?? [];
-
-  // Absences that don't already have a makeup request against them.
-  const requestedOccurrenceIds = new Set(makeups.map((m) => m.missed_occurrence_id));
-  const eligibleAbsences = absences.filter((a) => !requestedOccurrenceIds.has(a.occurrence_id));
 
   return (
     <div className="space-y-4">
@@ -361,19 +422,30 @@ function MakeupsPanel() {
           </p>
         ) : null}
 
-        {absencesQuery.isLoading ? (
+        {candidatesQuery.isError ? (
+          <div role="alert" className="rounded-md bg-status-red-50 p-3 text-sm text-status-red-800">
+            <p>Could not load your missed classes.</p>
+            <Button variant="secondary" onClick={() => void candidatesQuery.refetch()}>
+              Try again
+            </Button>
+          </div>
+        ) : candidatesQuery.isLoading ? (
           <ListSkeleton />
-        ) : eligibleAbsences.length === 0 ? (
-          <PanelEmptyState message="No missed classes available for a makeup request." />
+        ) : candidates.length === 0 ? (
+          <PanelEmptyState
+            message={makeupEmptyMessage(
+              candidatesQuery.data ?? { makeups_enabled: true, requires_notice: false },
+            )}
+          />
         ) : (
           <form
             className="space-y-3"
             onSubmit={(e) => {
               e.preventDefault();
-              if (!selectedAbsence) return;
+              if (!selected) return;
               submitMutation.mutate({
-                student_id: selectedAbsence.student_id,
-                missed_occurrence_id: selectedAbsence.occurrence_id,
+                student_id: selected.student_id,
+                missed_occurrence_id: selected.occurrence_id,
                 requested_target_occurrence_id: targetOccurrenceId || undefined,
               });
             }}
@@ -382,23 +454,22 @@ function MakeupsPanel() {
               Missed class
               <select
                 className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
-                value={selectedAbsence?.occurrence_id ?? ""}
+                value={selectedKey}
                 onChange={(e) => {
-                  const found = eligibleAbsences.find((a) => a.occurrence_id === e.target.value) ?? null;
-                  setSelectedAbsence(found);
+                  setSelectedKey(e.target.value);
                   setTargetOccurrenceId("");
                 }}
               >
                 <option value="">Select a missed class</option>
-                {eligibleAbsences.map((a) => (
-                  <option key={a.occurrence_id} value={a.occurrence_id}>
-                    Reported {formatAcademyDate(a.submitted_at, academyTimezone)} ({a.session_id})
+                {candidates.map((c) => (
+                  <option key={makeupCandidateKey(c)} value={makeupCandidateKey(c)}>
+                    {makeupCandidateLabel(c, academyTimezone)}
                   </option>
                 ))}
               </select>
             </label>
 
-            {selectedAbsence && (
+            {selected && (
               <label className="block text-xs font-semibold text-rally-muted">
                 Preferred makeup class (optional)
                 <select
@@ -423,10 +494,29 @@ function MakeupsPanel() {
               </label>
             )}
 
-            <Button type="submit" variant="primary" full disabled={!selectedAbsence || submitMutation.isPending}>
+            <Button type="submit" variant="primary" full disabled={!selected || submitMutation.isPending}>
               {submitMutation.isPending ? "Submitting…" : "Request makeup"}
             </Button>
           </form>
+        )}
+        {ineligible.length > 0 && (
+          <div className="mt-4" data-testid="makeup-ineligible">
+            <h3 className="text-xs font-semibold text-rally-muted">Can&apos;t be made up</h3>
+            <ul className="mt-2 space-y-2">
+              {ineligible.map((row) => (
+                <li
+                  key={makeupCandidateKey(row)}
+                  className="rounded-lg border border-rally-line p-3 text-sm"
+                >
+                  <p className="font-semibold text-rally-ink">
+                    {row.student_name} — {row.class_title} —{" "}
+                    {formatAcademyDateTime(row.start_at, academyTimezone)}
+                  </p>
+                  <p className="mt-1 text-xs text-rally-muted">{row.reason}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </Card>
 

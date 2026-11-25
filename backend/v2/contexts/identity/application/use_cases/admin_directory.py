@@ -72,8 +72,8 @@ class AdminUserDirectoryQuery(Protocol):
     async def list_users(
         self,
         role: Role | None = None,
-        academy_id: str | None = None,
         *,
+        academy_id: str,
         exclude_role: Role | None = None,
         roles: Sequence[Role] | None = None,
     ) -> list[AdminUserSummary]: ...
@@ -140,8 +140,8 @@ class ListAdminUsers:
     async def execute(
         self,
         role: Role | None = None,
-        academy_id: str | None = None,
         *,
+        academy_id: str,
         exclude_role: Role | None = None,
         roles: Sequence[Role] | None = None,
     ) -> list[AdminUserSummary]:

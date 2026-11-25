@@ -12,6 +12,7 @@ import {
   SkillChecklist,
   formatWinDate,
   milestoneLabel,
+  notesForChild,
 } from "./journey";
 
 type Current = NonNullable<ParentProgressJourney["current_level"]>;
@@ -243,5 +244,19 @@ describe("MilestoneList (L5B)", () => {
     );
     expect(html.indexOf("1 level completed")).toBeLessThan(html.indexOf("10 skills mastered"));
     expect(html).toContain("Maya: 10 skills mastered");
+  });
+});
+
+describe("notesForChild", () => {
+  it("keeps only the selected child's notes, matched on student id", () => {
+    const notes = [
+      { note_id: "n1", student_id: "st-alex", student_name: "Alex Rivera" },
+      { note_id: "n2", student_id: "st-sam", student_name: "Sam Rivera" },
+      // A sibling with the same display name must still not leak across.
+      { note_id: "n3", student_id: "st-sam", student_name: "Alex Rivera" },
+    ];
+    expect(notesForChild(notes, "st-alex").map((n) => n.note_id)).toEqual(["n1"]);
+    expect(notesForChild(notes, "st-sam").map((n) => n.note_id)).toEqual(["n2", "n3"]);
+    expect(notesForChild(notes, "st-unknown")).toEqual([]);
   });
 });

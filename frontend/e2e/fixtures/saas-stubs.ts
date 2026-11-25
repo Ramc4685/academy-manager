@@ -253,6 +253,24 @@ export async function stubAiVideoConsent(page: Page): Promise<void> {
   });
 }
 
+/**
+ * The admin messages page resolves the email campaign audience on load
+ * (`POST /admin/campaigns/preview`, #1029). Unstubbed it 502s against the dev
+ * server and trips the clean-console assertion on any spec mounting the page.
+ */
+export async function stubCampaignPreview(page: Page): Promise<void> {
+  await page.route("**/api/v2/admin/campaigns/preview", (route) =>
+    fulfillJson(route, {
+      recipient_count: 0,
+      family_count: 0,
+      contact_count: 0,
+      recipients: [],
+      exclusions: [],
+      audience_fingerprint: "fp-empty",
+    })
+  );
+}
+
 export async function stubParentMessages(
   page: Page,
   messages: unknown[] = []

@@ -583,6 +583,37 @@ def test_list_payments_uses_filtered_use_case_when_wired(admin_client):
     assert captured["offset"] == 2
 
 
+def test_list_payments_exposes_the_dispute_on_a_disputed_row(admin_client):
+    async def list_payments_filtered(**kwargs):
+        row = {
+            "payment_id": "lp-1",
+            "parent_id": "parent-1",
+            "session_id": None,
+            "amount_cents": 5000,
+            "currency": "usd",
+            "status": "succeeded",
+            "refunded_cents": 0,
+            "created_at": NOW,
+            "dispute_id": "dp_1",
+            "dispute_status": "needs_response",
+            "dispute_reason": "fraudulent",
+            "dispute_amount_cents": 5000,
+            "dispute_outcome": None,
+            "disputed_at": NOW,
+        }
+        return {"payments": [row], "total": 1, "limit": 200, "offset": 0}
+
+    admin_client.use_cases.list_payments_filtered = list_payments_filtered
+    r = admin_client.get("/api/v2/admin/payments")
+    assert r.status_code == 200, r.text
+    row = r.json()["payments"][0]
+    assert row["dispute_id"] == "dp_1"
+    assert row["dispute_status"] == "needs_response"
+    assert row["dispute_reason"] == "fraudulent"
+    assert row["dispute_amount_cents"] == 5000
+    assert row["disputed_at"] is not None
+
+
 def test_payment_feed_returns_rows(admin_client):
     async def list_payment_feed(limit: int = 20):
         assert limit == 5
@@ -1308,6 +1339,37 @@ def test_add_invoice_adjustment_allows_negative_discount_line(admin_client):
     assert body["invoice_total_cents"] == 6_000
     assert body["invoice_balance_due_cents"] == 6_000
     assert body["invoice_status"] == "open"
+
+
+def test_add_invoice_adjustment_threads_reason_and_actor_to_the_audit(admin_client):
+    """#1035: the dialog's required Reason was dropped before it reached the
+    writer, so nothing recorded why the parent's bill changed."""
+    calls: list[dict] = []
+
+    async def add_invoice_line(**kwargs) -> dict:
+        calls.append(kwargs)
+        line = {
+            "line_id": "line-1",
+            "invoice_id": "inv-1",
+            "line_type": "adjustment",
+            "description": kwargs["description"],
+            "quantity": 1,
+            "unit_amount_cents": kwargs["unit_amount_cents"],
+            "amount_cents": kwargs["unit_amount_cents"],
+        }
+        invoice = {"total_cents": 0, "balance_due_cents": 0, "status": "open"}
+        return {"line": line, "invoice": invoice}
+
+    admin_client.use_cases.add_invoice_line = add_invoice_line
+
+    response = admin_client.post(
+        "/api/v2/admin/billing/invoices/inv-1/adjustments",
+        json={"description": "Coach benefit", "amount_cents": -7_000, "reason": "Coach child"},
+    )
+
+    assert response.status_code == 201, response.text
+    assert calls[0]["reason"] == "Coach child"
+    assert calls[0]["actor_id"]
 
 
 def test_record_invoice_manual_payment_route(admin_client):

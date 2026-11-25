@@ -32,6 +32,7 @@ from backend.v2.contexts.communications.domain.models import (
     PaymentRiskAudience,
     SelectedRecipientsAudience,
     SessionAudience,
+    SessionsAudience,
 )
 from backend.v2.contexts.communications.domain.push_device import (
     PushDevice,
@@ -48,6 +49,9 @@ class ResolvedRecipient:
     user_id: str
     email: str | None
     display_name: str | None = None
+    #: An opted-in family contact (second parent, guardian) rather than a user.
+    #: Lets a preview tell families apart from extra addresses (#1029).
+    is_family_contact: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +83,14 @@ class AudienceResolver(Protocol):
     async def resolve_session_audience(
         self, audience: SessionAudience
     ) -> list[ResolvedRecipient]: ...
+
+    async def resolve_sessions_audience(
+        self, audience: SessionsAudience
+    ) -> list[ResolvedRecipient]:
+        """The union of several sessions' audiences (#1030). Raises
+        ``InvalidAudienceError`` when any id is not a session of the current
+        academy, so a foreign or mistyped id is refused, not silently empty."""
+        ...
 
     async def resolve_coach_audience(self, audience: CoachAudience) -> list[ResolvedRecipient]: ...
 

@@ -43,6 +43,7 @@ import { InvoicesPanel } from "./InvoicesPanel";
 import { StudentsPanel } from "./StudentsPanel";
 import { ReasonDialog, type ReasonDialogKind, type ReasonDialogResult } from "./family-dialogs";
 import {
+  chargeFailureMessage,
   enrollmentOptions,
   invoiceDueDays,
   manualPaymentSummary,
@@ -188,7 +189,16 @@ export function BillingTab({ parentId }: { parentId: string }) {
         break;
       case "charge_card":
         if (!invoiceId) return;
-        await chargeAdminInvoiceAutopay(invoiceId, r.reason);
+        {
+          const failure = chargeFailureMessage(
+            await chargeAdminInvoiceAutopay(invoiceId, r.reason),
+          );
+          if (failure) {
+            // Keep the dialog open on the message; the timeline still gets the attempt.
+            await refresh();
+            throw new Error(failure);
+          }
+        }
         break;
       case "send_invoice":
         if (!invoiceId) return;

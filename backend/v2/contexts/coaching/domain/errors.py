@@ -110,3 +110,59 @@ class NoteNotFound(DomainError):
 
     code = "Coaching.NoteNotFound"
     status_code = 404
+
+
+class RecapNotAllowed(DomainError):
+    """Caller may not see or change this occurrence's class recap. 404: the
+    occurrence is not theirs (or does not exist), so do not leak it."""
+
+    code = "Coaching.RecapNotAllowed"
+    status_code = 404
+
+
+class RecapWriteForbidden(DomainError):
+    """Caller may read the recap (assistant, admin) but only the assigned lead
+    coach or the academy owner may write it or submit a report."""
+
+    code = "Coaching.RecapWriteForbidden"
+    status_code = 403
+
+
+class RecapConflict(DomainError):
+    """The recap changed since the caller read it (stale ``expected_revision``)
+    or this mutation id was already used for a different write."""
+
+    code = "Coaching.RecapConflict"
+    status_code = 409
+
+
+class RecapInvalid(DomainError):
+    """Unknown curriculum skill, or a participant who is not marked present."""
+
+    code = "Coaching.RecapInvalid"
+    status_code = 422
+
+
+class DropoffCheckinDisabled(DomainError):
+    """The academy has not switched parent drop-off check-in on."""
+
+    code = "Coaching.DropoffCheckinDisabled"
+    status_code = 403
+
+
+class DropoffCheckinNotFound(DomainError):
+    """No such student for this parent, no such occurrence in this academy,
+    or (for a confirmation) no arrival report to confirm. 404 so another
+    family's child or another academy's class is never revealed."""
+
+    code = "Coaching.DropoffCheckinNotFound"
+    status_code = 404
+
+
+class DropoffWindowClosed(DomainError):
+    """The arrival cannot be reported or confirmed now. ``details["reason"]``
+    is ``cancelled``, ``not_scheduled``, ``not_open_yet``, ``closed`` or
+    ``expired``."""
+
+    code = "Coaching.DropoffWindowClosed"
+    status_code = 409

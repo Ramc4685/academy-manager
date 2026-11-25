@@ -6,8 +6,6 @@
  * `continueUrl`. But it reaches us as a *query parameter*, so anyone can put
  * any URL there. Honouring it blindly would turn `/auth/action` into an open
  * redirect that bounces a just-authenticated parent off the academy's domain.
- *
- * Mirrors the same-site rule the magic-link flow applies to `next_path`.
  */
 
 const FALLBACK_PATH = "/login";

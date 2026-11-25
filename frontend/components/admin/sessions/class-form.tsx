@@ -76,7 +76,7 @@ const inputClass =
 const lockedInputClass =
   "disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-rally-muted";
 
-const DAYS_OF_WEEK = [
+export const DAYS_OF_WEEK = [
   { value: "Mon", label: "Monday" },
   { value: "Tue", label: "Tuesday" },
   { value: "Wed", label: "Wednesday" },

@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from backend.v2.contexts.enrollment.domain.errors import EnrollmentMovedConcurrently
 from backend.v2.contexts.enrollment.domain.models import SEAT_HOLDING, Enrollment, Session
 
 
@@ -129,10 +130,15 @@ class FakeEnrollmentWriter:
     async def update_status(self, enrollment_id: str, status: str) -> None:
         self.rows[enrollment_id] = self.rows[enrollment_id].model_copy(update={"status": status})
 
-    async def update_session(self, enrollment_id: str, session_id: str) -> None:
-        self.rows[enrollment_id] = self.rows[enrollment_id].model_copy(
-            update={"session_id": session_id}
-        )
+    async def update_session(
+        self, enrollment_id: str, session_id: str, *, expected_session_id: str | None = None
+    ) -> None:
+        row = self.rows[enrollment_id]
+        if expected_session_id is not None and row.session_id != expected_session_id:
+            raise EnrollmentMovedConcurrently(
+                "moved by another request", enrollment_id=enrollment_id
+            )
+        self.rows[enrollment_id] = row.model_copy(update={"session_id": session_id})
 
     async def find_for_session_student(self, session_id: str, student_id: str) -> Enrollment | None:
         return next(

@@ -26,8 +26,16 @@ describe("defaultInboxTab", () => {
     expect(defaultInboxTab("not-a-queue", { makeups: 2 })).toBe("makeups");
   });
 
-  it("covers all eight queues", () => {
-    expect(INBOX_TABS).toHaveLength(8);
+  it("covers all nine queues, attendance last", () => {
+    expect(INBOX_TABS).toHaveLength(9);
+    expect(INBOX_TABS.at(-1)).toEqual({ id: "attendance", label: "Attendance" });
+  });
+
+  it("lands on Attendance from the dashboard link and when it is the only work", () => {
+    expect(defaultInboxTab("attendance", { registrations: 2 })).toBe("attendance");
+    expect(defaultInboxTab(null, { registrations: 0, pauses: 0, attendance: 3 })).toBe(
+      "attendance",
+    );
   });
 });
 

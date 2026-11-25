@@ -23,6 +23,7 @@ import {
   TrialsTab,
 } from "@/components/admin/requests/request-queues";
 import { PausesTab } from "@/components/admin/requests/PausesTab";
+import { AttendanceTab } from "@/components/admin/requests/AttendanceTab";
 import { getAdminInboxCounts } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import {
@@ -58,8 +59,8 @@ export default function AdminInboxPage() {
       <div>
         <h1 className="font-display text-2xl font-bold tracking-tight text-rally-ink">Inbox</h1>
         <p className="mt-0.5 text-sm text-rally-subtle">
-          Everything waiting on a decision: registrations, waitlists, level-ups, and parent
-          requests
+          Everything waiting on a decision: registrations, waitlists, level-ups, parent
+          requests, and attendance nobody took
         </p>
       </div>
 
@@ -127,6 +128,7 @@ export default function AdminInboxPage() {
       {tab === "absences" && <AbsencesTab />}
       {tab === "cancellations" && <CancellationsTab />}
       {tab === "pauses" && <PausesTab />}
+      {tab === "attendance" && <AttendanceTab />}
     </section>
   );
 }

@@ -63,12 +63,6 @@ class FakeUserRepo:
                 return u
         return None
 
-    async def get_by_firebase_uid(self, firebase_uid: str) -> User | None:
-        for u in self._by_email.values():
-            if firebase_uid in (u.firebase_uid, u.auth_uid):
-                return u
-        return None
-
 
 class FakeMembershipRepo:
     def __init__(self, memberships: list[AcademyMembership]) -> None:
@@ -345,60 +339,24 @@ async def test_missing_email_verified_claim_is_rejected() -> None:
         await uc.execute("ok", resolved_academy_id="academy-court")
 
 
+@pytest.mark.parametrize("email_verified", [False, True])
 @pytest.mark.asyncio
-async def test_server_minted_custom_token_does_not_require_verified_email() -> None:
-    """Magic-link sign-in must keep working.
-
-    ``ConsumeMagicLink`` mints the custom token itself against a user_id it
-    already resolved, and Firebase provisions those accounts with
-    ``email_verified=False``. There is no attacker-supplied email claim to
-    verify, so the server-minted provider is exempt — requiring the claim here
-    would lock every magic-link parent out.
-    """
+async def test_leftover_magic_link_custom_token_session_is_refused(email_verified: bool) -> None:
+    """LF4: nothing mints custom tokens since the magic-link stack was deleted,
+    but a session minted from an inbox link keeps refreshing until revoked.
+    It must fail closed (sign in again) even once the account's email is
+    verified, because the holder may be whoever the link was forwarded to."""
     coach = _coach_user().model_copy(update={"firebase_uid": "fb-coach"})
     uc = _build(
         users=[coach],
         token_claims={
             "uid": "fb-coach",
             "email": "coach@example.com",
-            "email_verified": False,
+            "email_verified": email_verified,
             "firebase": {"sign_in_provider": "custom"},
         },
     )
-    claims = await uc.execute("ok", resolved_academy_id="academy-court")
-    assert claims.user_id == "u-coach"
-
-
-@pytest.mark.asyncio
-async def test_custom_token_resolves_by_uid_never_by_its_unverified_email() -> None:
-    """A magic-link session whose Firebase email was changed to another roster
-    person's address must not become that person (identity_auth:6)."""
-    coach = _coach_user().model_copy(update={"firebase_uid": "fb-coach"})
-    victim = User(user_id="u-victim", email="victim@example.com", display_name="V")
-    uc = _build(
-        users=[coach, victim],
-        token_claims={
-            "uid": "fb-coach",
-            "email": "victim@example.com",
-            "email_verified": False,
-            "firebase": {"sign_in_provider": "custom"},
-        },
-    )
-    claims = await uc.execute("ok", resolved_academy_id="academy-court")
-    assert claims.user_id == "u-coach"
-
-
-@pytest.mark.asyncio
-async def test_custom_token_for_an_unknown_uid_is_not_found() -> None:
-    uc = _build(
-        token_claims={
-            "uid": "fb-stranger",
-            "email": "coach@example.com",
-            "email_verified": False,
-            "firebase": {"sign_in_provider": "custom"},
-        },
-    )
-    with pytest.raises(UserNotFound):
+    with pytest.raises(InvalidToken):
         await uc.execute("ok", resolved_academy_id="academy-court")
 
 

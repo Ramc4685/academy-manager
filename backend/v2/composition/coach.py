@@ -59,6 +59,9 @@ from backend.v2.contexts.coaching.application.use_cases.skill_notes import (
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoAttendanceRepository,
 )
+from backend.v2.contexts.coaching.infrastructure.mongo_class_recap_repo import (
+    MongoClassRecapRepository,
+)
 from backend.v2.contexts.coaching.infrastructure.mongo_session_feedback_repo import (
     MongoSessionFeedbackRepository,
 )
@@ -228,6 +231,8 @@ class CoachComposition:
     # test compositions working; real composition always sets both.
     set_progress_note_visibility: SetProgressNoteVisibility | None = None
     set_skill_note_visibility: SetSkillNoteVisibility | None = None
+    # Today flags classes whose recap is saved (coach recap shortcut).
+    recapped_occurrence_ids: Callable[[Sequence[str]], Awaitable[set[str]]] | None = None
 
 
 class CoachAssignedSessionLookup:
@@ -297,6 +302,17 @@ class _SessionTypeChangedEventSink:
                 ),
             )
         )
+
+
+def _recapped_occurrence_ids(db: Any) -> Callable[[Sequence[str]], Awaitable[set[str]]]:
+    """Which of these occurrences already have a recap with a taught skill."""
+    recaps = MongoClassRecapRepository(db)
+
+    async def resolve(occurrence_ids: Sequence[str]) -> set[str]:
+        rows = await recaps.list_for_occurrences(list(dict.fromkeys(occurrence_ids)))
+        return {r.occurrence_id for r in rows if r.taught_skill_ids}
+
+    return resolve
 
 
 def _overdue_cents_by_student(db: Any) -> Any:
@@ -673,4 +689,5 @@ def compose_coach(
         get_academy_timezone=academy_timezone_lookup(db),
         get_academy_info=_coach_academy_info(db),
         overdue_cents_by_student=_overdue_cents_by_student(db),
+        recapped_occurrence_ids=_recapped_occurrence_ids(db),
     )

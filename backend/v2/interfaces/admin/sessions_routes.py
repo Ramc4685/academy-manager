@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.v2.composition.dropoff_checkins import DropoffCheckinComposition
 from backend.v2.composition.session_announcements import (
     AnnouncementNotFound,
     SessionAnnouncementService,
@@ -27,6 +28,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_period_end_drop 
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     AcademyTimezoneUnset,
+    BulkTransferEnrollmentsCommand,
     CancelEnrollmentCommand,
     CancelSessionCommand,
     CreateSessionCommand,
@@ -44,8 +46,13 @@ from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurre
 from backend.v2.contexts.enrollment.application.use_cases.close_academy_dates import (
     CloseAcademyDatesCommand,
 )
+from backend.v2.contexts.enrollment.application.use_cases.copy_session import (
+    CopyRosterRefused,
+    CopySessionCommand,
+)
 from backend.v2.interfaces.admin.academy_clock import academy_zone
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
+from backend.v2.interfaces.admin.dropoff_routes import admin_dropoff_view
 from backend.v2.interfaces.admin.owner_gate import (
     ensure_owner_for_enrollment_delete,
     ensure_owner_for_price_change,
@@ -62,11 +69,17 @@ from backend.v2.interfaces.admin.views import (
     AdminSessionView,
     AdminStudentAttendanceList,
     AdminStudentAttendanceView,
+    BulkTransferEnrollmentsRequest,
+    BulkTransferEnrollmentsResponse,
+    BulkTransferRowView,
     CancelSessionOccurrenceRequest,
     CancelSessionOccurrenceResponse,
     CloseAcademyDatesRequest,
     CloseAcademyDatesResponse,
     ClosureDateView,
+    CopiedRosterRowView,
+    CopySessionRequest,
+    CopySessionResponse,
     CorrectStudentAttendanceRequest,
     CreateSessionRequest,
     CreditMissedClassRequest,
@@ -92,6 +105,7 @@ from backend.v2.interfaces.admin.views import (
     WelcomeEmailPreviewView,
     WithdrawEnrollmentRequest,
 )
+from backend.v2.interfaces.dropoff_views import optional_dropoff_checkins
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_owner, require_persona
 from backend.v2.shared.http.errors import DomainError
@@ -193,6 +207,57 @@ async def create_session(
     if use_cases.maintain_session_occurrences is not None:
         await use_cases.maintain_session_occurrences(session)
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))
+
+
+@router.post(
+    "/sessions/{session_id}/copy", response_model=CopySessionResponse, summary="Copy a class"
+)
+async def copy_session(
+    session_id: str,
+    body: CopySessionRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> CopySessionResponse:
+    """A0-8: new class from this one; optionally its active students too."""
+    if use_cases.copy_session is None:
+        raise HTTPException(status_code=503, detail="Copy class is not available.")
+    # Money is owner-only, as on Create: an admin's copy is unpriced.
+    include_price = "owner" in claims.roles
+    if use_cases.get_admin_session is not None:
+        source = await use_cases.get_admin_session(session_id)  # type: ignore[operator]
+        if source is not None:
+            amount = _row_field(source, "amount_cents") if include_price else None
+            await _reject_percent_pay_missing_price(
+                use_cases=use_cases,
+                coach_id=str(_row_field(source, "coach_id") or ""),
+                amount_cents=amount,  # type: ignore[arg-type]
+            )
+    try:
+        result = await use_cases.copy_session.execute(
+            CopySessionCommand(
+                source_session_id=session_id,
+                title=body.title,
+                days_of_week=body.days_of_week,
+                start_time=body.start_time,
+                end_time=body.end_time,
+                include_price=include_price,
+                copy_roster=body.copy_roster,
+                actor_id=claims.user_id,
+            )
+        )
+    # DuplicateSessionSeries goes to the shared DomainError handler (409) so its
+    # session_id detail reaches the dialog's "Open the existing class" link.
+    except AcademyTimezoneUnset as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except CopyRosterRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if use_cases.maintain_session_occurrences is not None:
+        await use_cases.maintain_session_occurrences(result.session)
+    return CopySessionResponse(
+        session=AdminSessionView(**result.session.model_dump(exclude={"academy_id"})),
+        price_copied=include_price,
+        roster=[CopiedRosterRowView(**row.model_dump()) for row in result.roster],
+    )
 
 
 @router.patch("/sessions/{session_id}", response_model=AdminSessionView, summary="Edit session")
@@ -659,12 +724,14 @@ async def list_occurrence_student_attendance(
     occurrence_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
+    dropoff: DropoffCheckinComposition | None = Depends(optional_dropoff_checkins),
 ) -> AdminStudentAttendanceList:
     reader = use_cases.list_occurrence_attendance
     if reader is None:
         raise HTTPException(status_code=503, detail="Attendance correction is not configured")
     rows = await reader(occurrence_id)  # type: ignore[operator]
     return AdminStudentAttendanceList(
+        dropoff=await admin_dropoff_view(dropoff, occurrence_id) if dropoff else None,
         attendance=[
             AdminStudentAttendanceView(
                 attendance_id=row.attendance_id,
@@ -680,7 +747,7 @@ async def list_occurrence_student_attendance(
                 marked_at=row.marked_at,
             )
             for row in rows
-        ]
+        ],
     )
 
 
@@ -906,6 +973,32 @@ async def transfer_enrollment(
         parent_id="",
         status=enrollment.status,
         enrolled_at=datetime.now(UTC),
+    )
+
+
+@router.post("/enrollments/bulk-transfer", response_model=BulkTransferEnrollmentsResponse)
+async def bulk_transfer_enrollments(
+    body: BulkTransferEnrollmentsRequest,
+    claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> BulkTransferEnrollmentsResponse:
+    """A0-8: per-row results; a refused row never blocks the others."""
+    if use_cases.bulk_transfer_enrollments is None:
+        raise HTTPException(status_code=503, detail="Bulk transfer is not available.")
+    result = await use_cases.bulk_transfer_enrollments.execute(
+        BulkTransferEnrollmentsCommand(
+            enrollment_ids=body.enrollment_ids,
+            target_session_id=body.target_session_id,
+            effective_at=_start_of_day_utc(body.effective_date),
+            effective_date=body.effective_date,
+            actor_id=claims.user_id,
+            reason=body.reason,
+        )
+    )
+    return BulkTransferEnrollmentsResponse(
+        results=[BulkTransferRowView(**row.model_dump()) for row in result.results],
+        moved_count=result.moved_count,
+        failed_count=result.failed_count,
     )
 
 

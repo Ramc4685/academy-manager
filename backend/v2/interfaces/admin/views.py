@@ -18,6 +18,7 @@ from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle impor
     PersonLifecycle,
 )
 from backend.v2.contexts.identity.application.update_academy_use_case import validate_https_url
+from backend.v2.interfaces.dropoff_views import StaffDropoffCheckinView
 from backend.v2.shared.auth.claims import Role
 from backend.v2.shared.comms import MAX_ANNOUNCEMENT_BODY
 from backend.v2.shared.comms.colour import _HEX as _HEX_COLOR_RE
@@ -530,8 +531,23 @@ class AdminStudentAttendanceView(BaseModel):
     marked_at: datetime | None = None
 
 
+class AdminOccurrenceDropoffView(BaseModel):
+    """Drop-off breakdown for the class date. Expected = roster (active
+    enrollments plus make-up / trial rows); ``checkins`` are every parent
+    report with its state, actor names and server timestamps."""
+
+    enabled: bool
+    expected_student_ids: list[str]
+    expected_count: int
+    pending_count: int
+    confirmed_count: int
+    checkins: list[StaffDropoffCheckinView]
+
+
 class AdminStudentAttendanceList(BaseModel):
     attendance: list[AdminStudentAttendanceView]
+    # None when drop-off check-in is not composed (or the date is unknown).
+    dropoff: AdminOccurrenceDropoffView | None = None
 
 
 def _validated_group_link(value: str | None) -> str | None:
@@ -788,6 +804,54 @@ class TransferEnrollmentRequest(BaseModel):
     reason: str | None = None
 
 
+class CopySessionRequest(BaseModel):
+    """A0-8 Copy class. Omitted schedule fields keep the source class's."""
+
+    title: str = Field(min_length=1, max_length=200)
+    days_of_week: list[str] | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    copy_roster: bool = False
+
+
+class CopiedRosterRowView(BaseModel):
+    student_id: str
+    full_name: str
+    ok: bool
+    error_code: str | None = None
+    message: str | None = None
+
+
+class CopySessionResponse(BaseModel):
+    session: AdminSessionView
+    #: False when an admin (not the owner) copied a priced class: the copy is
+    #: unpriced until the owner sets the fee, as with Create.
+    price_copied: bool
+    roster: list[CopiedRosterRowView]
+
+
+class BulkTransferEnrollmentsRequest(BaseModel):
+    """A0-8: move several roster rows to one class in one request."""
+
+    enrollment_ids: list[str] = Field(min_length=1, max_length=100)
+    target_session_id: str
+    effective_date: date
+    reason: str | None = None
+
+
+class BulkTransferRowView(BaseModel):
+    enrollment_id: str
+    ok: bool
+    error_code: str | None = None
+    message: str | None = None
+
+
+class BulkTransferEnrollmentsResponse(BaseModel):
+    results: list[BulkTransferRowView]
+    moved_count: int
+    failed_count: int
+
+
 class OverrideEnrollmentFeeRequest(BaseModel):
     amount_cents: int | None = Field(default=None, ge=0)
     reason: str | None = Field(default=None, max_length=500)
@@ -940,6 +1004,13 @@ class AdminPaymentView(BaseModel):
     void_reason: str | None = None
     voided_at: datetime | None = None
     voided_by: str | None = None
+    # Stripe dispute (chargeback) on this payment (#980); absent when never disputed.
+    dispute_id: str | None = None
+    dispute_status: str | None = None
+    dispute_reason: str | None = None
+    dispute_amount_cents: int | None = None
+    dispute_outcome: str | None = None
+    disputed_at: datetime | None = None
     created_at: datetime
     paid_at: datetime | None = None
 
@@ -1902,6 +1973,8 @@ AdminAttentionKind = Literal[
     "billing_deferrals",
     "waivers",
     "session_pressure",
+    # A past class date with students on the roster and no marks at all.
+    "missing_attendance",
 ]
 
 
@@ -2515,6 +2588,8 @@ class SendCampaignAudience(BaseModel):
     type: Literal["academy", "session"]
     role: Literal["parent", "coach"] = "parent"
     session_id: str | None = None
+    # #1030: several sessions in one campaign; one copy per address across them.
+    session_ids: list[str] | None = Field(default=None, max_length=50)
 
 
 class SendCampaignRequest(BaseModel):
@@ -2525,6 +2600,39 @@ class SendCampaignRequest(BaseModel):
     # derives one from the campaign content, so an identical retried POST
     # never re-emails the audience (#512).
     idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
+    # #1031: the fingerprint from the preview the admin confirmed. A send whose
+    # audience now resolves differently is refused with 409 audience_changed.
+    expected_audience_fingerprint: str | None = Field(default=None, max_length=128)
+
+
+class CampaignPreviewRequest(BaseModel):
+    audience: SendCampaignAudience
+
+
+class CampaignPreviewRecipient(BaseModel):
+    display_name: str | None = None
+    email: str
+    is_family_contact: bool = False
+
+
+class CampaignPreviewExclusion(BaseModel):
+    display_name: str | None = None
+    email: str | None = None
+    # missing_email | duplicate_address | suppressed | unsubscribed
+    reason: str
+    is_family_contact: bool = False
+
+
+class CampaignPreviewResponse(BaseModel):
+    """Resolved audience before a send (#1029): unique addresses, and the
+    families and opted-in contacts they belong to. Never an enrollment count."""
+
+    recipient_count: int
+    family_count: int
+    contact_count: int
+    recipients: list[CampaignPreviewRecipient] = Field(default_factory=list)
+    exclusions: list[CampaignPreviewExclusion] = Field(default_factory=list)
+    audience_fingerprint: str = ""
 
 
 class SendCampaignResponse(BaseModel):

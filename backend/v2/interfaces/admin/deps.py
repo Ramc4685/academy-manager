@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Protocol
+from datetime import datetime
+from typing import Any, Protocol
 
 from fastapi import Request
 
@@ -74,6 +75,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     UpdateAdminStudent,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
+    BulkTransferEnrollments,
     CancelEnrollment,
     CancelSession,
     CreateSession,
@@ -91,6 +93,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
 from backend.v2.contexts.enrollment.application.use_cases.cancel_session_occurrence import (
     CancelSessionOccurrence,
 )
+from backend.v2.contexts.enrollment.application.use_cases.copy_session import CopySession
 from backend.v2.contexts.enrollment.application.use_cases.departure_policies import (
     GetEnrollmentDeparturePolicy,
     UpdateEnrollmentDeparturePolicy,
@@ -282,9 +285,10 @@ class AdminUseCases:
     list_dues_followup: object  # callable
     send_dues_reminders: SendDuesReminders
     export_report_csv: object  # callable
-    list_enrollment_events: (
-        object  # async (enrollment_id, *, limit, cursor) -> (list[dict], cursor | None)
-    )
+    # async (enrollment_id, *, limit, cursor) -> (events, next cursor | None)
+    list_enrollment_events: Callable[
+        ..., Awaitable[tuple[list[dict[str, Any]], tuple[datetime, str] | None]]
+    ]
     list_billing_deferral_warnings: object  # async (*, today: date, limit: int)
     # comms
     comms: CommsService
@@ -303,6 +307,11 @@ class AdminUseCases:
     # predate it keep constructing AdminUseCases; real admin composition
     # always sets it, and the routes 503 rather than 500 when it is absent.
     session_announcements: SessionAnnouncementService | None = None
+    # A0-8 bulk roster transfer. Optional for the same reason; it loops
+    # `transfer_enrollment`, and the route 503s when it is absent.
+    bulk_transfer_enrollments: BulkTransferEnrollments | None = None
+    # A0-8 Copy class; optional like the two above (route 503s when absent).
+    copy_session: CopySession | None = None
     # recurring tuition discounts (#244)
     set_tuition_discount: object | None = None  # SetTuitionDiscount
     remove_tuition_discount: object | None = None  # RemoveTuitionDiscount
@@ -492,6 +501,7 @@ class AdminUseCases:
     # for fixtures that predate them; real admin composition always sets both.
     void_attendance: object | None = None  # VoidAttendance
     list_occurrence_attendance: object | None = None  # (occurrence_id) -> list[Attendance]
+    list_attendance_review: object | None = None  # ListAttendanceReview (Inbox Attendance tab)
     # Departures / holds (issue #697). Wired in composition/enrollment_holds.py
     # (never composition/admin.py — see that module's docstring) and attached
     # onto this already-built object in main.py, mirroring

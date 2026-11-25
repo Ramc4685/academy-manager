@@ -40,7 +40,21 @@ def test_get_self_service_policy_returns_defaults(admin_client):
         "can_claim_waitlist_offer": True,
         "payment_instructions": "",
         "welcome_email_absence_policy_default": "",
+        # Drop-off check-in is opt-in per academy.
+        "dropoff_checkin_enabled": False,
+        "dropoff_checkin_opens_minutes_before": 30,
+        "dropoff_checkin_closes_minutes_after": 15,
     }
+
+
+def test_put_self_service_policy_rejects_a_dropoff_window_over_60_minutes(admin_client):
+    admin_client.use_cases.update_self_service_policy = AsyncMock()
+    response = admin_client.put(
+        "/api/v2/admin/self-service/policy",
+        json={"dropoff_checkin_opens_minutes_before": 61},
+    )
+    assert response.status_code == 422
+    admin_client.use_cases.update_self_service_policy.execute.assert_not_called()
 
 
 def test_put_self_service_policy_rejects_negative_values(admin_client):

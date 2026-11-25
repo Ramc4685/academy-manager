@@ -616,6 +616,10 @@ def test_invoice_job_records_a_heartbeat_only_when_nothing_was_generated() -> No
     assert 'totals["academy_count"]' in gate
     assert 'totals["invoices_emailed"]' in gate
     assert 'totals["invoice_emails_failed"]' in gate
+    # #1033: whole-pass failures are recorded even on a retry-only tick.
+    assert 'totals["invoice_email_pass_failed"]' in gate
+    assert 'totals["invoice_mint_send_failed"]' in gate
+    assert 'totals["generation_failed"]' in gate
     # Still gated: an idle tick returns before writing any counts.
     assert gate.split("):", 1)[1].strip().startswith("return")
     assert "record_job_run(" not in body

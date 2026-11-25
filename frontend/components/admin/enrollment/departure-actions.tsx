@@ -11,11 +11,10 @@
  *
  * Vocabulary (owner-settled, see the departures design contract):
  *   Transfer, Hold, Return, Drop, Delete — never "Cancel", which is reserved
- *   for classes and dates, not a child. Pause/Resume are a *transitional*
- *   group: today's pause releases the seat and a hold (#697) does not, so
- *   relabelling Pause/Resume to Hold/Return now would misrepresent seat
- *   safety. They render in a visually separate group until #697 removes
- *   them.
+ *   for classes and dates, not a child. Hold (keeps the seat) replaced
+ *   Pause on the roster (A0-10). Resume stays only so a legacy paused row
+ *   (seat already released) is not stranded; it renders in a visually
+ *   separate group.
  *
  * Stateless: this component owns no dialog state and makes no request. The
  * caller supplies exactly which actions are available (`actions`) and reacts

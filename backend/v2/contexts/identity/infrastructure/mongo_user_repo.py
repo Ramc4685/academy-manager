@@ -213,12 +213,6 @@ class MongoUserRepository:
                 extra={"user_doc_id": str(doc["_id"])},
             )
 
-    async def get_by_firebase_uid(self, firebase_uid: str) -> User | None:
-        doc = await self.collection.find_one(
-            {"$or": [{"firebase_uid": firebase_uid}, {"auth_uid": firebase_uid}]}
-        )
-        return self._to_domain(doc) if doc else None
-
     async def get_by_id(self, user_id: str) -> User | None:
         doc = await self.collection.find_one(
             {"$or": [{"user_id": user_id}, {"auth_uid": user_id}, {"_id": user_id}]}
@@ -400,14 +394,14 @@ class MongoUserRepository:
     async def list_users(
         self,
         role: Role | None = None,
-        academy_id: str | None = None,
         *,
+        academy_id: str,
         exclude_role: Role | None = None,
         roles: Sequence[Role] | None = None,
     ) -> list[AdminUserSummary]:
         # Tenant scope first, then each optional filter as its own ``$and``
         # clause so the planner can still lead with ``academy_id``.
-        clauses: list[dict[str, object]] = [{"academy_id": academy_id or self._default_academy_id}]
+        clauses: list[dict[str, object]] = [{"academy_id": academy_id}]
         if role:
             clauses.append(self._role_filter(role))
         if roles:

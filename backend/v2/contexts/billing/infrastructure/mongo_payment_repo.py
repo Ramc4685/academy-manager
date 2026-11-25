@@ -10,6 +10,7 @@ from bson import ObjectId as BsonObjectId
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
+from backend.v2.contexts.billing.application.admin_payment_settlement import dispute_fields
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     GenerateMonthlyPaymentsResult,
 )
@@ -483,6 +484,7 @@ class MongoPaymentRepository(TenantScopedRepository):
             or doc.get("stripe_payment_intent"),
             "reconciliation_status": cls._reconciliation_status(doc),
             "created_at": created_at,
+            **dispute_fields(doc),
         }
 
     @classmethod

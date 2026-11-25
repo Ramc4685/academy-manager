@@ -4,12 +4,20 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useQueries, useQuery } from "@tanstack/react-query";
 
-import { getCoachAiStatus, getCoachToday, listCoachPendingNarratives, type CoachSession } from "@/lib/api/coach";
+import {
+  getCoachAiStatus,
+  getCoachSchedule,
+  getCoachToday,
+  listCoachPendingNarratives,
+  type CoachSession,
+} from "@/lib/api/coach";
 import { AI_STATUS_KEY, narrativeDate } from "@/lib/coach/progress-narrative";
 import {
   coachSessionHref,
   isCancelled,
+  latestUnfinishedRecap,
   markProgress,
+  nextUpcomingClass,
   recentUnmarkedSessions,
 } from "@/lib/coach/marking";
 import { coachScheduleEntryHref } from "@/lib/coach/schedule-links";
@@ -18,6 +26,7 @@ import { reportVitals } from "@/lib/pwa/vitals";
 import { formatSessionTimeRange, sessionDateKey } from "@/lib/time/session-time";
 import { RetryButton } from "@/components/coach/RetryButton";
 import { useQueuedMarkCount } from "@/lib/offline/use-needs-review-count";
+import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
 
 function todayISO(offset = 0): string {
   const d = new Date();
@@ -60,6 +69,20 @@ export default function CoachTodayPage() {
   // Only PREVIOUS days: today's own classes already carry a "Needs marks"
   // badge in the list below, and repeating them here would be noise.
   const recentUnmarked: CoachSession[] = recentUnmarkedSessions(lookbackSessions);
+
+  // Empty day: point the coach at the next class and the recap left open.
+  const emptyToday = viewingToday && !isError && !!data && sessions.length === 0;
+  const schedule = useQuery({
+    queryKey: queryKeys.coach.schedule(),
+    queryFn: getCoachSchedule,
+    enabled: emptyToday,
+    staleTime: 5 * 60 * 1000,
+  });
+  const nextClass = emptyToday ? nextUpcomingClass(schedule.data?.sessions ?? []) : null;
+  // Assistants read recaps but cannot write them, so no shortcut for them.
+  const assistant = useIsAssistantCoach();
+  const unfinishedRecap =
+    emptyToday && !assistant ? latestUnfinishedRecap(lookbackSessions) : null;
 
   // B4: AI notes waiting for this coach's approval before tonight's email.
   const aiStatus = useQuery({
@@ -143,6 +166,49 @@ export default function CoachTodayPage() {
         <p className="text-neutral-500" data-testid="empty-state">
           No sessions today.
         </p>
+      )}
+
+      {nextClass && (
+        <Link
+          href={coachScheduleEntryHref(nextClass) as Parameters<typeof Link>[0]["href"]}
+          data-testid="next-class"
+          className="mt-3 block rounded-lg border border-rally-line bg-white p-3 hover:border-rally-cobalt-600 dark:bg-neutral-900"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            Your next class
+          </p>
+          <p className="mt-1 font-semibold">{nextClass.title}</p>
+          <p className="text-sm text-neutral-600 dark:text-neutral-300">
+            {sessionDateKey(nextClass.start_at, nextClass.timezone)} ·{" "}
+            {formatSessionTimeRange(nextClass.start_at, nextClass.end_at, nextClass.timezone)}
+            {nextClass.location ? ` · ${nextClass.location}` : ""}
+          </p>
+        </Link>
+      )}
+
+      {unfinishedRecap && (
+        <Link
+          href={
+            `${coachScheduleEntryHref(unfinishedRecap)}&recap=open` as Parameters<
+              typeof Link
+            >[0]["href"]
+          }
+          data-testid="unfinished-recap"
+          className="mt-3 block rounded-lg border border-amber-300 bg-amber-50 p-3 hover:border-amber-500 dark:border-amber-900 dark:bg-amber-950"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-200">
+            Finish your class recap
+          </p>
+          <p className="mt-1 font-semibold">{unfinishedRecap.title}</p>
+          <p className="text-sm text-neutral-600 dark:text-neutral-300">
+            {sessionDateKey(unfinishedRecap.start_at, unfinishedRecap.timezone)} ·{" "}
+            {formatSessionTimeRange(
+              unfinishedRecap.start_at,
+              unfinishedRecap.end_at,
+              unfinishedRecap.timezone,
+            )}
+          </p>
+        </Link>
       )}
 
       {recentUnmarked.length > 0 && (

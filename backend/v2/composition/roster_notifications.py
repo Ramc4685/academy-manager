@@ -797,7 +797,8 @@ class RosterAlertAdapter:
                 parent_id,
                 title=academy_name,
                 body=f"{session.title} on {when} is cancelled.",
-                url="/parent",
+                # The family's calendar highlights this date (?occurrence=).
+                url=f"/parent/calendar?occurrence={quote(occurrence_id, safe='')}",
             )
 
         # The staff copy states the money outcome plainly, including when
@@ -902,7 +903,7 @@ class RosterAlertAdapter:
                     parent_id,
                     title=academy_name,
                     body=f"{len(lines)} class date{'s' if len(lines) != 1 else ''} cancelled.",
-                    url="/parent",
+                    url="/parent/calendar",
                 )
             except Exception:
                 failed = True

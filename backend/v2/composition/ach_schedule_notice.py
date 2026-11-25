@@ -18,6 +18,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_billing_settings_repo impo
 )
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
+    academy_card_route,
 )
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
@@ -78,12 +79,14 @@ async def _autopay_recipients(db: Any, academy_id: str, users: Any) -> list[dict
             {"academy_id": academy_id, "parent_id": {"$in": parent_ids}}
         )
     }
+    route = await academy_card_route(db) if customers else None
     out: list[dict[str, Any]] = []
     for pid in parent_ids:
         user = await users.get_by_id(pid)
-        label, last4 = MongoParentBillingCustomerRepository.display_payment_method(
-            customers.get(pid) or {}
-        )
+        doc = customers.get(pid) or {}
+        if not MongoParentBillingCustomerRepository.card_counts(doc, route):
+            doc = {}  # #981: a card autopay cannot charge is no card on file
+        label, last4 = MongoParentBillingCustomerRepository.display_payment_method(doc)
         out.append(
             {
                 "parent_id": pid,

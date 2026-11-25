@@ -264,6 +264,7 @@ class MongoAccountDeletionStore:
                 },
             },
         )
+        # Retired magic links: rows self-purge by TTL (0149); erase early anyway.
         await self._db["parent_magic_links"].delete_many({"user_id": {"$in": ids}})
         await self._db["login_attempts"].delete_many({"user_id": {"$in": ids}})
         if request.email:

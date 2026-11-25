@@ -65,6 +65,7 @@ from backend.v2.composition.invoice_naming import (
     find_invoice_by_id_or_number,
 )
 from backend.v2.composition.lifecycle_billing import (
+    build_add_invoice_line,
     build_autopay_status_gateway,
     build_void_billing_invoice,
     compose_enrollment_billing_sync,
@@ -103,6 +104,7 @@ from backend.v2.contexts.billing.application.admin_money import (
 )
 from backend.v2.contexts.billing.application.admin_payment_settlement import (
     SETTLED_STATUSES,
+    dispute_fields,
     settle_matching_rows,
     settlement_method,
 )
@@ -110,6 +112,7 @@ from backend.v2.contexts.billing.application.charge_admin_invoice import (
     attempt_regex,
     charge_invoice_as_admin,
 )
+from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
 from backend.v2.contexts.billing.application.checkout_paid_period import (
     CheckoutPaidPeriodResolver,
 )
@@ -130,7 +133,6 @@ from backend.v2.contexts.billing.application.refund_idempotency import (
 )
 from backend.v2.contexts.billing.application.use_cases.add_invoice_line import (
     AddInvoiceLine,
-    AddInvoiceLineCommand,
 )
 from backend.v2.contexts.billing.application.use_cases.admin_payment_ops import (
     ApplyPaymentDiscount,
@@ -318,6 +320,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_directory import
     UpdateAdminStudent,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
+    BulkTransferEnrollments,
     CancelEnrollment,
     CancelSession,
     CreateSession,
@@ -332,6 +335,7 @@ from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     TransferEnrollment,
     WithdrawEnrollment,
 )
+from backend.v2.contexts.enrollment.application.use_cases.copy_session import CopySession
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
 )
@@ -1046,16 +1050,16 @@ def compose_admin(
         idempotency_store=idempotency_store,
     )
 
-    async def _notify_minted_invoices(period: str) -> None:
+    async def _notify_minted_invoices(period: str) -> object:
         """Deliver what the run just minted, in the same run (issue #659).
 
         ``send_generated_invoices`` is bound later in this same function; this
         body only runs at request time, long after it exists. It owns the
         autopay split — non-autopay families get the invoice and a pay link,
-        autopay families get the pre-charge notice — so nothing here needs to
-        know the difference.
+        autopay families get the pre-charge notice. Returns the outcome so the
+        ops digest counts these sends (#1033).
         """
-        await send_generated_invoices(period)
+        return await send_generated_invoices(period)
 
     generate_monthly_payments = GenerateMonthlyPayments(
         payments=payments_repo,
@@ -1590,33 +1594,12 @@ def compose_admin(
             raise ValueError("invoice not found")
         return await billing_ledger_repo.list_payment_attempts(invoice_id)
 
-    async def add_invoice_line(
-        *,
-        invoice_id: str,
-        description: str,
-        line_type: str,
-        quantity: int,
-        unit_amount_cents: int,
-        product_id: str | None,
-    ) -> dict[str, Any]:
-        result = await AddInvoiceLine(
-            ledger=billing_ledger_repo,
-            counters=billing_counters_repo,
-            settings=billing_settings_repo,
-        ).execute(
-            AddInvoiceLineCommand(
-                invoice_id=invoice_id,
-                description=description,
-                line_type=line_type,
-                quantity=quantity,
-                unit_amount_cents=unit_amount_cents,
-                product_id=product_id,
-            )
-        )
-        return {
-            "line": result.line.model_dump(mode="python"),
-            "invoice": result.invoice.model_dump(mode="python"),
-        }
+    add_invoice_line = build_add_invoice_line(
+        ledger=billing_ledger_repo,
+        counters=billing_counters_repo,
+        settings=billing_settings_repo,
+        audit=billing_audit_log,
+    )
 
     async def remove_invoice_line(*, invoice_id: str, line_id: str) -> None:
         await RemoveInvoiceLine(ledger=billing_ledger_repo).execute(
@@ -2925,7 +2908,9 @@ def compose_admin(
 
     async def _occurrence_row(occurrence) -> dict[str, Any]:
         attendance_cursor = db.attendance.find(
-            {"academy_id": academy_id, "occurrence_id": occurrence.occurrence_id},
+            # Request tenant, not the boot academy: the Demo Academy's class
+            # dates read 0 marks and hid the Attendance action.
+            {"academy_id": request_academy_id(), "occurrence_id": occurrence.occurrence_id},
             sort=[("marked_at", -1)],
         )
         marked_by: set[str] = set()
@@ -3126,8 +3111,6 @@ def compose_admin(
         return await _enrich_parent_names(rows)
 
     async def list_payments_recent(fetch_cap: int = 200, *, include_voided: bool = False):
-        from backend.v2.shared.tenancy import current_academy_id
-
         fetch_cap = max(1, min(int(fetch_cap), 1000))
         request_academy_id = current_academy_id()
         invoice_rows: list[dict[str, Any]] = []
@@ -3298,6 +3281,7 @@ def compose_admin(
                     "void_reason": doc.get("void_reason"),
                     "voided_at": doc.get("voided_at"),
                     "voided_by": doc.get("voided_by"),
+                    **dispute_fields(doc),
                     "created_at": doc["created_at"],
                     "paid_at": doc.get("paid_at"),
                 }
@@ -3444,8 +3428,6 @@ def compose_admin(
         }
 
     async def list_payment_feed(limit: int = 20) -> list[dict[str, Any]]:
-        from backend.v2.shared.tenancy import current_academy_id
-
         request_academy_id = current_academy_id()
         limit = max(1, min(int(limit), 100))
 
@@ -3489,8 +3471,6 @@ def compose_admin(
         return await _enrich_parent_names(rows[:limit])
 
     async def list_last_payment_by_family() -> list[dict[str, Any]]:
-        from backend.v2.shared.tenancy import current_academy_id
-
         request_academy_id = current_academy_id()
         latest: dict[str, dict[str, Any]] = {}
 
@@ -3536,7 +3516,18 @@ def compose_admin(
         reason = reason.strip()
         if not reason:
             raise ValueError("reason is required")
-        checkout = await stripe.retrieve_checkout_session(stripe_checkout_session_id)
+        academy_id = request_academy_id()  # the request's academy, as the route below
+        # A direct charge's session lives on the academy's connected account
+        # (#983); the house academy reads the platform. The account comes from
+        # this academy's own route, never from the request; every row written
+        # below records that account (None = platform) so refunds route right.
+        route = await resolve_charge_route(
+            connected_accounts=connected_accounts_repo,
+            settings=billing_settings_repo,
+            context="admin_reconcile_stripe_billing",
+        )
+        on_account, account = route.on_account_kwargs(), route.connected_account_id
+        checkout = await stripe.retrieve_checkout_session(stripe_checkout_session_id, **on_account)
         metadata = checkout.get("metadata") if isinstance(checkout.get("metadata"), dict) else {}
         metadata = metadata or {}
         checkout_academy_id = metadata.get("academy_id")
@@ -3569,12 +3560,11 @@ def compose_admin(
         payment_status = str(checkout.get("payment_status") or "")
         checkout_status = str(checkout.get("status") or "")
         if not stripe_payment_intent_id and stripe_invoice_id:
-            invoice = await stripe.retrieve_invoice(stripe_invoice_id)
+            invoice = await stripe.retrieve_invoice(stripe_invoice_id, **on_account)
             stripe_payment_intent_id = str(invoice.get("payment_intent") or "")
         if customer_id:
             await parent_customers_repo.set_stripe_customer_id(
-                parent_id=parent_id,
-                stripe_customer_id=customer_id,
+                parent_id=parent_id, stripe_customer_id=customer_id, stripe_account_id=account
             )
 
         app_subscription_id = str(
@@ -3595,6 +3585,7 @@ def compose_admin(
                         "enrollment_id": enrollment_id,
                         "session_id": str(enrollment.get("session_id") or ""),
                         "stripe_subscription_id": stripe_subscription_id,
+                        "stripe_account_id": account,
                         "status": "active" if payment_status == "paid" else "incomplete",
                         "payment_mode": "monthly",
                         "updated_at": now,
@@ -3670,6 +3661,7 @@ def compose_admin(
                                 "stripe_subscription_id": stripe_subscription_id or None,
                                 "stripe_invoice_id": stripe_invoice_id or None,
                                 "stripe_payment_intent_id": stripe_payment_intent_id or None,
+                                "stripe_account_id": account,
                                 "amount_received_cents": amount_total or final_amount,
                                 "paid_amount_cents": amount_total or final_amount,
                                 "balance_due_cents": 0,
@@ -4331,6 +4323,7 @@ def compose_admin(
         correct_attendance=attendance_corrections.correct,
         void_attendance=attendance_corrections.void,
         list_occurrence_attendance=attendance_corrections.list_for_occurrence,
+        list_attendance_review=attendance_corrections.review,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,
@@ -4347,6 +4340,14 @@ def compose_admin(
         get_projected_income=make_projected_income_report(db),
         list_enrollment_events=make_list_enrollment_events(db),
         comms=comms,
+        bulk_transfer_enrollments=BulkTransferEnrollments(transfer=transfer_enrollment),
+        copy_session=CopySession(
+            sessions=sessions_w,
+            create_session=create_session,
+            enrollments=enrollments_r,
+            students=students_r,
+            roster_add=edit_roster_add,
+        ),
         session_announcements=compose_announcements(db, settings, comms=comms, users=users_r),
         send_campaign=send_campaign,
         list_admin_waivers=list_admin_waivers,

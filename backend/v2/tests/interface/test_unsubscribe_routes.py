@@ -181,8 +181,7 @@ def test_an_unresolvable_host_is_refused_rather_than_waved_through(db: Any) -> N
     academy subdomain, and the middleware then leaves `resolved_academy_id`
     unset. If that were accepted, the cross-tenant check below it would be
     skipped on every such request — a guard that exists only in the tests that
-    inject a tenant. `magic_link_routes` already refuses this case; so does
-    this one.
+    inject a tenant.
     """
     with TestClient(_build_app(db, academy_id=None)) as client:
         response = client.post("/api/v2/unsubscribe/preview", json={"token": _token()})

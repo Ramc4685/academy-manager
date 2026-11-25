@@ -103,6 +103,8 @@ TENANT_OWNED_COLLECTIONS = {
     # explicitly rather than through the ContextVar (#880)
     "coach_digest_sends",
     "parent_digest_sends",
+    "parent_win_sends",
+    "parent_report_card_sends",
     # People CRM leads shared with the public tenant page (migration 0192)
     "crm_contacts",
     # Public tenant page programs (migration 0194, Lane B1)
@@ -145,6 +147,8 @@ TENANT_OWNED_COLLECTIONS = {
     # Referral programme (migration 0238, L9 C2): codes and referrals.
     "referral_codes",
     "referrals",
+    # Parent drop-off check-ins (migration 0246), one per child per class.
+    "dropoff_checkins",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are
@@ -231,6 +235,16 @@ APPROVED_COMPOSITION_EXCEPTIONS = {
 # say what it reads and why the read cannot be tenant-scoped. Admission bar:
 # read-only, operator-facing, never reachable from a tenant request path.
 APPROVED_CROSS_TENANT_EXCEPTIONS = {
+    Path("contexts/billing/infrastructure/mongo_payment_intent_directory.py"): (
+        "By design cross-tenant and read-only (#982): a dispute on a platform "
+        "charge carries no Connect account and no metadata, so in multi_academy "
+        "mode ingest finds its academy from the ledger payment that recorded the "
+        "disputed PaymentIntent, before any tenant scope exists. It reads only "
+        "academy_id and stripe_account_id of ledger_payments rows matching the "
+        "exact stripe_payment_intent_id (index from migration 0245), at most "
+        "three, and writes nothing. Only the signature-verified Stripe webhook "
+        "reaches it."
+    ),
     Path("contexts/billing/infrastructure/mongo_connected_account_directory.py"): (
         "By design cross-tenant and read-only: Stripe delivers each direct-charge "
         "academy's payment events as Connect events to the one boot-academy "

@@ -82,19 +82,6 @@ async def test_a_new_session_stamps_last_login_at_on_the_users_row(mongo_db) -> 
 
 
 @pytest.mark.asyncio
-async def test_a_magic_link_session_is_audited_but_does_not_count_as_activated(mongo_db) -> None:
-    # One click on the digest's own auto-login link must not stop the digest
-    # from treating the parent as never-activated.
-    await mongo_db["users"].insert_one({"user_id": "u-coach", "email": "c@example.com"})
-
-    await _record(MongoLoginAuditRecorder(mongo_db), dedupe_key="u-coach:2", provider="custom")
-
-    assert await mongo_db["audit_logs"].count_documents({"actor_id": "u-coach"}) == 1
-    user = await mongo_db["users"].find_one({"user_id": "u-coach"})
-    assert "last_login_at" not in user
-
-
-@pytest.mark.asyncio
 async def test_the_audit_row_survives_a_failing_users_write(mongo_db) -> None:
     # Regression: the users update ran first, so its failure lost the audit row.
     class _BrokenUsers:

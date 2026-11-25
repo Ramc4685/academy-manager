@@ -45,6 +45,7 @@ from backend.v2.contexts.communications.application.ports import (
 )
 from backend.v2.contexts.communications.application.use_cases.notify_message_by_push import (
     NotifyMessageByPush,
+    message_url,
 )
 from backend.v2.contexts.communications.application.use_cases.send_push_to_user import (
     SendPushToUser,
@@ -301,7 +302,7 @@ class SessionAnnouncementService:
                     user_id=recipient.user_id,
                     title=session.title or academy_name,
                     body=_push_preview(message.body),
-                    data={"url": "/parent/messages"},
+                    data={"url": message_url("/parent/messages", message)},
                     event=PushEvent.URGENT_ANNOUNCEMENT,
                 )
         return AnnouncementPostResult(

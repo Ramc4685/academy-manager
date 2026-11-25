@@ -100,16 +100,7 @@ class LoadAuthClaims:
             raise InvalidToken("token missing email")
         require_verified_email(token_claims)
 
-        if _sign_in_provider(token_claims) == "custom":
-            # Server-minted (magic-link) sessions skip the verified-email check,
-            # so their email claim must not pick the account: resolve by the
-            # Firebase uid we minted the token for.
-            uid = token_claims.get("uid") or token_claims.get("sub")
-            if not isinstance(uid, str) or not uid:
-                raise InvalidToken("token missing uid")
-            user = await self._users.get_by_firebase_uid(uid)
-        else:
-            user = await self._users.get_by_email(email)
+        user = await self._users.get_by_email(email)
         if user is None:
             raise UserNotFound(f"no user for email {email}")
         if not _user_is_active(user):

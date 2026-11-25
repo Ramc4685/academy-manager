@@ -29,7 +29,8 @@ CORS_ORIGINS=https://academy.example.com
 STRIPE_API_KEY=sk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 # Required when a separate Connect-scoped webhook endpoint is configured for
-# connected-account events such as account.updated and capability.updated.
+# connected-account events (account.updated, capability.updated, and the
+# direct-charge payment events listed in docs/runbooks/stripe-direct-charges.md).
 STRIPE_CONNECT_WEBHOOK_SECRET=whsec_...
 SCHEDULER_TZ=America/Chicago
 RESEND_API_KEY=re_...
@@ -96,7 +97,7 @@ The following variables were introduced in Phase 5 and must be set in production
 |---|---|---|
 | `STRIPE_API_KEY` | Yes | Stripe secret key (`sk_live_...` or `sk_test_...`). Without this, all billing endpoints return 503. |
 | `STRIPE_WEBHOOK_SECRET` | Yes | Stripe webhook signing secret (`whsec_...`). Without this, `POST /api/v2/parent/webhooks/stripe` returns 503 and all Stripe payment confirmations are silently dropped. |
-| `STRIPE_CONNECT_WEBHOOK_SECRET` | Required for Connect | Signing secret for the Connect-scoped Stripe webhook endpoint that receives connected-account events (`account.updated`, `capability.updated`). Keep `STRIPE_WEBHOOK_SECRET` for account-level billing events. |
+| `STRIPE_CONNECT_WEBHOOK_SECRET` | Required for Connect | Signing secret for the Connect-scoped Stripe webhook endpoint that receives connected-account events (`account.updated`, `capability.updated`, and the direct-charge payment events listed in `docs/runbooks/stripe-direct-charges.md`). Keep `STRIPE_WEBHOOK_SECRET` for account-level billing events. |
 | `SCHEDULER_TZ` | No | IANA timezone for scheduled billing jobs. The backend default is `UTC`; production sets `America/Chicago` in `backend/fly.toml`. |
 
 Set these on Fly with:

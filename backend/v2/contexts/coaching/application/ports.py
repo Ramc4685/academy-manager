@@ -7,9 +7,11 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
+from backend.v2.contexts.coaching.domain.dropoff import DropoffCheckin
 from backend.v2.contexts.coaching.domain.models import (
     Attendance,
     AttendanceEntrySource,
+    AttendanceStatus,
     CoachAttendance,
     CoachAttendanceAuditEntry,
     CoachSkillNote,
@@ -129,3 +131,122 @@ class SkillNoteRepository(Protocol):
     async def set_visibility(
         self, student_id: str, note_id: str, visibility: NoteVisibility
     ) -> CoachSkillNote | None: ...
+
+
+# --- Admin attendance review (Inbox "Attendance" tab) ---
+
+
+class ReviewOccurrence(BaseModel):
+    """One past class date with its roster size and recorded marks (voided included)."""
+
+    model_config = {"frozen": True}
+
+    occurrence_id: str
+    session_id: str
+    session_name: str
+    start_at: datetime
+    status: str
+    enrolled_count: int
+    marked_count: int
+
+
+class ReviewCorrection(BaseModel):
+    model_config = {"frozen": True}
+
+    attendance_id: str
+    occurrence_id: str
+    session_id: str
+    session_name: str
+    start_at: datetime | None
+    student_id: str
+    student_name: str
+    status: AttendanceStatus
+    previous_status: AttendanceStatus | None
+    corrected_at: datetime
+    corrected_by_name: str | None
+    reason: str | None
+
+
+class AttendanceReviewReader(Protocol):
+    async def occurrences_between(self, start: datetime, end: datetime) -> list[ReviewOccurrence]:
+        """Non-cancelled class dates starting in ``[start, end)``."""
+        ...
+
+    async def corrections_since(self, since: datetime) -> list[ReviewCorrection]: ...
+
+
+class DropoffPolicy(BaseModel):
+    """The academy's drop-off check-in switch and window (minutes)."""
+
+    model_config = {"frozen": True}
+
+    enabled: bool = False
+    opens_minutes_before: int = 30
+    closes_minutes_after: int = 15
+
+
+class DropoffPolicyLookup(Protocol):
+    """Reads the academy's self-service policy. Enrollment owns it, so the
+    composition root adapts it into this shape (ADR-0005 rule 5)."""
+
+    async def get(self) -> DropoffPolicy: ...
+
+
+class GuardianLookup(Protocol):
+    async def is_guardian(self, parent_id: str, student_id: str) -> bool:
+        """True when this parent owns this student in the request tenant."""
+        ...
+
+
+class ExpectedRosterLookup(Protocol):
+    async def expected_student_ids(
+        self, *, occurrence_id: str, session_id: str, template_session_id: str | None
+    ) -> list[str]:
+        """Students expected at this occurrence: active enrollments in the
+        session (or its template) plus one-time make-up / trial entries."""
+        ...
+
+
+class DropoffMarkReader(Protocol):
+    """The attendance marks a check-in's displayed state is derived from."""
+
+    async def find_existing(self, occurrence_id: str, student_id: str) -> Attendance | None: ...
+
+    async def list_for_occurrences(self, occurrence_ids: list[str]) -> list[Attendance]: ...
+
+
+class DropoffCheckinRepository(Protocol):
+    async def report(self, checkin: DropoffCheckin) -> DropoffCheckin:
+        """Insert unless a row exists for (occurrence, student); return the
+        stored row either way (a repeat tap returns the first report)."""
+        ...
+
+    async def get(self, occurrence_id: str, student_id: str) -> DropoffCheckin | None: ...
+
+    async def begin_confirm(
+        self, occurrence_id: str, student_id: str, *, confirm_mutation_id: str, staff_id: str
+    ) -> DropoffCheckin | None:
+        """Atomically move ``reported`` -> ``confirming``. Returns the row
+        after the attempt (already confirming/confirmed rows come back
+        unchanged), or None when there is no row."""
+        ...
+
+    async def finish_confirm(
+        self,
+        occurrence_id: str,
+        student_id: str,
+        *,
+        attendance_id: str,
+        reconciled: bool,
+        confirmed_at: datetime,
+        confirmed_by: str,
+    ) -> DropoffCheckin | None:
+        """Move ``confirming`` -> ``confirmed``; a no-op on any other status.
+        Returns the row after the attempt."""
+        ...
+
+    async def list_for_occurrences(self, occurrence_ids: list[str]) -> list[DropoffCheckin]: ...
+
+    async def list_for_student(
+        self, student_id: str, occurrence_ids: list[str]
+    ) -> list[DropoffCheckin]: ...

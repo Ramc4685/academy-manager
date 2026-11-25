@@ -40,6 +40,12 @@ export const queryKeys = {
     billingMovePreview: (enrollmentId: string, toSessionTypeId: string) =>
       ["coach", "billing-enrollments", "preview", enrollmentId, toSessionTypeId] as const,
   },
+  // Not under "coach": coach.* is persisted to localStorage for offline use,
+  // and a recap carries private after-class report text (persistence.ts).
+  classRecap: {
+    occurrence: (occurrenceId: string) => ["class-recap", occurrenceId] as const,
+    handoffs: () => ["class-recap", "handoffs"] as const,
+  },
   admin: {
     all: ["admin"] as const,
     sessions: (date?: string) => ["admin", "sessions", date ?? "all"] as const,
@@ -144,6 +150,8 @@ export const queryKeys = {
     attention: () => ["admin", "dashboard", "attention"] as const,
     setupChecklist: () => ["admin", "dashboard", "setup-checklist"] as const,
     inboxCounts: () => ["admin", "inbox", "counts"] as const,
+    inboxAttendance: () => ["admin", "inbox", "attendance"] as const,
+    campaignPreview: (audience: unknown) => ["admin", "campaigns", "preview", audience] as const,
     academy: () => ["admin", "academy"] as const,
     fees: () => ["admin", "academy", "fees"] as const,
     invoiceSchedule: () => ["admin", "billing", "invoice-schedule"] as const,
@@ -231,6 +239,7 @@ export const queryKeys = {
     all: ["parent"] as const,
     absences: () => ["parent", "absences"] as const,
     makeups: () => ["parent", "makeups"] as const,
+    makeupCandidates: () => ["parent", "makeups", "candidates"] as const,
     makeupTargets: (studentId: string, missedOccurrenceId: string) =>
       ["parent", "makeups", "targets", studentId, missedOccurrenceId] as const,
     trials: () => ["parent", "trials"] as const,
@@ -238,8 +247,10 @@ export const queryKeys = {
     // Same arrays the Requests page and shell already use inline.
     academy: () => ["parent", "academy"] as const,
     children: () => ["parent", "children"] as const,
+    childProgressNotes: (studentId: string) => ["parent", "progress", studentId] as const,
     progressJourney: (studentId: string) =>
       ["parent", "progress-journey", studentId] as const,
+    classRecaps: (studentId: string) => ["parent", "class-recaps", studentId] as const,
     cancellationPreview: (enrollmentId: string) =>
       ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,
     messages: () => ["parent", "messages"] as const,

@@ -135,6 +135,7 @@ DEPENDENTS: list[tuple[str, str]] = [
     ("makeup_requests", "requested_target_occurrence_id"),
     ("makeup_requests", "approved_target_occurrence_id"),
     ("trial_requests", "assigned_occurrence_id"),
+    ("dropoff_checkins", "occurrence_id"),
 ]
 
 

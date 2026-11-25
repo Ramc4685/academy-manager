@@ -21,7 +21,9 @@ from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_
     ListParentAvailableSessions,
 )
 from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
+    DescribeAbsenceMakeups,
     ListEligibleMakeupTargets,
+    ListMakeupCandidates,
     ListParentMakeups,
     SubmitMakeupRequest,
 )
@@ -100,12 +102,16 @@ class ParentUseCases:
     # Self-cancel enrollment (R4, Task 8)
     preview_self_cancel: PreviewSelfCancel | None = None
     self_cancel_enrollment: SelfCancelEnrollment | None = None
+    # #1037/#1041; optional so fixtures predating it still construct this.
+    list_makeup_candidates: ListMakeupCandidates | None = None
+    describe_absence_makeups: DescribeAbsenceMakeups | None = None
     get_registration_waiver: object = None  # callable -> Waiver | None
     get_registration_waivers: Callable[[str | None], Awaitable[tuple[list[Any], bool]]] | None = (
         None
     )
     start_invoice_payment_for_parent: object | None = None  # callable
     start_balance_payment_for_parent: object | None = None  # callable
+    billing_portal_available: object | None = None  # callable(parent_id) -> bool
     # Optional so existing ParentUseCases constructions (and tests) that predate
     # the skill pathway keep working. Real parent composition always sets it;
     # the skill routes are the only consumers.

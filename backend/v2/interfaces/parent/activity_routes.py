@@ -36,7 +36,11 @@ async def list_enrollments(
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ParentEnrollmentsResponse:
     rows = await use_cases.list_enrollments_for_parent(claims.user_id)  # type: ignore[operator]
-    return ParentEnrollmentsResponse(enrollments=[ParentEnrollmentView(**row) for row in rows])
+    portal = getattr(use_cases, "billing_portal_available", None)
+    return ParentEnrollmentsResponse(
+        enrollments=[ParentEnrollmentView(**row) for row in rows],
+        billing_portal_available=bool(portal and await portal(claims.user_id)),
+    )
 
 
 @router.get("/attendance", response_model=ParentAttendanceResponse)
@@ -61,11 +65,12 @@ async def list_attendance(
 async def list_progress(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    student_id: str | None = Query(default=None, max_length=64),
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ParentProgressResponse:
     rows, total = await use_cases.list_progress_for_parent(  # type: ignore[operator]
-        claims.user_id, limit=limit, offset=offset
+        claims.user_id, limit=limit, offset=offset, student_id=student_id
     )
     return ParentProgressResponse(
         notes=[ParentProgressNoteView(**row) for row in rows],

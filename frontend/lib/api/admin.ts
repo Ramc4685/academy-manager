@@ -116,7 +116,12 @@ export interface AdminStudentAttendanceView {
 
 export interface AdminStudentAttendanceList {
   attendance: AdminStudentAttendanceView[];
+  /** Drop-off check-in breakdown; null when the academy has the feature off. */
+  dropoff?: AdminOccurrenceDropoffView | null;
 }
+
+export type AdminOccurrenceDropoffView = components["schemas"]["AdminOccurrenceDropoffView"];
+export type StaffDropoffCheckinView = components["schemas"]["StaffDropoffCheckinView"];
 
 export interface UpdateSessionOccurrenceCoachRequest {
   actual_coach_id?: string | null;
@@ -253,13 +258,6 @@ export interface TransferEnrollmentRequest {
   reason?: string;
 }
 
-export interface PauseEnrollmentRequest {
-  effective_date: string;
-  resume_on?: string | null;
-  review_on?: string | null;
-  reason?: string;
-}
-
 /** Issue #697: a hold keeps the seat; `return_on` is required by the backend. */
 export interface HoldEnrollmentRequest {
   return_on: string;
@@ -389,6 +387,13 @@ export interface AdminPaymentView {
   void_reason?: string | null;
   voided_at?: string | null;
   voided_by?: string | null;
+  /** Stripe dispute (chargeback) on this payment (#980); absent when never disputed. */
+  dispute_id?: string | null;
+  dispute_status?: string | null;
+  dispute_reason?: string | null;
+  dispute_amount_cents?: number | null;
+  dispute_outcome?: string | null;
+  disputed_at?: string | null;
   created_at: string;
   paid_at?: string | null;
 }
@@ -1354,7 +1359,8 @@ export type AdminAttentionKind =
   | "scheduled_action_failed"
   | "billing_deferrals"
   | "waivers"
-  | "session_pressure";
+  | "session_pressure"
+  | "missing_attendance";
 
 export interface AdminAttentionItem {
   attention_id: string;
@@ -2067,6 +2073,19 @@ export function voidOccurrenceStudentAttendance(
   );
 }
 
+/** Admin confirms a parent-reported drop-off (writes the Present mark). */
+export function confirmOccurrenceDropoff(
+  occurrenceId: string,
+  studentId: string
+): Promise<StaffDropoffCheckinView> {
+  return apiFetch<StaffDropoffCheckinView>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/checkins/${encodeURIComponent(
+      studentId
+    )}/confirm`,
+    { method: "POST" }
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Enrollments
 // ---------------------------------------------------------------------------
@@ -2149,11 +2168,43 @@ export function transferEnrollment(
   });
 }
 
-export function pauseEnrollment(
-  enrollmentId: string,
-  payload: PauseEnrollmentRequest
-): Promise<void> {
-  return apiFetch<void>(`/admin/enrollments/${enrollmentId}/pause`, {
+/** A0-8 Copy class. Omitted schedule fields keep the source class's. */
+export interface CopySessionRequest {
+  title: string;
+  days_of_week?: string[];
+  start_time?: string;
+  end_time?: string;
+  copy_roster: boolean;
+}
+
+export interface CopySessionResponse {
+  session: AdminSessionView;
+  /** False when an admin (not the owner) copied a priced class. */
+  price_copied: boolean;
+  roster: { student_id: string; full_name: string; ok: boolean; error_code: string | null; message: string | null }[];
+}
+
+export function copySession(sessionId: string, payload: CopySessionRequest): Promise<CopySessionResponse> {
+  return apiFetch<CopySessionResponse>(`/admin/sessions/${encodeURIComponent(sessionId)}/copy`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** A0-8: one row per requested enrollment; a refused row never blocks the rest. */
+export interface BulkTransferEnrollmentsResponse {
+  results: { enrollment_id: string; ok: boolean; error_code: string | null; message: string | null }[];
+  moved_count: number;
+  failed_count: number;
+}
+
+export function bulkTransferEnrollments(payload: {
+  enrollment_ids: string[];
+  target_session_id: string;
+  effective_date: string;
+  reason?: string;
+}): Promise<BulkTransferEnrollmentsResponse> {
+  return apiFetch<BulkTransferEnrollmentsResponse>("/admin/enrollments/bulk-transfer", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -3367,12 +3418,15 @@ export interface CampaignAudiencePayload {
   type: "academy" | "session";
   role?: "parent" | "coach";
   session_id?: string;
+  /** #1030: several sessions in one campaign, deduplicated server-side. */
+  session_ids?: string[];
 }
 
 export interface SendEmailCampaignRequest {
   subject: string;
   body: string;
   audience: CampaignAudiencePayload;
+  expected_audience_fingerprint?: string;
 }
 
 export interface SendEmailCampaignResponse {
@@ -3382,6 +3436,40 @@ export interface SendEmailCampaignResponse {
   failed_count: number;
   /** True when the send went to the background queue (counts are still zero). */
   queued?: boolean;
+}
+
+/** #1029: the audience the send would reach, resolved server-side; emails nobody. */
+export interface EmailCampaignPreviewRecipient {
+  display_name: string | null;
+  email: string;
+  is_family_contact: boolean;
+}
+
+/** #1031: who the send would skip, with the rule that skips them. */
+export interface EmailCampaignPreviewExclusion {
+  display_name: string | null;
+  email: string | null;
+  reason: "missing_email" | "duplicate_address" | "suppressed" | "unsubscribed" | string;
+  is_family_contact: boolean;
+}
+
+export interface EmailCampaignPreview {
+  recipient_count: number;
+  family_count: number;
+  contact_count: number;
+  recipients: EmailCampaignPreviewRecipient[];
+  exclusions: EmailCampaignPreviewExclusion[];
+  /** Sent back with the campaign; a changed audience is refused with 409. */
+  audience_fingerprint: string;
+}
+
+export function previewEmailCampaign(
+  audience: CampaignAudiencePayload,
+): Promise<EmailCampaignPreview> {
+  return apiFetch<EmailCampaignPreview>("/admin/campaigns/preview", {
+    method: "POST",
+    body: JSON.stringify({ audience }),
+  });
 }
 
 export function sendEmailCampaign(
@@ -3515,6 +3603,40 @@ export function getAdminInboxCounts(): Promise<AdminInboxCounts> {
   return apiFetch<AdminInboxCounts>("/admin/inbox/counts", { method: "GET" });
 }
 
+/** A past class date with students on the roster and no attendance marks. */
+export interface AdminMissingAttendanceRow {
+  occurrence_id: string;
+  session_id: string;
+  session_name: string;
+  start_at: string;
+  enrolled_count: number;
+}
+
+/** A mark changed or voided after it was first recorded (review only). */
+export interface AdminAttendanceCorrectionRow {
+  attendance_id: string;
+  occurrence_id: string;
+  session_id: string;
+  session_name: string;
+  start_at: string | null;
+  student_name: string;
+  status: string;
+  previous_status: string | null;
+  corrected_at: string;
+  corrected_by_name: string | null;
+  reason: string | null;
+  href: string;
+}
+
+export interface AdminAttendanceReview {
+  missing: AdminMissingAttendanceRow[];
+  corrections: AdminAttendanceCorrectionRow[];
+}
+
+export function getAdminAttendanceReview(): Promise<AdminAttendanceReview> {
+  return apiFetch<AdminAttendanceReview>("/admin/inbox/attendance", { method: "GET" });
+}
+
 export function listAdminAttention(): Promise<AdminAttentionList> {
   return apiFetch<AdminAttentionList>("/admin/dashboard/attention", { method: "GET" });
 }
@@ -3600,6 +3722,10 @@ export interface SelfServicePolicyView {
   //: make-ups" text (Settings overhaul Phase 3 PR 10). Used only when the
   //: class leaves its own field empty.
   welcome_email_absence_policy_default: string;
+  // Parent drop-off check-in (off by default) and its window around class start.
+  dropoff_checkin_enabled: boolean;
+  dropoff_checkin_opens_minutes_before: number;
+  dropoff_checkin_closes_minutes_after: number;
 }
 
 /**
