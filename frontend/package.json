@@ -46,7 +46,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "4.14.0",
-    "@fullcalendar/core": "6.1.21",
+    "@fullcalendar/core": "7.1.5",
     "@fullcalendar/daygrid": "6.1.22",
     "@fullcalendar/luxon3": "6.1.22",
     "@fullcalendar/react": "6.1.22",
