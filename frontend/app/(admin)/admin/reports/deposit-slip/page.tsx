@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Fragment, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
@@ -128,6 +129,17 @@ export default function AdminDepositSlipPage() {
             {reportQuery.isLoading ? "Loading deposits..." : "No payments received this month."}
           </p>
         )}
+        <p className="mt-4 text-sm text-rally-muted">
+          To trace one payment to its invoice, open{" "}
+          <Link
+            data-testid="deposit-slip-invoices-link"
+            href={"/admin/payments?tab=invoices" as Parameters<typeof Link>[0]["href"]}
+            className="font-medium text-rally-cobalt-700 underline underline-offset-2"
+          >
+            Payments → All invoices
+          </Link>
+          .
+        </p>
       </Card>
     </section>
   );

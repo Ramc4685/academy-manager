@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -792,8 +793,17 @@ export function InvoiceDialog({
               <p className="text-rally-subtle">No payments allocated yet.</p>
             ) : (
               data.allocations.map((row) => (
-                <SummaryRow key={row.payment_id} label={row.payment_id} value={formatCents(row.amount_cents)} />
+                <SummaryRow key={row.payment_id} label={`Payment ${row.payment_id}`} value={formatCents(row.amount_cents)} />
               ))
+            )}
+            {payment && (
+              <Link
+                data-testid="invoice-family-billing-link"
+                href={`/admin/families/${encodeURIComponent(payment.parent_id)}` as Parameters<typeof Link>[0]["href"]}
+                className="mt-1 inline-block text-rally-cobalt-700 hover:underline"
+              >
+                Open family billing for each payment&apos;s method, date and Stripe reference
+              </Link>
             )}
           </div>
           {data.credit_usage.length > 0 && (
