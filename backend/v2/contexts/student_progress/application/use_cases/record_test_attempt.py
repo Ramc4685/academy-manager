@@ -254,6 +254,7 @@ class RecordTestAttempt:
             # Another writer stored this observation first: continue from theirs.
             attempt = await self._test_attempts.get_by_observation(cmd.observation_key)  # type: ignore[assignment]
         passed = attempt.passed
+        finished = prior is not None and prior.effects_done_at is not None
 
         # Update skill status
         tries = 0
@@ -305,9 +306,14 @@ class RecordTestAttempt:
                 written = True
         else:
             new_status = "PASSED" if passed else "NEEDS_REVIEW"
-        if prior is not None and already_passed:
-            # Resuming an observation whose pass already landed: re-stamping
-            # last_updated_at would announce the same pass again tonight.
+        if finished and not already_passed:
+            # Finished, and the skill no longer stands on it: a reassessment
+            # took it back, so replaying it must not restore the pass.
+            passed = False
+        if prior is not None and (already_passed or finished):
+            # Resuming an observation whose pass already landed, or one that
+            # finished: re-stamping would announce it again (or undo a
+            # reassessment).
             written = True
         if not written:
             if existing_prog is None:

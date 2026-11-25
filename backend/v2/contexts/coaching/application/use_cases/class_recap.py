@@ -104,6 +104,13 @@ class ClassRecapRepository(Protocol):
         occurrence id), strictly older than ``before`` when given."""
         ...
 
+    async def settle_passes(
+        self, occurrence_id: str, *, revision: int, pairs: list[tuple[str, str]]
+    ) -> None:
+        """Mark these passes run by the pipeline, without a new revision;
+        a no-op once the recap moved past ``revision``."""
+        ...
+
 
 class ClassReportRepository(Protocol):
     async def get(self, report_id: str) -> ClassReport | None: ...
@@ -271,7 +278,8 @@ class DemonstrationOutcome(BaseModel):
 #: as a try short of N (or the pass was since taken back); in_progress: an
 #: earlier save stopped part way (saving again finishes it); earned_before:
 #: already passed elsewhere; not_recorded: the pipeline refused it (not
-#: placed, retired skill) or it has not run yet.
+#: placed, retired skill). A pass the pipeline has not run yet reads
+#: in_progress (see ``_pass_receipts``).
 PassReceipt = Literal["recorded", "counted", "in_progress", "earned_before", "not_recorded"]
 
 
@@ -299,6 +307,17 @@ class ClassDemonstrationWriter(Protocol):
     ) -> dict[tuple[str, str], PassReceipt]:
         """State of each ``(student_id, skill_id)`` pass of this class."""
         ...
+
+
+async def _pass_receipts(
+    writer: ClassDemonstrationWriter, occurrence_id: str, passes: tuple[ChildPass, ...]
+) -> dict[tuple[str, str], PassReceipt]:
+    receipts = await writer.receipts(occurrence_id, [(p.student_id, p.skill_id) for p in passes])
+    for row in passes:
+        key = (row.student_id, row.skill_id)
+        if receipts.get(key) == "not_recorded" and not row.settled:
+            receipts[key] = "in_progress"  # saved, but a save stopped before running it
+    return receipts
 
 
 # --- save (the one guarded writer) -----------------------------------------
@@ -394,8 +413,7 @@ class SaveClassRecap:
         # A pass the pipeline never counted may be taken off (a mis-tap).
         uncounted: set[tuple[str, str]] = set()
         if self._writer is not None and current is not None and current.passes:
-            pairs = [(p.student_id, p.skill_id) for p in current.passes]
-            receipts = await self._writer.receipts(occ.occurrence_id, pairs)
+            receipts = await _pass_receipts(self._writer, occ.occurrence_id, current.passes)
             uncounted = {pair for pair, r in receipts.items() if r == "not_recorded"}
         passes = self._passes(cmd, current, taught, marks, revision + 1, uncounted)
 
@@ -469,18 +487,14 @@ class SaveClassRecap:
     ) -> None:
         if self._writer is None or not recap.passes:
             return
-        pairs = [(row.student_id, row.skill_id) for row in recap.passes]
-        receipts = await self._writer.receipts(occ.occurrence_id, pairs)
+        receipts = await _pass_receipts(self._writer, occ.occurrence_id, recap.passes)
         by_skill: dict[str, list[str]] = {}
         for row in recap.passes:
-            receipt = receipts.get((row.student_id, row.skill_id))
-            # Landed passes are left alone, so a later edit never re-runs
-            # their side effects (a level-up the owner since rejected). An
-            # uncounted pass runs only in the save that added it: an old one
-            # (earned before, then reassessed) must not come back on an edit.
-            if receipt == "in_progress" or (
-                receipt == "not_recorded" and row.added_revision == recap.revision
-            ):
+            # Only unfinished passes run: landed ones are left alone, so a
+            # later edit never re-runs their side effects (a level-up the owner
+            # since rejected), and a refused one (or one earned before, then
+            # reassessed) never comes back on an edit.
+            if receipts.get((row.student_id, row.skill_id)) == "in_progress":
                 by_skill.setdefault(row.skill_id, []).append(row.student_id)
         # Each is applied once per class, child and skill: a resumed one
         # picks up where it stopped.
@@ -493,6 +507,12 @@ class SaveClassRecap:
                 session_id=occ.session_id,
                 occurrence_id=occ.occurrence_id,
                 observed_at=occ.starts_at,
+            )
+        if by_skill:
+            await self._recaps.settle_passes(
+                occ.occurrence_id,
+                revision=recap.revision,
+                pairs=[(sid, skill) for skill, sids in by_skill.items() for sid in sids],
             )
 
 
@@ -570,9 +590,7 @@ class GetClassRecap:
             skill_names=await self._skills.names(taught, active_only=False),
             reports=reports,
             pass_receipts=(
-                await self._writer.receipts(
-                    occurrence_id, [(p.student_id, p.skill_id) for p in recap.passes]
-                )
+                await _pass_receipts(self._writer, occurrence_id, recap.passes)
                 if self._writer is not None and recap is not None and recap.passes
                 else {}
             ),

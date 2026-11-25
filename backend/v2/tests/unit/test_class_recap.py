@@ -193,6 +193,18 @@ class Recaps:
             rows = [r for r in rows if (r.class_starts_at, r.occurrence_id) < before]
         return rows[:limit]
 
+    async def settle_passes(
+        self, occurrence_id: str, *, revision: int, pairs: list[tuple[str, str]]
+    ) -> None:
+        recap = self.rows.get(occurrence_id)
+        if recap is None or recap.revision != revision:
+            return
+        passes = tuple(
+            p.model_copy(update={"settled": True}) if (p.student_id, p.skill_id) in pairs else p
+            for p in recap.passes
+        )
+        self.rows[occurrence_id] = recap.model_copy(update={"passes": passes})
+
 
 class Reports:
     """Insert-only, like MongoClassReportRepository."""
@@ -693,6 +705,21 @@ async def test_an_uncounted_pass_can_be_taken_off_and_an_old_one_is_not_retried(
         LEAD_ACTOR,
     )
     assert [p.student_id for p in dropped.passes] == ["maya"]
+
+
+async def test_a_save_that_died_before_a_pass_ran_resumes_it_on_a_later_revision() -> None:
+    w = World(writer=Writer())
+    w.writer.crash = True  # dies on maya, before leo's pass ever runs
+    with pytest.raises(RuntimeError):
+        await w.save.execute(_cmd(passes=[_pass("maya"), _pass("leo")]), LEAD_ACTOR)
+    w.writer.calls.clear()
+    await w.save.execute(
+        _cmd(mutation_id="m-2", expected_revision=1, passes=[_pass("maya"), _pass("leo")]),
+        LEAD_ACTOR,
+    )
+    assert w.writer.calls == [(GRIP, ["maya", "leo"])]
+    assert w.writer.state[("leo", GRIP)] == "recorded"
+    assert all(p.settled for p in w.recaps.rows[OCC].passes)
 
 
 async def test_passes_need_the_pipeline() -> None:

@@ -32,6 +32,10 @@ from backend.v2.contexts.student_progress.application.use_cases.record_test_atte
     RecordTestAttempt,
     RecordTestAttemptCommand,
 )
+from backend.v2.contexts.student_progress.application.use_cases.unmark_skill_mastered import (
+    UnmarkSkillMastered,
+    UnmarkSkillMasteredCommand,
+)
 from backend.v2.contexts.student_progress.infrastructure.curriculum_lookup_adapter import (
     CurriculumSkillLookupAdapter,
 )
@@ -212,6 +216,13 @@ def _wire(db: Any) -> dict[str, Any]:
         "attempts": attempts,
         "recs": recs,
         "events": _Events(db),
+        "unmark": UnmarkSkillMastered(
+            level_progress=level_progress,
+            skill_progress=skill_progress,
+            recommendations=recs,
+            skill_lookup=lookup,
+            test_attempts=attempts,
+        ),
     }
 
 
@@ -432,3 +443,26 @@ async def test_resuming_a_landed_pass_does_not_announce_it_again(real_db: Any) -
         first = (await w["skill_progress"].get("maya", "clear")).last_updated_at
         await _record(w, "clear", ["maya"])
         assert (await w["skill_progress"].get("maya", "clear")).last_updated_at == first
+
+
+async def test_a_take_back_wins_over_an_interrupted_pass(real_db: Any) -> None:
+    await _seed(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await _place(w, "maya", "L1")
+        w["attempts"].crash_on = {"before_done"}
+        with pytest.raises(_Crash):
+            await _record(w, "grip", ["maya"])
+        await w["unmark"].execute(
+            UnmarkSkillMasteredCommand(
+                student_id="maya",
+                skill_id="grip",
+                program_id="prog",
+                updated_by="owner",
+                can_sign_off=True,
+            )
+        )
+        receipts = await w["class"].receipts("occ-1", [("maya", "grip")])
+        assert receipts == {("maya", "grip"): "counted"}  # no longer resumable
+        await _record(w, "grip", ["maya"])  # a later recap save replays it
+        assert (await w["skill_progress"].get("maya", "grip")).status == "PRACTICING"
