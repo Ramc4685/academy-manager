@@ -1,6 +1,6 @@
 # child-class-timeline
 
-PR: #TBD
+PR: #1242
 
 ## What changed
 A child's progress page now opens with their class timeline, newest first, ahead of current level progress. Each class shows its date (with the year), the class lesson, what this child practised, and "Passed at this class" only on the class whose demonstration earned the pass, and only while the pass still stands; a pass taken back and re-earned later shows only on the later class. A practice repeated across classes shows on every date it happened. A group lesson the coach did not credit to the child never claims they practised. Older classes load a page at a time with "Show older classes", ordered by class start with a stable tie-break across batches. The old "✓ passed as of today" mark is gone from the timeline; current mastery stays in the level section. Coach report text and other children never appear.
