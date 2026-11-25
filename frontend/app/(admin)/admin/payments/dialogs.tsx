@@ -799,7 +799,7 @@ export function InvoiceDialog({
             {payment && (
               <Link
                 data-testid="invoice-family-billing-link"
-                href={`/admin/families/${encodeURIComponent(payment.parent_id)}` as Parameters<typeof Link>[0]["href"]}
+                href={`/admin/families/${encodeURIComponent(payment.parent_id)}?tab=billing` as Parameters<typeof Link>[0]["href"]}
                 className="mt-1 inline-block text-rally-cobalt-700 hover:underline"
               >
                 Open family billing for each payment&apos;s method, date and Stripe reference

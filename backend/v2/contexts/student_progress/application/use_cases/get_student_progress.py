@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from backend.v2.contexts.student_progress.application.ports import (
     CertificateRepository,
     LevelUpRecommendationRepository,
@@ -14,7 +12,6 @@ from backend.v2.contexts.student_progress.application.ports import (
 from backend.v2.contexts.student_progress.domain.models import (
     SkillPassportEntry,
     StudentProgressSummary,
-    skill_passed_at,
 )
 
 
@@ -112,7 +109,6 @@ class GetStudentPassport:
 
             # Get test attempt summary
             attempt_count = 0
-            attempts: list[Any] = []
             last_passed: bool | None = None
             last_tested_at = None
             attempts_repo = self._test_attempts
@@ -137,9 +133,7 @@ class GetStudentPassport:
                     last_test_passed=last_passed,
                     last_tested_at=last_tested_at,
                     test_attempt_count=attempt_count,
-                    passed_at=skill_passed_at(
-                        status, attempts, prog.last_updated_at if prog else None
-                    ),
+                    passed_at=prog.last_updated_at if prog and status == "PASSED" else None,
                 )
             )
 

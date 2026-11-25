@@ -602,6 +602,10 @@ test.describe("admin students", () => {
 test("student progress shows the date each skill was passed", async ({ page }) => {
   await stubMe(page);
   await stubAdminAcademy(page);
+  // A Chicago academy: an evening pass is stored as the next UTC day.
+  await page.route(/\/api\/v2\/admin\/academy(?:\?.*)?$/, (route) =>
+    fulfillJson(route, { academy_id: "academy-e2e", display_name: "Academy E2E", timezone: "America/Chicago" }),
+  );
   await page.route("**/api/v2/admin/students/student-1", (route) =>
     route.request().method() === "GET"
       ? fulfillJson(route, {
@@ -653,13 +657,13 @@ test("student progress shows the date each skill was passed", async ({ page }) =
   await page.route("**/api/v2/admin/students/student-1/passport*", (route) =>
     fulfillJson(route, {
       passport: [
-        entry("sk-grip", "Grip", 1, "PASSED", "2026-11-10T18:00:00Z"),
+        entry("sk-grip", "Grip", 1, "PASSED", "2026-11-11T02:30:00"),
         entry("sk-serve", "Serve", 2, "PRACTICING", null),
       ],
     }),
   );
 
   await page.goto("/admin/students/student-1/progress?program_id=prog-1");
-  await expect(page.getByTestId("skill-passed-at-sk-grip")).toHaveText("Passed Nov 10, 2026");
+  await expect(page.getByTestId("skill-passed-at-sk-grip")).toHaveText("Passed Tue, Nov 10");
   await expect(page.getByTestId("skill-passed-at-sk-serve")).toHaveCount(0);
 });

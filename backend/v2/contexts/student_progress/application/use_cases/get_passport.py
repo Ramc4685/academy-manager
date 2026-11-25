@@ -12,10 +12,7 @@ from backend.v2.contexts.student_progress.application.ports import (
     TestAttemptRepository,
 )
 from backend.v2.contexts.student_progress.domain.errors import StudentNotPlaced
-from backend.v2.contexts.student_progress.domain.models import (
-    SkillPassportEntry,
-    skill_passed_at,
-)
+from backend.v2.contexts.student_progress.domain.models import SkillPassportEntry
 
 
 @dataclass(frozen=True)
@@ -88,9 +85,7 @@ class GetStudentPassport:
                     last_test_passed=last_passed,
                     last_tested_at=last_tested_at,
                     test_attempt_count=attempt_count,
-                    passed_at=skill_passed_at(
-                        status, attempts, prog.last_updated_at if prog else None
-                    ),
+                    passed_at=prog.last_updated_at if prog and status == "PASSED" else None,
                 )
             )
 

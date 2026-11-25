@@ -19,9 +19,10 @@ class, saves one mark, and an admin finds that same mark.
   (desktop button, phone menu). Class date rows show weekday and year.
 - Admin Inbox tabs read "Makeup requests", "Absence notices", "Pause requests".
   Settings points to Staff for giving a coach or admin access.
-- Invoice detail links to the family's billing for each payment's method, date
+- Invoice detail links to the family's Billing tab for each payment's method, date
   and Stripe reference; the deposit slip links to all invoices.
-- Admin student progress shows the date each skill was passed.
+- Admin student progress shows the date each skill was passed, in the
+  academy's timezone (test dates too).
 - Parent Profile and Children show each child's waiver state with a sign or
   view link. Payments links to the children's next class date and time.
 - Sign-up shows the email path as a distinct secondary choice next to Google
@@ -29,7 +30,8 @@ class, saves one mark, and an admin finds that same mark.
 
 ## Deploy notes
 Backend adds an optional `passed_at` field to the skill passport and student
-progress responses (derived from the latest passing test, else the last update).
+progress responses: a PASSED skill's last update, the same date milestones and
+the parent journey already use.
 Additive only: no migration, index or env change. The one-hour marking rule,
 permissions, tenancy and billing behaviour are unchanged.
 

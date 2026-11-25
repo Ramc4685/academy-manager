@@ -67,7 +67,7 @@ test("a paid invoice names its payment and links to the family's billing", async
   await expect(page.getByText("Payment pay-clean-1")).toBeVisible();
   await expect(page.getByTestId("invoice-family-billing-link")).toHaveAttribute(
     "href",
-    "/admin/families/parent-2",
+    "/admin/families/parent-2?tab=billing",
   );
 });
 
