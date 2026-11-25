@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from backend.v2.composition.class_recap import ProgressClassDemonstrations
+from backend.v2.composition.class_recap import ProgressClassDemonstrations, SkillProgressPasses
 from backend.v2.contexts.curriculum.infrastructure.mongo_level_repo import MongoLevelRepository
 from backend.v2.contexts.curriculum.infrastructure.mongo_skill_repo import MongoSkillRepository
 from backend.v2.contexts.student_progress.application.use_cases.mark_skill_mastered import (
@@ -466,3 +466,45 @@ async def test_a_take_back_wins_over_an_interrupted_pass(real_db: Any) -> None:
         assert receipts == {("maya", "grip"): "counted"}  # no longer resumable
         await _record(w, "grip", ["maya"])  # a later recap save replays it
         assert (await w["skill_progress"].get("maya", "grip")).status == "PRACTICING"
+
+
+def _formal(skill_id: str, *, success: int) -> RecordTestAttemptCommand:
+    return RecordTestAttemptCommand(
+        student_id="maya",
+        skill_id=skill_id,
+        program_id="prog",
+        coach_id="coach",
+        can_sign_off=True,
+        attempts_count=5,
+        success_count=success,
+    )
+
+
+async def test_a_failed_formal_test_wins_over_an_interrupted_class_pass(real_db: Any) -> None:
+    await _seed(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await _place(w, "maya", "L1")
+        w["attempts"].crash_on = {"before_done"}
+        with pytest.raises(_Crash):
+            await _record(w, "grip", ["maya"])
+        await w["record"].execute(_formal("grip", success=1))  # reassessed: not there yet
+        assert await w["class"].receipts("occ-1", [("maya", "grip")]) == {
+            ("maya", "grip"): "counted"
+        }
+        await _record(w, "grip", ["maya"])  # a later recap save replays it
+        assert (await w["skill_progress"].get("maya", "grip")).status == "NEEDS_REVIEW"
+
+
+async def test_the_timeline_credits_a_class_only_for_the_pass_it_earned(real_db: Any) -> None:
+    await _seed(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        passes = SkillProgressPasses(w["skill_progress"], w["attempts"])
+        await _place(w, "maya", "L1")
+        await _record(w, "grip", ["maya"])
+        assert await passes.earned_at("maya", ["occ-1"]) == {"occ-1": {"grip"}}
+        await w["record"].execute(_formal("grip", success=1))  # taken back
+        await w["record"].execute(_formal("grip", success=5))  # re-earned by a test
+        assert (await w["skill_progress"].get("maya", "grip")).status == "PASSED"
+        assert await passes.earned_at("maya", ["occ-1"]) == {}

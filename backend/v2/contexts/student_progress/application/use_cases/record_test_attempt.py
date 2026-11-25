@@ -51,6 +51,16 @@ def _resolve_academy_id() -> str:
     return current_academy_id()
 
 
+async def close_unfinished_observations(
+    attempts: TestAttemptRepository, student_id: str, skill_id: str, *, at: datetime
+) -> None:
+    """A reassessment takes a pass back: a class pass still finishing would
+    otherwise resume on the next recap save and restore it."""
+    for attempt in await attempts.list_for_student_skill(student_id, skill_id):
+        if attempt.observation_key and attempt.effects_done_at is None:
+            await attempts.mark_effects_done(attempt.attempt_id, at=at, earned=False)
+
+
 class RecordTestAttemptCommand(BaseModel):
     model_config = {"frozen": True}
     student_id: str
@@ -316,6 +326,10 @@ class RecordTestAttempt:
             # reassessment).
             written = True
         if not written:
+            if cmd.observation_key is None and already_passed and new_status != "PASSED":
+                await close_unfinished_observations(
+                    self._test_attempts, cmd.student_id, cmd.skill_id, at=now
+                )
             if existing_prog is None:
                 updated_prog = StudentSkillProgress(
                     skill_progress_id=str(new_ulid()),

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.v2.composition.ai import AiComposition
@@ -162,6 +162,10 @@ class EnrollmentOccurrenceRosterNames:
         return {row.student_id: row.full_name for row in rows}
 
 
+def _utc(at: datetime) -> datetime:
+    return at if at.tzinfo else at.replace(tzinfo=UTC)
+
+
 class SkillProgressPasses:
     """``PassedSkills``: a class earned a skill when its finished observation
     passed it, it is the child's latest such pass of that skill (a take-back
@@ -178,11 +182,20 @@ class SkillProgressPasses:
         if not any(row.occurrence_id in wanted for row in latest.values()):
             return {}
         held = {
-            str(row.skill_id) for row in await self._progress.list_passed_for_student(student_id)
+            str(row.skill_id): _utc(row.last_updated_at)
+            for row in await self._progress.list_passed_for_student(student_id)
         }
         out: dict[str, set[str]] = {}
         for skill_id, row in latest.items():
-            if skill_id in held and row.occurrence_id in wanted:
+            passed_at = held.get(skill_id)
+            # The current pass must be this observation's: it landed while the
+            # observation ran. A later re-earn (a test, a tap) re-stamps it.
+            if (
+                passed_at is not None
+                and row.occurrence_id in wanted
+                and row.effects_done_at is not None
+                and _utc(row.tested_at) <= passed_at <= _utc(row.effects_done_at)
+            ):
                 out.setdefault(str(row.occurrence_id), set()).add(skill_id)
         return out
 

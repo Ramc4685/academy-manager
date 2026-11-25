@@ -214,11 +214,13 @@ async def test_parent_adapters_read_in_bulk_per_academy_and_skip_silent_passes(
                 "updated_at": NOW,
             }
         )
-    for academy, skill_id, status, silent in (
-        (ACADEMY, "s-live", "PASSED", False),
-        (ACADEMY, "s-retired", "PASSED", True),  # placement credit
-        (ACADEMY, "s-learning", "LEARNING", False),
-        (OTHER, "s-other", "PASSED", False),
+    later = NOW + timedelta(days=7)
+    for academy, skill_id, status, silent, passed_at in (
+        (ACADEMY, "s-live", "PASSED", False, NOW),
+        (ACADEMY, "s-retired", "PASSED", True, NOW),  # placement credit
+        (ACADEMY, "s-learning", "LEARNING", False, NOW),
+        (ACADEMY, "s-retest", "PASSED", False, later),  # re-earned by a later formal test
+        (OTHER, "s-other", "PASSED", False, later),
     ):
         await real_db["student_skill_progress"].insert_one(
             {
@@ -229,7 +231,7 @@ async def test_parent_adapters_read_in_bulk_per_academy_and_skip_silent_passes(
                 "level_id": "lvl-1",
                 "program_id": "prog-1",
                 "status": status,
-                "last_updated_at": NOW,
+                "last_updated_at": passed_at,
                 "last_updated_by": "coach-1",
                 "silent": silent,
             }
@@ -237,11 +239,11 @@ async def test_parent_adapters_read_in_bulk_per_academy_and_skip_silent_passes(
     catalog = CurriculumRecapSkills(
         skills=MongoSkillRepository(real_db), levels=None, resolve_default_program=None
     )
-    later = NOW + timedelta(days=7)
     for academy, attempt_id, skill_id, occ, earned, at in (
         (ACADEMY, "t-1", "s-live", "occ-1", True, NOW),
         (ACADEMY, "t-2", "s-learning", "occ-1", True, NOW),  # pass since taken back
         (ACADEMY, "t-3", "s-live", "occ-2", False, NOW),  # a try, not the pass
+        (ACADEMY, "t-6", "s-retest", "occ-1", True, NOW),  # lost, then re-earned elsewhere
         (OTHER, "t-4", "s-other", "occ-1", True, NOW),
         (OTHER, "t-5", "s-other", "occ-3", True, later),  # taken back, re-earned later
     ):
@@ -253,7 +255,7 @@ async def test_parent_adapters_read_in_bulk_per_academy_and_skip_silent_passes(
                 "skill_id": skill_id,
                 "occurrence_id": occ,
                 "observation_key": f"{occ}:maya:{skill_id}",
-                "effects_done_at": NOW,
+                "effects_done_at": at,
                 "earned_pass": earned,
                 "level_id": "lvl-1",
                 "program_id": "prog-1",
