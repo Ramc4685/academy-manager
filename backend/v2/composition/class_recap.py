@@ -415,6 +415,11 @@ def compose_class_recap(
         attempts=MongoTestAttemptRepository(db),
         progress=MongoStudentSkillProgressRepository(db),
     )
+    groups = ActiveLevelGroups(
+        level_progress=MongoStudentLevelProgressRepository(db),
+        levels=levels,
+        resolve_default_program=resolve_program,
+    )
     save = SaveClassRecap(
         recaps=recaps,
         occurrences=occurrences,
@@ -432,11 +437,7 @@ def compose_class_recap(
             skills=skills,
             names=names,
             writer=writer,
-            groups=ActiveLevelGroups(
-                level_progress=MongoStudentLevelProgressRepository(db),
-                levels=levels,
-                resolve_default_program=resolve_program,
-            ),
+            groups=groups,
         ),
         save=save,
         submit_report=SubmitClassReport(
@@ -449,6 +450,7 @@ def compose_class_recap(
             interpreter=interpreter,
             save=save,
             academy_id=current_academy_id,
+            groups=groups,
         ),
         list_handoffs=ListOpenClassReportHandoffs(reports=reports),
         resolve_report=ResolveClassReport(reports=reports),

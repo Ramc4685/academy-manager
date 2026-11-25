@@ -351,6 +351,26 @@ def _group_lessons(
     )
 
 
+def _report_group_lessons(
+    current: ClassRecap | None, groups: list[RecapGroup], practice: Sequence[ChildPractice]
+) -> list[GroupLesson] | None:
+    """A report only adds: each level group gains the skills its own children
+    practised. Teaching alone credits no group, as it credits no child."""
+    kept = {row.level_id: row.skill_ids for row in current.group_lessons} if current else {}
+    if not groups:
+        return None
+    by_student = {row.student_id: row.skill_ids for row in practice}
+    lessons = dict(kept)
+    for group in groups:
+        practised = (s for sid in group.student_ids for s in by_student.get(sid, ()))
+        skills = tuple(dict.fromkeys((*kept.get(group.level_id, ()), *practised)))
+        if skills:
+            lessons[group.level_id] = skills
+    if len(lessons) > MAX_GROUPS:
+        return None  # more groups than a recap holds: keep the recorded ones
+    return [GroupLesson(level_id=lid, skill_ids=ids) for lid, ids in lessons.items()]
+
+
 async def _pass_receipts(
     writer: ClassDemonstrationWriter, occurrence_id: str, passes: tuple[ChildPass, ...]
 ) -> dict[tuple[str, str], PassReceipt]:
@@ -681,7 +701,9 @@ class SubmitClassReport:
         save: SaveClassRecap,
         academy_id: Callable[[], str],
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        groups: RecapGroupLookup | None = None,
     ) -> None:
+        self._groups = groups
         self._reports = reports
         self._recaps = recaps
         self._occurrences = occurrences
@@ -797,9 +819,16 @@ class SubmitClassReport:
         practice = merge_practice(
             current.practice if current is not None else (), resolved.practice
         )
-        if current is not None and (taught, practice) == (
-            current.taught_skill_ids,
-            current.practice,
+        practised = [row.student_id for row in practice]
+        groups = await self._groups.for_students(practised) if self._groups and practised else []
+        lessons = _report_group_lessons(current, groups, practice)
+        same_lessons = lessons is None or (
+            current is not None and tuple(lessons) == current.group_lessons
+        )
+        if (
+            current is not None
+            and (taught, practice) == (current.taught_skill_ids, current.practice)
+            and same_lessons
         ):
             # Nothing new: the recap already says all of this.
             return report.model_copy(
@@ -814,6 +843,7 @@ class SubmitClassReport:
                     expected_revision=current.revision if current is not None else 0,
                     taught_skill_ids=list(taught),
                     practice=list(practice),
+                    group_lessons=lessons,
                     source="report",
                     source_report_id=report.report_id,
                 ),

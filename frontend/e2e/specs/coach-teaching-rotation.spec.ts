@@ -237,4 +237,61 @@ test.describe("Coach teaching rotation", () => {
       "true",
     );
   });
+  test("a reported pass is added to the recap and saved through the pass rules", async ({
+    page,
+    mock,
+  }) => {
+    void mock;
+    const saves: { passes?: unknown }[] = [];
+    const reported = {
+      ...recap([]),
+      reports: [
+        {
+          report_id: "r-1",
+          is_mine: true,
+          text: "Cy passed his overhead clear today.",
+          submitted_at: new Date().toISOString(),
+          outcome: "applied",
+          ai_used: true,
+          questions: [],
+          pass_claims: [{ student_id: "st3", skill_id: "sk-clear" }],
+          applied_revision: 1,
+          resolved_at: null,
+        },
+      ],
+    };
+    await page.route("**/api/v2/coach/occurrences/occ-today-1/class-recap", async (route: Route) => {
+      if (route.request().method() === "PUT") {
+        saves.push(route.request().postDataJSON());
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            ...reported,
+            revision: 2,
+            passes: [
+              { student_id: "st3", skill_id: "sk-clear", receipt: "recorded", added_revision: 2 },
+            ],
+          }),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(reported),
+      });
+    });
+    await page.goto("/coach/sessions/occ-today-1?recap=open");
+
+    await expect(page.getByTestId("recap-pass-claims")).toContainText(
+      "Cy Testwood passed Overhead clear",
+    );
+    await page.getByTestId("recap-claim-add-st3-sk-clear").click();
+    await expect(page.getByTestId("pass-st3-sk-clear")).toHaveAttribute("aria-pressed", "true");
+    await page.getByTestId("recap-save").click();
+
+    await expect.poll(() => saves.length).toBe(1);
+    expect(saves[0].passes).toEqual([{ student_id: "st3", skill_id: "sk-clear" }]);
+    await expect(page.getByTestId("recap-claim-add-st3-sk-clear")).toHaveCount(0);
+  });
 });

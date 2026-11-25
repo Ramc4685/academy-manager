@@ -484,7 +484,20 @@ export function ClassRecapBody({
       )}
 
       {view.reports.length > 0 && (
-        <ReportList view={view} names={names} skillsHref={skillsHref} />
+        <ReportList
+          view={view}
+          names={names}
+          skillsHref={skillsHref}
+          // A reported pass is only a claim: the editor adds it here and the
+          // recap save runs it through the pass rules, like a tapped pass.
+          canAddPass={(studentId, skillId) =>
+            view.can_edit &&
+            draft.taught.includes(skillId) &&
+            eligible.some((c) => c.student_id === studentId) &&
+            !passed(studentId, skillId)
+          }
+          onAddPass={togglePass}
+        />
       )}
     </div>
   );
@@ -806,10 +819,14 @@ function ReportList({
   view,
   names,
   skillsHref,
+  canAddPass,
+  onAddPass,
 }: {
   view: ClassRecapView;
   names: Map<string, string>;
   skillsHref?: string;
+  canAddPass: (studentId: string, skillId: string) => boolean;
+  onAddPass: (studentId: string, skillId: string) => void;
 }) {
   const queryClient = useQueryClient();
   const studentName = new Map(view.roster.map((r) => [r.student_id, r.name]));
@@ -867,7 +884,8 @@ function ReportList({
                       }`,
                   )
                   .join(", ")}
-                . That is not recorded as a pass: check it on the class&apos;s{" "}
+                . That is not recorded as a pass until the lead coach or owner adds it
+                to this recap and saves, or checks it on the class&apos;s{" "}
                 {skillsHref ? (
                   <Link
                     href={skillsHref as Parameters<typeof Link>[0]["href"]}
@@ -882,6 +900,22 @@ function ReportList({
                 .
               </p>
             )}
+            {r.pass_claims
+              .filter((c) => canAddPass(c.student_id, c.skill_id))
+              .map((c) => (
+                <Button
+                  key={`${c.student_id}:${c.skill_id}`}
+                  variant="secondary"
+                  size="sm"
+                  className="mr-2 mt-2"
+                  data-testid={`recap-claim-add-${c.student_id}-${c.skill_id}`}
+                  onClick={() => onAddPass(c.student_id, c.skill_id)}
+                >
+                  {`Add pass: ${studentName.get(c.student_id) ?? "child"}, ${
+                    names.get(c.skill_id) ?? "skill"
+                  }`}
+                </Button>
+              ))}
             {view.can_resolve &&
               r.outcome === "sent_to_owner" &&
               !r.resolved_at && (

@@ -316,7 +316,12 @@ class World:
         )
 
     def submit(
-        self, interpreter: Interpreter, roster: Roster | None = None, *, now: datetime = NOW
+        self,
+        interpreter: Interpreter,
+        roster: Roster | None = None,
+        *,
+        now: datetime = NOW,
+        groups: Any = None,
     ) -> SubmitClassReport:
         return SubmitClassReport(
             reports=self.reports,
@@ -329,6 +334,7 @@ class World:
             save=self.save,
             academy_id=lambda: ACADEMY,
             clock=lambda: now,
+            groups=groups,
         )
 
     def child(self, passes: Passes | None = None) -> ListChildClassRecaps:
@@ -855,6 +861,48 @@ async def test_split_report_applies_per_child_and_keeps_the_pass_as_follow_up() 
     assert seen["student_aliases"] == ["S1", "S2", "S3", "S4", "S5", "S6"]
     assert all(s.alias.startswith("K") for s in seen["skills"])
     assert "maya" not in repr(seen) and "Lopez" not in repr(seen)
+
+
+class LevelGroups:
+    """Maya and Sam on Level 1, Leo on Level 2."""
+
+    async def for_students(self, student_ids: list[str]) -> list[RecapGroup]:
+        rows = {"lvl-1": ["maya", "sam"], "lvl-2": ["leo"]}
+        return [
+            RecapGroup(
+                level_id=lid, name=lid, sequence=i, student_ids=[s for s in ids if s in student_ids]
+            )
+            for i, (lid, ids) in enumerate(rows.items())
+            if any(s in student_ids for s in ids)
+        ]
+
+
+async def test_a_report_files_each_groups_practice_as_its_lesson() -> None:
+    w = World()
+    await w.save.execute(
+        _cmd(
+            taught_skill_ids=[GRIP],
+            practice=_practice(sam=[GRIP]),
+            group_lessons=[GroupLesson(level_id="lvl-1", skill_ids=(GRIP,))],
+        ),
+        LEAD_ACTOR,
+    )
+    report = await w.submit(Interpreter(SPLIT), groups=LevelGroups()).execute(
+        _report(SPLIT_TEXT), LEAD_ACTOR
+    )
+    assert report.outcome == "applied"
+    lessons = {g.level_id: g.skill_ids for g in w.recaps.rows[OCC].group_lessons}
+    # Level 1 keeps its recorded lesson; Level 2 gains only what Leo practised.
+    assert lessons == {"lvl-1": (GRIP,), "lvl-2": (SMASH,)}
+
+
+async def test_a_taught_only_report_gives_no_group_a_lesson() -> None:
+    w = World()
+    facts = ReportFacts(taught=(TaughtClaim(skills=("K2",), evidence="introduced the jump smash"),))
+    await w.submit(Interpreter(facts), groups=LevelGroups()).execute(
+        _report("Today we introduced the jump smash."), LEAD_ACTOR
+    )
+    assert w.recaps.rows[OCC].group_lessons == ()
 
 
 async def test_partial_report_never_removes_existing_participants() -> None:
