@@ -238,8 +238,33 @@ class Interpreter:
         return self.facts
 
 
+class Writer:
+    """The pass pipeline seen from a recap: one observation per class, child
+    and skill; ``crash`` stops a record part way, as a dying process would."""
+
+    def __init__(self) -> None:
+        self.state: dict[tuple[str, str], str] = {}
+        self.calls: list[tuple[str, list[str]]] = []
+        self.crash = False
+
+    async def record(self, *, skill_id: str, student_ids: list[str], **_: Any) -> list[Any]:
+        self.calls.append((skill_id, list(student_ids)))
+        for sid in student_ids:
+            self.state[(sid, skill_id)] = "in_progress"
+            if self.crash:
+                self.crash = False
+                raise RuntimeError("process died")
+            self.state[(sid, skill_id)] = "recorded"
+        return []
+
+    async def receipts(self, occurrence_id: str, passes: list[tuple[str, str]]) -> dict[Any, str]:
+        return {pair: self.state.get(pair, "not_recorded") for pair in passes}
+
+
 class World:
-    def __init__(self, *, marks: dict[str, str] | None = None, **occ: Any) -> None:
+    def __init__(
+        self, *, marks: dict[str, str] | None = None, writer: Writer | None = None, **occ: Any
+    ) -> None:
         self.recaps, self.reports = Recaps(), Reports()
         self.occurrences, self.attendance = Occurrences(**occ), AttendanceRows(marks)
         self.save = SaveClassRecap(
@@ -249,7 +274,9 @@ class World:
             skills=Catalog(),
             academy_id=lambda: ACADEMY,
             clock=lambda: NOW,
+            writer=writer,
         )
+        self.writer = writer
 
     def get(self) -> GetClassRecap:
         return GetClassRecap(
@@ -259,6 +286,7 @@ class World:
             attendance=self.attendance,
             skills=Catalog(),
             names=Names(),
+            writer=self.writer,
         )
 
     def submit(
@@ -579,6 +607,86 @@ async def test_replay_returns_the_saved_recap_and_stale_correction_conflicts() -
     )
     assert corrected.revision == 2 and corrected.practice == ()
     assert corrected.recap_id == first.recap_id
+
+
+def _pass(sid: str, skill: str = GRIP) -> PassClaim:
+    return PassClaim(student_id=sid, skill_id=skill)
+
+
+async def test_a_pass_is_saved_with_the_recap_and_recorded_once() -> None:
+    w = World(writer=Writer())
+    recap = await w.save.execute(_cmd(passes=[_pass("maya"), _pass("maya")]), LEAD_ACTOR)
+    assert [(p.student_id, p.added_revision) for p in recap.passes] == [("maya", 1)]
+    assert w.writer.calls == [(GRIP, ["maya"])]
+    # A correction that keeps the pass never re-runs it.
+    await w.save.execute(
+        _cmd(mutation_id="m-2", expected_revision=1, passes=[_pass("maya"), _pass("leo")]),
+        LEAD_ACTOR,
+    )
+    assert w.writer.calls == [(GRIP, ["maya"]), (GRIP, ["leo"])]
+    state = await w.get().execute(OCC, LEAD_ACTOR)
+    assert state.pass_receipts[("maya", GRIP)] == "recorded"
+
+
+async def test_an_interrupted_save_shows_in_progress_and_its_replay_finishes() -> None:
+    w = World(writer=Writer())
+    w.writer.crash = True
+    with pytest.raises(RuntimeError):
+        await w.save.execute(_cmd(passes=[_pass("maya")]), LEAD_ACTOR)
+    assert (await w.get().execute(OCC, LEAD_ACTOR)).pass_receipts == {("maya", GRIP): "in_progress"}
+    await w.save.execute(_cmd(passes=[_pass("maya")]), LEAD_ACTOR)  # same mutation id
+    assert w.recaps.saves == 1
+    assert w.writer.state == {("maya", GRIP): "recorded"}
+
+
+async def test_a_correction_that_omits_passes_keeps_them() -> None:
+    w = World(writer=Writer())
+    await w.save.execute(_cmd(passes=[_pass("maya")]), LEAD_ACTOR)
+    kept = await w.save.execute(_cmd(mutation_id="m-2", expected_revision=1), LEAD_ACTOR)
+    assert [p.student_id for p in kept.passes] == ["maya"]
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        [_pass("ana")],  # absent
+        [_pass("maya", SMASH)],  # not taught
+    ],
+)
+async def test_a_pass_needs_a_present_child_and_a_taught_skill(claims: list[PassClaim]) -> None:
+    w = World(writer=Writer())
+    with pytest.raises(RecapInvalid):
+        await w.save.execute(_cmd(passes=claims), LEAD_ACTOR)
+    assert w.recaps.saves == 0 and w.writer.calls == []
+
+
+async def test_a_recorded_pass_cannot_be_dropped_by_an_edit() -> None:
+    w = World(writer=Writer())
+    await w.save.execute(_cmd(passes=[_pass("maya")]), LEAD_ACTOR)
+    with pytest.raises(RecapInvalid):
+        await w.save.execute(_cmd(mutation_id="m-2", expected_revision=1, passes=[]), LEAD_ACTOR)
+
+
+async def test_an_uncounted_pass_can_be_taken_off_and_an_old_one_is_not_retried() -> None:
+    w = World(writer=Writer())
+    await w.save.execute(_cmd(passes=[_pass("maya"), _pass("leo")]), LEAD_ACTOR)
+    w.writer.state[("leo", GRIP)] = "not_recorded"  # e.g. not placed
+    w.writer.calls.clear()
+    edited = await w.save.execute(
+        _cmd(mutation_id="m-2", expected_revision=1, passes=[_pass("maya"), _pass("leo")]),
+        LEAD_ACTOR,
+    )
+    assert w.writer.calls == []  # leo's pass is from revision 1: not re-run
+    dropped = await w.save.execute(
+        _cmd(mutation_id="m-3", expected_revision=edited.revision, passes=[_pass("maya")]),
+        LEAD_ACTOR,
+    )
+    assert [p.student_id for p in dropped.passes] == ["maya"]
+
+
+async def test_passes_need_the_pipeline() -> None:
+    with pytest.raises(RecapInvalid):
+        await World().save.execute(_cmd(passes=[_pass("maya")]), LEAD_ACTOR)
 
 
 async def test_cancelled_or_future_class_cannot_be_recapped() -> None:

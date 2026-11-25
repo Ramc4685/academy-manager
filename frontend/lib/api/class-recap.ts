@@ -17,6 +17,27 @@ export interface ChildPractice {
   skill_ids: string[];
 }
 
+/** recorded: landed and passed; counted: landed as a try short of the
+ * skill's N (or the pass was since taken back); in_progress: a save stopped
+ * part way and saving again finishes it; earned_before: passed at an earlier
+ * date; not_recorded: the skill pipeline did not count it. */
+export type PassReceipt =
+  | "recorded"
+  | "counted"
+  | "in_progress"
+  | "earned_before"
+  | "not_recorded";
+
+export interface ClassPass {
+  student_id: string;
+  skill_id: string;
+}
+
+export interface ChildPassView extends ClassPass {
+  receipt: PassReceipt;
+  added_revision: number;
+}
+
 export interface RecapRosterEntry {
   student_id: string;
   name: string;
@@ -49,6 +70,7 @@ export interface ClassRecapView {
   updated_at: string | null;
   taught_skills: RecapSkill[];
   practice: ChildPractice[];
+  passes: ChildPassView[];
   roster: RecapRosterEntry[];
   skill_options: RecapSkill[];
   reports: ClassReport[];
@@ -60,6 +82,8 @@ export interface SaveClassRecapBody {
   expected_revision: number;
   taught_skill_ids: string[];
   practice: ChildPractice[];
+  /** Every pass of this class: saved ones must stay listed. */
+  passes: ClassPass[];
 }
 
 export interface SubmitClassReportBody {

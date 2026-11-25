@@ -17,6 +17,7 @@ from typing import Any
 
 from backend.v2.composition.ai import AiComposition
 from backend.v2.composition.coaching_lookups import EnrollmentOccurrenceLookup
+from backend.v2.composition.pathway import compose_student_progress
 from backend.v2.contexts.ai.application.use_cases.interpret_class_report import (
     ClassReportInput,
     InterpretClassReport,
@@ -28,7 +29,7 @@ from backend.v2.contexts.coaching.application.use_cases.class_recap import (
     GetClassRecap,
     ListChildClassRecaps,
     ListOpenClassReportHandoffs,
-    RecordClassDemonstration,
+    PassReceipt,
     ResolveClassReport,
     SaveClassRecap,
     SkillOption,
@@ -82,6 +83,9 @@ from backend.v2.contexts.student_progress.application.use_cases.mark_skill_maste
 )
 from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_repo import (
     MongoStudentSkillProgressRepository,
+)
+from backend.v2.contexts.student_progress.infrastructure.mongo_test_attempt_repo import (
+    MongoTestAttemptRepository,
 )
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.http.errors import DomainError
@@ -179,9 +183,13 @@ class ProgressClassDemonstrations:
     (MarkSkillMastered -> RecordTestAttempt), with the program read from the
     skill itself rather than trusted from the client."""
 
-    def __init__(self, *, skills: Any, mark_mastered: MarkSkillMastered) -> None:
+    def __init__(
+        self, *, skills: Any, mark_mastered: MarkSkillMastered, attempts: Any, progress: Any
+    ) -> None:
         self._skills = skills
         self._mark = mark_mastered
+        self._attempts = attempts
+        self._progress = progress
 
     async def record(
         self,
@@ -193,7 +201,6 @@ class ProgressClassDemonstrations:
         session_id: str,
         occurrence_id: str,
         observed_at: datetime,
-        mutation_id: str,
     ) -> list[DemonstrationOutcome]:
         skill = await self._skills.get(skill_id)
         if skill is None:
@@ -211,10 +218,32 @@ class ProgressClassDemonstrations:
                 off_level_ok=True,
                 occurrence_id=occurrence_id,
                 observed_at=observed_at,
-                mutation_id=mutation_id,
             )
         )
         return [DemonstrationOutcome(**o.model_dump()) for o in outcomes]
+
+    async def receipts(
+        self, occurrence_id: str, passes: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], PassReceipt]:
+        # Same key MarkSkillMastered gives a class observation.
+        keys = {f"{occurrence_id}:{sid}:{skill}": (sid, skill) for sid, skill in passes}
+        stored = {
+            a.observation_key: a for a in await self._attempts.list_by_observations(list(keys))
+        }
+        out: dict[tuple[str, str], PassReceipt] = {}
+        for key, (sid, skill) in keys.items():
+            attempt = stored.get(key)
+            if attempt is not None and attempt.effects_done_at is None:
+                out[(sid, skill)] = "in_progress"
+                continue
+            row = await self._progress.get(sid, skill)
+            is_passed = row is not None and row.status == "PASSED"
+            if attempt is not None:
+                # Counted: an N_TRIES try short of N, or a pass since taken back.
+                out[(sid, skill)] = "recorded" if is_passed else "counted"
+            else:
+                out[(sid, skill)] = "earned_before" if is_passed else "not_recorded"
+        return out
 
 
 class AiClassReportInterpreter:
@@ -277,7 +306,6 @@ class ClassRecapComposition:
     list_handoffs: ListOpenClassReportHandoffs
     resolve_report: ResolveClassReport
     list_for_child: ListChildClassRecaps
-    record_demonstration: RecordClassDemonstration
     #: A model is wired; otherwise every report goes to the owner.
     ai_enabled: bool
 
@@ -288,7 +316,6 @@ def compose_class_recap(
     outbox: Outbox | None = None,
     idempotency_store: IdempotencyStore | None = None,
 ) -> ClassRecapComposition:
-    from backend.v2.composition.pathway import compose_student_progress
 
     recaps = MongoClassRecapRepository(db)
     reports = MongoClassReportRepository(db)
@@ -322,12 +349,21 @@ def compose_class_recap(
         if ai_enabled
         else None
     )
+    writer = ProgressClassDemonstrations(
+        skills=MongoSkillRepository(db),
+        mark_mastered=compose_student_progress(
+            db, outbox, idempotency_store=idempotency_store
+        ).mark_skill_mastered,
+        attempts=MongoTestAttemptRepository(db),
+        progress=MongoStudentSkillProgressRepository(db),
+    )
     save = SaveClassRecap(
         recaps=recaps,
         occurrences=occurrences,
         attendance=attendance,
         skills=skills,
         academy_id=current_academy_id,
+        writer=writer,
     )
     return ClassRecapComposition(
         get=GetClassRecap(
@@ -337,6 +373,7 @@ def compose_class_recap(
             attendance=attendance,
             skills=skills,
             names=names,
+            writer=writer,
         ),
         save=save,
         submit_report=SubmitClassReport(
@@ -357,17 +394,6 @@ def compose_class_recap(
             attendance=StudentConfirmedAttendance(db),
             skills=skills,
             passes=SkillProgressPasses(MongoStudentSkillProgressRepository(db)),
-        ),
-        record_demonstration=RecordClassDemonstration(
-            occurrences=occurrences,
-            attendance=attendance,
-            skills=skills,
-            writer=ProgressClassDemonstrations(
-                skills=MongoSkillRepository(db),
-                mark_mastered=compose_student_progress(
-                    db, outbox, idempotency_store=idempotency_store
-                ).mark_skill_mastered,
-            ),
         ),
         ai_enabled=ai_enabled,
     )

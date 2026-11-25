@@ -17,7 +17,9 @@ import {
   saveClassRecap,
   submitClassReport,
   type ChildPractice,
+  type ClassPass,
   type ClassRecapView,
+  type PassReceipt,
   type ClassReport,
 } from "@/lib/api/class-recap";
 import {
@@ -34,6 +36,26 @@ import { queryKeys } from "@/lib/query/keys";
 interface Draft {
   taught: string[];
   practice: ChildPractice[];
+  passes: ClassPass[];
+}
+
+const RECEIPT: Record<PassReceipt, string> = {
+  recorded: "Pass recorded",
+  counted: "Counted as a try; not passed yet",
+  in_progress: "Pass still saving. Save again to finish it.",
+  earned_before: "Already passed before this class",
+  not_recorded: "Not counted by the skill rules",
+};
+
+function viewDraft(view: ClassRecapView): Draft {
+  return {
+    taught: view.taught_skills.map((s) => s.skill_id),
+    practice: view.practice,
+    passes: (view.passes ?? []).map(({ student_id, skill_id }) => ({
+      student_id,
+      skill_id,
+    })),
+  };
 }
 
 function saveError(err: unknown): string {
@@ -146,10 +168,7 @@ export function ClassRecapBody({
 }) {
   const queryClient = useQueryClient();
   const key = queryKeys.classRecap.occurrence(view.occurrence_id);
-  const [draft, setDraft] = useState<Draft>({
-    taught: view.taught_skills.map((s) => s.skill_id),
-    practice: view.practice,
-  });
+  const [draft, setDraft] = useState<Draft>(() => viewDraft(view));
   const [picked, setPicked] = useState("");
   // "" means every taught skill.
   const [creditSkill, setCreditSkill] = useState("");
@@ -162,12 +181,12 @@ export function ClassRecapBody({
     ]),
   );
   const eligible = practiceEligible(view.roster);
-  const dirty =
-    JSON.stringify(draft) !==
-    JSON.stringify({
-      taught: view.taught_skills.map((s) => s.skill_id),
-      practice: view.practice,
-    });
+  const saved = new Map(
+    (view.passes ?? []).map((p) => [`${p.student_id}:${p.skill_id}`, p]),
+  );
+  // A save that stopped part way is finished by saving again.
+  const unfinished = (view.passes ?? []).some((p) => p.receipt === "in_progress");
+  const dirty = JSON.stringify(draft) !== JSON.stringify(viewDraft(view));
 
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
 
@@ -179,6 +198,7 @@ export function ClassRecapBody({
         expected_revision: view.revision,
         taught_skill_ids: draft.taught,
         practice: draft.practice,
+        passes: draft.passes,
       }),
     onSuccess: (next) => {
       setError(null);
@@ -193,6 +213,15 @@ export function ClassRecapBody({
 
   const practised = (studentId: string) =>
     draft.practice.find((p) => p.student_id === studentId)?.skill_ids ?? [];
+  const passed = (studentId: string, skillId: string) =>
+    draft.passes.some((p) => p.student_id === studentId && p.skill_id === skillId);
+  const togglePass = (studentId: string, skillId: string) =>
+    setDraft((d) => ({
+      ...d,
+      passes: passed(studentId, skillId)
+        ? d.passes.filter((p) => !(p.student_id === studentId && p.skill_id === skillId))
+        : [...d.passes, { student_id: studentId, skill_id: skillId }],
+    }));
 
   return (
     <div className="space-y-5" data-testid="class-recap">
@@ -224,6 +253,12 @@ export function ClassRecapBody({
                       setDraft((d) => ({
                         taught: d.taught.filter((t) => t !== id),
                         practice: withoutSkill(d.practice, id),
+                        // Saved passes stand; only unsaved ones go with the skill.
+                        passes: d.passes.filter(
+                          (p) =>
+                            p.skill_id !== id ||
+                            saved.has(`${p.student_id}:${p.skill_id}`),
+                        ),
                       }))
                     }
                   >
@@ -385,6 +420,15 @@ export function ClassRecapBody({
                       ) : null;
                     })}
                   </div>
+                  <PassRow
+                    studentId={child.student_id}
+                    skills={draft.taught}
+                    names={names}
+                    canEdit={view.can_edit}
+                    isPassed={passed}
+                    saved={saved}
+                    onToggle={togglePass}
+                  />
                 </li>
               ))}
             </ul>
@@ -400,11 +444,11 @@ export function ClassRecapBody({
       {view.can_edit && (
         <Button
           variant="primary"
-          disabled={!dirty || save.isPending}
+          disabled={!(dirty || unfinished) || save.isPending}
           onClick={() => save.mutate()}
           data-testid="recap-save"
         >
-          {save.isPending ? "Saving…" : "Save recap"}
+          {save.isPending ? "Saving…" : unfinished ? "Finish saving" : "Save recap"}
         </Button>
       )}
       {!view.can_edit && (
@@ -416,6 +460,78 @@ export function ClassRecapBody({
       {view.reports.length > 0 && (
         <ReportList view={view} names={names} skillsHref={skillsHref} />
       )}
+    </div>
+  );
+}
+
+/** Skills this child passed at this class. A saved pass is locked: taking
+ * it back is a formal reassessment, not a recap edit. */
+function PassRow({
+  studentId,
+  skills,
+  names,
+  canEdit,
+  isPassed,
+  saved,
+  onToggle,
+}: {
+  studentId: string;
+  skills: string[];
+  names: Map<string, string>;
+  canEdit: boolean;
+  isPassed: (studentId: string, skillId: string) => boolean;
+  saved: Map<string, { receipt: PassReceipt }>;
+  onToggle: (studentId: string, skillId: string) => void;
+}) {
+  const rows = skills.filter(
+    (id) => canEdit || isPassed(studentId, id),
+  );
+  if (rows.length === 0) return null;
+  return (
+    <div className="mt-2" data-testid={`passes-${studentId}`}>
+      <p className="text-xs text-rally-subtle">Passed at this class</p>
+      <ul className="mt-1 space-y-1">
+        {rows.map((skillId) => {
+          const on = isPassed(studentId, skillId);
+          const kept = saved.get(`${studentId}:${skillId}`);
+          const label = names.get(skillId) ?? "Retired skill";
+          return (
+            <li key={skillId} className="flex flex-wrap items-center gap-2">
+              {/* Only a pass the skill rules never counted can be taken off. */}
+              {canEdit && (!kept || kept.receipt === "not_recorded") ? (
+                <button
+                  type="button"
+                  aria-pressed={on}
+                  data-testid={`pass-${studentId}-${skillId}`}
+                  onClick={() => onToggle(studentId, skillId)}
+                  className={`min-h-touch rounded-full border px-3 text-sm ${
+                    on
+                      ? "border-rally-ink bg-rally-ink text-white"
+                      : "border-dashed border-rally-line text-rally-muted"
+                  }`}
+                >
+                  {on ? "✓ Passed: " : "Passed: "}
+                  {label}
+                </button>
+              ) : (
+                on && (
+                  <span className="rounded-full border border-rally-ink px-3 py-1 text-sm text-rally-ink">
+                    {`✓ Passed: ${label}`}
+                  </span>
+                )
+              )}
+              {kept && (
+                <span
+                  className="text-xs text-rally-subtle"
+                  data-testid={`pass-receipt-${studentId}-${skillId}`}
+                >
+                  {RECEIPT[kept.receipt]}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

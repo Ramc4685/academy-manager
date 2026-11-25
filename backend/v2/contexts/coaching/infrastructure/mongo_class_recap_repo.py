@@ -17,6 +17,7 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.coaching.domain.class_recap import (
     CONFIRMED_PRESENT,
+    ChildPass,
     ChildPractice,
     ClassRecap,
     ClassReport,
@@ -41,6 +42,14 @@ class MongoClassRecapRepository(TenantScopedRepository):
                 ChildPractice(student_id=str(row["student_id"]), skill_ids=tuple(row["skill_ids"]))
                 for row in doc.get("practice") or ()
             ),
+            passes=tuple(
+                ChildPass(
+                    student_id=str(row["student_id"]),
+                    skill_id=str(row["skill_id"]),
+                    added_revision=int(row["added_revision"]),
+                )
+                for row in doc.get("passes") or ()
+            ),
             revision=int(doc.get("revision") or 0),
             last_mutation_id=doc.get("last_mutation_id"),
             source=doc.get("source") or "direct",
@@ -60,6 +69,7 @@ class MongoClassRecapRepository(TenantScopedRepository):
             {"student_id": row.student_id, "skill_ids": list(row.skill_ids)}
             for row in recap.practice
         ]
+        body["passes"] = [row.model_dump() for row in recap.passes]
         if expected_revision == 0:
             try:
                 await self._insert_one(body)

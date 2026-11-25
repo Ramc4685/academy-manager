@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from motor.motor_asyncio import AsyncIOMotorClientSession, AsyncIOMotorDatabase
+from pymongo.errors import DuplicateKeyError
 
 from .base import DomainEvent
 
@@ -41,6 +42,18 @@ class MongoOutbox:
         session: AsyncIOMotorClientSession | None = None,
     ) -> None:
         now = datetime.now(UTC)
+        try:
+            await self._insert(event, now, session)
+        except DuplicateKeyError:
+            if session is not None:
+                raise  # the transaction is already aborted; let its owner see it
+            # Same event_id = the same event (a replayed write with a fixed id):
+            # it is already queued, so append converges instead of failing.
+            return
+
+    async def _insert(
+        self, event: DomainEvent, now: datetime, session: AsyncIOMotorClientSession | None
+    ) -> None:
         await self._collection.insert_one(
             {
                 "event_id": event.event_id,

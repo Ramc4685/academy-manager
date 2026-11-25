@@ -137,6 +137,11 @@ class TestAttempt(BaseModel):
     observed_at: datetime | None = None
     #: Who signed a pass off; None for a fail or an assistant's tap.
     signed_off_by: str | None = None
+    #: ``occurrence:student:skill`` for a class observation (unique); None
+    #: for a formal test, which may repeat.
+    observation_key: str | None = None
+    #: When every effect of a class observation landed; None while partial.
+    effects_done_at: datetime | None = None
 
 
 class LevelUpRecommendation(BaseModel):

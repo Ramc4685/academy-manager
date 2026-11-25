@@ -38,6 +38,7 @@ ReportOutcome = Literal["applied", "needs_clarification", "sent_to_owner"]
 
 MAX_TAUGHT_SKILLS = 30
 MAX_PARTICIPANTS = 100
+MAX_PASSES = 200
 
 
 class ChildPractice(BaseModel):
@@ -45,6 +46,19 @@ class ChildPractice(BaseModel):
 
     student_id: str = Field(min_length=1)
     skill_ids: tuple[str, ...] = Field(min_length=1, max_length=MAX_TAUGHT_SKILLS)
+
+
+class ChildPass(BaseModel):
+    """The coach saw this child meet this skill's criterion in this class.
+    Applied through the pass pipeline once per class, child and skill; a
+    later revision never removes it (a formal reassessment does)."""
+
+    model_config = {"frozen": True}
+
+    student_id: str
+    skill_id: str
+    #: The recap revision that first recorded it (corrections keep it).
+    added_revision: int = Field(ge=1)
 
 
 class ClassRecap(BaseModel):
@@ -57,6 +71,7 @@ class ClassRecap(BaseModel):
     class_starts_at: datetime
     taught_skill_ids: tuple[str, ...] = ()
     practice: tuple[ChildPractice, ...] = ()
+    passes: tuple[ChildPass, ...] = ()
     revision: int = Field(default=0, ge=0)
     last_mutation_id: str | None = None
     source: RecapSource = "direct"
@@ -72,8 +87,8 @@ class ClassRecap(BaseModel):
 
 
 class PassClaim(BaseModel):
-    """A report said a child passed a skill, quoted from the report. Never
-    applied: the coach records a pass through the existing pass workflow."""
+    """A child passed a skill. From a report it is only a follow-up for the
+    coach; on direct recap entry it is saved and run through the pass pipeline."""
 
     model_config = {"frozen": True}
 

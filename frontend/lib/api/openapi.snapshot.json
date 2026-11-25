@@ -13320,6 +13320,34 @@
         "title": "ChildClassRecapView",
         "type": "object"
       },
+      "ChildPassView": {
+        "properties": {
+          "added_revision": {
+            "title": "Added Revision",
+            "type": "integer"
+          },
+          "receipt": {
+            "title": "Receipt",
+            "type": "string"
+          },
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "skill_id",
+          "receipt",
+          "added_revision"
+        ],
+        "title": "ChildPassView",
+        "type": "object"
+      },
       "ChildPracticeView": {
         "properties": {
           "skill_ids": {
@@ -13648,6 +13676,13 @@
             "title": "Occurrence Id",
             "type": "string"
           },
+          "passes": {
+            "items": {
+              "$ref": "#/components/schemas/ChildPassView"
+            },
+            "title": "Passes",
+            "type": "array"
+          },
           "practice": {
             "items": {
               "$ref": "#/components/schemas/ChildPracticeView"
@@ -13722,6 +13757,7 @@
           "updated_at",
           "taught_skills",
           "practice",
+          "passes",
           "roster",
           "skill_options",
           "reports"
@@ -17155,55 +17191,6 @@
           "failed"
         ],
         "title": "DeliveryProblemsView",
-        "type": "object"
-      },
-      "DemonstrationOutcomeView": {
-        "properties": {
-          "level_up_queued": {
-            "title": "Level Up Queued",
-            "type": "boolean"
-          },
-          "off_level": {
-            "title": "Off Level",
-            "type": "boolean"
-          },
-          "outcome": {
-            "title": "Outcome",
-            "type": "string"
-          },
-          "student_id": {
-            "title": "Student Id",
-            "type": "string"
-          },
-          "tries": {
-            "title": "Tries",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "student_id",
-          "outcome",
-          "off_level",
-          "level_up_queued",
-          "tries"
-        ],
-        "title": "DemonstrationOutcomeView",
-        "type": "object"
-      },
-      "DemonstrationResultsView": {
-        "properties": {
-          "results": {
-            "items": {
-              "$ref": "#/components/schemas/DemonstrationOutcomeView"
-            },
-            "title": "Results",
-            "type": "array"
-          }
-        },
-        "required": [
-          "results"
-        ],
-        "title": "DemonstrationResultsView",
         "type": "object"
       },
       "DenyMakeupRequestBody": {
@@ -30670,44 +30657,6 @@
         "title": "RecordAgreementAcceptanceRequest",
         "type": "object"
       },
-      "RecordDemonstrationBody": {
-        "properties": {
-          "class_starts_at": {
-            "format": "date-time",
-            "title": "Class Starts At",
-            "type": "string"
-          },
-          "mutation_id": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Mutation Id",
-            "type": "string"
-          },
-          "skill_id": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Skill Id",
-            "type": "string"
-          },
-          "student_ids": {
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 100,
-            "minItems": 1,
-            "title": "Student Ids",
-            "type": "array"
-          }
-        },
-        "required": [
-          "class_starts_at",
-          "mutation_id",
-          "skill_id",
-          "student_ids"
-        ],
-        "title": "RecordDemonstrationBody",
-        "type": "object"
-      },
       "RecordExpenseRequest": {
         "properties": {
           "amount_cents": {
@@ -32015,6 +31964,21 @@
             "minLength": 1,
             "title": "Mutation Id",
             "type": "string"
+          },
+          "passes": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PassClaimView"
+                },
+                "maxItems": 200,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passes"
           },
           "practice": {
             "items": {
@@ -53753,58 +53717,6 @@
         "summary": "Confirm a parent's drop-off report and mark the child present (idempotent)",
         "tags": [
           "coach"
-        ]
-      }
-    },
-    "/api/v2/coach/occurrences/{occurrence_id}/class-demonstrations": {
-      "post": {
-        "operationId": "record_class_demonstration_api_v2_coach_occurrences__occurrence_id__class_demonstrations_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "occurrence_id",
-            "required": true,
-            "schema": {
-              "title": "Occurrence Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RecordDemonstrationBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DemonstrationResultsView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Record Class Demonstration",
-        "tags": [
-          "coach.class-recap"
         ]
       }
     },

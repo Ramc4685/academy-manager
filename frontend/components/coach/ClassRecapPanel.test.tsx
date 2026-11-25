@@ -32,6 +32,7 @@ const VIEW: ClassRecapView = {
     { student_id: "maya", skill_ids: ["sk-x"] },
     { student_id: "leo", skill_ids: ["sk-y"] },
   ],
+  passes: [],
   roster: [
     { student_id: "maya", name: "Maya Lopez", attendance: "present" },
     { student_id: "leo", name: "Leo Chen", attendance: "late" },
@@ -79,6 +80,49 @@ describe("ClassRecapPanel", () => {
       /data-testid="recap-credit-everyone"[^>]*>Credit everyone present \(2\)/,
     );
     expect(render({ can_edit: false })).not.toContain("recap-credit-everyone");
+  });
+
+  it("offers a pass per taught skill and locks a saved one with its receipt", () => {
+    const html = render({
+      passes: [
+        { student_id: "maya", skill_id: "sk-x", receipt: "in_progress", added_revision: 2 },
+      ],
+    });
+    expect(pressed(html, "pass-leo-sk-y")).toBe("false");
+    expect(html).not.toContain('data-testid="pass-maya-sk-x"');
+    expect(html).toContain("✓ Passed: Forehand grip");
+    expect(html).toMatch(
+      /data-testid="pass-receipt-maya-sk-x"[^>]*>Pass still saving\. Save again to finish it\./,
+    );
+    expect(html).toMatch(/data-testid="recap-save"[^>]*>Finish saving/);
+    expect(html).not.toContain("pass-ana-");
+  });
+
+  it("lets the coach take off a pass the skill rules never counted", () => {
+    const html = render({
+      passes: [
+        {
+          student_id: "maya",
+          skill_id: "sk-x",
+          receipt: "not_recorded",
+          added_revision: 2,
+        },
+      ],
+    });
+    expect(pressed(html, "pass-maya-sk-x")).toBe("true");
+    expect(html).toContain("Not counted by the skill rules");
+    expect(html).toMatch(/data-testid="recap-save"[^>]*>Save recap/);
+  });
+
+  it("shows a recorded pass read-only and no pass offers without edit rights", () => {
+    const html = render({
+      can_edit: false,
+      passes: [
+        { student_id: "maya", skill_id: "sk-x", receipt: "recorded", added_revision: 1 },
+      ],
+    });
+    expect(html).toContain("Pass recorded");
+    expect(html).not.toContain('data-testid="pass-leo-');
   });
 
   it("never offers practice for an absent child", () => {
