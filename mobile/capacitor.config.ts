@@ -51,6 +51,9 @@ const config: CapacitorConfig = {
       skipNativeAuth: true,
       providers: ["google.com", "apple.com"],
     },
+    // Off until the person turns on app lock (frontend/lib/auth/native-biometric.ts).
+    // On, it hides the app-switcher snapshot; Android's FLAG_SECURE also blocks screenshots.
+    PrivacyScreen: { enable: false, preventScreenshots: false },
   },
   ios: {
     appendUserAgent: nativeAuthMarker("ios/App/App/GoogleService-Info.plist"),
@@ -68,6 +71,8 @@ const config: CapacitorConfig = {
         packageOptions: {
           "@capacitor-firebase/authentication": { symlink: true },
           "@capacitor-firebase/messaging": { symlink: true },
+          "@capgo/capacitor-native-biometric": { symlink: true },
+          "@capacitor-community/privacy-screen": { symlink: true },
         },
       },
     },

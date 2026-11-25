@@ -28,6 +28,8 @@ import { Button } from "@/components/ds/button";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { BigNum } from "@/components/ds/typography";
 import { SKILL_STATUS_LABELS } from "@/components/skills/SkillStatusChip";
+import { useAcademyTimezone } from "@/components/admin/use-academy-today";
+import { formatAcademyDate } from "@/lib/format/academy-time";
 
 const ADMIN_SETTABLE_STATUSES: SkillStatus[] = [
   "INTRODUCED",
@@ -440,6 +442,7 @@ function AdminSkillRow({
   studentId: string;
   onUpdated: () => void;
 }) {
+  const timezone = useAcademyTimezone();
   const [showTestForm, setShowTestForm] = useState(false);
   const [attemptsCount, setAttemptsCount] = useState("1");
   const [successCount, setSuccessCount] = useState("1");
@@ -493,12 +496,17 @@ function AdminSkillRow({
           {entry.skill_description && (
             <p className="mt-1 text-sm text-rally-muted">{entry.skill_description}</p>
           )}
+          {entry.status === "PASSED" && entry.passed_at && (
+            <p data-testid={`skill-passed-at-${entry.skill_id}`} className="mt-2 text-xs font-semibold text-rally-ink">
+              Passed {formatAcademyDate(entry.passed_at, timezone)}
+            </p>
+          )}
           {entry.test_attempt_count > 0 && (
             <p className="mt-2 text-xs text-rally-muted">
               {entry.test_attempt_count} test attempt
               {entry.test_attempt_count === 1 ? "" : "s"}
               {entry.last_tested_at
-                ? ` · last ${formatDate(entry.last_tested_at)}`
+                ? ` · last ${formatAcademyDate(entry.last_tested_at, timezone)}`
                 : ""}
               {entry.last_test_passed !== null
                 ? ` · ${entry.last_test_passed ? "passed" : "failed"}`

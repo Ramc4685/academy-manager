@@ -69,7 +69,9 @@ const mark = {
   client_app_version: "test",
 };
 
-describe("offline attendance across an app restart", () => {
+// Each test re-imports the queue modules; under a loaded full run that alone can
+// pass 5s, and a timed-out test leaks its sync into the next one.
+describe("offline attendance across an app restart", { timeout: 30_000 }, () => {
   beforeEach(() => {
     disk.stores.mutations.clear();
     disk.stores.audit.clear();

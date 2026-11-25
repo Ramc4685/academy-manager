@@ -1075,6 +1075,13 @@ def test_admin_can_update_skill_status_and_record_test(env):
     assert updated_skill["status"] == "PASSED"
     assert updated_skill["test_attempt_count"] == 1
     assert updated_skill["last_test_passed"] is True
+    # Usability study: admins could not see WHEN a skill was passed.
+    assert updated_skill["passed_at"] == updated_skill["last_tested_at"]
+    assert all(
+        entry["passed_at"] is None
+        for entry in updated_passport
+        if entry["skill_id"] != skill.skill_id
+    )
 
 
 def test_repeated_same_level_placement_returns_existing_active_placement(env):

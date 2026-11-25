@@ -14,6 +14,13 @@ test("the class screen unlocks marking at T-60 without a reload", async ({ page,
   await page.goto("/coach/sessions/s-today-1");
   await expect(page.getByTestId("marking-not-open")).toBeVisible();
   await expect(page.getByTestId("mark-st1-present")).toBeDisabled();
+  // The banner and the disabled bulk button name the same opening time: T-60
+  // in the class's zone, never "when class starts" (usability study).
+  const opensAt = await page.getByTestId("marking-not-open").textContent();
+  const time = /opens at (\d{1,2}:\d{2}\s[AP]M\s\S+),/.exec(opensAt ?? "")?.[1];
+  expect(time).toBeTruthy();
+  await expect(page.getByTestId("mark-all-present")).toHaveText(`Opens at ${time}`);
+  await expect(page.getByTestId("session-when")).toContainText(/\w{3}, \w{3} \d{1,2} · /);
 
   // 31 minutes later the class is 59 minutes away: marking is open.
   await page.clock.fastForward("31:00");

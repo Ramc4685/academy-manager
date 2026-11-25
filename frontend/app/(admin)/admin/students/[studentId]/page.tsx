@@ -564,7 +564,7 @@ function SkillPathwayPanel({ student }: { student: AdminStudentDetail }) {
         <Overline>Skill pathway</Overline>
       </div>
       <p className="mt-3 text-sm text-rally-muted">
-        Place this student in a curriculum level and review skill completion.
+        See each skill&apos;s status, test dates and pass dates, and place this student in a level.
       </p>
       <div className="mt-4">
         <Link
@@ -575,7 +575,7 @@ function SkillPathwayPanel({ student }: { student: AdminStudentDetail }) {
           }) as Parameters<typeof Link>[0]["href"]}
           className="inline-flex items-center justify-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
         >
-          Manage skill progress
+          Skill progress and pass dates
         </Link>
       </div>
     </Card>

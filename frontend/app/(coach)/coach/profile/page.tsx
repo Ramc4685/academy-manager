@@ -9,6 +9,7 @@ import {
   type UpdateCoachProfileRequest,
 } from "@/lib/api/coach";
 import { queryKeys } from "@/lib/query/keys";
+import { AppLockSetting } from "@/components/persona/app-lock-setting";
 import { DeleteAccountSection } from "@/components/persona/delete-account-section";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
@@ -175,7 +176,8 @@ export default function CoachProfilePage() {
       )}
 
       {!isLoading && !editing && (
-        <div className="mt-4">
+        <div className="mt-4 space-y-4">
+          <AppLockSetting />
           <DeleteAccountSection persona="coach" />
         </div>
       )}

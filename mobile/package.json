@@ -11,11 +11,13 @@
     "test": "node --test scripts/*.test.mjs"
   },
   "dependencies": {
+    "@capacitor-community/privacy-screen": "8.0.0",
     "@capacitor-firebase/authentication": "8.5.2",
     "@capacitor-firebase/messaging": "8.5.2",
     "@capacitor/android": "8.5.1",
     "@capacitor/core": "8.5.1",
     "@capacitor/ios": "8.5.1",
+    "@capgo/capacitor-native-biometric": "8.9.3",
     "firebase": "12.18.0"
   },
   "devDependencies": {
