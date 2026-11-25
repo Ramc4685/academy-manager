@@ -310,7 +310,7 @@ function ChildJourney({ studentId, childName }: { studentId: string; childName: 
 
   return (
     <div className="space-y-4" data-testid="parent-progress-journey">
-      <LevelStrip firstName={firstName} journey={journey} />
+      {journey.levels?.length > 0 && <LevelStrip firstName={firstName} journey={journey} />}
       {current ? (
         <>
           <LevelRing current={current} />
