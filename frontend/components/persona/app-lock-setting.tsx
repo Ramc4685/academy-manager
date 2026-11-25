@@ -7,6 +7,7 @@ import {
   disableBiometricLock,
   enableBiometricLock,
   isBiometricLockOn,
+  verifyWithBiometrics,
 } from "@/lib/auth/native-biometric";
 
 /**
@@ -31,12 +32,17 @@ export function AppLockSetting() {
   async function toggle() {
     if (busy) return;
     setError(null);
+    setBusy(true);
     if (on) {
-      disableBiometricLock();
-      setOn(false);
+      // Same check as turning it on, so whoever holds an unlocked phone can't drop the lock.
+      const ok = await verifyWithBiometrics("Turn off app lock");
+      setBusy(false);
+      if (ok) {
+        disableBiometricLock();
+        setOn(false);
+      } else setError(`${label} didn't confirm, so app lock is still on.`);
       return;
     }
-    setBusy(true);
     const ok = await enableBiometricLock();
     setBusy(false);
     if (ok) setOn(true);

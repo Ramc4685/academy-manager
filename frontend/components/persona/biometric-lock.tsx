@@ -94,10 +94,14 @@ export function BiometricLock() {
     ) {
       return;
     }
-    await signOutCurrent();
-    await clearDeviceData();
-    clearPersistedQueryCache();
-    window.location.replace("/login");
+    try {
+      await signOutCurrent();
+      await clearDeviceData();
+      clearPersistedQueryCache();
+    } finally {
+      // Even if clean-up failed, leave the lock screen rather than look stuck.
+      window.location.replace("/login");
+    }
   }
 
   if (!covered) return null;
