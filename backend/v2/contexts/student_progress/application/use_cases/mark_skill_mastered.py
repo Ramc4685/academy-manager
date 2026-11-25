@@ -148,7 +148,11 @@ class MarkSkillMastered:
                     notes=MASTERED_NOTE,
                     off_level_ok=cmd.off_level_ok,
                     observed_at=cmd.observed_at,
-                    mutation_id=f"{cmd.mutation_id}:{student_id}" if cmd.mutation_id else None,
+                    mutation_id=(
+                        f"{cmd.mutation_id}:{cmd.skill_id}:{student_id}"
+                        if cmd.mutation_id
+                        else None
+                    ),
                 )
             )
         except PassNeedsLeadCoach:

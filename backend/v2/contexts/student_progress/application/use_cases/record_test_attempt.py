@@ -227,7 +227,8 @@ class RecordTestAttempt:
             notes=cmd.notes,
             tested_at=now,
             observed_at=cmd.observed_at or now,
-            # The observer is coach_id; a pass also names who signed it off.
+            # The observer is coach_id; a passing attempt (an N_TRIES try too)
+            # names who signed it off.
             signed_off_by=cmd.coach_id if passed and cmd.can_sign_off else None,
         )
         await self._test_attempts.save(attempt)
