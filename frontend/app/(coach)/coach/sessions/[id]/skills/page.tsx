@@ -12,6 +12,7 @@ import {
   type CoachSkillGroup,
 } from "@/lib/api/coach";
 import { updateSkillStatus, type SkillStatus } from "@/lib/api/curriculum";
+import { formatPlainDate } from "@/lib/format/plain-date";
 import { queryKeys } from "@/lib/query/keys";
 import { SessionDetailTabs, SessionNextStep } from "@/components/coach/SessionDetailTabs";
 import { SKILL_STATUS_LABELS } from "@/components/skills/SkillStatusChip";
@@ -79,8 +80,15 @@ export default function CoachSessionSkillsPage({ params, searchParams }: PagePro
         </Link>
         <div>
           <h1 className="text-xl font-semibold">Skill updates</h1>
-          <p className="text-sm text-neutral-500">
-            {data ? `${data.title} · ${data.roster.length} students` : date}
+          <p className="text-sm text-neutral-500" data-testid="skills-class-identity">
+            {data
+              ? `${data.title} · ${formatPlainDate(date)} · ${data.roster.length} students`
+              : formatPlainDate(date)}
+          </p>
+          {/* A usability tester marked skills and believed attendance was saved. */}
+          <p className="text-xs text-neutral-500" data-testid="skills-not-attendance">
+            Skill changes don&apos;t record attendance. Mark present or absent on the
+            Attendance tab.
           </p>
         </div>
       </header>

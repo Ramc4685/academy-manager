@@ -482,3 +482,79 @@ test.describe("SaaS v2 — no legacy /api/* traffic anywhere in admin smoke", ()
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
   });
 });
+
+// Usability study: a parent on Profile saw the child's details but never the waiver.
+test.describe("SaaS v2 — waiver status on each child", () => {
+  const child = (student_id: string, full_name: string) => ({
+    student_id,
+    full_name,
+    date_of_birth: "2016-01-01",
+    emergency_contact_name: null,
+    emergency_contact_phone: null,
+    medical_notes: null,
+    no_medical_conditions: false,
+  });
+
+  async function stubParent(page: import("@playwright/test").Page, required: boolean) {
+    await stubMe(page, {
+      user_id: "user-parent-w9",
+      email: "parent@example.com",
+      academy_id: ACADEMY_A,
+      roles: ["parent"],
+    });
+    await stubParentProfile(page, {
+      user_id: "user-parent-w9",
+      children: [child("st-1", "Asha Rao"), child("st-2", "Dev Rao")],
+    });
+    await stubParentMessages(page);
+    await stubParentAcademy(page);
+    // Profile loads the email-preferences card; unstubbed it 502s into the console check.
+    await page.route("**/api/v2/parent/email-preferences", (route) =>
+      fulfillJson(route, { campaigns_opted_out: false, digests_opted_out: false, notifications_opted_out: false }),
+    );
+    const students = [
+      { student_id: "st-1", student_name: "Asha Rao", status: "pending", signed_at: null, waiver_version: null },
+      {
+        student_id: "st-2",
+        student_name: "Dev Rao",
+        status: "signed",
+        signed_at: "2026-11-01T15:00:00Z",
+        waiver_version: "3",
+        waiver_signature_id: "sig-dev",
+      },
+    ];
+    await page.route("**/api/v2/parent/waivers/current", (route) =>
+      fulfillJson(route, {
+        required,
+        consent_text: "I agree to sign electronically.",
+        waiver_template_id: required ? "wt-liability" : null,
+        title: required ? "Liability waiver" : null,
+        version: required ? "3" : null,
+        body: required ? "Liability text" : null,
+        students: required ? students : [],
+        waivers: required
+          ? [{ waiver_template_id: "wt-liability", title: "Liability waiver", version: "3", body: "Liability text", students }]
+          : [],
+      }),
+    );
+  }
+
+  test("Profile shows each child's own waiver state and links to signing", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
+    await stubParent(page, true);
+    await page.goto("/parent/profile");
+    await expect(page.getByTestId("child-waiver-st-1")).toContainText("Waiver needed");
+    await expect(page.getByTestId("child-waiver-st-2")).toContainText("Waiver signed");
+    await expect(page.getByTestId("child-waiver-st-2")).not.toContainText("needed");
+    await page.getByTestId("child-waiver-st-1").getByRole("link", { name: "Sign now" }).click();
+    await expect(page).toHaveURL(/\/parent\/waivers$/);
+    expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("no waiver chip when the academy requires none", async ({ page }) => {
+    await stubParent(page, false);
+    await page.goto("/parent/profile");
+    await expect(page.getByText("Asha Rao").first()).toBeVisible();
+    await expect(page.getByTestId("child-waiver-st-1")).toHaveCount(0);
+  });
+});

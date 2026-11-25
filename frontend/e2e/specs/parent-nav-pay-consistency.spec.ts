@@ -191,6 +191,21 @@ test.describe("parent shell — nav, pay style, touch targets (#843)", () => {
     expect(balancePay).toBe("rgb(37, 99, 235)");
   });
 
+  // Usability study retest: sign-in lands on Payments. With an unpaid invoice the
+  // balance and its pay action come first, and the next class is one tap away.
+  test("Payments leads with the balance due and links to the next class", async ({ page }) => {
+    await stubParentShell(page);
+    await stubPayments(page);
+    await page.goto("/parent/payments");
+    await expect(page.getByTestId("parent-payments")).toContainText("Balance due");
+    const pay = page.getByTestId("pay-balance");
+    await expect(pay).toBeVisible();
+    await expect(pay).toContainText("Pay balance");
+    const link = page.getByTestId("payments-next-class-link");
+    await expect(link).toHaveAttribute("href", "/parent/children");
+    await expect(link).toContainText("next class date and time");
+  });
+
   test("Billing portal and View detail meet the 44px touch target", async ({ page }) => {
     await stubParentShell(page);
     await stubPayments(page);

@@ -882,6 +882,30 @@ test.describe("Rally admin shell", () => {
     await expect(nav.getByTestId("admin-nav-inbox")).not.toContainText("0");
   });
 
+  // Usability study: an admin hunting a parent's request missed these tabs.
+  test("Inbox names parent requests and notices in its tab labels", async ({ page }) => {
+    await stubAdminBff(page);
+    await page.route("**/api/v2/admin/inbox/counts", (route) =>
+      fulfillJson(route, { counts: { makeups: 1, pauses: 1 }, total: 2, unavailable: [] }),
+    );
+    await page.goto("/admin/inbox");
+    await expect(page.getByRole("tab", { name: /Makeup requests/ })).toBeVisible();
+    await expect(page.getByRole("tab", { name: /Absence notices/ })).toBeVisible();
+    await expect(page.getByRole("tab", { name: /Pause requests/ })).toBeVisible();
+    await expect(page.getByTestId("admin-inbox-count-makeups")).toHaveText("1");
+  });
+
+  // Usability study: asked where to give staff access, the tester tried Settings.
+  test("Settings points to Staff for giving a coach or admin access", async ({ page }) => {
+    await stubAdminBff(page);
+    await page.goto("/admin/settings");
+    const pointer = page.getByTestId("settings-staff-pointer");
+    await expect(pointer).toContainText("Giving a coach or admin access?");
+    await pointer.getByRole("link", { name: "Staff" }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await expect(page.getByTestId("admin-users")).toBeVisible();
+  });
+
   test("all nav groups are visible at 1280x900 without scrolling the sidebar", async ({
     page,
   }) => {

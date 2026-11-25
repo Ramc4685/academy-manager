@@ -40,6 +40,7 @@ import { BulkMarkUndoWindow } from "@/lib/coach/bulk-mark-undo";
 import {
   correctionWindowClosed,
   isRecordedMark,
+  MARK_LEAD_TIME_MS,
   markingNotOpenYet,
   withoutUnconfirmedMark,
   markProgress,
@@ -49,7 +50,11 @@ import { onSync, syncNow } from "@/lib/offline/sync";
 import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 import { queryKeys } from "@/lib/query/keys";
 import { useOnline } from "@/lib/pwa/online";
-import { formatSessionTimeRange } from "@/lib/time/session-time";
+import {
+  formatAcademyClock,
+  formatAcademyTimeRange,
+  parseAcademyInstant,
+} from "@/lib/format/academy-time";
 
 import { formatBulkAttendanceError } from "./bulk-attendance-error";
 
@@ -874,6 +879,13 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   const markAllPending = bulkAttendanceMutation.isPending || queueingAll;
   // A future class cannot be marked (the server refuses it too).
   const notOpenYet = markingNotOpenYet(session.start_at, now);
+  // One opening time for the banner and the disabled button (they disagreed).
+  const opensAt = notOpenYet
+    ? formatAcademyClock(
+        new Date(parseAcademyInstant(session.start_at).getTime() - MARK_LEAD_TIME_MS).toISOString(),
+        session.timezone,
+      )
+    : "";
 
   return (
     <section data-testid="session-detail">
@@ -911,8 +923,10 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             </p>
           )}
           <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
-            {session.location} ·{" "}
-            {formatSessionTimeRange(session.start_at, session.end_at, session.timezone)}
+            <span data-testid="session-when">
+              {formatAcademyTimeRange(session.start_at, session.end_at, session.timezone)}
+            </span>{" "}
+            · {session.location}
           </p>
           {session.coach_name && (
             <p
@@ -958,7 +972,8 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
           className="mb-4 rounded-md border p-3 text-sm"
           style={{ borderColor: "var(--rally-line)", color: "var(--rally-muted)" }}
         >
-          This class hasn&apos;t started yet. Attendance opens an hour before it begins.
+          This class hasn&apos;t started yet. Attendance opens at {opensAt}, an hour
+          before it begins.
         </p>
       )}
 
@@ -1224,7 +1239,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
                   {markAllPending
                     ? "Marking…"
                     : notOpenYet
-                      ? "Opens when class starts"
+                      ? `Opens at ${opensAt}`
                       : unmarkedStudentIds.length === 0
                         ? // #1040: no bulk candidates is not the same as done.
                           progress.complete

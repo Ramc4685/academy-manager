@@ -148,3 +148,17 @@ test.describe("parent email registration verification", () => {
     expect(parentRegistrationCalls).toBe(1);
   });
 });
+
+// Usability study: the email path read as a twin of the Google button.
+test("register shows Google and email as two distinct choices", async ({ page }) => {
+  await page.goto("/register");
+  await expect(page.getByTestId("register-submit")).toBeEnabled();
+  await expect(page.getByTestId("register-google")).toBeVisible();
+  await expect(page.getByText("Or sign up with email")).toBeVisible();
+  const [googleBg, emailBg] = await Promise.all(
+    ["register-google", "register-submit"].map((id) =>
+      page.getByTestId(id).evaluate((el) => getComputedStyle(el).backgroundColor),
+    ),
+  );
+  expect(emailBg).not.toBe(googleBg);
+});

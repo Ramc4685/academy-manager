@@ -481,6 +481,15 @@ export default function ParentPaymentsPage() {
         </button>
         )}
       </div>
+      {/* Sign-in lands here; a tester hunted invoices for the next class (usability study). */}
+      <Link
+        href="/parent/children"
+        data-testid="payments-next-class-link"
+        className="flex min-h-touch items-center justify-between rounded-xl border border-rally-line bg-white px-4 text-sm font-semibold text-rally-cobalt-700"
+      >
+        <span>Looking for the next class date and time? See your children&apos;s classes</span>
+        <span aria-hidden="true">→</span>
+      </Link>
 
       {/* Status banners */}
       {settlementPending && !checkoutPollTimedOut && (
