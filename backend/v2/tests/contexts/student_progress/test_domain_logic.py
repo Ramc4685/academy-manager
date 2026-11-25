@@ -55,8 +55,8 @@ def test_check_level_completion_not_ready():
 
 
 def test_check_level_completion_empty_required():
-    # level has no required skills → True (trivially met)
-    assert check_level_completion([], set()) is True
+    assert check_level_completion([], set()) is False
+    assert check_level_completion([], {"optional-pass"}) is False
 
 
 def test_check_level_completion_extra_passed():

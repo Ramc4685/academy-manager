@@ -27,53 +27,39 @@ export function LevelStrip({ firstName, journey }: { firstName: string; journey:
           ? `Level ${current.number} of ${journey.levels.length}${
               levelColorName(current.color) ? ` · ${levelColorName(current.color)}` : ""
             }`
-          : `All ${journey.levels.length} levels done`}
+          : journey.pathway_complete ? "Pathway complete" : "Awaiting level placement"}
       </p>
-      <ol className="mt-4 flex" aria-label="Levels">
-        {journey.levels.map((level, idx) => {
-          const isLast = idx === journey.levels.length - 1;
-          const label =
-            level.state === "done"
-              ? "done"
-              : level.state === "current"
-                ? "current level"
-                : "coming up";
+      <ol className="mt-3 divide-y divide-rally-night-line" aria-label="Levels">
+        {journey.levels.map((level) => {
           const swatch = levelSwatch(level.color);
+          const isCurrent = level.level_id === current?.level_id;
           return (
             <li
               key={level.level_id}
-              className="relative flex flex-1 min-w-0 flex-col items-center gap-1.5"
-              aria-current={level.state === "current" ? "step" : undefined}
+              aria-current={isCurrent ? "step" : undefined}
+              className="flex items-center gap-3 py-2"
             >
-              {!isLast && (
-                <span
-                  aria-hidden="true"
-                  className={`absolute top-[15px] left-1/2 h-[3px] w-full ${
-                    level.state === "done" ? "bg-status-green-500" : "bg-rally-night-line"
-                  }`}
-                />
-              )}
-              <span
-                style={{ background: swatch.fill, color: swatch.on }}
-                className={`relative z-10 flex items-center justify-center rounded-full font-display font-bold ${
-                  level.state === "current"
-                    ? "h-[32px] w-[32px] -mt-[1px] text-sm ring-[3px] ring-white"
-                    : `h-[26px] w-[26px] mt-[2px] text-xs ring-1 ring-status-slate-700 ${
-                        level.state === "upcoming" ? "opacity-60" : ""
-                      }`
-                }`}
-              >
-                {level.state === "done" ? "✓" : level.number}
-                <span className="sr-only">{`Level ${level.number}, ${level.name}: ${label}`}</span>
-              </span>
               <span
                 aria-hidden="true"
-                className={`w-full truncate px-0.5 text-center text-[11px] ${
-                  level.state === "current" ? "font-bold text-white" : "text-rally-bright"
-                }`}
+                style={{ background: swatch.fill, color: swatch.on }}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full font-bold"
               >
-                {level.name}
+                {level.number}
               </span>
+              <div>
+                <p className="text-sm font-bold">
+                  <span className="sr-only">Level {level.number}, </span>{level.name}
+                  {isCurrent && <span className="font-normal"> · Current level</span>}
+                </p>
+                {level.required_total !== undefined && (
+                  <p className="text-xs text-rally-bright">
+                    {level.required_total === 0
+                      ? "No required skills configured"
+                      : `${level.required_passed}/${level.required_total} required skills passed`}
+                    {!!level.optional_total && ` · ${level.optional_passed}/${level.optional_total} optional skills passed`}
+                  </p>
+                )}
+              </div>
             </li>
           );
         })}
@@ -85,17 +71,26 @@ export function LevelStrip({ firstName, journey }: { firstName: string; journey:
 const RING_R = 36;
 const RING_C = 2 * Math.PI * RING_R;
 
-export function LevelRing({ current }: { current: NonNullable<Journey["current_level"]> }) {
-  const { skills_done: done, skills_total: total, skills_remaining: remaining } = current;
+type CurrentLevel = NonNullable<Journey["current_level"]>;
+
+function nextLevelStep(current: CurrentLevel): string {
+  if (current.required_total === 0) return "No required skills configured";
+  const remaining = current.skills_remaining;
+  if (remaining === 0) {
+    return current.required_total === undefined
+      ? "Your coach reviews level placement."
+      : "Required skills passed. Ready for level review.";
+  }
+  const skills = `${remaining} ${remaining === 1 ? "skill" : "skills"}`;
+  return current.has_next_level
+    ? `${skills} to Level ${current.number + 1}`
+    : `${skills} to finish the pathway`;
+}
+
+export function LevelRing({ current }: { current: CurrentLevel }) {
+  const done = current.required_passed ?? current.skills_done;
+  const total = current.required_total ?? current.skills_total;
   const filled = total > 0 ? (done / total) * RING_C : 0;
-  const nextStep =
-    remaining === 0
-      ? current.has_next_level
-        ? `Level ${current.number} done, moving up to Level ${current.number + 1}`
-        : "Every level done"
-      : current.has_next_level
-        ? `${remaining} ${remaining === 1 ? "skill" : "skills"} to Level ${current.number + 1}`
-        : `${remaining} ${remaining === 1 ? "skill" : "skills"} to finish the pathway`;
   const swatch = levelSwatch(current.color);
   const colorName = levelColorName(current.color);
 
@@ -117,7 +112,7 @@ export function LevelRing({ current }: { current: NonNullable<Journey["current_l
           height="88"
           viewBox="0 0 88 88"
           role="img"
-          aria-label={`${done} of ${total} skills done`}
+          aria-label={total > 0 ? `${done} of ${total} skills passed` : "No skills to count"}
           className="shrink-0"
         >
           <circle
@@ -145,12 +140,12 @@ export function LevelRing({ current }: { current: NonNullable<Journey["current_l
             textAnchor="middle"
             className="fill-rally-ink font-display text-xl font-bold"
           >
-            {done}/{total}
+            {total > 0 ? `${done}/${total}` : "—"}
           </text>
         </svg>
         <div className="min-w-0 space-y-1">
           <p className="font-display text-lg font-bold text-rally-ink">{current.name}</p>
-          <p className="text-sm text-status-slate-700">{nextStep}</p>
+          <p className="text-sm text-status-slate-700">{nextLevelStep(current)}</p>
           {current.pace_weeks !== null && (
             <p className="text-[13px] text-rally-muted">
               At this pace: about {current.pace_weeks} {current.pace_weeks === 1 ? "week" : "weeks"}

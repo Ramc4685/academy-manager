@@ -102,10 +102,15 @@ async def test_skill_progress_repo_isolates_tenants(db) -> None:
         await repo.upsert(_skill_progress("stu-a"))
 
     with tenant_scope("academy-a"):
+        rows = await repo.list_for_student_program("stu-a", "prog-1")
+        assert [row.skill_id for row in rows] == ["skill-1"]
+        assert await repo.list_for_student_program("stu-a", "prog-2") == []
+        assert await repo.list_for_student_program("stu-b", "prog-1") == []
         assert await repo.get("stu-a", "skill-1") is not None
         assert len(await repo.list_passed_for_student_level("stu-a", "lvl-1")) == 1
 
     with tenant_scope("academy-b"):
+        assert await repo.list_for_student_program("stu-a", "prog-1") == []
         assert await repo.get("stu-a", "skill-1") is None
         assert await repo.list_for_student_level("stu-a", "lvl-1") == []
         assert await repo.list_passed_for_student_level("stu-a", "lvl-1") == []
