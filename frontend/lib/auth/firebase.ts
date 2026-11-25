@@ -40,6 +40,7 @@ import {
 import { getReadyIdToken } from "@/lib/auth/token-readiness";
 import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 import { clearPersonaHintCookie } from "@/lib/auth/persona-hint-cookie";
+import { disableBiometricLock } from "@/lib/auth/native-biometric";
 import { stopPushNotifications } from "@/lib/auth/native-push";
 
 const firebaseConfig = {
@@ -321,8 +322,10 @@ export async function signOutCurrent(): Promise<void> {
   clearBffIdentityCookie();
   // Leave no persona hint behind for the next user of a shared device (#451).
   clearPersonaHintCookie();
-  if (E2E_BYPASS) return;
-  await signOut(auth());
+  if (!E2E_BYPASS) await signOut(auth());
+  // Only once the session is gone: the next person on a shared phone must not
+  // inherit this app lock, but a failed sign-out must not drop it either.
+  disableBiometricLock();
 }
 
 export function onAuthChange(cb: (user: User | null) => void): () => void {

@@ -6,6 +6,8 @@ import { publicPageBrand } from "@/lib/public-page/metadata";
 import { loadPublicAcademyPage } from "@/lib/public-page/server-fetch";
 import { Providers } from "@/lib/providers";
 import { SentryInit } from "@/components/observability/sentry-init";
+import { BiometricLockLoader } from "@/components/persona/biometric-lock-loader";
+import { APP_LOCK_BOOT_SCRIPT } from "@/lib/auth/app-lock-key";
 
 // Self-hosted (latin subset of the Google Fonts variable files): next/font/google
 // fetched and parsed Google's CSS at build time, and an unparseable response
@@ -75,11 +77,15 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: APP_LOCK_BOOT_SCRIPT }} />
+      </head>
       <body
         className={`${manrope.variable} ${outfit.variable} ${jetbrainsMono.variable} min-h-screen bg-white font-body text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100`}
       >
         <SentryInit />
         <Providers>{children}</Providers>
+        <BiometricLockLoader />
       </body>
     </html>
   );

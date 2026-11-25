@@ -1,0 +1,12 @@
+# biometric-app-lock
+
+PR: #1236
+
+## What changed
+Coaches and parents using the iOS/Android app can turn on "Lock with Face ID" (or fingerprint) from their profile. The app then asks for a face, fingerprint or phone passcode when it opens and after a minute in the background, and covers the screen in the app switcher. It is off by default, set per phone, needs the same check to turn off, and is switched off by sign-out.
+
+## Deploy notes
+The frontend change ships with the normal web deploy; browsers see nothing new (a tiny pre-paint check in the root layout, and the lock code loads only inside the app shell). The toggle only shows in app builds that ship the new `@capgo/capacitor-native-biometric` and `@capacitor-community/privacy-screen` plugins, so a new TestFlight and Play build is needed before anyone sees it. The same build raises the iOS minimum from 15.0 to 16.4, matching what the web app supports (drops iPhone 6s, 7 and SE 1st gen) (`docs/runbooks/mobile-store-builds.md`).
+
+## Risk / rollback
+Worst case is a person stuck at the lock screen: the passcode fallback and "Sign out instead" both get them out, and sign-out clears the setting. If the lock screen's code cannot load (offline cold start with a stale cache), the app stays covered with a Reload button rather than opening unlocked. It is a screen cover, not encryption of the session or cached data. While the lock is on, Android blocks screenshots of the app (FLAG_SECURE). Roll back by reverting; older app builds never show the toggle.
