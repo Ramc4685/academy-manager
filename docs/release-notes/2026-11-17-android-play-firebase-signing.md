@@ -1,6 +1,6 @@
 # Android Google Play sign-in configuration
 
-PR: TBD
+PR: #1235
 
 ## What changed
 The Android app bundles the Firebase OAuth clients for Google Play signing and the current upload certificate. Builds installed from Google Play can use native Google sign-in with the registered certificates.
