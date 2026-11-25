@@ -493,6 +493,11 @@ function AdminSkillRow({
           {entry.skill_description && (
             <p className="mt-1 text-sm text-rally-muted">{entry.skill_description}</p>
           )}
+          {entry.status === "PASSED" && entry.passed_at && (
+            <p data-testid={`skill-passed-at-${entry.skill_id}`} className="mt-2 text-xs font-semibold text-rally-ink">
+              Passed {formatDate(entry.passed_at)}
+            </p>
+          )}
           {entry.test_attempt_count > 0 && (
             <p className="mt-2 text-xs text-rally-muted">
               {entry.test_attempt_count} test attempt

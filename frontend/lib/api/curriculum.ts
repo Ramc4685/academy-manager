@@ -123,6 +123,8 @@ export interface SkillPassportEntry {
   status: SkillStatus;
   last_test_passed: boolean | null;
   last_tested_at: string | null;
+  /** When a PASSED skill was passed; null otherwise. */
+  passed_at?: string | null;
   test_attempt_count: number;
 }
 

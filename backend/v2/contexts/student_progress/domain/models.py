@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -272,6 +273,27 @@ class SkillPassportEntry(BaseModel):
     last_test_passed: bool | None
     last_tested_at: datetime | None
     test_attempt_count: int
+    #: When a PASSED skill was passed (see ``skill_passed_at``); None otherwise.
+    passed_at: datetime | None = None
+
+
+class _Attempt(Protocol):
+    passed: bool
+    tested_at: datetime
+
+
+def skill_passed_at(
+    status: str, attempts: Iterable[_Attempt], last_updated_at: datetime | None
+) -> datetime | None:
+    """The date a skill was passed: the latest passing test, else the PASSED write.
+
+    Tap-to-master and admin status changes pass a skill with no attempt, so the
+    progress row's last update is the pass date for those.
+    """
+    if status != "PASSED":
+        return None
+    passing = max((a for a in attempts if a.passed), key=lambda a: a.tested_at, default=None)
+    return passing.tested_at if passing else last_updated_at
 
 
 class SkillBoardStudentRef(BaseModel):
