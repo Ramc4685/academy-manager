@@ -376,3 +376,15 @@ async def test_pace_uses_only_current_required_earned_skills(
     repos.rows[-1] = repos.rows[-1].model_copy(update={"silent": False})
     earned = await _use_case(repos).execute(STUDENT, PROGRAM, now=NOW)
     assert earned.current_level and earned.current_level.pace_weeks == 1
+
+
+async def test_level_without_required_skills_is_never_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(SKILLS, "L3", [_skill("bonus", 1, "Bonus", required=False)])
+    repos = _Repos()
+    repos.rows.append(_progress("bonus", "PASSED", NOW, level_id="L3"))
+    journey = await _use_case(repos).execute(STUDENT, PROGRAM, now=NOW)
+    last = journey.levels[2]
+    assert (last.required_total, last.optional_passed) == (0, 1)
+    assert last.state == "upcoming"
