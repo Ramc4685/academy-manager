@@ -12,6 +12,7 @@ import { Chip } from "@/components/ds/chip";
 import { EmptyState } from "@/components/ds/empty-state";
 import { useToast } from "@/components/ds/toast";
 import { PauseEnrollmentForm } from "@/components/parent/pause-enrollment-form";
+import { EnrollmentActions } from "@/components/parent/enrollment-actions";
 import { queryKeys } from "@/lib/query/keys";
 import {
   getCancellationPreview,
@@ -47,8 +48,15 @@ import {
 } from "@/lib/format/hold-copy";
 import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 import { reEnrollHref } from "@/lib/parent/re-enroll";
-import { noClassReason, scheduleSourceLabel } from "@/lib/parent/schedule-events";
+import {
+  ALREADY_REPORTED_LABEL,
+  noClassReason,
+  scheduleSourceLabel,
+} from "@/lib/parent/schedule-events";
 import { OneTimeClassChip } from "@/components/parent/one-time-class";
+import { ArrivalCheckin } from "@/components/parent/arrival-checkin";
+import { dropoffRefetchInterval, parentArrivalView } from "@/lib/dropoff/checkin";
+import { AbsenceMakeupStatus } from "@/components/parent/absence-makeup-status";
 
 // Avatar gradients are shared with the kid-first Home cards so the same child
 // wears the same colour on both screens (lib/avatar-gradient.ts).
@@ -151,6 +159,16 @@ function ChildCard({
   const { data: scheduleData } = useQuery({
     queryKey: ["parent", "child-schedule", child.student_id],
     queryFn: () => getChildSchedule(child.student_id),
+    // Drop-off: refetch when a window opens and while it is open, so the
+    // button appears and "Waiting for staff" turns into "Checked in".
+    refetchInterval: (query) =>
+      dropoffRefetchInterval(
+        (query.state.data?.entries ?? []).map((e) => ({
+          opensAt: e.checkin?.window_opens_at,
+          closesAt: e.checkin?.window_closes_at,
+          done: e.checkin?.state === "confirmed" || e.status === "cancelled",
+        })),
+      ),
   });
 
   const sessions = scheduleData?.entries ?? [];
@@ -215,6 +233,7 @@ function ChildCard({
               <SessionRow
                 key={s.occurrence_id}
                 studentId={child.student_id}
+                childName={child.full_name}
                 entry={s}
                 academyTimezone={academyTimezone}
                 canReportAbsence={canReportAbsence}
@@ -265,11 +284,13 @@ function ChildCard({
 
 function SessionRow({
   studentId,
+  childName,
   entry,
   academyTimezone,
   canReportAbsence,
 }: {
   studentId: string;
+  childName: string;
   entry: ParentScheduleEntry;
   academyTimezone: string | null;
   canReportAbsence: boolean;
@@ -284,6 +305,9 @@ function SessionRow({
   const cancelled = entry.status === "cancelled";
   // #1038: an approved make-up / trial sits alongside regular classes.
   const sourceLabel = scheduleSourceLabel(entry.source);
+  // A child already dropped off is not absent: no "Report absence" beside it.
+  const arrival = parentArrivalView(entry);
+  const arrived = arrival === "pending" || arrival === "confirmed";
 
   const absenceMutation = useMutation({
     mutationFn: submitAbsenceNotice,
@@ -291,6 +315,7 @@ function SessionRow({
       setSubmitted(true);
       toast({ kind: "success", title: "Absence reported" });
       void queryClient.invalidateQueries({ queryKey: queryKeys.parent.absences() });
+      void queryClient.invalidateQueries({ queryKey: ["parent", "child-schedule", studentId] });
     },
   });
 
@@ -336,16 +361,38 @@ function SessionRow({
         </div>
       </div>
 
+      <ArrivalCheckin studentId={studentId} childName={childName} entry={entry} />
+
       {absenceMutation.isError && (
         <p role="alert" className="text-xs text-status-red-800">
           {absenceMutation.error instanceof Error ? absenceMutation.error.message : "Could not report absence."}
         </p>
       )}
 
-      {cancelled || !canReportAbsence ? null : submitted ? (
-        <p role="status" className="text-xs font-semibold text-status-green-800">
-          Absence reported
-        </p>
+      {cancelled || !canReportAbsence || arrived ? null : submitted || entry.absence_reported ? (
+        <div>
+          {/* Text, not a disabled button: a disabled button is skipped by Tab,
+              so keyboard and screen-reader users would never hear it. */}
+          <p
+            role="status"
+            data-testid={`absence-reported-${entry.occurrence_id}`}
+            className="text-xs font-semibold text-status-green-800"
+          >
+            {submitted ? "Absence reported" : ALREADY_REPORTED_LABEL}
+          </p>
+          {/* A reported date also shows where it stands with makeups; a plain
+              "reported" adds nothing to "Already reported". */}
+          {!submitted &&
+            entry.absence_makeup &&
+            !(entry.absence_makeup.state === "reported" && !entry.absence_makeup.reason) && (
+            <AbsenceMakeupStatus
+              makeup={entry.absence_makeup}
+              studentId={studentId}
+              occurrenceId={entry.occurrence_id}
+              academyTimezone={academyTimezone}
+            />
+          )}
+        </div>
       ) : (
         <Button
           variant="secondary"
@@ -388,9 +435,11 @@ function EnrollmentRow({
 
   return (
     <li className="rounded-xl p-3 bg-rally-paper">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold truncate text-rally-ink">{enrollment.session_title}</p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          {/* The full class name wraps; cut short beside two inline buttons it
+              left "Junior Beginners" as a 17 px sliver on a 390 px phone. */}
+          <p className="text-sm font-semibold break-words text-rally-ink">{enrollment.session_title}</p>
           <p className="text-xs mt-0.5 text-rally-muted">
             {departed
               ? "Your child has left this class"
@@ -436,30 +485,24 @@ function EnrollmentRow({
             Enroll in a class
           </Link>
         )}
-        {!departed && !held && !pendingLabel && (canRequestPause || canRequestCancel) && (
-          <div className="flex shrink-0 items-center gap-2">
-            {canRequestPause && (
-              <Button
-                variant="secondary"
-                size="sm"
-                data-testid={`enrollment-pause-${enrollment.enrollment_id}`}
-                aria-expanded={pausing}
-                onClick={() => setPausing((open) => !open)}
-              >
-                Pause enrollment
-              </Button>
-            )}
-            {canRequestCancel && (
-              <Button variant="danger" size="sm" onClick={() => setConfirming(true)}>
-                Cancel enrollment…
-              </Button>
-            )}
-          </div>
+        {!departed && !held && !pendingLabel && (
+          <EnrollmentActions
+            enrollmentId={enrollment.enrollment_id}
+            sessionTitle={enrollment.session_title}
+            childName={enrollment.student_name}
+            canRequestPause={canRequestPause}
+            canRequestCancel={canRequestCancel}
+            pausing={pausing}
+            onPause={() => setPausing((open) => !open)}
+            onCancel={() => setConfirming(true)}
+          />
         )}
       </div>
       {pausing && canRequestPause && (
         <PauseEnrollmentForm
           enrollmentId={enrollment.enrollment_id}
+          childName={enrollment.student_name}
+          sessionTitle={enrollment.session_title}
           onCancel={() => setPausing(false)}
         />
       )}
@@ -516,7 +559,7 @@ function CancelEnrollmentDialog({
     <Modal
       open
       onClose={onClose}
-      title={`Cancel enrollment in ${enrollment.session_title}`}
+      title={`Cancel ${enrollment.student_name}'s enrollment in ${enrollment.session_title}`}
       dismissable={!cancelMutation.isPending}
     >
       {previewQuery.isError ? (

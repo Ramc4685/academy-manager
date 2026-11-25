@@ -129,6 +129,15 @@ test.describe("parent self-service — absences", () => {
               submitted_by: "parent-1",
               submitted_at: "2026-07-10T12:00:00Z",
               notice_window_met: true,
+              missed_class: {
+                occurrence_id: "occ-050",
+                session_id: "sess-1",
+                session_title: "Junior Beginners",
+                start_at: "2026-07-18T14:00:00Z",
+                end_at: "2026-07-18T15:00:00Z",
+                timezone: "America/Chicago",
+                status: "scheduled",
+              },
             },
           ],
         }),
@@ -140,6 +149,10 @@ test.describe("parent self-service — absences", () => {
     await expect(page.getByRole("tab", { name: "Absences", selected: true })).toBeVisible();
     await expect(page.getByText("My absence notices")).toBeVisible();
     await expect(page.getByText("ON TIME")).toBeVisible();
+    // The card names the missed class; the send time is a separate line.
+    await expect(page.getByTestId("absence-class-notice-1")).toContainText("Junior Beginners");
+    await expect(page.getByTestId("absence-class-notice-1")).toContainText("9:00");
+    await expect(page.getByText(/^Submitted /)).toBeVisible();
   });
 
   test("submitting an absence on time shows a success confirmation", async ({ page }) => {
@@ -183,6 +196,78 @@ test.describe("parent self-service — absences", () => {
     await page.getByRole("button", { name: "Report absence" }).click();
 
     await expect(page.getByRole("status")).toContainText("Absence notice submitted.");
+  });
+
+  test("a date that already has a notice is shown as Already reported and cannot be picked", async ({
+    page,
+  }) => {
+    await page.route(`**/api/v2/parent/children/${STUDENT_ID}/schedule`, async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          entries: [
+            {
+              occurrence_id: "occ-100",
+              session_id: "sess-1",
+              session_title: SESSION_TITLE,
+              location: "Court 1",
+              start_at: "2026-07-14T18:00:00Z",
+              end_at: "2026-07-14T19:00:00Z",
+              status: "scheduled",
+              coach_name: null,
+              absence_reported: true,
+            },
+            {
+              occurrence_id: "occ-101",
+              session_id: "sess-1",
+              session_title: SESSION_TITLE,
+              location: "Court 1",
+              start_at: "2026-07-21T18:00:00Z",
+              end_at: "2026-07-21T19:00:00Z",
+              status: "scheduled",
+              coach_name: null,
+              absence_reported: false,
+            },
+          ],
+          total: 2,
+          limit: 50,
+          offset: 0,
+        }),
+      });
+    });
+    await page.route("**/api/v2/parent/absences", (route: Route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({ status: 200, contentType: "application/json", body: '{"notices":[]}' })
+        : route.fallback(),
+    );
+    for (const [url, body] of [
+      ["**/api/v2/parent/attendance", { records: [] }],
+      ["**/api/v2/parent/enrollments", { enrollments: [] }],
+    ] as const) {
+      await page.route(url, (route: Route) =>
+        route.request().method() === "GET"
+          ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) })
+          : route.fallback(),
+      );
+    }
+
+    // Requests → Absences: the reported date is listed but disabled.
+    await page.goto("/parent/requests");
+    const absenceForm = page.locator("form");
+    await absenceForm.getByRole("combobox").nth(0).selectOption(STUDENT_ID);
+    const classSelect = absenceForm.getByRole("combobox").nth(1);
+    const reported = classSelect.locator('option[value="occ-100"]');
+    await expect(reported).toBeDisabled();
+    await expect(reported).toContainText("Already reported");
+    await expect(classSelect.locator('option[value="occ-101"]')).toBeEnabled();
+    await expect(classSelect.locator('option[value="occ-101"]')).not.toContainText("Already reported");
+
+    // Children: the same rule on the session row.
+    await page.goto("/parent/children");
+    await expect(page.getByTestId("absence-reported-occ-100")).toHaveText("Already reported");
+    await expect(page.getByRole("button", { name: "Report absence" })).toHaveCount(1);
   });
 
   test("shows the child's name on an absence notice row", async ({ page }) => {
@@ -591,9 +676,19 @@ test.describe("parent self-service — self-cancel enrollment", () => {
 
     await page.goto("/parent/children");
     await expect(page.getByTestId("parent-children")).toBeVisible();
-    await page.getByRole("button", { name: "Cancel enrollment…" }).click();
+    // Phones get one "Manage enrollment" menu instead of two inline buttons,
+    // which squeezed the class name to a sliver; the full name must show.
+    const title = page.getByText(SESSION_TITLE, { exact: true }).last();
+    await expect(title).toBeVisible();
+    expect((await title.boundingBox())?.width ?? 0).toBeGreaterThan(80);
+    await expect(page.getByRole("button", { name: "Cancel enrollment…" })).toBeHidden();
+    await page.getByTestId(`enrollment-manage-${ENROLLMENT_ID}`).click();
+    await page.getByRole("menuitem", { name: "Cancel enrollment…" }).click();
 
-    const dialog = page.getByRole("dialog", { name: `Cancel enrollment in ${SESSION_TITLE}` });
+    // The confirmation names the child and the class before anything happens.
+    const dialog = page.getByRole("dialog", {
+      name: `Cancel ${STUDENT_NAME}'s enrollment in ${SESSION_TITLE}`,
+    });
     await expect(dialog).toBeVisible();
 
     // Fee and timing must be visible before the parent confirms.
@@ -618,12 +713,48 @@ test.describe("parent self-service — self-cancel enrollment", () => {
 });
 
 test.describe("parent self-service — progress", () => {
-  test("renders progress notes", async ({ page }) => {
+  test("shows only the selected child's coach notes, and switching child switches them", async ({
+    page,
+  }) => {
+    const SIBLING_ID = "st-2";
+    const SIBLING_NAME = "Ben Kim";
     await stubParentIdentity(page);
     await stubAcademyAndChildren(page);
-
-    await page.route("**/api/v2/parent/progress", async (route: Route) => {
+    await page.route("**/api/v2/parent/children", async (route: Route) => {
       if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          children: [
+            { student_id: STUDENT_ID, full_name: STUDENT_NAME, lifecycle: "active" },
+            { student_id: SIBLING_ID, full_name: SIBLING_NAME, lifecycle: "active" },
+          ],
+        }),
+      });
+    });
+    await page.route("**/api/v2/parent/students/*/progress-journey", (route: Route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          current_level: null,
+          pathway_complete: false,
+          skills: [],
+          milestones: [],
+          recent_wins: [],
+          practice_drill: null,
+        }),
+      }),
+    );
+
+    // The route returns BOTH children's notes whatever student_id it gets,
+    // as an older API that ignores the parameter would; the page must still
+    // show only the selected child's.
+    const requestedIds: (string | null)[] = [];
+    await page.route("**/api/v2/parent/progress**", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      requestedIds.push(new URL(route.request().url()).searchParams.get("student_id"));
       return route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -631,11 +762,21 @@ test.describe("parent self-service — progress", () => {
           notes: [
             {
               note_id: "note-1",
+              student_id: STUDENT_ID,
               coach_name: "Coach Kim",
               student_name: STUDENT_NAME,
               created_at: new Date().toISOString(),
               session_title: SESSION_TITLE,
               body: "Great footwork this week.",
+            },
+            {
+              note_id: "note-2",
+              student_id: SIBLING_ID,
+              coach_name: "Coach Kim",
+              student_name: SIBLING_NAME,
+              created_at: new Date().toISOString(),
+              session_title: SESSION_TITLE,
+              body: "Backhand clears are getting deeper.",
             },
           ],
         }),
@@ -644,8 +785,51 @@ test.describe("parent self-service — progress", () => {
 
     await page.goto("/parent/progress");
 
-    await expect(page.getByTestId("parent-progress")).toBeVisible();
-    await expect(page.getByText("Great footwork this week.")).toBeVisible();
+    const notes = page.getByTestId("parent-progress-notes");
+    await expect(notes).toContainText("Notes from coaches about Ava");
+    await expect(notes.getByText("Great footwork this week.")).toBeVisible();
+    await expect(page.getByText("Backhand clears are getting deeper.")).toHaveCount(0);
+
+    await page.getByRole("tab", { name: SIBLING_NAME }).click();
+    await expect(notes).toContainText("Notes from coaches about Ben");
+    await expect(notes.getByText("Backhand clears are getting deeper.")).toBeVisible();
+    await expect(page.getByText("Great footwork this week.")).toHaveCount(0);
+    // The tab asks the server for one child at a time.
+    expect(requestedIds).toEqual(expect.arrayContaining([STUDENT_ID, SIBLING_ID]));
+  });
+});
+
+test.describe("parent self-service — progress roster states", () => {
+  test("a failed roster load shows an error with retry, not a blank page", async ({ page }) => {
+    await stubParentIdentity(page);
+    await stubAcademyAndChildren(page);
+    // A 4xx skips the query client's retries, so the error state shows at once.
+    await page.route("**/api/v2/parent/children", (route: Route) =>
+      route.request().method() !== "GET"
+        ? route.fallback()
+        : route.fulfill({ status: 403, contentType: "application/json", body: "{}" }),
+    );
+
+    await page.goto("/parent/progress");
+    await expect(page.getByText("Could not load your children.")).toBeVisible();
+    await expect(page.getByRole("button", { name: /retry|try again/i })).toBeVisible();
+  });
+
+  test("an empty roster shows an empty state", async ({ page }) => {
+    await stubParentIdentity(page);
+    await stubAcademyAndChildren(page);
+    await page.route("**/api/v2/parent/children", (route: Route) =>
+      route.request().method() !== "GET"
+        ? route.fallback()
+        : route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ children: [] }),
+          }),
+    );
+
+    await page.goto("/parent/progress");
+    await expect(page.getByText("No progress notes yet")).toBeVisible();
   });
 });
 

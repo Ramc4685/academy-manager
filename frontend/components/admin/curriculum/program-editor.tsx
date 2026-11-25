@@ -414,10 +414,10 @@ function LevelAccordion({
           >
             {level.sequence}
           </span>
-          <div>
+          <div className="min-w-0">
             <span className="font-semibold text-rally-base">{level.name}</span>
             {level.description && (
-              <span className="ml-2 text-sm text-neutral-500">{level.description}</span>
+              <span className="block text-sm text-neutral-500 sm:ml-2 sm:inline">{level.description}</span>
             )}
           </div>
         </div>
@@ -687,15 +687,18 @@ function SkillRow({
 
   return (
     <div className="px-4 py-3">
-      <div className="flex items-center gap-3">
+      {/* Wraps on phones so the controls drop below instead of squeezing the text to one word a line. */}
+      <div data-testid={`skill-row-${skill.skill_id}`} className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <span className="w-5 text-right text-xs text-neutral-400">{skill.sequence}</span>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-48">
           <span className="text-sm font-medium text-rally-base">{skill.name}</span>
           {skill.description && (
-            <span className="ml-2 text-xs text-neutral-400">{skill.description}</span>
+            <span className="mt-0.5 block text-xs text-neutral-400 sm:ml-2 sm:mt-0 sm:inline">
+              {skill.description}
+            </span>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {skill.is_required && (
             <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-600">
               Required

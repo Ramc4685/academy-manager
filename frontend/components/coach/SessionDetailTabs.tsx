@@ -78,3 +78,35 @@ export function SessionDetailTabs({
     </div>
   );
 }
+
+/**
+ * "Next step" link at the foot of a class screen, so a coach finishing one
+ * step lands on the next for the SAME class: attendance → skills → recap.
+ * The recap lives on the attendance screen, opened by `recap=open`.
+ */
+export function SessionNextStep({
+  occurrenceId,
+  date,
+  to,
+}: {
+  occurrenceId: string;
+  date: string;
+  to: "skills" | "recap";
+}) {
+  const id = encodeURIComponent(occurrenceId);
+  const d = encodeURIComponent(date);
+  const href =
+    to === "skills"
+      ? `/coach/sessions/${id}/skills?date=${d}`
+      : `/coach/sessions/${id}?date=${d}&recap=open`;
+  return (
+    <Link
+      href={href as Parameters<typeof Link>[0]["href"]}
+      data-testid={`next-step-${to}`}
+      className="mt-6 flex min-h-touch items-center justify-between rounded-lg border border-rally-cobalt-600 px-4 text-sm font-semibold text-rally-cobalt-700 hover:bg-rally-cobalt-50 dark:text-rally-cobalt-100 dark:hover:bg-rally-night-panel"
+    >
+      <span>{to === "skills" ? "Next: update skills" : "Next: class recap"}</span>
+      <span aria-hidden="true">→</span>
+    </Link>
+  );
+}

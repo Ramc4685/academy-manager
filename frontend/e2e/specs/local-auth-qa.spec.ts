@@ -47,23 +47,14 @@ test.describe("local authenticated QA defect coverage", () => {
     await expect(page.getByTestId("persona-access-denied")).toContainText("coach access");
   });
 
-  test("seeded parent billing portal reports the autopay prerequisite", async ({ page }) => {
+  test("seeded parent sees no billing portal before a Stripe customer exists", async ({ page }) => {
     await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/payments/);
 
     await page.goto("/parent/payments");
-    await page.getByRole("button", { name: "Billing portal" }).click();
-    const portalError = page.getByTestId("billing-portal-error");
+    await expect(page.getByTestId("parent-payments")).toBeVisible();
     // A seeded parent has never completed autopay, so there is no Stripe
-    // customer and therefore no portal. The backend decides that before it
-    // touches any Stripe gateway (Billing.BillingPortalNotReady), so this is
-    // the same on a stack with Stripe test keys and on a default seeded stack
-    // running the fake gateway — issue #595, which used to redirect to a dead
-    // fake.stripe.com URL here instead of rendering a banner.
-    await expect(portalError).toContainText("Start autopay for an enrollment first");
-    // Raw backend detail must never reach the banner.
-    await expect(portalError).not.toContainText("Request failed");
-    await expect(portalError).not.toContainText("Stripe");
-    await expect(page).toHaveURL(/\/parent\/payments/);
+    // customer and no portal to open (#595 used to dead-end on a fake URL).
+    await expect(page.getByTestId("billing-portal")).toHaveCount(0);
   });
 
   test("seeded admin can load the protected admin workspace", async ({ page }) => {

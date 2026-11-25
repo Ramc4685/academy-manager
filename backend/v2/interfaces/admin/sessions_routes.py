@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.v2.composition.dropoff_checkins import DropoffCheckinComposition
 from backend.v2.composition.session_announcements import (
     AnnouncementNotFound,
     SessionAnnouncementService,
@@ -51,6 +52,7 @@ from backend.v2.contexts.enrollment.application.use_cases.copy_session import (
 )
 from backend.v2.interfaces.admin.academy_clock import academy_zone
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
+from backend.v2.interfaces.admin.dropoff_routes import admin_dropoff_view
 from backend.v2.interfaces.admin.owner_gate import (
     ensure_owner_for_enrollment_delete,
     ensure_owner_for_price_change,
@@ -103,6 +105,7 @@ from backend.v2.interfaces.admin.views import (
     WelcomeEmailPreviewView,
     WithdrawEnrollmentRequest,
 )
+from backend.v2.interfaces.dropoff_views import optional_dropoff_checkins
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_owner, require_persona
 from backend.v2.shared.http.errors import DomainError
@@ -721,12 +724,14 @@ async def list_occurrence_student_attendance(
     occurrence_id: str,
     _claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
+    dropoff: DropoffCheckinComposition | None = Depends(optional_dropoff_checkins),
 ) -> AdminStudentAttendanceList:
     reader = use_cases.list_occurrence_attendance
     if reader is None:
         raise HTTPException(status_code=503, detail="Attendance correction is not configured")
     rows = await reader(occurrence_id)  # type: ignore[operator]
     return AdminStudentAttendanceList(
+        dropoff=await admin_dropoff_view(dropoff, occurrence_id) if dropoff else None,
         attendance=[
             AdminStudentAttendanceView(
                 attendance_id=row.attendance_id,
@@ -742,7 +747,7 @@ async def list_occurrence_student_attendance(
                 marked_at=row.marked_at,
             )
             for row in rows
-        ]
+        ],
     )
 
 

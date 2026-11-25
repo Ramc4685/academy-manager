@@ -154,6 +154,9 @@ class CoachUseCases:
     # skill-note one is optional like ``create_skill_note`` (503 when unset).
     set_progress_note_visibility: SetProgressNoteVisibility | None = None
     set_skill_note_visibility: SetSkillNoteVisibility | None = None
+    # Occurrence ids (of those given) whose class recap names a taught skill,
+    # for ``recap_saved`` on /coach/today. Optional for fixtures that predate it.
+    recapped_occurrence_ids: Callable[[Sequence[str]], Awaitable[set[str]]] | None = None
 
 
 log = logging.getLogger(__name__)

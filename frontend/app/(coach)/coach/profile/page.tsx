@@ -15,7 +15,6 @@ import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
 
 export default function CoachProfilePage() {
   const queryClient = useQueryClient();
-  // Assistant coaches are never on payroll, so there is no pay to show.
   const assistant = useIsAssistantCoach();
 
   const { data: profile, isLoading } = useQuery({
@@ -102,20 +101,11 @@ export default function CoachProfilePage() {
             </button>
           </div>
 
-          {!assistant && (
-            <section
-              data-testid="coach-pay-card"
-              className="rounded-lg border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
-            >
-              <h2 className="font-semibold">Pay &amp; statements</h2>
-              <p className="mt-1 text-sm text-neutral-500">
-                Pay information lives here, separate from Coach Home.
-              </p>
-              <p className="mt-3 rounded-md bg-neutral-50 p-3 text-sm text-neutral-600 dark:bg-neutral-800">
-                Statement downloads are not available yet.
-              </p>
-            </section>
-          )}
+          {/*
+            No "Pay & statements" card: there are no coach statements to open
+            yet, and a card that only says so is noise. Bring it back with the
+            first real statement download.
+          */}
         </div>
       )}
 
@@ -186,7 +176,7 @@ export default function CoachProfilePage() {
 
       {!isLoading && !editing && (
         <div className="mt-4">
-          <DeleteAccountSection />
+          <DeleteAccountSection persona="coach" />
         </div>
       )}
 

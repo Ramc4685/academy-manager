@@ -13,6 +13,8 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, Field
 
 from backend.v2.contexts.enrollment.domain.self_service import (
+    DROPOFF_CLOSES_MAX_MINUTES,
+    DROPOFF_OPENS_MAX_MINUTES,
     PAYMENT_INSTRUCTIONS_MAX_LENGTH,
     SCHEDULE_MONTH_PATTERN,
     ParentSelfServicePolicy,
@@ -56,6 +58,13 @@ class UpdateSelfServicePolicyCommand(BaseModel):
     #: Settings overhaul Phase 3 PR 10: academy-level welcome-email fallback.
     welcome_email_absence_policy_default: str | None = Field(
         default=None, max_length=PAYMENT_INSTRUCTIONS_MAX_LENGTH
+    )
+    dropoff_checkin_enabled: bool | None = None
+    dropoff_checkin_opens_minutes_before: int | None = Field(
+        default=None, ge=0, le=DROPOFF_OPENS_MAX_MINUTES
+    )
+    dropoff_checkin_closes_minutes_after: int | None = Field(
+        default=None, ge=0, le=DROPOFF_CLOSES_MAX_MINUTES
     )
 
     def fields(self) -> dict[str, Any]:

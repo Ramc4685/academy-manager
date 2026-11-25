@@ -2,7 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 
 import { Button } from "@/components/ds/button";
 import type { ApiError } from "@/lib/api/client";
@@ -44,6 +49,11 @@ function saveError(err: unknown): string {
  * report keeps its id, so the retry replays it instead of starting a second
  * read; any other 409 means the id is spent and the next send mints a new one.
  */
+/** Today's recap shortcut reads `recap_saved` from every cached Today list. */
+export function refreshTodayRecapFlags(queryClient: QueryClient): void {
+  void queryClient.invalidateQueries({ queryKey: ["coach", "today"] });
+}
+
 export function afterReportError(
   err: unknown,
   last: ReportAttempt | null,
@@ -52,7 +62,8 @@ export function afterReportError(
   if (e?.status === 409 && e.details?.processing === true) {
     return {
       attempt: last,
-      message: "Your report is still being read. Wait a moment, then send it again.",
+      message:
+        "Your report is still being read. Wait a moment, then send it again.",
     };
   }
   return {
@@ -79,13 +90,19 @@ export function ClassRecapPanel({
   });
 
   if (query.isLoading) {
-    return <p className="text-sm text-rally-subtle">Loading the class recap…</p>;
+    return (
+      <p className="text-sm text-rally-subtle">Loading the class recap…</p>
+    );
   }
   if (query.isError || !query.data) {
     return (
       <p role="alert" className="text-sm text-rally-ink">
         Could not load the class recap.{" "}
-        <button type="button" className="underline" onClick={() => void query.refetch()}>
+        <button
+          type="button"
+          className="underline"
+          onClick={() => void query.refetch()}
+        >
           Try again
         </button>
       </p>
@@ -139,12 +156,18 @@ export function ClassRecapBody({
   const [error, setError] = useState<string | null>(null);
 
   const names = new Map(
-    [...view.skill_options, ...view.taught_skills].map((s) => [s.skill_id, s.name]),
+    [...view.skill_options, ...view.taught_skills].map((s) => [
+      s.skill_id,
+      s.name,
+    ]),
   );
   const eligible = practiceEligible(view.roster);
   const dirty =
     JSON.stringify(draft) !==
-    JSON.stringify({ taught: view.taught_skills.map((s) => s.skill_id), practice: view.practice });
+    JSON.stringify({
+      taught: view.taught_skills.map((s) => s.skill_id),
+      practice: view.practice,
+    });
 
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
 
@@ -160,6 +183,7 @@ export function ClassRecapBody({
     onSuccess: (next) => {
       setError(null);
       queryClient.setQueryData(key, next);
+      refreshTodayRecapFlags(queryClient);
     },
     onError: (err) => {
       setError(saveError(err));
@@ -177,9 +201,14 @@ export function ClassRecapBody({
           Taught in this class
         </h3>
         {draft.taught.length === 0 ? (
-          <p className="mt-1 text-sm text-rally-subtle">No skills recorded yet.</p>
+          <p className="mt-1 text-sm text-rally-subtle">
+            No skills recorded yet.
+          </p>
         ) : (
-          <ul className="mt-2 flex flex-wrap gap-2" data-testid="recap-taught-list">
+          <ul
+            className="mt-2 flex flex-wrap gap-2"
+            data-testid="recap-taught-list"
+          >
             {draft.taught.map((id) => (
               <li
                 key={id}
@@ -207,7 +236,10 @@ export function ClassRecapBody({
         )}
         {view.can_edit && (
           <div className="mt-2 flex gap-2">
-            <label className="sr-only" htmlFor={`recap-skill-${view.occurrence_id}`}>
+            <label
+              className="sr-only"
+              htmlFor={`recap-skill-${view.occurrence_id}`}
+            >
               Add a taught skill
             </label>
             <select
@@ -242,101 +274,120 @@ export function ClassRecapBody({
       </section>
 
       <section aria-labelledby="recap-practice">
-        <h3 id="recap-practice" className="text-sm font-semibold text-rally-ink">
+        <h3
+          id="recap-practice"
+          className="text-sm font-semibold text-rally-ink"
+        >
           Who practised what
         </h3>
         <p className="mt-1 text-xs text-rally-subtle">
-          Only children marked present or late can be credited. Teaching a skill does not mark
-          anyone as having practised it.
+          Only children marked present or late can be credited. Teaching a skill
+          does not mark anyone as having practised it.
         </p>
         {eligible.length === 0 ? (
           <p className="mt-2 text-sm text-rally-subtle">
             No one is marked present yet. Mark attendance first.
           </p>
         ) : draft.taught.length === 0 ? (
-          <p className="mt-2 text-sm text-rally-subtle">Add a taught skill first.</p>
+          <p className="mt-2 text-sm text-rally-subtle">
+            Add a taught skill first.
+          </p>
         ) : (
           <>
-          {view.can_edit && (
-            <div className="mt-2 flex gap-2">
-              <label className="sr-only" htmlFor={`recap-credit-${view.occurrence_id}`}>
-                Skill to credit to everyone present
-              </label>
-              <select
-                id={`recap-credit-${view.occurrence_id}`}
-                data-testid="recap-credit-select"
-                value={draft.taught.includes(creditSkill) ? creditSkill : ""}
-                onChange={(e) => setCreditSkill(e.target.value)}
-                className="min-h-touch min-w-0 flex-1 rounded-md border border-rally-line px-2 text-sm"
-              >
-                <option value="">All taught skills</option>
-                {draft.taught.map((id) => (
-                  <option key={id} value={id}>
-                    {names.get(id) ?? "Retired skill"}
-                  </option>
-                ))}
-              </select>
-              <Button
-                variant="secondary"
-                size="sm"
-                data-testid="recap-credit-everyone"
-                onClick={() =>
-                  setDraft((d) => ({
-                    ...d,
-                    practice: creditEveryone(
-                      d.practice,
-                      view.roster,
-                      d.taught.includes(creditSkill) ? [creditSkill] : d.taught,
-                    ),
-                  }))
-                }
-              >
-                {`Credit everyone present (${eligible.length})`}
-              </Button>
-            </div>
-          )}
-          <ul className="mt-2 divide-y divide-rally-line" data-testid="recap-practice-grid">
-            {eligible.map((child) => (
-              <li key={child.student_id} className="py-2">
-                <p className="text-sm font-medium text-rally-ink">{child.name}</p>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {draft.taught.map((skillId) => {
-                    const on = practised(child.student_id).includes(skillId);
-                    const label = names.get(skillId) ?? "Retired skill";
-                    return view.can_edit ? (
-                      <button
-                        key={skillId}
-                        type="button"
-                        aria-pressed={on}
-                        data-testid={`practice-${child.student_id}-${skillId}`}
-                        onClick={() =>
-                          setDraft((d) => ({
-                            ...d,
-                            practice: togglePractice(d.practice, child.student_id, skillId),
-                          }))
-                        }
-                        className={`min-h-touch rounded-full border px-3 text-sm ${
-                          on
-                            ? "border-rally-ink bg-rally-ink text-white"
-                            : "border-rally-line text-rally-muted"
-                        }`}
-                      >
-                        {on ? "✓ " : ""}
-                        {label}
-                      </button>
-                    ) : on ? (
-                      <span
-                        key={skillId}
-                        className="rounded-full border border-rally-line px-3 py-1 text-sm text-rally-ink"
-                      >
-                        {label}
-                      </span>
-                    ) : null;
-                  })}
-                </div>
-              </li>
-            ))}
-          </ul>
+            {view.can_edit && (
+              <div className="mt-2 flex gap-2">
+                <label
+                  className="sr-only"
+                  htmlFor={`recap-credit-${view.occurrence_id}`}
+                >
+                  Skill to credit to everyone present
+                </label>
+                <select
+                  id={`recap-credit-${view.occurrence_id}`}
+                  data-testid="recap-credit-select"
+                  value={draft.taught.includes(creditSkill) ? creditSkill : ""}
+                  onChange={(e) => setCreditSkill(e.target.value)}
+                  className="min-h-touch min-w-0 flex-1 rounded-md border border-rally-line px-2 text-sm"
+                >
+                  <option value="">All taught skills</option>
+                  {draft.taught.map((id) => (
+                    <option key={id} value={id}>
+                      {names.get(id) ?? "Retired skill"}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-testid="recap-credit-everyone"
+                  onClick={() =>
+                    setDraft((d) => ({
+                      ...d,
+                      practice: creditEveryone(
+                        d.practice,
+                        view.roster,
+                        d.taught.includes(creditSkill)
+                          ? [creditSkill]
+                          : d.taught,
+                      ),
+                    }))
+                  }
+                >
+                  {`Credit everyone present (${eligible.length})`}
+                </Button>
+              </div>
+            )}
+            <ul
+              className="mt-2 divide-y divide-rally-line"
+              data-testid="recap-practice-grid"
+            >
+              {eligible.map((child) => (
+                <li key={child.student_id} className="py-2">
+                  <p className="text-sm font-medium text-rally-ink">
+                    {child.name}
+                  </p>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {draft.taught.map((skillId) => {
+                      const on = practised(child.student_id).includes(skillId);
+                      const label = names.get(skillId) ?? "Retired skill";
+                      return view.can_edit ? (
+                        <button
+                          key={skillId}
+                          type="button"
+                          aria-pressed={on}
+                          data-testid={`practice-${child.student_id}-${skillId}`}
+                          onClick={() =>
+                            setDraft((d) => ({
+                              ...d,
+                              practice: togglePractice(
+                                d.practice,
+                                child.student_id,
+                                skillId,
+                              ),
+                            }))
+                          }
+                          className={`min-h-touch rounded-full border px-3 text-sm ${
+                            on
+                              ? "border-rally-ink bg-rally-ink text-white"
+                              : "border-rally-line text-rally-muted"
+                          }`}
+                        >
+                          {on ? "✓ " : ""}
+                          {label}
+                        </button>
+                      ) : on ? (
+                        <span
+                          key={skillId}
+                          className="rounded-full border border-rally-line px-3 py-1 text-sm text-rally-ink"
+                        >
+                          {label}
+                        </span>
+                      ) : null;
+                    })}
+                  </div>
+                </li>
+              ))}
+            </ul>
           </>
         )}
       </section>
@@ -388,8 +439,11 @@ export function ClassReportForm({
 
   const submit = useMutation({
     mutationFn: () => {
-      const next = nextReportAttempt(attempt.current, text.trim(), view.ai_enabled && useAi, () =>
-        crypto.randomUUID(),
+      const next = nextReportAttempt(
+        attempt.current,
+        text.trim(),
+        view.ai_enabled && useAi,
+        () => crypto.randomUUID(),
       );
       attempt.current = next;
       return submitClassReport(view.occurrence_id, {
@@ -407,6 +461,7 @@ export function ClassReportForm({
       void queryClient.invalidateQueries({
         queryKey: queryKeys.classRecap.occurrence(view.occurrence_id),
       });
+      refreshTodayRecapFlags(queryClient);
     },
     onError: (err) => {
       const next = afterReportError(err, attempt.current);
@@ -416,13 +471,17 @@ export function ClassReportForm({
   });
 
   return (
-    <section aria-labelledby={`${id}-title`} className="rounded-lg border border-rally-line p-3">
+    <section
+      aria-labelledby={`${id}-title`}
+      className="rounded-lg border border-rally-line p-3"
+    >
       <h3 id={`${id}-title`} className="text-sm font-semibold text-rally-ink">
         After-class report
       </h3>
       <p className="mt-1 text-xs text-rally-subtle">
-        Describe what the class worked on and who practised what. Name the children who took part,
-        or say &quot;everyone&quot;. A report only adds to the recap; it never removes anything.
+        Describe what the class worked on and who practised what. Name the
+        children who took part, or say &quot;everyone&quot;. A report only adds
+        to the recap; it never removes anything.
       </p>
       <label htmlFor={id} className="sr-only">
         After-class report
@@ -437,8 +496,16 @@ export function ClassReportForm({
         className="mt-2 w-full rounded-md border border-rally-line p-2 text-sm"
       />
       {view.ai_enabled ? (
-        <div className="mt-2 rounded-md bg-rally-paper p-2">
-          <label className="flex items-start gap-2 text-sm text-rally-ink">
+        // Optional AI reading sits behind a disclosure: the standard report is
+        // the whole job, and the consent text is long.
+        <details
+          className="mt-2 rounded-md bg-rally-paper p-2"
+          data-testid="recap-ai-options"
+        >
+          <summary className="min-h-touch cursor-pointer content-center text-sm font-medium text-rally-ink">
+            More options: AI reading
+          </summary>
+          <label className="mt-2 flex items-start gap-2 text-sm text-rally-ink">
             <input
               type="checkbox"
               data-testid="recap-report-use-ai"
@@ -449,16 +516,24 @@ export function ClassReportForm({
             />
             Let AI read this report (optional)
           </label>
-          <p id={`${id}-ai-note`} className="mt-1 text-xs text-rally-muted" data-testid="recap-ai-note">
-            If you tick this, the report goes to the academy&apos;s AI provider with children&apos;s
-            names swapped for codes and emails and phone numbers removed. Skills and practice it can
-            match to your words are added straight to the recap; anything unclear comes back to you
-            as a question. Passes are never recorded from a report. Leave it unticked and the report
-            goes to the owner, who enters it by hand.
+          <p
+            id={`${id}-ai-note`}
+            className="mt-1 text-xs text-rally-muted"
+            data-testid="recap-ai-note"
+          >
+            If you tick this, the report goes to the academy&apos;s AI provider
+            with children&apos;s names swapped for codes and emails and phone
+            numbers removed. Skills and practice it can match to your words are
+            added straight to the recap; anything unclear comes back to you as a
+            question. Passes are never recorded from a report. Leave it unticked
+            and the report goes to the owner, who enters it by hand.
           </p>
-        </div>
+        </details>
       ) : (
-        <p className="mt-2 text-xs text-rally-muted" data-testid="recap-ai-off-note">
+        <p
+          className="mt-2 text-xs text-rally-muted"
+          data-testid="recap-ai-off-note"
+        >
           This report goes to the owner, who adds it to the recap by hand.
         </p>
       )}
@@ -468,15 +543,24 @@ export function ClassReportForm({
         </p>
       )}
       {recapDirty && (
-        <p className="mt-2 text-sm text-rally-ink" data-testid="recap-report-blocked">
-          Save or undo your recap changes first. A report updates the recap and would replace
-          unsaved edits.
+        <p
+          className="mt-2 text-sm text-rally-ink"
+          data-testid="recap-report-blocked"
+        >
+          Save or undo your recap changes first. A report updates the recap and
+          would replace unsaved edits.
         </p>
       )}
       {result && (
-        <p role="status" className="mt-2 text-sm text-rally-ink" data-testid="recap-report-result">
+        <p
+          role="status"
+          className="mt-2 text-sm text-rally-ink"
+          data-testid="recap-report-result"
+        >
           {reportOutcomeLabel(result.outcome)}
-          {result.questions.length > 0 ? `: ${result.questions.join(" ")}` : "."}
+          {result.questions.length > 0
+            ? `: ${result.questions.join(" ")}`
+            : "."}
         </p>
       )}
       <div className="mt-2">
@@ -509,12 +593,15 @@ function ReportList({
   const queryClient = useQueryClient();
   const studentName = new Map(view.roster.map((r) => [r.student_id, r.name]));
   const resolve = useMutation({
-    mutationFn: (reportId: string) => resolveClassReport(view.occurrence_id, reportId),
+    mutationFn: (reportId: string) =>
+      resolveClassReport(view.occurrence_id, reportId),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.classRecap.occurrence(view.occurrence_id),
       });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.classRecap.handoffs() });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.classRecap.handoffs(),
+      });
     },
   });
 
@@ -528,7 +615,10 @@ function ReportList({
       </h3>
       <ul className="mt-2 space-y-2" data-testid="recap-report-list">
         {view.reports.map((r) => (
-          <li key={r.report_id} className="rounded-md border border-rally-line p-2 text-sm">
+          <li
+            key={r.report_id}
+            className="rounded-md border border-rally-line p-2 text-sm"
+          >
             <p className="whitespace-pre-wrap text-rally-ink">{r.text}</p>
             <p className="mt-1 text-xs text-rally-muted">
               {reportOutcomeLabel(r.outcome)}
@@ -543,7 +633,10 @@ function ReportList({
               </ul>
             )}
             {r.pass_claims.length > 0 && (
-              <p className="mt-1 text-xs text-rally-ink" data-testid="recap-pass-claims">
+              <p
+                className="mt-1 text-xs text-rally-ink"
+                data-testid="recap-pass-claims"
+              >
                 The report says{" "}
                 {r.pass_claims
                   .map(
@@ -568,17 +661,19 @@ function ReportList({
                 .
               </p>
             )}
-            {view.can_resolve && r.outcome === "sent_to_owner" && !r.resolved_at && (
-              <Button
-                variant="secondary"
-                size="sm"
-                className="mt-2"
-                disabled={resolve.isPending}
-                onClick={() => resolve.mutate(r.report_id)}
-              >
-                Mark handled
-              </Button>
-            )}
+            {view.can_resolve &&
+              r.outcome === "sent_to_owner" &&
+              !r.resolved_at && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="mt-2"
+                  disabled={resolve.isPending}
+                  onClick={() => resolve.mutate(r.report_id)}
+                >
+                  Mark handled
+                </Button>
+              )}
           </li>
         ))}
       </ul>

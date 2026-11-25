@@ -1179,6 +1179,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.class_recap import compose_class_recap
 
     app.state.class_recap = compose_class_recap(db, app.state.ai)
+    # Parent drop-off check-in: parent reports arrival, staff confirm, and the
+    # confirmation writes the attendance mark through MarkAttendance.
+    from backend.v2.composition.dropoff_checkins import compose_dropoff_checkins
+
+    app.state.dropoff_checkins = compose_dropoff_checkins(db, outbox, idempotency_store)
     # B5 month-close narrator (paid AI): the gated LlmPort over the month-close reader.
     from backend.v2.composition.ai_reports import compose_ai_reports
 

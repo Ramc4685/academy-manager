@@ -116,7 +116,12 @@ export interface AdminStudentAttendanceView {
 
 export interface AdminStudentAttendanceList {
   attendance: AdminStudentAttendanceView[];
+  /** Drop-off check-in breakdown; null when the academy has the feature off. */
+  dropoff?: AdminOccurrenceDropoffView | null;
 }
+
+export type AdminOccurrenceDropoffView = components["schemas"]["AdminOccurrenceDropoffView"];
+export type StaffDropoffCheckinView = components["schemas"]["StaffDropoffCheckinView"];
 
 export interface UpdateSessionOccurrenceCoachRequest {
   actual_coach_id?: string | null;
@@ -1354,7 +1359,8 @@ export type AdminAttentionKind =
   | "scheduled_action_failed"
   | "billing_deferrals"
   | "waivers"
-  | "session_pressure";
+  | "session_pressure"
+  | "missing_attendance";
 
 export interface AdminAttentionItem {
   attention_id: string;
@@ -2064,6 +2070,19 @@ export function voidOccurrenceStudentAttendance(
       method: "PATCH",
       body: JSON.stringify({ reason }),
     }
+  );
+}
+
+/** Admin confirms a parent-reported drop-off (writes the Present mark). */
+export function confirmOccurrenceDropoff(
+  occurrenceId: string,
+  studentId: string
+): Promise<StaffDropoffCheckinView> {
+  return apiFetch<StaffDropoffCheckinView>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/checkins/${encodeURIComponent(
+      studentId
+    )}/confirm`,
+    { method: "POST" }
   );
 }
 
@@ -3584,6 +3603,40 @@ export function getAdminInboxCounts(): Promise<AdminInboxCounts> {
   return apiFetch<AdminInboxCounts>("/admin/inbox/counts", { method: "GET" });
 }
 
+/** A past class date with students on the roster and no attendance marks. */
+export interface AdminMissingAttendanceRow {
+  occurrence_id: string;
+  session_id: string;
+  session_name: string;
+  start_at: string;
+  enrolled_count: number;
+}
+
+/** A mark changed or voided after it was first recorded (review only). */
+export interface AdminAttendanceCorrectionRow {
+  attendance_id: string;
+  occurrence_id: string;
+  session_id: string;
+  session_name: string;
+  start_at: string | null;
+  student_name: string;
+  status: string;
+  previous_status: string | null;
+  corrected_at: string;
+  corrected_by_name: string | null;
+  reason: string | null;
+  href: string;
+}
+
+export interface AdminAttendanceReview {
+  missing: AdminMissingAttendanceRow[];
+  corrections: AdminAttendanceCorrectionRow[];
+}
+
+export function getAdminAttendanceReview(): Promise<AdminAttendanceReview> {
+  return apiFetch<AdminAttendanceReview>("/admin/inbox/attendance", { method: "GET" });
+}
+
 export function listAdminAttention(): Promise<AdminAttentionList> {
   return apiFetch<AdminAttentionList>("/admin/dashboard/attention", { method: "GET" });
 }
@@ -3669,6 +3722,10 @@ export interface SelfServicePolicyView {
   //: make-ups" text (Settings overhaul Phase 3 PR 10). Used only when the
   //: class leaves its own field empty.
   welcome_email_absence_policy_default: string;
+  // Parent drop-off check-in (off by default) and its window around class start.
+  dropoff_checkin_enabled: boolean;
+  dropoff_checkin_opens_minutes_before: number;
+  dropoff_checkin_closes_minutes_after: number;
 }
 
 /**

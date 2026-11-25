@@ -102,6 +102,7 @@ On logout, all coach IndexedDB stores and the cached coach API responses are cle
 
 - **Offline-first reconciliation across multiple coaches at the same session.** If a co-coach is added to a session that the original coach is already viewing, the original coach must reconnect to see the second coach's marks. This is acceptable.
 - **Time travel.** Coaches cannot mark attendance for past dates while offline. The session_id implies the date, and old sessions are filtered server-side.
+- **Drop-off check-in.** A parent's "I've arrived" and a staff "Confirm drop-off" are online-only. Neither goes into the offline queue, and React Query is told not to pause and resume them (`networkMode: "always"`), because an arrival sent after the fact would be false. A failed send says staff have NOT received it and offers a manual Retry; the server endpoint is idempotent.
 - **Anonymous mutations.** Every queued mutation carries the authenticated coach's identity from the cached token. Tokens stale beyond their refresh window invalidate the queue.
 
 ## Acceptance for Wave 1B exit

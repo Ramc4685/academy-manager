@@ -1,6 +1,60 @@
 {
   "components": {
     "schemas": {
+      "AbsenceMakeupView": {
+        "description": "Where a reported absence stands: reported, makeup eligible, requested,\nbooked (with the makeup class) or expired. Decided server-side by the\nsame eligibility check a makeup request runs; the client only displays it.",
+        "properties": {
+          "booked_class": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssignedClassView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "state": {
+            "enum": [
+              "reported",
+              "eligible",
+              "requested",
+              "booked",
+              "expired"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "AbsenceMakeupView",
+        "type": "object"
+      },
       "AbsenceNoticeAdminRow": {
         "properties": {
           "notice_id": {
@@ -87,6 +141,26 @@
       },
       "AbsenceNoticeView": {
         "properties": {
+          "makeup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AbsenceMakeupView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "missed_class": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssignedClassView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "notice_id": {
             "title": "Notice Id",
             "type": "string"
@@ -872,6 +946,129 @@
         "title": "AdminAiVideoConsentList",
         "type": "object"
       },
+      "AdminAttendanceCorrectionView": {
+        "properties": {
+          "attendance_id": {
+            "title": "Attendance Id",
+            "type": "string"
+          },
+          "corrected_at": {
+            "format": "date-time",
+            "title": "Corrected At",
+            "type": "string"
+          },
+          "corrected_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrected By Name"
+          },
+          "href": {
+            "title": "Href",
+            "type": "string"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "previous_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "session_name": {
+            "title": "Session Name",
+            "type": "string"
+          },
+          "start_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attendance_id",
+          "occurrence_id",
+          "session_id",
+          "session_name",
+          "start_at",
+          "student_name",
+          "status",
+          "previous_status",
+          "corrected_at",
+          "corrected_by_name",
+          "reason",
+          "href"
+        ],
+        "title": "AdminAttendanceCorrectionView",
+        "type": "object"
+      },
+      "AdminAttendanceReviewView": {
+        "description": "Class dates with no marks (actionable) and recent corrections (review).\n\nA missing row carries no href: the client links it to the coach marking\nscreen (admins mark as coach supervisors), which needs the academy-local date.",
+        "properties": {
+          "corrections": {
+            "items": {
+              "$ref": "#/components/schemas/AdminAttendanceCorrectionView"
+            },
+            "title": "Corrections",
+            "type": "array"
+          },
+          "missing": {
+            "items": {
+              "$ref": "#/components/schemas/AdminMissingAttendanceView"
+            },
+            "title": "Missing",
+            "type": "array"
+          }
+        },
+        "required": [
+          "missing",
+          "corrections"
+        ],
+        "title": "AdminAttendanceReviewView",
+        "type": "object"
+      },
       "AdminAttentionItemView": {
         "properties": {
           "attention_id": {
@@ -904,7 +1101,8 @@
               "scheduled_action_failed",
               "billing_deferrals",
               "waivers",
-              "session_pressure"
+              "session_pressure",
+              "missing_attendance"
             ],
             "title": "Kind",
             "type": "string"
@@ -3412,6 +3610,40 @@
         "title": "AdminMessageView",
         "type": "object"
       },
+      "AdminMissingAttendanceView": {
+        "properties": {
+          "enrolled_count": {
+            "title": "Enrolled Count",
+            "type": "integer"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "session_name": {
+            "title": "Session Name",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "session_id",
+          "session_name",
+          "start_at",
+          "enrolled_count"
+        ],
+        "title": "AdminMissingAttendanceView",
+        "type": "object"
+      },
       "AdminMonthCloseAutopayRun": {
         "properties": {
           "charge_on": {
@@ -3935,6 +4167,51 @@
           }
         },
         "title": "AdminNotificationsView",
+        "type": "object"
+      },
+      "AdminOccurrenceDropoffView": {
+        "description": "Drop-off breakdown for the class date. Expected = roster (active\nenrollments plus make-up / trial rows); ``checkins`` are every parent\nreport with its state, actor names and server timestamps.",
+        "properties": {
+          "checkins": {
+            "items": {
+              "$ref": "#/components/schemas/StaffDropoffCheckinView"
+            },
+            "title": "Checkins",
+            "type": "array"
+          },
+          "confirmed_count": {
+            "title": "Confirmed Count",
+            "type": "integer"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "expected_count": {
+            "title": "Expected Count",
+            "type": "integer"
+          },
+          "expected_student_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Expected Student Ids",
+            "type": "array"
+          },
+          "pending_count": {
+            "title": "Pending Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled",
+          "expected_student_ids",
+          "expected_count",
+          "pending_count",
+          "confirmed_count",
+          "checkins"
+        ],
+        "title": "AdminOccurrenceDropoffView",
         "type": "object"
       },
       "AdminOccurrenceTeachingPlanResponse": {
@@ -7073,6 +7350,16 @@
             },
             "title": "Attendance",
             "type": "array"
+          },
+          "dropoff": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdminOccurrenceDropoffView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -14343,6 +14630,16 @@
             ],
             "title": "Attendance Status"
           },
+          "checkin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StaffDropoffCheckinView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "enrollment_status": {
             "anyOf": [
               {
@@ -14577,6 +14874,30 @@
             ],
             "title": "Coach Name"
           },
+          "dropoff_window_closes_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dropoff Window Closes At"
+          },
+          "dropoff_window_opens_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dropoff Window Opens At"
+          },
           "end_at": {
             "format": "date-time",
             "title": "End At",
@@ -14589,6 +14910,11 @@
           "occurrence_id": {
             "title": "Occurrence Id",
             "type": "string"
+          },
+          "recap_saved": {
+            "default": false,
+            "title": "Recap Saved",
+            "type": "boolean"
           },
           "roster": {
             "items": {
@@ -16958,6 +17284,76 @@
           "last_seen_at"
         ],
         "title": "DeviceView",
+        "type": "object"
+      },
+      "DropoffCheckinView": {
+        "properties": {
+          "can_report_arrival": {
+            "default": false,
+            "title": "Can Report Arrival",
+            "type": "boolean"
+          },
+          "confirmed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed At"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "reported_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported At"
+          },
+          "state": {
+            "enum": [
+              "none",
+              "pending",
+              "confirmed",
+              "expired"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "window_closes_at": {
+            "format": "date-time",
+            "title": "Window Closes At",
+            "type": "string"
+          },
+          "window_opens_at": {
+            "format": "date-time",
+            "title": "Window Opens At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "student_id",
+          "state",
+          "window_opens_at",
+          "window_closes_at"
+        ],
+        "title": "DropoffCheckinView",
         "type": "object"
       },
       "DunningResponse": {
@@ -24711,6 +25107,18 @@
             ],
             "title": "Autopay Enrollment Status"
           },
+          "autopay_offer": {
+            "default": "available",
+            "enum": [
+              "available",
+              "free_class",
+              "manual_payments",
+              "not_active",
+              "unavailable"
+            ],
+            "title": "Autopay Offer",
+            "type": "string"
+          },
           "autopay_payment_method_label": {
             "anyOf": [
               {
@@ -24900,6 +25308,11 @@
       },
       "ParentEnrollmentsResponse": {
         "properties": {
+          "billing_portal_available": {
+            "default": false,
+            "title": "Billing Portal Available",
+            "type": "boolean"
+          },
           "enrollments": {
             "items": {
               "$ref": "#/components/schemas/ParentEnrollmentView"
@@ -25173,6 +25586,17 @@
             "title": "Invoice Id",
             "type": "string"
           },
+          "invoice_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Number"
+          },
           "lines": {
             "items": {
               "$ref": "#/components/schemas/ParentInvoiceLineView"
@@ -25302,6 +25726,17 @@
           "invoice_id": {
             "title": "Invoice Id",
             "type": "string"
+          },
+          "invoice_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Number"
           },
           "pdf_url": {
             "anyOf": [
@@ -25837,6 +26272,26 @@
       },
       "ParentScheduleEntryView": {
         "properties": {
+          "absence_makeup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AbsenceMakeupView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "absence_reported": {
+            "default": false,
+            "title": "Absence Reported",
+            "type": "boolean"
+          },
+          "can_report_arrival": {
+            "default": false,
+            "title": "Can Report Arrival",
+            "type": "boolean"
+          },
           "cancellation_reason": {
             "anyOf": [
               {
@@ -25847,6 +26302,16 @@
               }
             ],
             "title": "Cancellation Reason"
+          },
+          "checkin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DropoffCheckinView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "coach_name": {
             "anyOf": [
@@ -26098,6 +26563,11 @@
           "can_request_trial": {
             "default": true,
             "title": "Can Request Trial",
+            "type": "boolean"
+          },
+          "dropoff_checkin_enabled": {
+            "default": false,
+            "title": "Dropoff Checkin Enabled",
             "type": "boolean"
           }
         },
@@ -31788,6 +32258,18 @@
             "title": "Cancellation Minimum Notice Days",
             "type": "integer"
           },
+          "dropoff_checkin_closes_minutes_after": {
+            "title": "Dropoff Checkin Closes Minutes After",
+            "type": "integer"
+          },
+          "dropoff_checkin_enabled": {
+            "title": "Dropoff Checkin Enabled",
+            "type": "boolean"
+          },
+          "dropoff_checkin_opens_minutes_before": {
+            "title": "Dropoff Checkin Opens Minutes Before",
+            "type": "integer"
+          },
           "makeup_expiry_days": {
             "title": "Makeup Expiry Days",
             "type": "integer"
@@ -31818,7 +32300,10 @@
           "can_request_cancel",
           "can_claim_waitlist_offer",
           "payment_instructions",
-          "welcome_email_absence_policy_default"
+          "welcome_email_absence_policy_default",
+          "dropoff_checkin_enabled",
+          "dropoff_checkin_opens_minutes_before",
+          "dropoff_checkin_closes_minutes_after"
         ],
         "title": "SelfServicePolicyView",
         "type": "object"
@@ -33116,6 +33601,137 @@
           "conversion_rate"
         ],
         "title": "SourceConversionView",
+        "type": "object"
+      },
+      "StaffDropoffCheckinView": {
+        "description": "Adds who reported / confirmed (names resolved where the read does so)\nand the attendance mark the confirmation wrote or linked to.",
+        "properties": {
+          "attendance_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attendance Id"
+          },
+          "can_report_arrival": {
+            "default": false,
+            "title": "Can Report Arrival",
+            "type": "boolean"
+          },
+          "confirmed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed At"
+          },
+          "confirmed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed By"
+          },
+          "confirmed_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed By Name"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "reconciled_with_existing_mark": {
+            "default": false,
+            "title": "Reconciled With Existing Mark",
+            "type": "boolean"
+          },
+          "reported_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported At"
+          },
+          "reported_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported By"
+          },
+          "reported_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported By Name"
+          },
+          "state": {
+            "enum": [
+              "none",
+              "pending",
+              "confirmed",
+              "expired"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "window_closes_at": {
+            "format": "date-time",
+            "title": "Window Closes At",
+            "type": "string"
+          },
+          "window_opens_at": {
+            "format": "date-time",
+            "title": "Window Opens At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "student_id",
+          "state",
+          "window_opens_at",
+          "window_closes_at"
+        ],
+        "title": "StaffDropoffCheckinView",
         "type": "object"
       },
       "StartAutopayRequest": {
@@ -37166,6 +37782,43 @@
               }
             ],
             "title": "Cancellation Minimum Notice Days"
+          },
+          "dropoff_checkin_closes_minutes_after": {
+            "anyOf": [
+              {
+                "maximum": 240.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dropoff Checkin Closes Minutes After"
+          },
+          "dropoff_checkin_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dropoff Checkin Enabled"
+          },
+          "dropoff_checkin_opens_minutes_before": {
+            "anyOf": [
+              {
+                "maximum": 60.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dropoff Checkin Opens Minutes Before"
           },
           "makeup_expiry_days": {
             "anyOf": [
@@ -44077,6 +44730,27 @@
         ]
       }
     },
+    "/api/v2/admin/inbox/attendance": {
+      "get": {
+        "operationId": "admin_inbox_attendance_api_v2_admin_inbox_attendance_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAttendanceReviewView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Admin Inbox Attendance",
+        "tags": [
+          "admin.inbox"
+        ]
+      }
+    },
     "/api/v2/admin/inbox/counts": {
       "get": {
         "description": "Pending counts for every admin inbox queue, keyed by queue id.",
@@ -49011,6 +49685,57 @@
         ]
       }
     },
+    "/api/v2/admin/session-occurrences/{occurrence_id}/checkins/{student_id}/confirm": {
+      "post": {
+        "operationId": "confirm_dropoff_api_v2_admin_session_occurrences__occurrence_id__checkins__student_id__confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffDropoffCheckinView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm a parent's drop-off report and mark the child present (idempotent)",
+        "tags": [
+          "admin.dropoff"
+        ]
+      }
+    },
     "/api/v2/admin/session-occurrences/{occurrence_id}/coach": {
       "patch": {
         "operationId": "update_session_occurrence_coach_api_v2_admin_session_occurrences__occurrence_id__coach_patch",
@@ -52977,6 +53702,57 @@
         ]
       }
     },
+    "/api/v2/coach/occurrences/{occurrence_id}/checkins/{student_id}/confirm": {
+      "post": {
+        "operationId": "confirm_dropoff_api_v2_coach_occurrences__occurrence_id__checkins__student_id__confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffDropoffCheckinView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm a parent's drop-off report and mark the child present (idempotent)",
+        "tags": [
+          "coach"
+        ]
+      }
+    },
     "/api/v2/coach/occurrences/{occurrence_id}/class-recap": {
       "get": {
         "operationId": "get_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_get",
@@ -55902,6 +56678,57 @@
         ]
       }
     },
+    "/api/v2/parent/children/{student_id}/occurrences/{occurrence_id}/arrival": {
+      "post": {
+        "operationId": "report_arrival_api_v2_parent_children__student_id__occurrences__occurrence_id__arrival_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DropoffCheckinView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Report that a child has arrived for a class date (idempotent)",
+        "tags": [
+          "parent.dropoff"
+        ]
+      }
+    },
     "/api/v2/parent/children/{student_id}/schedule": {
       "get": {
         "operationId": "get_child_schedule_api_v2_parent_children__student_id__schedule_get",
@@ -56963,6 +57790,23 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "student_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Student Id"
             }
           }
         ],

@@ -133,6 +133,8 @@ test.describe("billing trust and recovery surfaces", () => {
             last_attempt_outcome: "declined",
           },
         ],
+        // Autopay is on, so the parent has a Stripe customer and a portal.
+        billing_portal_available: true,
       });
     });
     await page.route("**/api/v2/parent/pause-requests", (route) => {

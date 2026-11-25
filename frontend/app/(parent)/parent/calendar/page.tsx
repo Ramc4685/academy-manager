@@ -17,6 +17,7 @@ import { CalendarTimeZoneUnavailable } from "@/components/calendar/CalendarTimeZ
 import { AddToCalendar } from "@/components/parent/AddToCalendar";
 import { ScheduleList, type ScheduleListRow } from "@/components/parent/ScheduleList";
 import { academyMonthKey } from "@/lib/format/academy-time";
+import { useLinkedParam } from "@/lib/navigation/use-linked-param";
 
 /** This month through two months ahead, on the academy's calendar. */
 function scheduleRange(timeZone: string | null | undefined) {
@@ -79,7 +80,11 @@ export default function ParentCalendarPage() {
       enabled: children.length > 0 && academyQuery.isSuccess,
     })),
   });
-  const [view, setView] = useDefaultView();
+  const [defaultView, setView] = useDefaultView();
+  // A cancellation push (`?occurrence=`) opens the list, where that date is outlined.
+  const linkedOccurrenceId = useLinkedParam("occurrence");
+  const [picked, setPicked] = useState(false);
+  const view: View = linkedOccurrenceId && !picked ? "list" : defaultView;
 
   const isLoading =
     childrenLoading || academyQuery.isLoading || scheduleQueries.some((q) => q.isLoading);
@@ -130,7 +135,10 @@ export default function ParentCalendarPage() {
               key={option}
               type="button"
               aria-pressed={view === option}
-              onClick={() => setView(option)}
+              onClick={() => {
+                setPicked(true);
+                setView(option);
+              }}
               className={`rounded-md px-3 py-1 text-sm font-semibold ${
                 view === option ? "bg-rally-ink text-white" : "text-rally-muted"
               }`}
@@ -193,6 +201,8 @@ export default function ParentCalendarPage() {
           rows={listRows}
           timeZone={calendarZone.timeZone}
           publishedThrough={academyQuery.data?.schedule_published_through}
+          // A failed schedule read must not claim the linked date is gone.
+          highlightOccurrenceId={isError ? null : linkedOccurrenceId}
         />
       ) : calendarZone.status === "ready" ? (
         <PersonaCalendarView events={events} timeZone={calendarZone.timeZone} monthFirst />

@@ -148,6 +148,8 @@ export interface ParentEnrollment {
   autopay_payment_method_label?: string | null;
   autopay_payment_method_last4?: string | null;
   autopay_setup_status?: string | null;
+  /** Whether "Set up autopay" can work; anything but "available" is a refusal autopay start would return. Absent = available. */
+  autopay_offer?: "available" | "free_class" | "manual_payments" | "not_active" | "unavailable";
 }
 
 export interface ParentInvoice {
@@ -164,6 +166,8 @@ export interface ParentInvoice {
   enrollment_id?: string | null;
   /** Why a "void" invoice was voided (e.g. "enrollment_cancelled"); null for every other status. */
   void_reason?: string | null;
+  /** e.g. "DEMO-202611-0001"; null for invoices made before numbering. */
+  invoice_number?: string | null;
 }
 
 export interface ParentInvoiceLine {
@@ -278,6 +282,28 @@ export interface ParentScheduleEntry {
   source?: ParentScheduleSource;
   /** Why a cancelled date is off ("Gym not available"); null for a class. */
   cancellation_reason?: string | null;
+  /** The child already has an absence notice for this date. Absent on older responses. */
+  absence_reported?: boolean;
+  /** Drop-off check-in for this date; null when the academy has the feature off. */
+  checkin?: DropoffCheckinView | null;
+  /** Server-computed: the "I've arrived" button may be shown right now. */
+  can_report_arrival?: boolean;
+  /** That absence's makeup state (only when reported). */
+  absence_makeup?: AbsenceMakeupView | null;
+}
+
+export type DropoffCheckinView = components["schemas"]["DropoffCheckinView"];
+
+/**
+ * Tell staff the child has been dropped off for this class date. Idempotent on
+ * the server (a repeat tap returns the same row), so a manual Retry is safe.
+ * Never queued offline: a stale arrival sent later would be wrong.
+ */
+export function reportArrival(studentId: string, occurrenceId: string): Promise<DropoffCheckinView> {
+  return apiFetch(
+    `/parent/children/${encodeURIComponent(studentId)}/occurrences/${encodeURIComponent(occurrenceId)}/arrival`,
+    { method: "POST" },
+  );
 }
 
 export type ParentScheduleSource = "regular" | "makeup" | "trial";
@@ -497,6 +523,8 @@ export function listParentChildren(): Promise<{ children: ParentChild[] }> {
 
 export function listParentEnrollments(): Promise<{
   enrollments: ParentEnrollment[];
+  /** The Stripe billing portal can open for this parent. */
+  billing_portal_available?: boolean;
 }> {
   return apiFetch("/parent/enrollments", { method: "GET" });
 }
@@ -509,6 +537,15 @@ export function listParentAttendance(): Promise<{
 
 export function listParentProgress(): Promise<{ notes: ParentProgressNote[] }> {
   return apiFetch("/parent/progress", { method: "GET" });
+}
+
+/** One child's coach notes; the server scopes to the parent's own children. */
+export function listParentChildProgress(
+  studentId: string,
+): Promise<{ notes: ParentProgressNote[] }> {
+  return apiFetch(`/parent/progress?student_id=${encodeURIComponent(studentId)}&limit=200`, {
+    method: "GET",
+  });
 }
 
 export function getParentProgressJourney(
@@ -558,6 +595,7 @@ export interface ParentSelfServiceSwitches {
   // Reflects the Public page "Accept free trial requests" toggle, not a
   // duplicate switch — see backend/v2/interfaces/parent/views.py.
   can_request_trial: boolean;
+  dropoff_checkin_enabled?: boolean;
 }
 
 export const DEFAULT_PARENT_SELF_SERVICE_SWITCHES: ParentSelfServiceSwitches = {
@@ -726,6 +764,25 @@ export interface AbsenceNoticeView {
   submitted_by: string;
   submitted_at: string;
   notice_window_met: boolean;
+  missed_class?: AssignedClassView | null;
+  /** Where this absence stands with makeups; null when it couldn't be resolved. */
+  makeup?: AbsenceMakeupView | null;
+}
+
+/**
+ * Server-derived makeup state of a reported absence. "requested" is a pending
+ * request awaiting the academy. The client only displays it.
+ */
+export type AbsenceMakeupState = "reported" | "eligible" | "requested" | "booked" | "expired";
+
+export interface AbsenceMakeupView {
+  state: AbsenceMakeupState;
+  /** eligible: last day to request a makeup. */
+  expires_at?: string | null;
+  /** reported: why a past class can't be made up. */
+  reason?: string | null;
+  /** booked: the makeup class. */
+  booked_class?: AssignedClassView | null;
 }
 
 export function listParentAbsences(): Promise<{ notices: AbsenceNoticeView[] }> {

@@ -11,6 +11,8 @@ the read-back all see the same tenant-scoped collection:
   48h window, admin any time).
 - ``void`` annuls a mark, admin-only, reason required (#554).
 - ``list_for_occurrence`` feeds the admin session-detail roster panel.
+- ``review`` feeds the Admin Inbox "Attendance" tab: dates with no marks and
+  recent corrections/voids.
 """
 
 from __future__ import annotations
@@ -22,6 +24,9 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from backend.v2.contexts.coaching.application.ports import OccurrenceLookup
+from backend.v2.contexts.coaching.application.use_cases.attendance_review import (
+    ListAttendanceReview,
+)
 from backend.v2.contexts.coaching.application.use_cases.correct_attendance import (
     CorrectAttendance,
 )
@@ -31,6 +36,9 @@ from backend.v2.contexts.coaching.application.use_cases.void_attendance import (
 from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoAttendanceRepository,
 )
+from backend.v2.contexts.coaching.infrastructure.mongo_attendance_review_read_model import (
+    MongoAttendanceReviewReadModel,
+)
 from backend.v2.shared.events import Outbox
 
 
@@ -39,6 +47,7 @@ class AttendanceCorrectionUseCases:
     correct: CorrectAttendance
     void: VoidAttendance
     list_for_occurrence: Callable[[str], object]
+    review: ListAttendanceReview
 
 
 def compose_attendance_corrections(
@@ -60,4 +69,5 @@ def compose_attendance_corrections(
         # there is no assignment or grace-window check to make.
         void=VoidAttendance(attendance_repo=repo, outbox=outbox, academy_id=academy_id),
         list_for_occurrence=repo.list_for_occurrence,
+        review=ListAttendanceReview(reader=MongoAttendanceReviewReadModel(db)),
     )
