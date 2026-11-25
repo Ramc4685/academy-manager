@@ -16,7 +16,7 @@ const ADMIN_ME = {
 
 const SESSION_ID = "sess-juniors";
 const OCCURRENCE_ID = "sess-juniors:2026-11-18:16:00";
-// 4pm Tuesday in Chicago; admins mark it as coach supervisors.
+// 4pm Wednesday in Chicago; admins mark it as coach supervisors.
 const MARK_HREF = `/coach/sessions/${encodeURIComponent(OCCURRENCE_ID)}?date=2026-11-18`;
 const CORRECTED_ID = "occ-earlier";
 const CORRECTION_HREF = `/admin/sessions/${SESSION_ID}?tab=dates&occurrence=${CORRECTED_ID}`;
@@ -47,6 +47,24 @@ const REVIEW = {
       href: CORRECTION_HREF,
     },
   ],
+};
+
+const SESSION = {
+  session_id: SESSION_ID,
+  coach_id: "coach-1",
+  coach_name: "Test Coach",
+  title: "Juniors Tuesday",
+  location: "Court 1",
+  start_at: "2026-09-01T22:00:00Z",
+  end_at: "2026-09-01T23:00:00Z",
+  days_of_week: ["Tue"],
+  start_time: "16:00",
+  end_time: "17:00",
+  timezone: "America/Chicago",
+  capacity: 12,
+  status: "scheduled",
+  enrolled_count: 6,
+  waitlist_count: 0,
 };
 
 function fulfillJson(route: Route, body: unknown, status = 200) {
@@ -112,6 +130,8 @@ async function stubAdmin(page: Page) {
           logo_url: null,
           brand_color: null,
         });
+      case "/api/v2/admin/sessions":
+        return fulfillJson(route, { sessions: [{ ...SESSION, amount_cents: 0, not_billed_count: 0 }] });
       case `/api/v2/admin/sessions/${SESSION_ID}`:
         return fulfillJson(route, {
           session_id: SESSION_ID,
@@ -207,4 +227,28 @@ test("attendance tab links missing dates to marking and corrections to the class
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Attendance", { exact: true })).toBeVisible();
   await expect(dialog.getByTestId("attendance-status-stu-1")).toHaveText("voided");
+});
+
+// Usability study: an admin opened a recurring class template and guessed the
+// weekday from a requested date. The list points to Class dates, and each date
+// row names its weekday and year.
+test("the sessions list leads to one class date, labelled with weekday and year", async ({
+  page,
+}) => {
+  await stubAdmin(page);
+  await page.goto("/admin/sessions");
+  await expect(page.getByTestId("sessions-dates-hint")).toBeVisible();
+  const datesLink = page.getByTestId(`session-dates-link-${SESSION_ID}`);
+  if (await datesLink.count()) {
+    await expect(datesLink).toHaveAttribute("href", `/admin/sessions/${SESSION_ID}?tab=dates`);
+    await datesLink.click();
+  } else {
+    // Phone layout: the same destination sits in the row's actions menu.
+    await page.getByTestId(`session-actions-${SESSION_ID}`).click();
+    await page.getByRole("menuitem", { name: "Class dates" }).click();
+  }
+  await expect(page).toHaveURL(new RegExp(`/admin/sessions/${SESSION_ID}\\?tab=dates`));
+  await expect(page.getByTestId(`class-date-row-${OCCURRENCE_ID}`)).toContainText(
+    "Wed, Nov 18, 2026",
+  );
 });
