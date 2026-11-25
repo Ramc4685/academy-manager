@@ -17,6 +17,7 @@ from backend.v2.contexts.student_progress.application.ports import (
     SkillLookup,
     StudentLevelProgressRepository,
     StudentSkillProgressRepository,
+    TestAttemptRepository,
 )
 from backend.v2.contexts.student_progress.domain.errors import (
     LevelUpInProgress,
@@ -61,8 +62,10 @@ class UnmarkSkillMastered:
         skill_progress: StudentSkillProgressRepository,
         recommendations: LevelUpRecommendationRepository,
         skill_lookup: SkillLookup,
+        test_attempts: TestAttemptRepository,
         outbox: Outbox | None = None,
     ) -> None:
+        self._test_attempts = test_attempts
         self._level_progress = level_progress
         self._skill_progress = skill_progress
         self._recs = recommendations
@@ -139,6 +142,14 @@ class UnmarkSkillMastered:
                 status=existing.status,
                 withdrawn_rec_ids=withdrawn,
             )
+
+        # A class pass interrupted before its effects finished would otherwise
+        # resume on the next recap save and restore the pass taken back here.
+        for attempt in await self._test_attempts.list_for_student_skill(
+            cmd.student_id, cmd.skill_id
+        ):
+            if attempt.observation_key and attempt.effects_done_at is None:
+                await self._test_attempts.mark_effects_done(attempt.attempt_id, at=now)
 
         updated = existing.model_copy(
             update={

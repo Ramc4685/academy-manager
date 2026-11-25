@@ -527,6 +527,7 @@ def compose_student_progress(
             skill_progress=skill_progress_repo,
             recommendations=recommendation_repo,
             skill_lookup=skill_lookup,
+            test_attempts=test_attempt_repo,
             outbox=outbox,
         ),
         set_mastery_note=SetMasteryNote(skill_progress=skill_progress_repo),

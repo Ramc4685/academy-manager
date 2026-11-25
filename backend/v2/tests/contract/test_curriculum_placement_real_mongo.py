@@ -393,6 +393,7 @@ def _wire_tap(db: Any) -> dict[str, Any]:
         skill_progress=w["skill_progress"],
         recommendations=w["recs"],
         skill_lookup=w["lookup"],
+        test_attempts=MongoTestAttemptRepository(db),
     )
     return w
 

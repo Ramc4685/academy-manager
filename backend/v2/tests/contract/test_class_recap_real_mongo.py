@@ -17,7 +17,12 @@ from typing import Any
 import pytest
 
 from backend.v2.composition.class_recap import CurriculumRecapSkills, SkillProgressPasses
-from backend.v2.contexts.coaching.domain.class_recap import ChildPractice, ClassRecap, ClassReport
+from backend.v2.contexts.coaching.domain.class_recap import (
+    ChildPass,
+    ChildPractice,
+    ClassRecap,
+    ClassReport,
+)
 from backend.v2.contexts.coaching.infrastructure.mongo_class_recap_repo import (
     MongoClassRecapRepository,
     MongoClassReportRepository,
@@ -83,6 +88,21 @@ async def test_one_recap_per_occurrence_with_revision_cas(real_db: Any) -> None:
     with tenant_scope(OTHER):
         assert await repo.get("occ-1") is None
         assert await repo.save(_recap(1, academy_id=OTHER), expected_revision=0)
+
+
+async def test_settling_passes_keeps_the_revision_and_skips_a_stale_one(real_db: Any) -> None:
+    repo = MongoClassRecapRepository(real_db)
+    passes = tuple(
+        ChildPass(student_id=sid, skill_id="skill-a", added_revision=1) for sid in ("maya", "leo")
+    )
+    with tenant_scope(ACADEMY):
+        assert await repo.save(_recap(1, passes=passes), expected_revision=0)
+        await repo.settle_passes("occ-1", revision=1, pairs=[("maya", "skill-a")])
+        stored = await repo.get("occ-1")
+        assert stored is not None and stored.revision == 1
+        assert [p.settled for p in stored.passes] == [True, False]
+        await repo.settle_passes("occ-1", revision=0, pairs=[("leo", "skill-a")])  # stale
+        assert [p.settled for p in (await repo.get("occ-1")).passes] == [True, False]  # type: ignore[union-attr]
 
 
 async def test_reports_are_insert_only_and_handoffs_close_once(real_db: Any) -> None:

@@ -47,6 +47,7 @@ class MongoClassRecapRepository(TenantScopedRepository):
                     student_id=str(row["student_id"]),
                     skill_id=str(row["skill_id"]),
                     added_revision=int(row["added_revision"]),
+                    settled=bool(row.get("settled")),
                 )
                 for row in doc.get("passes") or ()
             ),
@@ -81,6 +82,21 @@ class MongoClassRecapRepository(TenantScopedRepository):
             {"$set": body},
         )
         return bool(result.matched_count)
+
+    async def settle_passes(
+        self, occurrence_id: str, *, revision: int, pairs: list[tuple[str, str]]
+    ) -> None:
+        recap = await self.get(occurrence_id)
+        if recap is None or recap.revision != revision:
+            return  # a newer save owns the passes; it settles its own
+        done = set(pairs)
+        passes = [
+            {**row.model_dump(), "settled": row.settled or (row.student_id, row.skill_id) in done}
+            for row in recap.passes
+        ]
+        await self._update_one(
+            {"occurrence_id": occurrence_id, "revision": revision}, {"$set": {"passes": passes}}
+        )
 
     async def list_for_occurrences(self, occurrence_ids: list[str]) -> list[ClassRecap]:
         if not occurrence_ids:

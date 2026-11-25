@@ -59,6 +59,9 @@ class ChildPass(BaseModel):
     skill_id: str
     #: The recap revision that first recorded it (corrections keep it).
     added_revision: int = Field(ge=1)
+    #: The pass pipeline has run it (stored it, or refused it). Until then
+    #: it is durable intent a later save resumes, whatever the revision.
+    settled: bool = False
 
 
 class ClassRecap(BaseModel):
