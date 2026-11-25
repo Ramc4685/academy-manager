@@ -1,6 +1,6 @@
 # biometric-app-lock
 
-PR: TBD
+PR: #1236
 
 ## What changed
 Coaches and parents using the iOS/Android app can turn on "Lock with Face ID" (or fingerprint) from their profile. The app then asks for a face, fingerprint or phone passcode when it opens and after a minute in the background, and covers the screen in the app switcher. It is off by default, set per phone, needs the same check to turn off, and is switched off by sign-out.
