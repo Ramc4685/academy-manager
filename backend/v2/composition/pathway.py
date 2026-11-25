@@ -24,6 +24,8 @@ from backend.v2.contexts.curriculum.application.use_cases.manage_lesson_cards im
 )
 from backend.v2.contexts.curriculum.application.use_cases.manage_levels import (
     CreateLevel,
+    DeleteLevel,
+    GetLevelUsage,
     ListLevels,
     ReorderLevels,
     UpdateLevel,
@@ -56,6 +58,9 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_ext_ref_repo import (
 )
 from backend.v2.contexts.curriculum.infrastructure.mongo_lesson_card_repo import (
     MongoLessonCardRepository,
+)
+from backend.v2.contexts.curriculum.infrastructure.mongo_level_deletion_store import (
+    MongoLevelDeletionStore,
 )
 from backend.v2.contexts.curriculum.infrastructure.mongo_level_repo import MongoLevelRepository
 from backend.v2.contexts.curriculum.infrastructure.mongo_pathway_query import MongoPathwayQuery
@@ -278,6 +283,8 @@ class CurriculumComposition:
     get_program: GetProgram
     create_level: CreateLevel
     update_level: UpdateLevel
+    delete_level: DeleteLevel
+    get_level_usage: GetLevelUsage
     list_levels: ListLevels
     create_skill: CreateSkill
     update_skill: UpdateSkill
@@ -342,6 +349,7 @@ def compose_curriculum(db: AsyncIOMotorDatabase[Any]) -> CurriculumComposition:
     refs_repo = MongoExternalRefRepository(db)
     lesson_card_repo = MongoLessonCardRepository(db)
     video_ref_repo = MongoCurriculumVideoRefRepository(db)
+    level_deletion_store = MongoLevelDeletionStore(db)
     pathway_query = MongoPathwayQuery(
         programs_repo,
         levels_repo,
@@ -357,6 +365,8 @@ def compose_curriculum(db: AsyncIOMotorDatabase[Any]) -> CurriculumComposition:
         get_program=GetProgram(programs=programs_repo),
         create_level=CreateLevel(programs=programs_repo, levels=levels_repo),
         update_level=UpdateLevel(levels=levels_repo),
+        delete_level=DeleteLevel(levels=levels_repo, store=level_deletion_store),
+        get_level_usage=GetLevelUsage(levels=levels_repo, store=level_deletion_store),
         list_levels=ListLevels(levels=levels_repo),
         create_skill=CreateSkill(levels=levels_repo, skills=skills_repo),
         update_skill=UpdateSkill(skills=skills_repo),

@@ -2,8 +2,14 @@
 include ':capacitor-android'
 project(':capacitor-android').projectDir = new File('../node_modules/.pnpm/@capacitor+android@8.5.1_@capacitor+core@8.5.1/node_modules/@capacitor/android/capacitor')
 
+include ':capacitor-community-privacy-screen'
+project(':capacitor-community-privacy-screen').projectDir = new File('../node_modules/.pnpm/@capacitor-community+privacy-screen@8.0.0_@capacitor+core@8.5.1/node_modules/@capacitor-community/privacy-screen/android')
+
 include ':capacitor-firebase-authentication'
 project(':capacitor-firebase-authentication').projectDir = new File('../node_modules/.pnpm/@capacitor-firebase+authentication@8.5.2_@capacitor+core@8.5.1_firebase@12.18.0/node_modules/@capacitor-firebase/authentication/android')
 
 include ':capacitor-firebase-messaging'
 project(':capacitor-firebase-messaging').projectDir = new File('../node_modules/.pnpm/@capacitor-firebase+messaging@8.5.2_@capacitor+core@8.5.1_firebase@12.18.0/node_modules/@capacitor-firebase/messaging/android')
+
+include ':capgo-capacitor-native-biometric'
+project(':capgo-capacitor-native-biometric').projectDir = new File('../node_modules/.pnpm/@capgo+capacitor-native-biometric@8.9.3_@capacitor+core@8.5.1/node_modules/@capgo/capacitor-native-biometric/android')

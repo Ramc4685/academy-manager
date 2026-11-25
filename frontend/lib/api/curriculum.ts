@@ -762,6 +762,27 @@ export function setLevelColor(levelId: string, color: string): Promise<Level> {
   });
 }
 
+/** What still uses a level or its skills; empty `in_use` means it can be deleted. */
+export interface LevelUsage {
+  deletable: boolean;
+  in_use: Record<string, number>;
+}
+
+export function getLevelUsage(
+  programId: string,
+): Promise<{ levels: Record<string, LevelUsage> }> {
+  return apiFetch(`/admin/programs/${encodeURIComponent(programId)}/level-usage`, {
+    method: "GET",
+  });
+}
+
+/** Deletes the level with its skills and criteria; 409 `Curriculum.LevelInUse` when used. */
+export function deleteLevel(
+  levelId: string,
+): Promise<{ level_id: string; deleted: { levels: number; skills: number; criteria: number } }> {
+  return apiFetch(`/admin/levels/${encodeURIComponent(levelId)}`, { method: "DELETE" });
+}
+
 /** The level-up rule is each level's requires_admin_approval; set it on every level. */
 export async function setLevelUpRule(
   levelIds: string[],

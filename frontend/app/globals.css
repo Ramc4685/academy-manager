@@ -131,3 +131,9 @@
     animation: none;
   }
 }
+
+/* App lock (components/persona/biometric-lock.tsx): set before first paint by
+   APP_LOCK_BOOT_SCRIPT, so the page stays hidden until the lock screen is up. */
+html[data-app-lock] body > :not([data-app-lock-cover]) {
+  visibility: hidden;
+}

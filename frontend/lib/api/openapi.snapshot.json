@@ -44982,6 +44982,47 @@
       }
     },
     "/api/v2/admin/levels/{level_id}": {
+      "delete": {
+        "description": "Delete an unused level with its skills and criteria.\n\n``Curriculum.LevelInUse`` (409) when anything references the level or its\nskills; the shared domain-error handler carries ``in_use`` counts.",
+        "operationId": "delete_level_api_v2_admin_levels__level_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "level_id",
+            "required": true,
+            "schema": {
+              "title": "Level Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Delete Level Api V2 Admin Levels  Level Id  Delete"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Level",
+        "tags": [
+          "admin-pathway"
+        ]
+      },
       "put": {
         "operationId": "update_level_api_v2_admin_levels__level_id__put",
         "parameters": [
@@ -47540,6 +47581,49 @@
           }
         },
         "summary": "Seed Program Lesson Cards Route",
+        "tags": [
+          "admin-pathway"
+        ]
+      }
+    },
+    "/api/v2/admin/programs/{program_id}/level-usage": {
+      "get": {
+        "description": "Per level: ``{deletable, in_use}`` so the editor only offers delete when it works.",
+        "operationId": "get_level_usage_api_v2_admin_programs__program_id__level_usage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Get Level Usage Api V2 Admin Programs  Program Id  Level Usage Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Level Usage",
         "tags": [
           "admin-pathway"
         ]
