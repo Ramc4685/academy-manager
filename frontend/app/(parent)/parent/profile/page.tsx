@@ -7,6 +7,7 @@ import { Button } from "@/components/ds/button";
 import { FormField, fieldDescribedBy } from "@/components/ds/form-field";
 import { Skeleton } from "@/components/ds/skeleton";
 import { useToast } from "@/components/ds/toast";
+import { ChildWaiverStatus } from "@/components/parent/child-waiver-status";
 import { ReferralCard } from "@/components/parent/referral-card";
 import { AppLockSetting } from "@/components/persona/app-lock-setting";
 import { DeleteAccountSection } from "@/components/persona/delete-account-section";
@@ -305,6 +306,9 @@ function ChildCard({ child }: { child: ParentSelfChild }) {
       <div className="mb-3 flex items-center justify-between">
         <h2 className="font-bold text-rally-ink text-[15px]">{child.full_name}</h2>
         <GapBadge count={gapCount} />
+      </div>
+      <div className="mb-3">
+        <ChildWaiverStatus studentId={child.student_id} />
       </div>
 
       <form
