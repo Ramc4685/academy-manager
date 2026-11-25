@@ -1,6 +1,6 @@
 # delete-curriculum-level
 
-PR: TBD
+PR: #1237
 
 ## What changed
 - Admins can permanently delete a curriculum level from the program editor (Settings → Curriculum). "Delete level" shows only on the program's last active level and only while nothing uses it, opens a confirm dialog, and removes the level with its skills and their criteria. It sits beside the existing Retire level (a soft hide), and exists to undo a mistaken save, such as an AI skill ladder appended by accident, from the top down.
