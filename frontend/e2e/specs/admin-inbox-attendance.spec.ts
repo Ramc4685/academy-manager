@@ -232,12 +232,22 @@ test("attendance tab links missing dates to marking and corrections to the class
 // Usability study: an admin opened a recurring class template and guessed the
 // weekday from a requested date. The list points to Class dates, and each date
 // row names its weekday and year.
-test("the sessions list leads to one class date, labelled with weekday and year", async ({
+for (const viewport of [
+  { name: "phone", size: { width: 400, height: 860 } },
+  { name: "desktop", size: { width: 1280, height: 800 } },
+]) test(`the sessions list leads to one class date, labelled with weekday and year (${viewport.name})`, async ({
   page,
 }) => {
+  await page.setViewportSize(viewport.size);
   await stubAdmin(page);
   await page.goto("/admin/sessions");
-  await expect(page.getByTestId("sessions-dates-hint")).toBeVisible();
+  await expect(page.getByTestId("sessions-dates-hint")).toContainText("regular schedule");
+  const row = page.getByTestId(`session-row-${SESSION_ID}`);
+  if (viewport.name === "desktop") {
+    await expect(page.getByTestId("admin-sessions-table").getByText("Regular days")).toBeVisible();
+  } else {
+    await expect(row).toContainText("Regular: ");
+  }
   const datesLink = page.getByTestId(`session-dates-link-${SESSION_ID}`);
   if (await datesLink.count()) {
     await expect(datesLink).toHaveAttribute("href", `/admin/sessions/${SESSION_ID}?tab=dates`);

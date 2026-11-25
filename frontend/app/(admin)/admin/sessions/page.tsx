@@ -265,8 +265,8 @@ export default function AdminSessionsPage() {
 
       {/* A tester opened the wrong recurring class looking for one date (usability study). */}
       <p data-testid="sessions-dates-hint" className="text-sm text-rally-muted">
-        Each row is a recurring class. Open Class dates to take or review attendance and the recap
-        for one day.
+        Days and times are each class&apos;s regular schedule. A one-off or moved class can fall on
+        another day, so open Class dates to find one date and its attendance and recap.
       </p>
 
       {view === "calendar" ? (
@@ -448,7 +448,7 @@ function SessionList({
             <tr className="border-b border-rally-line text-left">
               <Th>Session</Th>
               <Th>Location</Th>
-              <Th>Day</Th>
+              <Th>Regular days</Th>
               <Th>Time</Th>
               <Th>Coach</Th>
               <Th align="right">Fee</Th>
@@ -616,7 +616,7 @@ function SessionPhoneList({
             secondary={
               <>
                 <div className="font-mono text-xs tabular-nums text-rally-base">
-                  {sessionDayLabel(s)} · {formatSessionTimeRange(s)}
+                  Regular: {sessionDayLabel(s)} · {formatSessionTimeRange(s)}
                 </div>
                 <div className="break-words">
                   {s.location} · {s.coach_name || "Coach assigned"}
