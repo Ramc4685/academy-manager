@@ -244,7 +244,8 @@ describe("the desktop fixes that ship with the phone rows (#847)", () => {
 
   it("Sessions: the list says which day, at every width", () => {
     const src = appSource("(admin)/admin/sessions/page.tsx");
-    expect(src).toContain("<Th>Day</Th>");
+    // Labelled as the regular schedule: a one-off class can fall on another day.
+    expect(src).toContain("<Th>Regular days</Th>");
     expect(src).toContain("function sessionDayLabel");
     // Read in the session's own timezone, or the class moves a day for an
     // admin in another zone.
