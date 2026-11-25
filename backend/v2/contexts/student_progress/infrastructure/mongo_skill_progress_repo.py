@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pymongo.errors import DuplicateKeyError
 
@@ -98,6 +99,34 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
             filter_["tries"] = {"$gte": -delta}
         doc = await self._find_one_and_update(filter_, {"$inc": {"tries": delta}})
         return int(doc.get("tries") or 0) if doc else None
+
+    async def add_try_once(self, student_id: str, skill_id: str, contribution_id: str) -> int:
+        """Count one try per contribution and return the count it made.
+
+        One atomic update stores the contribution with the count it reached,
+        so a replay or a second writer reads the same number back, whatever
+        undos or plain taps happened since. 0 when there is no row."""
+        key = {"student_id": student_id, "skill_id": skill_id}
+        # A pipeline update: _update_one still scopes the filter by tenant.
+        pipeline: Any = [
+            {"$set": {"tries": {"$add": [{"$ifNull": ["$tries", 0]}, 1]}}},
+            {
+                "$set": {
+                    "try_contributions": {
+                        "$concatArrays": [
+                            {"$ifNull": ["$try_contributions", []]},
+                            [{"id": contribution_id, "n": "$tries"}],
+                        ]
+                    }
+                }
+            },
+        ]
+        await self._update_one({**key, "try_contributions.id": {"$ne": contribution_id}}, pipeline)
+        doc = await self._find_one(key)
+        for row in (doc or {}).get("try_contributions") or []:
+            if row.get("id") == contribution_id:
+                return int(row["n"])
+        return 0
 
     async def set_status_unless_passed(
         self,

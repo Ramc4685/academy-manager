@@ -4,7 +4,6 @@ GET  /coach/occurrences/{occurrence_id}/class-recap      read (lead, assistant, 
 PUT  /coach/occurrences/{occurrence_id}/class-recap      direct entry (lead coach or owner)
 POST /coach/occurrences/{occurrence_id}/class-reports    after-class report (lead coach or owner)
 POST /coach/occurrences/{occurrence_id}/class-reports/{report_id}/resolve   owner closes a handoff
-POST /coach/occurrences/{occurrence_id}/class-demonstrations   a child met a skill's criterion (lead coach or owner)
 
 Writes carry ``class_starts_at`` as read, so a write meant for one dated
 class cannot land on a rescheduled one. The use cases own every rule (who may
@@ -22,15 +21,17 @@ from pydantic import BaseModel, Field
 
 from backend.v2.composition.class_recap import ClassRecapComposition
 from backend.v2.contexts.coaching.application.use_cases.class_recap import (
+    MAX_GROUPS,
     MAX_PARTICIPANTS,
+    MAX_PASSES,
     MAX_TAUGHT_SKILLS,
     REPORT_MAX_CHARS,
     ChildPractice,
     ClassRecapState,
     ClassReport,
-    DemonstrationOutcome,
+    GroupLesson,
+    PassClaim,
     RecapActor,
-    RecordClassDemonstrationCommand,
     SaveClassRecapCommand,
     SubmitClassReportCommand,
 )
@@ -62,6 +63,25 @@ class PassClaimView(BaseModel):
     skill_id: str
 
 
+class ChildPassView(BaseModel):
+    student_id: str
+    skill_id: str
+    #: recorded, in_progress (saving again finishes it), earned_before, not_recorded
+    receipt: str
+    added_revision: int
+
+
+class GroupLessonView(BaseModel):
+    level_id: str = Field(min_length=1, max_length=64)
+    skill_ids: list[str] = Field(min_length=1, max_length=MAX_TAUGHT_SKILLS)
+
+
+class RecapGroupView(BaseModel):
+    level_id: str
+    name: str
+    student_ids: list[str]
+
+
 class ClassReportView(BaseModel):
     report_id: str
     is_mine: bool
@@ -86,9 +106,13 @@ class ClassRecapView(BaseModel):
     updated_at: datetime | None
     taught_skills: list[RecapSkillView]
     practice: list[ChildPracticeView]
+    passes: list[ChildPassView]
     roster: list[RecapRosterView]
     skill_options: list[RecapSkillView]
     reports: list[ClassReportView]
+    #: The class's level groups and what each worked on.
+    groups: list[RecapGroupView]
+    group_lessons: list[GroupLessonView]
 
 
 class SaveClassRecapBody(BaseModel):
@@ -97,6 +121,10 @@ class SaveClassRecapBody(BaseModel):
     expected_revision: int = Field(ge=0)
     taught_skill_ids: list[str] = Field(default_factory=list, max_length=MAX_TAUGHT_SKILLS)
     practice: list[ChildPracticeView] = Field(default_factory=list, max_length=MAX_PARTICIPANTS)
+    #: Every pass of this class; omitted keeps the recorded ones.
+    passes: list[PassClaimView] | None = Field(default=None, max_length=MAX_PASSES)
+    #: What each level group worked on; omitted keeps the recorded lessons.
+    group_lessons: list[GroupLessonView] | None = Field(default=None, max_length=MAX_GROUPS)
 
 
 class SubmitClassReportBody(BaseModel):
@@ -104,25 +132,6 @@ class SubmitClassReportBody(BaseModel):
     report_id: str = Field(min_length=1, max_length=64)
     text: str = Field(min_length=1, max_length=REPORT_MAX_CHARS)
     use_ai: bool = False
-
-
-class RecordDemonstrationBody(BaseModel):
-    class_starts_at: datetime
-    mutation_id: str = Field(min_length=1, max_length=64)
-    skill_id: str = Field(min_length=1, max_length=64)
-    student_ids: list[str] = Field(min_length=1, max_length=MAX_PARTICIPANTS)
-
-
-class DemonstrationOutcomeView(BaseModel):
-    student_id: str
-    outcome: str
-    off_level: bool
-    level_up_queued: bool
-    tries: int
-
-
-class DemonstrationResultsView(BaseModel):
-    results: list[DemonstrationOutcomeView]
 
 
 def _recap(request: Request) -> ClassRecapComposition:
@@ -178,9 +187,26 @@ def _view(state: ClassRecapState, *, ai_enabled: bool, actor: RecapActor) -> Cla
             ChildPracticeView(student_id=row.student_id, skill_ids=list(row.skill_ids))
             for row in (recap.practice if recap is not None else ())
         ],
+        passes=[
+            ChildPassView(
+                student_id=row.student_id,
+                skill_id=row.skill_id,
+                receipt=state.pass_receipts.get((row.student_id, row.skill_id), "not_recorded"),
+                added_revision=row.added_revision,
+            )
+            for row in (recap.passes if recap is not None else ())
+        ],
         roster=[RecapRosterView(**r.model_dump()) for r in state.roster],
         skill_options=[RecapSkillView(**o.model_dump()) for o in state.skill_options],
         reports=[_report_view(r, actor.user_id) for r in state.reports],
+        groups=[
+            RecapGroupView(level_id=g.level_id, name=g.name, student_ids=g.student_ids)
+            for g in state.groups
+        ],
+        group_lessons=[
+            GroupLessonView(level_id=g.level_id, skill_ids=list(g.skill_ids))
+            for g in (recap.group_lessons if recap is not None else ())
+        ],
     )
 
 
@@ -214,6 +240,19 @@ async def save_class_recap(
                 ChildPractice(student_id=row.student_id, skill_ids=tuple(row.skill_ids))
                 for row in body.practice
             ],
+            passes=(
+                None
+                if body.passes is None
+                else [PassClaim(student_id=p.student_id, skill_id=p.skill_id) for p in body.passes]
+            ),
+            group_lessons=(
+                None
+                if body.group_lessons is None
+                else [
+                    GroupLesson(level_id=g.level_id, skill_ids=tuple(g.skill_ids))
+                    for g in body.group_lessons
+                ]
+            ),
         ),
         actor,
     )
@@ -247,22 +286,3 @@ async def resolve_class_report(
 ) -> ClassReportView:
     report = await recap.resolve_report.execute(occurrence_id, report_id, _actor(claims))
     return _report_view(report, claims.user_id)
-
-
-@router.post(
-    "/occurrences/{occurrence_id}/class-demonstrations",
-    response_model=DemonstrationResultsView,
-)
-async def record_class_demonstration(
-    occurrence_id: str,
-    body: RecordDemonstrationBody,
-    claims: AuthClaims = Depends(require_coach_surface()),
-    recap: ClassRecapComposition = Depends(_recap),
-) -> DemonstrationResultsView:
-    outcomes: list[DemonstrationOutcome] = await recap.record_demonstration.execute(
-        RecordClassDemonstrationCommand(occurrence_id=occurrence_id, **body.model_dump()),
-        _actor(claims),
-    )
-    return DemonstrationResultsView(
-        results=[DemonstrationOutcomeView(**o.model_dump()) for o in outcomes]
-    )

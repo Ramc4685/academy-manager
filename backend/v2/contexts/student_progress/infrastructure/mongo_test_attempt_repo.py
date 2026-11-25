@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
+from pymongo.errors import DuplicateKeyError
+
 from backend.v2.contexts.student_progress.domain.models import TestAttempt
 from backend.v2.shared.tenancy import TenantScopedRepository
 
@@ -32,32 +36,72 @@ class MongoTestAttemptRepository(TenantScopedRepository):
             tested_at=doc["tested_at"],
             observed_at=doc.get("observed_at"),
             signed_off_by=str(doc["signed_off_by"]) if doc.get("signed_off_by") else None,
+            observation_key=doc.get("observation_key"),
+            effects_done_at=doc.get("effects_done_at"),
+            earned_pass=bool(doc.get("earned_pass", False)),
         )
 
+    @staticmethod
+    def _body(attempt: TestAttempt) -> dict[str, object]:
+        body: dict[str, object] = {
+            "attempt_id": attempt.attempt_id,
+            "student_id": attempt.student_id,
+            "skill_id": attempt.skill_id,
+            "level_id": attempt.level_id,
+            "program_id": attempt.program_id,
+            "session_id": attempt.session_id,
+            "occurrence_id": attempt.occurrence_id,
+            "coach_id": attempt.coach_id,
+            "scoring_type": attempt.scoring_type,
+            "attempts_count": attempt.attempts_count,
+            "success_count": attempt.success_count,
+            "score": attempt.score,
+            "passed": attempt.passed,
+            "coach_override": attempt.coach_override,
+            "override_reason": attempt.override_reason,
+            "notes": attempt.notes,
+            "tested_at": attempt.tested_at,
+            "observed_at": attempt.observed_at,
+            "signed_off_by": attempt.signed_off_by,
+        }
+        if attempt.observation_key:
+            # Absent (not null) on formal tests: the unique index is partial.
+            body["observation_key"] = attempt.observation_key
+            body["effects_done_at"] = attempt.effects_done_at
+        return body
+
     async def save(self, attempt: TestAttempt) -> None:
-        await self._insert_one(
-            {
-                "attempt_id": attempt.attempt_id,
-                "student_id": attempt.student_id,
-                "skill_id": attempt.skill_id,
-                "level_id": attempt.level_id,
-                "program_id": attempt.program_id,
-                "session_id": attempt.session_id,
-                "occurrence_id": attempt.occurrence_id,
-                "coach_id": attempt.coach_id,
-                "scoring_type": attempt.scoring_type,
-                "attempts_count": attempt.attempts_count,
-                "success_count": attempt.success_count,
-                "score": attempt.score,
-                "passed": attempt.passed,
-                "coach_override": attempt.coach_override,
-                "override_reason": attempt.override_reason,
-                "notes": attempt.notes,
-                "tested_at": attempt.tested_at,
-                "observed_at": attempt.observed_at,
-                "signed_off_by": attempt.signed_off_by,
-            }
+        await self._insert_one(self._body(attempt))
+
+    async def insert_observation(self, attempt: TestAttempt) -> bool:
+        try:
+            await self._insert_one(self._body(attempt))
+        except DuplicateKeyError:
+            return False
+        return True
+
+    async def get_by_observation(self, observation_key: str) -> TestAttempt | None:
+        doc = await self._find_one({"observation_key": observation_key})
+        return self._to_domain(doc) if doc else None
+
+    async def list_by_observations(self, observation_keys: list[str]) -> list[TestAttempt]:
+        if not observation_keys:
+            return []
+        cursor = self._find_many({"observation_key": {"$in": observation_keys}})
+        return [self._to_domain(d) async for d in cursor]
+
+    async def mark_effects_done(self, attempt_id: str, *, at: datetime, earned: bool) -> None:
+        await self._update_one(
+            {"attempt_id": attempt_id, "effects_done_at": None},
+            {"$set": {"effects_done_at": at, "earned_pass": earned}},
         )
+
+    async def earned_for_student(self, student_id: str) -> list[TestAttempt]:
+        cursor = self._find_many(
+            {"student_id": student_id, "earned_pass": True, "effects_done_at": {"$ne": None}},
+            sort=[("tested_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
 
     async def list_for_student_skill(self, student_id: str, skill_id: str) -> list[TestAttempt]:
         cursor = self._find_many(

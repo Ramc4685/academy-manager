@@ -35,9 +35,11 @@ from backend.v2.contexts.student_progress.domain.errors import (
     ActiveRecommendationExists,
     EnrollmentEnded,
     PassNeedsLeadCoach,
+    SkillAlreadyPassed,
     SkillNotOnCurrentLevel,
 )
 from backend.v2.contexts.student_progress.domain.logic import check_level_completion
+from backend.v2.shared.http.errors import DomainError
 
 MASTERED_NOTE = "Marked as mastered in class"
 
@@ -63,10 +65,11 @@ class MarkSkillMasteredCommand(BaseModel):
     #: Trusted class entry point only (see ``RecordTestAttemptCommand``): a
     #: skill of another active level counts there and never queues a level-up.
     off_level_ok: bool = False
+    #: A dated class: each child's tap is then that class's one observation
+    #: of the skill, and a retry or second writer resumes it instead of
+    #: counting again (``RecordTestAttemptCommand.observation_key``).
     occurrence_id: str | None = None
     observed_at: datetime | None = None
-    #: Per-student retries replay instead of counting another N_TRIES try.
-    mutation_id: str | None = None
 
 
 class MasteredOutcome(BaseModel):
@@ -115,21 +118,13 @@ class MarkSkillMastered:
         on_level = skill_level_id == active.level_id
         if not on_level and not cmd.off_level_ok:
             return MasteredOutcome(student_id=student_id, outcome="not_on_level")
+        observation_key = (
+            f"{cmd.occurrence_id}:{student_id}:{cmd.skill_id}" if cmd.occurrence_id else None
+        )
         existing = await self._skill_progress.get(student_id, cmd.skill_id)
-        if existing is not None and existing.status == "PASSED" and not on_level:
-            return MasteredOutcome(
-                student_id=student_id, outcome="already_mastered", off_level=True
-            )
-        if existing is not None and existing.status == "PASSED":
-            # Skills passed before tap-to-master (or a level-up the owner
-            # rejected) leave a complete level with nothing queued; a re-tap
-            # is the coach's way to move them on.
-            complete = await self._level_complete(student_id, active.level_id)
-            return MasteredOutcome(
-                student_id=student_id,
-                outcome="already_mastered",
-                level_up_queued=complete and await self._queue_level_up(cmd, student_id),
-            )
+        # A class observation asks the writer: its own replay must go on.
+        if observation_key is None and existing is not None and existing.status == "PASSED":
+            return await self._already(cmd, student_id, active.level_id, on_level)
 
         # RecordTestAttempt applies the pass rule (one predicate for every route).
         try:
@@ -148,13 +143,11 @@ class MarkSkillMastered:
                     notes=MASTERED_NOTE,
                     off_level_ok=cmd.off_level_ok,
                     observed_at=cmd.observed_at,
-                    mutation_id=(
-                        f"{cmd.mutation_id}:{cmd.skill_id}:{student_id}"
-                        if cmd.mutation_id
-                        else None
-                    ),
+                    observation_key=observation_key,
                 )
             )
+        except SkillAlreadyPassed:
+            return await self._already(cmd, student_id, active.level_id, on_level)
         except PassNeedsLeadCoach:
             return MasteredOutcome(
                 student_id=student_id, outcome="needs_lead", off_level=not on_level
@@ -163,19 +156,41 @@ class MarkSkillMastered:
             # Off-level and not live curriculum of this program (retired skill or level).
             return MasteredOutcome(student_id=student_id, outcome="not_on_level", off_level=True)
         if not result.passed:
-            return MasteredOutcome(
+            outcome = MasteredOutcome(
                 student_id=student_id,
                 outcome="try_recorded",
                 tries=result.tries,
                 off_level=not on_level,
             )
+            if observation_key:
+                await self._record.finish_observation(result.attempt_id, earned=False)
+            return outcome
         queued = on_level and result.level_completed and await self._queue_level_up(cmd, student_id)
+        if observation_key:
+            await self._record.finish_observation(result.attempt_id, earned=True)
         return MasteredOutcome(
             student_id=student_id,
             outcome="mastered",
             level_up_queued=queued,
             tries=result.tries,
             off_level=not on_level,
+        )
+
+    async def _already(
+        self, cmd: MarkSkillMasteredCommand, student_id: str, level_id: str, on_level: bool
+    ) -> MasteredOutcome:
+        if not on_level:
+            return MasteredOutcome(
+                student_id=student_id, outcome="already_mastered", off_level=True
+            )
+        # Skills passed before tap-to-master (or a level-up the owner
+        # rejected) leave a complete level with nothing queued; a re-tap
+        # is the coach's way to move them on.
+        complete = await self._level_complete(student_id, level_id)
+        return MasteredOutcome(
+            student_id=student_id,
+            outcome="already_mastered",
+            level_up_queued=complete and await self._queue_level_up(cmd, student_id),
         )
 
     async def _level_complete(self, student_id: str, level_id: str) -> bool:
@@ -193,8 +208,10 @@ class MarkSkillMastered:
             )
         except ActiveRecommendationExists:
             return True
-        except EnrollmentEnded:
-            # Roster-visible but not live (e.g. held): the pass stands, the
-            # move waits, and the rest of the class still gets marked.
+        except (EnrollmentEnded, DomainError):
+            # Roster-visible but not live (e.g. held), or the level is not
+            # ready: the pass stands, the move waits, and the rest of the
+            # class still gets marked (a durable class pass is replayed, so a
+            # raise here would block it for good).
             return False
         return True

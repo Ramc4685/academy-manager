@@ -22,6 +22,7 @@ ON_DATE = date(2026, 6, 11)
 PROGRAM_ID = "prog-001"
 PROGRAM_NAME = "Badminton Skill Pathway"
 LEVEL_1 = "level-001"
+LEVEL_2 = "level-002"
 COACH_ID = "coach-001"
 SESSION_ID = "session-001"
 
@@ -83,6 +84,7 @@ class _FakeSkillLookup:
     def __init__(self) -> None:
         self._levels = {
             LEVEL_1: SimpleNamespace(level_id=LEVEL_1, name="Grip and Control", sequence=1),
+            LEVEL_2: SimpleNamespace(level_id=LEVEL_2, name="Rallying", sequence=2),
         }
         self._skills = {
             LEVEL_1: [
@@ -92,6 +94,9 @@ class _FakeSkillLookup:
                 SimpleNamespace(
                     skill_id="sk-b", name="Backhand grip", sequence=2, is_required=True
                 ),
+            ],
+            LEVEL_2: [
+                SimpleNamespace(skill_id="sk-c", name="Clear", sequence=1, is_required=True),
             ],
         }
 
@@ -223,6 +228,7 @@ def _make_use_case(
     level_videos: dict[str, list[object]] | None = None,
     skill_videos: dict[str, list[object]] | None = None,
     criteria: dict[str, list[str]] | None = None,
+    recaps: list[object] | None = None,
 ) -> GenerateDailyTeachingPlan:
     teaching_focus = GetTeachingFocus(
         level_progress=_FakeLevelProgressRepo(level_rows),
@@ -236,6 +242,46 @@ def _make_use_case(
         lesson_cards=_FakeLessonCards(cards or []),
         video_refs=_FakeVideoRefs(level_videos or {}, skill_videos or {}),
         criteria=_FakeCriteria(criteria or {}),
+        recap_history=_FakeRecapHistory(recaps or []),
+        levels=_FakeLevels(),
+    )
+
+
+class _FakeRecapHistory:
+    """Mirrors the Mongo read: this batch only, strictly before, newest first."""
+
+    def __init__(self, recaps: list[object]) -> None:
+        self._recaps = recaps
+        self.calls = 0
+
+    async def list_for_session_before(
+        self, session_id: str, *, before: datetime, limit: int
+    ) -> list[object]:
+        self.calls += 1
+        rows = [
+            r
+            for r in self._recaps
+            if r.session_id == session_id and r.class_starts_at < before  # type: ignore[attr-defined]
+        ]
+        rows.sort(key=lambda r: r.class_starts_at, reverse=True)  # type: ignore[attr-defined]
+        return rows[:limit]
+
+
+class _FakeLevels:
+    async def list_for_program(self, program_id: str) -> list[object]:
+        return [
+            SimpleNamespace(level_id=LEVEL_1, sequence=1, is_active=True),
+            SimpleNamespace(level_id=LEVEL_2, sequence=2, is_active=True),
+        ]
+
+
+def _recap(day: int, lessons: dict[str, list[str]], session_id: str = SESSION_ID) -> object:
+    return SimpleNamespace(
+        session_id=session_id,
+        class_starts_at=datetime(2026, 6, day, 9, 0, tzinfo=UTC),
+        group_lessons=[
+            SimpleNamespace(level_id=lid, skill_ids=tuple(sids)) for lid, sids in lessons.items()
+        ],
     )
 
 
@@ -441,3 +487,169 @@ async def test_plan_uses_the_days_roster_not_the_standing_one() -> None:
 
     assert occurrence_roster.calls == [(SESSION_ID, f"occ-{SESSION_ID}")]
     assert [u.student_id for u in plan.sessions[0].unplaced] == ["stu-1", "stu-makeup"]
+
+
+# ---------------------------------------------------------------------------
+# Drill rotation from this batch's delivery history (skills-first step 5)
+# ---------------------------------------------------------------------------
+
+_ROTATION_CARDS = [
+    _card("l1-a", level_id=LEVEL_1, skill_ids=["sk-a"], lesson_number=1, display_order=1),
+    _card("l1-a2", level_id=LEVEL_1, skill_ids=["sk-a"], lesson_number=2, display_order=2),
+    _card("l1-b", level_id=LEVEL_1, skill_ids=["sk-b"], lesson_number=3, display_order=3),
+    _card("l2-c", level_id=LEVEL_2, skill_ids=["sk-c"], lesson_number=1, display_order=1),
+    _card("l2-c2", level_id=LEVEL_2, skill_ids=["sk-c"], lesson_number=2, display_order=2),
+]
+
+
+def _class_on(day: int) -> SimpleNamespace:
+    occ = _occurrence(SESSION_ID)
+    occ.start_at = datetime(2026, 6, day, 9, 0, tzinfo=UTC)
+    occ.occurrence_id = f"occ-{day}"
+    return occ
+
+
+def _rotation_case(
+    day: int, recaps: list[object], *, bo_passed_grip: bool = True
+) -> GenerateDailyTeachingPlan:
+    return _make_use_case(
+        occurrences=[_class_on(day)],
+        roster_by_session={
+            SESSION_ID: [
+                _roster_entry("stu-1", "Alice Fake"),
+                _roster_entry("stu-2", "Bo Fake"),
+                _roster_entry("stu-3", "Cy Fake"),
+            ]
+        },
+        # Beginners: Alice is on sk-a, Bo (grip passed) on sk-b. Cy rallies on sk-c.
+        level_rows=[
+            _level_progress("stu-1", LEVEL_1),
+            _level_progress("stu-2", LEVEL_1),
+            _level_progress("stu-3", LEVEL_2),
+        ],
+        skill_rows=[_skill_progress("stu-2", "sk-a", "PASSED")] if bo_passed_grip else [],
+        cards=_ROTATION_CARDS,
+        recaps=recaps,
+    )
+
+
+async def _groups(use_case: GenerateDailyTeachingPlan, day: int, coach: str = COACH_ID) -> dict:
+    plan = await use_case.execute(coach_id=coach, on_date=date(2026, 6, day), program_id=PROGRAM_ID)
+    return {g.level_id: g for g in plan.sessions[0].groups}
+
+
+@pytest.mark.asyncio
+async def test_two_consecutive_classes_rotate_each_group_and_a_substitute_sees_the_same() -> None:
+    day1 = await _groups(_rotation_case(10, []), 10)
+    assert day1[LEVEL_1].assignment.card.card_id == "l1-a"
+    assert day1[LEVEL_2].assignment.card.card_id == "l2-c"
+    assert day1[LEVEL_1].history_known is False
+
+    # The coach recorded what each group worked on in the day-10 recap.
+    recaps = [_recap(10, {LEVEL_1: ["sk-a"], LEVEL_2: ["sk-c"]})]
+    regular = await _groups(_rotation_case(11, recaps), 11)
+    substitute = await _groups(_rotation_case(11, recaps), 11, coach="coach-sub")
+
+    beginners, rallying = regular[LEVEL_1].assignment, regular[LEVEL_2].assignment
+    # The grip drills only repeat the last lesson, so the beginners move on to
+    # Bo's sk-b drill and Alice is flagged as the variation.
+    assert beginners.card.card_id == "l1-b"
+    assert beginners.need_count == 1 and beginners.is_repeat is False
+    assert [v.student_name for v in beginners.variations] == ["Alice Fake"]
+    # The rallying group has only sk-c drills: a deliberate repeat.
+    assert rallying.card.card_id == "l2-c"
+    assert rallying.is_repeat is True
+    assert rallying.last_taught_at == datetime(2026, 6, 10, 9, 0, tzinfo=UTC)
+    assert {k: v.model_dump() for k, v in substitute.items()} == {
+        k: v.model_dump() for k, v in regular.items()
+    }
+
+
+@pytest.mark.asyncio
+async def test_changing_the_delivered_lesson_changes_the_next_pick() -> None:
+    after_a = await _groups(_rotation_case(11, [_recap(10, {LEVEL_1: ["sk-b"]})]), 11)
+    after_b = await _groups(_rotation_case(11, [_recap(10, {LEVEL_1: ["sk-a"]})]), 11)
+    assert after_a[LEVEL_1].assignment.card.card_id == "l1-a"
+    assert after_b[LEVEL_1].assignment.card.card_id == "l1-b"
+
+
+@pytest.mark.asyncio
+async def test_unchanged_inputs_give_the_same_plan() -> None:
+    recaps = [_recap(8, {LEVEL_1: ["sk-b"]}), _recap(10, {LEVEL_1: ["sk-a"]})]
+    first = await _groups(_rotation_case(11, recaps), 11)
+    second = await _groups(_rotation_case(11, list(reversed(recaps))), 11)
+    assert {k: v.model_dump() for k, v in first.items()} == {
+        k: v.model_dump() for k, v in second.items()
+    }
+
+
+@pytest.mark.asyncio
+async def test_missing_history_reads_as_unknown_not_as_never_taught_wrongly() -> None:
+    groups = await _groups(_rotation_case(11, []), 11)
+    beginners = groups[LEVEL_1]
+    assert beginners.history_known is False
+    assert beginners.assignment.last_taught_at is None
+    assert beginners.assignment.is_repeat is False
+    # Equal need (one child each): catalog order breaks the tie.
+    assert beginners.assignment.card.card_id == "l1-a"
+    assert beginners.assignment.need_count == 1
+    assert beginners.assignment.cue == "Point A"
+
+
+@pytest.mark.asyncio
+async def test_least_recently_taught_wins_among_equal_need() -> None:
+    # l1-a (sk-a) was taught on the 8th; the 10th was sk-b. Both sk-a cards
+    # share the date, so catalog order still picks l1-a over l1-a2.
+    recaps = [_recap(8, {LEVEL_1: ["sk-a"]}), _recap(10, {LEVEL_1: ["sk-b"]})]
+    beginners = (await _groups(_rotation_case(11, recaps), 11))[LEVEL_1].assignment
+    assert beginners.card.card_id == "l1-a"
+    assert beginners.last_taught_at == datetime(2026, 6, 8, 9, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_an_exhausted_catalog_is_a_deliberate_repeat() -> None:
+    recaps = [_recap(10, {LEVEL_2: ["sk-c"]})]
+    rallying = (await _groups(_rotation_case(11, recaps), 11))[LEVEL_2]
+    assert rallying.assignment.is_repeat is True
+    assert rallying.assignment.card.card_id == "l2-c"
+    assert rallying.assignment.last_taught_at == datetime(2026, 6, 10, 9, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_a_drill_nobody_needs_never_replaces_a_repeat() -> None:
+    # Both beginners still need sk-a, done last class; the sk-b drill would
+    # be for nobody, so the plan repeats a grip drill on purpose.
+    recaps = [_recap(10, {LEVEL_1: ["sk-a"]})]
+    case = _rotation_case(11, recaps, bo_passed_grip=False)
+    beginners = (await _groups(case, 11))[LEVEL_1].assignment
+    assert beginners.card.card_id == "l1-a"
+    assert beginners.need_count == 2
+    assert beginners.is_repeat is True
+
+
+@pytest.mark.asyncio
+async def test_an_advanced_station_never_excludes_a_beginner_drill() -> None:
+    # The rallying group warmed up on the beginners' grip skill.
+    recaps = [_recap(10, {LEVEL_2: ["sk-a"]})]
+    beginners = (await _groups(_rotation_case(11, recaps), 11))[LEVEL_1]
+    assert beginners.history_known is False
+    assert beginners.assignment.card.card_id == "l1-a"
+    assert beginners.assignment.is_repeat is False
+
+
+@pytest.mark.asyncio
+async def test_a_higher_group_gets_a_reinforcement_drill_from_the_level_below() -> None:
+    groups = await _groups(_rotation_case(11, []), 11)
+    assert groups[LEVEL_1].reinforcement is None
+    reinforcement = groups[LEVEL_2].reinforcement
+    assert reinforcement is not None
+    assert reinforcement.card.card_id in {"l1-a", "l1-a2", "l1-b"}
+    assert reinforcement.need_count == 0
+
+
+@pytest.mark.asyncio
+async def test_history_is_read_once_per_class_and_never_includes_the_class_itself() -> None:
+    use_case = _rotation_case(11, [_recap(11, {LEVEL_1: ["sk-a"]})])
+    beginners = (await _groups(use_case, 11))[LEVEL_1]
+    assert beginners.history_known is False
+    assert use_case._recap_history.calls == 1  # type: ignore[union-attr]

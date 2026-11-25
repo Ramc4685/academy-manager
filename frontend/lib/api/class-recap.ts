@@ -17,6 +17,40 @@ export interface ChildPractice {
   skill_ids: string[];
 }
 
+/** recorded: landed and passed; counted: landed as a try short of the
+ * skill's N (or the pass was since taken back); in_progress: a save stopped
+ * part way and saving again finishes it; earned_before: passed at an earlier
+ * date; not_recorded: the skill pipeline did not count it. */
+export type PassReceipt =
+  | "recorded"
+  | "counted"
+  | "in_progress"
+  | "earned_before"
+  | "not_recorded";
+
+export interface ClassPass {
+  student_id: string;
+  skill_id: string;
+}
+
+export interface ChildPassView extends ClassPass {
+  receipt: PassReceipt;
+  added_revision: number;
+}
+
+/** What one level group of the class worked on. */
+export interface GroupLesson {
+  level_id: string;
+  skill_ids: string[];
+}
+
+/** A level group in the class: the present children on one level. */
+export interface RecapGroup {
+  level_id: string;
+  name: string;
+  student_ids: string[];
+}
+
 export interface RecapRosterEntry {
   student_id: string;
   name: string;
@@ -49,9 +83,12 @@ export interface ClassRecapView {
   updated_at: string | null;
   taught_skills: RecapSkill[];
   practice: ChildPractice[];
+  passes: ChildPassView[];
   roster: RecapRosterEntry[];
   skill_options: RecapSkill[];
   reports: ClassReport[];
+  groups?: RecapGroup[];
+  group_lessons?: GroupLesson[];
 }
 
 export interface SaveClassRecapBody {
@@ -60,6 +97,10 @@ export interface SaveClassRecapBody {
   expected_revision: number;
   taught_skill_ids: string[];
   practice: ChildPractice[];
+  /** Every pass of this class: saved ones must stay listed. */
+  passes: ClassPass[];
+  /** What each level group worked on; feeds the next class's teaching plan. */
+  group_lessons: GroupLesson[];
 }
 
 export interface SubmitClassReportBody {
@@ -81,8 +122,6 @@ export interface ClassReportHandoff {
 export interface ChildRecapSkill {
   skill_id: string;
   name: string;
-  /** Passed as of today (the skill pipeline), not necessarily at this class. */
-  passed: boolean;
 }
 
 export interface ChildClassRecap {
@@ -90,6 +129,14 @@ export interface ChildClassRecap {
   class_starts_at: string;
   taught_skills: ChildRecapSkill[];
   practiced_skills: ChildRecapSkill[];
+  /** Passed by a demonstration in this class, and still held. */
+  earned_skills: ChildRecapSkill[];
+}
+
+export interface ChildClassRecapPage {
+  recaps: ChildClassRecap[];
+  /** Pass back for older classes; null on the last page. */
+  next_cursor: string | null;
 }
 
 const recapPath = (occurrenceId: string) =>
@@ -134,9 +181,13 @@ export function listClassReportHandoffs(): Promise<{ reports: ClassReportHandoff
   });
 }
 
-export function listChildClassRecaps(studentId: string): Promise<{ recaps: ChildClassRecap[] }> {
-  return apiFetch<{ recaps: ChildClassRecap[] }>(
-    `/parent/students/${encodeURIComponent(studentId)}/class-recaps`,
+export function listChildClassRecaps(
+  studentId: string,
+  cursor: string | null = null,
+): Promise<ChildClassRecapPage> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return apiFetch<ChildClassRecapPage>(
+    `/parent/students/${encodeURIComponent(studentId)}/class-recaps${query}`,
     { method: "GET" },
   );
 }

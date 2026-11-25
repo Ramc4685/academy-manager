@@ -107,6 +107,8 @@ async def get_occurrence_teaching_plan(
     groups = await plan_use_case.build_session_groups(
         session_id=session_id,
         program_id=resolved_id,
+        # History stops at this class, so the tab shows what the coach was given.
+        before=occurrence.start_at,
     )
     return AdminOccurrenceTeachingPlanResponse(
         program_id=resolved_id or "",

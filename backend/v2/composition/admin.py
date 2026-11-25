@@ -292,6 +292,9 @@ from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
     MongoCoachAttendanceAuditLogRepository,
     MongoCoachAttendanceRepository,
 )
+from backend.v2.contexts.coaching.infrastructure.mongo_class_recap_repo import (
+    MongoClassRecapRepository,
+)
 from backend.v2.contexts.coaching.infrastructure.mongo_coach_rate_repo import (
     MongoCoachRateAuditLogRepository,
     MongoCoachRateRepository,
@@ -307,6 +310,7 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_criterion_repo import (
 from backend.v2.contexts.curriculum.infrastructure.mongo_lesson_card_repo import (
     MongoLessonCardRepository,
 )
+from backend.v2.contexts.curriculum.infrastructure.mongo_level_repo import MongoLevelRepository
 from backend.v2.contexts.curriculum.infrastructure.mongo_video_ref_repo import (
     MongoCurriculumVideoRefRepository,
 )
@@ -796,6 +800,8 @@ def compose_admin(
         lesson_cards=MongoLessonCardRepository(db),
         video_refs=MongoCurriculumVideoRefRepository(db),
         criteria=MongoCriterionRepository(db),
+        recap_history=MongoClassRecapRepository(db),
+        levels=MongoLevelRepository(db),
     )
     get_coach_engagement_stats = GetCoachEngagementStats(
         skill_progress=MongoStudentSkillProgressRepository(db)

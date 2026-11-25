@@ -10,6 +10,8 @@ new write paths:
   is wired or for the per-session route),
 * ``GetTeachingFocus`` (student_progress) — the next skill per student,
 * curriculum lesson cards + level/skill YouTube refs + skill criteria,
+* this batch's earlier class recaps — what each level group actually worked
+  on — so each group's drill rotates from real delivery,
 
 into the *Today's Teaching Plan* DTO (plan section 4). Pathway truth lives in
 student_progress; teaching content lives in curriculum — nothing is duplicated
@@ -21,10 +23,12 @@ sessions with every roster student ``unplaced`` and ``pathway_configured`` false
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import UTC, date, datetime, time
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
+
+from backend.v2.shared.time.mongo import ensure_utc
 
 # This orchestrator deliberately imports NOTHING from other bounded contexts —
 # all cross-context dependencies (teaching focus, lesson cards, video refs,
@@ -74,6 +78,22 @@ class VideoRefReader(Protocol):
 
 class CriterionReader(Protocol):
     async def list_for_skill(self, skill_id: str) -> list[Any]: ...
+
+
+class RecapHistoryReader(Protocol):
+    """Earlier class recaps of one batch, newest first."""
+
+    async def list_for_session_before(
+        self, session_id: str, *, before: datetime, limit: int
+    ) -> list[Any]: ...
+
+
+class LevelReader(Protocol):
+    async def list_for_program(self, program_id: str) -> list[Any]: ...
+
+
+#: Recaps read per batch to rank a group's drills (about a term of weekly classes).
+HISTORY_DEPTH = 20
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +163,34 @@ class UnplacedStudent(BaseModel):
     student_name: str
 
 
+class StudentVariation(BaseModel):
+    """A child in the group whose own next skill the drill does not cover."""
+
+    model_config = {"frozen": True}
+
+    student_id: str
+    student_name: str
+    skill_id: str
+    skill_name: str
+
+
+class TeachingAssignment(BaseModel):
+    model_config = {"frozen": True}
+
+    card: LessonCardView
+    #: The first teaching point (or the goal) to say out loud.
+    cue: str | None = None
+    #: Children of the group whose next skill this drill covers.
+    need_count: int = 0
+    #: Start of the class at which this batch's group last worked on one of
+    #: the drill's skills (an instant: render it in the session's timezone);
+    #: None when never (or when there is no delivery history).
+    last_taught_at: datetime | None = None
+    #: Every drill for the group was just delivered: a deliberate repeat.
+    is_repeat: bool = False
+    variations: list[StudentVariation] = Field(default_factory=list)
+
+
 class LevelTeachingGroup(BaseModel):
     model_config = {"frozen": True}
 
@@ -150,8 +198,14 @@ class LevelTeachingGroup(BaseModel):
     level_name: str
     level_sequence: int
     youtube_links: list[VideoLink] = Field(default_factory=list)
+    #: The assignment's card (kept for older callers).
     lesson_card: LessonCardView | None = None
     students: list[StudentFocusView] = Field(default_factory=list)
+    #: A recap of this batch recorded what this group worked on.
+    history_known: bool = False
+    assignment: TeachingAssignment | None = None
+    #: For a group above the first level: a drill from the level below.
+    reinforcement: TeachingAssignment | None = None
 
 
 class SessionGroups(BaseModel):
@@ -228,7 +282,11 @@ class GenerateDailyTeachingPlan:
         video_refs: VideoRefReader,
         criteria: CriterionReader,
         occurrence_roster: OccurrenceRosterGetter | None = None,
+        recap_history: RecapHistoryReader | None = None,
+        levels: LevelReader | None = None,
     ) -> None:
+        self._recap_history = recap_history
+        self._levels = levels
         self._occurrence_roster = occurrence_roster
         self._occurrences = occurrences
         self._get_roster = get_roster
@@ -254,12 +312,11 @@ class GenerateDailyTeachingPlan:
             else await self._occurrences.execute(coach_id, on_date)
         )
         cards_by_skill, cards_by_level = await self._card_maps(program_id)
+        catalog = _Catalog(cards_by_skill, cards_by_level, await self._level_sequences(program_id))
+        day_start = datetime.combine(on_date, time.min, tzinfo=UTC)
 
         sessions = await asyncio.gather(
-            *[
-                self._build_session(occ, program_id, cards_by_skill, cards_by_level)
-                for occ in occurrences
-            ]
+            *[self._build_session(occ, program_id, catalog, day_start) for occ in occurrences]
         )
         return DailyTeachingPlan(
             date=on_date.isoformat(),
@@ -270,13 +327,31 @@ class GenerateDailyTeachingPlan:
         )
 
     async def build_session_groups(
-        self, *, session_id: str, program_id: str | None
+        self, *, session_id: str, program_id: str | None, before: datetime | None = None
     ) -> SessionGroups:
-        """Groups + unplaced for a single session (per-session route)."""
+        """Groups + unplaced for a single session (per-session route). History
+        stops at ``before`` (the class's start), else now."""
         cards_by_skill, cards_by_level = await self._card_maps(program_id)
-        return await self._build_groups(session_id, program_id, cards_by_skill, cards_by_level)
+        catalog = _Catalog(cards_by_skill, cards_by_level, await self._level_sequences(program_id))
+        cutoff = ensure_utc(before) if before is not None else datetime.now(UTC)
+        return await self._build_groups(session_id, program_id, catalog, cutoff)
 
     # -- internals ----------------------------------------------------------
+
+    async def _level_sequences(self, program_id: str | None) -> dict[str, int]:
+        if not program_id or self._levels is None:
+            return {}
+        return {
+            str(level.level_id): int(level.sequence)
+            for level in await self._levels.list_for_program(program_id)  # active only
+        }
+
+    async def _history(self, session_id: str, before: datetime) -> list[Any]:
+        if self._recap_history is None or not session_id:
+            return []
+        return await self._recap_history.list_for_session_before(
+            session_id, before=before, limit=HISTORY_DEPTH
+        )
 
     async def _card_maps(
         self, program_id: str | None
@@ -297,8 +372,8 @@ class GenerateDailyTeachingPlan:
         self,
         occurrence: Any,
         program_id: str | None,
-        cards_by_skill: dict[str, list[Any]],
-        cards_by_level: dict[str, list[Any]],
+        catalog: _Catalog,
+        day_start: datetime,
     ) -> SessionTeachingPlan:
         session_id = str(getattr(occurrence, "session_id", ""))
         occurrence_id = getattr(occurrence, "occurrence_id", None)
@@ -309,9 +384,9 @@ class GenerateDailyTeachingPlan:
                 occurrence_id=str(occurrence_id),
             )
             roster = [r for r in rows if _in_the_room(r)]
-        groups = await self._build_groups(
-            session_id, program_id, cards_by_skill, cards_by_level, roster=roster
-        )
+        starts = getattr(occurrence, "start_at", None)
+        before = ensure_utc(starts) if isinstance(starts, datetime) else day_start
+        groups = await self._build_groups(session_id, program_id, catalog, before, roster=roster)
         return SessionTeachingPlan(
             session_id=session_id,
             occurrence_id=occurrence_id,
@@ -328,8 +403,8 @@ class GenerateDailyTeachingPlan:
         self,
         session_id: str,
         program_id: str | None,
-        cards_by_skill: dict[str, list[Any]],
-        cards_by_level: dict[str, list[Any]],
+        catalog: _Catalog,
+        before: datetime,
         *,
         roster: list[Any] | None = None,
     ) -> SessionGroups:
@@ -348,8 +423,9 @@ class GenerateDailyTeachingPlan:
         students_arg = [(str(e.student_id), str(e.full_name)) for e in roster]
         focus = await self._teaching_focus.for_students(students_arg, program_id)
 
+        history = await self._history(session_id, before)
         groups = await asyncio.gather(
-            *[self._enrich_group(g, cards_by_skill, cards_by_level) for g in focus.groups]
+            *[self._enrich_group(g, catalog, history) for g in focus.groups]
         )
         unplaced = [
             UnplacedStudent(student_id=u.student_id, student_name=u.student_name)
@@ -358,10 +434,7 @@ class GenerateDailyTeachingPlan:
         return SessionGroups(groups=list(groups), unplaced=unplaced)
 
     async def _enrich_group(
-        self,
-        group: Any,
-        cards_by_skill: dict[str, list[Any]],
-        cards_by_level: dict[str, list[Any]],
+        self, group: Any, catalog: _Catalog, history: list[Any]
     ) -> LevelTeachingGroup:
         level_id = group.level_id
 
@@ -386,8 +459,17 @@ class GenerateDailyTeachingPlan:
             for skill_id, crits in zip(distinct_skill_ids, crit_lists, strict=False):
                 criteria_by_skill[skill_id] = [str(c.description) for c in crits]
 
-        lesson_card = self._pick_group_card(
-            level_id, next_skill_ids, cards_by_skill, cards_by_level
+        delivered = _delivered(history, level_id)
+        main_cards = _dedupe(
+            [c for sid in next_skill_ids for c in catalog.by_skill.get(sid, [])]
+            + catalog.by_level.get(level_id, [])
+        )
+        assignment = _assign(main_cards, delivered, group.students) if next_skill_ids else None
+        lower = catalog.level_below(level_id, int(group.level_sequence))
+        reinforcement = (
+            _assign(catalog.by_level.get(lower, []), delivered, group.students)
+            if lower and next_skill_ids
+            else None
         )
 
         students: list[StudentFocusView] = []
@@ -419,31 +501,112 @@ class GenerateDailyTeachingPlan:
             level_name=group.level_name,
             level_sequence=group.level_sequence,
             youtube_links=level_youtube,
-            lesson_card=lesson_card,
+            lesson_card=assignment.card if assignment else None,
             students=students,
+            history_known=bool(delivered),
+            assignment=assignment,
+            reinforcement=reinforcement,
         )
 
-    @staticmethod
-    def _pick_group_card(
-        level_id: str,
-        next_skill_ids: list[str],
-        cards_by_skill: dict[str, list[Any]],
-        cards_by_level: dict[str, list[Any]],
-    ) -> LessonCardView | None:
-        # No next skills (e.g. everyone is ready for level-up) → no card.
-        if not next_skill_ids:
-            return None
 
-        skill_cards: list[Any] = []
-        seen: set[str] = set()
-        for skill_id in next_skill_ids:
-            for card in cards_by_skill.get(skill_id, []):
-                if card.card_id not in seen:
-                    seen.add(card.card_id)
-                    skill_cards.append(card)
+# ---------------------------------------------------------------------------
+# Drill rotation (pure: the same inputs always give the same plan)
+# ---------------------------------------------------------------------------
 
-        candidates = skill_cards or cards_by_level.get(level_id, [])
-        if not candidates:
-            return None
-        chosen = min(candidates, key=lambda c: (int(c.display_order), int(c.lesson_number)))
-        return _card_view(chosen)
+
+class _Catalog:
+    def __init__(
+        self,
+        by_skill: dict[str, list[Any]],
+        by_level: dict[str, list[Any]],
+        sequences: dict[str, int],
+    ) -> None:
+        self.by_skill = by_skill
+        self.by_level = by_level
+        self._sequences = sequences
+
+    def level_below(self, level_id: str, sequence: int) -> str | None:
+        """The nearest active level below this one that has drills."""
+        lower = [
+            (seq, lid)
+            for lid, seq in self._sequences.items()
+            if seq < sequence and lid != level_id and self.by_level.get(lid)
+        ]
+        return max(lower)[1] if lower else None
+
+
+def _delivered(history: list[Any], level_id: str) -> list[tuple[datetime, tuple[str, ...]]]:
+    """``(class start, skills)`` this group worked on, newest first."""
+    out: list[tuple[datetime, tuple[str, ...]]] = []
+    for recap in history:
+        for row in getattr(recap, "group_lessons", ()):
+            if row.level_id == level_id:
+                out.append((ensure_utc(recap.class_starts_at), tuple(row.skill_ids)))
+    return out
+
+
+def _dedupe(cards: list[Any]) -> list[Any]:
+    seen: dict[str, Any] = {}
+    for card in cards:
+        seen.setdefault(str(card.card_id), card)
+    return list(seen.values())
+
+
+def _assign(
+    cards: list[Any], delivered: list[tuple[datetime, tuple[str, ...]]], students: list[Any]
+) -> TeachingAssignment | None:
+    """Rank the group's drills: skip one that adds nothing to the last lesson
+    (unless no other drill is for anyone in the group), then most children
+    still needing it, then least recently taught (never first), then catalog
+    order and id. A skipped drill picked anyway is a deliberate repeat."""
+    if not cards:
+        return None
+    last_taught: dict[str, datetime] = {}
+    for on, skills in delivered:  # newest first: keep the first date seen
+        for sid in skills:
+            last_taught.setdefault(sid, on)
+    previous = set(delivered[0][1]) if delivered else set()
+    needs = [s.next_skill.skill_id for s in students if s.next_skill is not None]
+
+    def recency(card: Any) -> datetime | None:
+        dates = [last_taught[sid] for sid in card.skill_ids if sid in last_taught]
+        return max(dates) if dates else None
+
+    def need(card: Any) -> int:
+        return sum(1 for sid in needs if sid in set(card.skill_ids))
+
+    def rank(card: Any) -> tuple[Any, ...]:
+        last = recency(card)
+        return (
+            -need(card),
+            last is not None,
+            last or datetime.min.replace(tzinfo=UTC),
+            int(card.display_order),
+            int(card.lesson_number),
+            str(card.card_id),
+        )
+
+    fresh = [c for c in cards if not (c.skill_ids and set(c.skill_ids) <= previous)]
+    # Moving on to a drill nobody in the group needs is worse than a repeat.
+    pool = fresh if any(need(c) for c in fresh) or not any(need(c) for c in cards) else cards
+    chosen = min(pool or cards, key=rank)
+    covered = set(chosen.skill_ids)
+    last = recency(chosen)
+    points = list(getattr(chosen, "teaching_points", []))
+    return TeachingAssignment(
+        card=_card_view(chosen),
+        cue=points[0] if points else (str(getattr(chosen, "goal_summary", "")) or None),
+        need_count=sum(1 for sid in needs if sid in covered),
+        last_taught_at=last,
+        is_repeat=chosen not in fresh,
+        variations=[
+            StudentVariation(
+                student_id=s.student_id,
+                student_name=s.student_name,
+                skill_id=s.next_skill.skill_id,
+                skill_name=s.next_skill.name,
+            )
+            for s in students
+            if s.next_skill is not None and s.next_skill.skill_id not in covered
+        ],
+    )

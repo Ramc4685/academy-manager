@@ -5502,23 +5502,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v2/coach/occurrences/{occurrence_id}/class-demonstrations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Record Class Demonstration */
-        post: operations["record_class_demonstration_api_v2_coach_occurrences__occurrence_id__class_demonstrations_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v2/coach/occurrences/{occurrence_id}/class-recap": {
         parameters: {
             query?: never;
@@ -12997,6 +12980,8 @@ export interface components {
         };
         /** ChildClassRecapList */
         ChildClassRecapList: {
+            /** Next Cursor */
+            next_cursor?: string | null;
             /** Recaps */
             recaps: components["schemas"]["ChildClassRecapView"][];
         };
@@ -13007,12 +12992,25 @@ export interface components {
              * Format: date-time
              */
             class_starts_at: string;
+            /** Earned Skills */
+            earned_skills: components["schemas"]["ChildRecapSkillView"][];
             /** Occurrence Id */
             occurrence_id: string;
             /** Practiced Skills */
             practiced_skills: components["schemas"]["ChildRecapSkillView"][];
             /** Taught Skills */
             taught_skills: components["schemas"]["ChildRecapSkillView"][];
+        };
+        /** ChildPassView */
+        ChildPassView: {
+            /** Added Revision */
+            added_revision: number;
+            /** Receipt */
+            receipt: string;
+            /** Skill Id */
+            skill_id: string;
+            /** Student Id */
+            student_id: string;
         };
         /** ChildPracticeView */
         ChildPracticeView: {
@@ -13064,8 +13062,6 @@ export interface components {
         ChildRecapSkillView: {
             /** Name */
             name: string;
-            /** Passed */
-            passed: boolean;
             /** Skill Id */
             skill_id: string;
         };
@@ -13131,8 +13127,14 @@ export interface components {
              * Format: date-time
              */
             class_starts_at: string;
+            /** Group Lessons */
+            group_lessons: components["schemas"]["GroupLessonView"][];
+            /** Groups */
+            groups: components["schemas"]["RecapGroupView"][];
             /** Occurrence Id */
             occurrence_id: string;
+            /** Passes */
+            passes: components["schemas"]["ChildPassView"][];
             /** Practice */
             practice: components["schemas"]["ChildPracticeView"][];
             /** Reports */
@@ -14403,24 +14405,6 @@ export interface components {
             failed: components["schemas"]["FailedDeliveryView"][];
             /** Suppressed Emails */
             suppressed_emails: string[];
-        };
-        /** DemonstrationOutcomeView */
-        DemonstrationOutcomeView: {
-            /** Level Up Queued */
-            level_up_queued: boolean;
-            /** Off Level */
-            off_level: boolean;
-            /** Outcome */
-            outcome: string;
-            /** Student Id */
-            student_id: string;
-            /** Tries */
-            tries: number;
-        };
-        /** DemonstrationResultsView */
-        DemonstrationResultsView: {
-            /** Results */
-            results: components["schemas"]["DemonstrationOutcomeView"][];
         };
         /** DenyMakeupRequestBody */
         DenyMakeupRequestBody: {
@@ -15700,6 +15684,13 @@ export interface components {
              */
             period_start: string;
         };
+        /** GroupLessonView */
+        GroupLessonView: {
+            /** Level Id */
+            level_id: string;
+            /** Skill Ids */
+            skill_ids: string[];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -16214,6 +16205,12 @@ export interface components {
         };
         /** LevelTeachingGroup */
         LevelTeachingGroup: {
+            assignment?: components["schemas"]["TeachingAssignment"] | null;
+            /**
+             * History Known
+             * @default false
+             */
+            history_known: boolean;
             lesson_card?: components["schemas"]["LessonCardView"] | null;
             /** Level Id */
             level_id: string;
@@ -16221,6 +16218,7 @@ export interface components {
             level_name: string;
             /** Level Sequence */
             level_sequence: number;
+            reinforcement?: components["schemas"]["TeachingAssignment"] | null;
             /** Students */
             students?: components["schemas"]["StudentFocusView"][];
             /** Youtube Links */
@@ -19100,6 +19098,15 @@ export interface components {
             /** Label */
             label: string | null;
         };
+        /** RecapGroupView */
+        RecapGroupView: {
+            /** Level Id */
+            level_id: string;
+            /** Name */
+            name: string;
+            /** Student Ids */
+            student_ids: string[];
+        };
         /** RecapRosterView */
         RecapRosterView: {
             /** Attendance */
@@ -19224,20 +19231,6 @@ export interface components {
             accepted_by: string;
             /** Agreement Version */
             agreement_version: string;
-        };
-        /** RecordDemonstrationBody */
-        RecordDemonstrationBody: {
-            /**
-             * Class Starts At
-             * Format: date-time
-             */
-            class_starts_at: string;
-            /** Mutation Id */
-            mutation_id: string;
-            /** Skill Id */
-            skill_id: string;
-            /** Student Ids */
-            student_ids: string[];
         };
         /** RecordExpenseRequest */
         RecordExpenseRequest: {
@@ -19719,8 +19712,12 @@ export interface components {
             class_starts_at: string;
             /** Expected Revision */
             expected_revision: number;
+            /** Group Lessons */
+            group_lessons?: components["schemas"]["GroupLessonView"][] | null;
             /** Mutation Id */
             mutation_id: string;
+            /** Passes */
+            passes?: components["schemas"]["PassClaimView"][] | null;
             /** Practice */
             practice?: components["schemas"]["ChildPracticeView"][];
             /** Taught Skill Ids */
@@ -20660,6 +20657,20 @@ export interface components {
             /** Total */
             total: number;
         };
+        /**
+         * StudentVariation
+         * @description A child in the group whose own next skill the drill does not cover.
+         */
+        StudentVariation: {
+            /** Skill Id */
+            skill_id: string;
+            /** Skill Name */
+            skill_name: string;
+            /** Student Id */
+            student_id: string;
+            /** Student Name */
+            student_name: string;
+        };
         /** SubmitClassReportBody */
         SubmitClassReportBody: {
             /**
@@ -20828,6 +20839,26 @@ export interface components {
             provider: string;
             /** Reason */
             reason: string;
+        };
+        /** TeachingAssignment */
+        TeachingAssignment: {
+            card: components["schemas"]["LessonCardView"];
+            /** Cue */
+            cue?: string | null;
+            /**
+             * Is Repeat
+             * @default false
+             */
+            is_repeat: boolean;
+            /** Last Taught At */
+            last_taught_at?: string | null;
+            /**
+             * Need Count
+             * @default 0
+             */
+            need_count: number;
+            /** Variations */
+            variations?: components["schemas"]["StudentVariation"][];
         };
         /** TechniqueObservationBody */
         TechniqueObservationBody: {
@@ -32382,41 +32413,6 @@ export interface operations {
             };
         };
     };
-    record_class_demonstration_api_v2_coach_occurrences__occurrence_id__class_demonstrations_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                occurrence_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RecordDemonstrationBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DemonstrationResultsView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_get: {
         parameters: {
             query?: never;
@@ -35421,7 +35417,9 @@ export interface operations {
     };
     list_child_class_recaps_api_v2_parent_students__student_id__class_recaps_get: {
         parameters: {
-            query?: never;
+            query?: {
+                cursor?: string | null;
+            };
             header?: never;
             path: {
                 student_id: string;

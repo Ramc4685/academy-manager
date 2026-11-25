@@ -13271,6 +13271,17 @@
       },
       "ChildClassRecapList": {
         "properties": {
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
           "recaps": {
             "items": {
               "$ref": "#/components/schemas/ChildClassRecapView"
@@ -13291,6 +13302,13 @@
             "format": "date-time",
             "title": "Class Starts At",
             "type": "string"
+          },
+          "earned_skills": {
+            "items": {
+              "$ref": "#/components/schemas/ChildRecapSkillView"
+            },
+            "title": "Earned Skills",
+            "type": "array"
           },
           "occurrence_id": {
             "title": "Occurrence Id",
@@ -13315,9 +13333,38 @@
           "occurrence_id",
           "class_starts_at",
           "taught_skills",
-          "practiced_skills"
+          "practiced_skills",
+          "earned_skills"
         ],
         "title": "ChildClassRecapView",
+        "type": "object"
+      },
+      "ChildPassView": {
+        "properties": {
+          "added_revision": {
+            "title": "Added Revision",
+            "type": "integer"
+          },
+          "receipt": {
+            "title": "Receipt",
+            "type": "string"
+          },
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "skill_id",
+          "receipt",
+          "added_revision"
+        ],
+        "title": "ChildPassView",
         "type": "object"
       },
       "ChildPracticeView": {
@@ -13396,10 +13443,6 @@
             "title": "Name",
             "type": "string"
           },
-          "passed": {
-            "title": "Passed",
-            "type": "boolean"
-          },
           "skill_id": {
             "title": "Skill Id",
             "type": "string"
@@ -13407,8 +13450,7 @@
         },
         "required": [
           "skill_id",
-          "name",
-          "passed"
+          "name"
         ],
         "title": "ChildRecapSkillView",
         "type": "object"
@@ -13644,9 +13686,30 @@
             "title": "Class Starts At",
             "type": "string"
           },
+          "group_lessons": {
+            "items": {
+              "$ref": "#/components/schemas/GroupLessonView"
+            },
+            "title": "Group Lessons",
+            "type": "array"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/RecapGroupView"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
           "occurrence_id": {
             "title": "Occurrence Id",
             "type": "string"
+          },
+          "passes": {
+            "items": {
+              "$ref": "#/components/schemas/ChildPassView"
+            },
+            "title": "Passes",
+            "type": "array"
           },
           "practice": {
             "items": {
@@ -13722,9 +13785,12 @@
           "updated_at",
           "taught_skills",
           "practice",
+          "passes",
           "roster",
           "skill_options",
-          "reports"
+          "reports",
+          "groups",
+          "group_lessons"
         ],
         "title": "ClassRecapView",
         "type": "object"
@@ -17155,55 +17221,6 @@
           "failed"
         ],
         "title": "DeliveryProblemsView",
-        "type": "object"
-      },
-      "DemonstrationOutcomeView": {
-        "properties": {
-          "level_up_queued": {
-            "title": "Level Up Queued",
-            "type": "boolean"
-          },
-          "off_level": {
-            "title": "Off Level",
-            "type": "boolean"
-          },
-          "outcome": {
-            "title": "Outcome",
-            "type": "string"
-          },
-          "student_id": {
-            "title": "Student Id",
-            "type": "string"
-          },
-          "tries": {
-            "title": "Tries",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "student_id",
-          "outcome",
-          "off_level",
-          "level_up_queued",
-          "tries"
-        ],
-        "title": "DemonstrationOutcomeView",
-        "type": "object"
-      },
-      "DemonstrationResultsView": {
-        "properties": {
-          "results": {
-            "items": {
-              "$ref": "#/components/schemas/DemonstrationOutcomeView"
-            },
-            "title": "Results",
-            "type": "array"
-          }
-        },
-        "required": [
-          "results"
-        ],
-        "title": "DemonstrationResultsView",
         "type": "object"
       },
       "DenyMakeupRequestBody": {
@@ -21066,6 +21083,31 @@
         "title": "GeneratePayoutPeriodRequest",
         "type": "object"
       },
+      "GroupLessonView": {
+        "properties": {
+          "level_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Level Id",
+            "type": "string"
+          },
+          "skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 30,
+            "minItems": 1,
+            "title": "Skill Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "level_id",
+          "skill_ids"
+        ],
+        "title": "GroupLessonView",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -22508,6 +22550,21 @@
       },
       "LevelTeachingGroup": {
         "properties": {
+          "assignment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeachingAssignment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "history_known": {
+            "default": false,
+            "title": "History Known",
+            "type": "boolean"
+          },
           "lesson_card": {
             "anyOf": [
               {
@@ -22529,6 +22586,16 @@
           "level_sequence": {
             "title": "Level Sequence",
             "type": "integer"
+          },
+          "reinforcement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeachingAssignment"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "students": {
             "items": {
@@ -30332,6 +30399,32 @@
         "title": "ReasonCountView",
         "type": "object"
       },
+      "RecapGroupView": {
+        "properties": {
+          "level_id": {
+            "title": "Level Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "student_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Student Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "level_id",
+          "name",
+          "student_ids"
+        ],
+        "title": "RecapGroupView",
+        "type": "object"
+      },
       "RecapRosterView": {
         "properties": {
           "attendance": {
@@ -30668,44 +30761,6 @@
           "accepted_by"
         ],
         "title": "RecordAgreementAcceptanceRequest",
-        "type": "object"
-      },
-      "RecordDemonstrationBody": {
-        "properties": {
-          "class_starts_at": {
-            "format": "date-time",
-            "title": "Class Starts At",
-            "type": "string"
-          },
-          "mutation_id": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Mutation Id",
-            "type": "string"
-          },
-          "skill_id": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Skill Id",
-            "type": "string"
-          },
-          "student_ids": {
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 100,
-            "minItems": 1,
-            "title": "Student Ids",
-            "type": "array"
-          }
-        },
-        "required": [
-          "class_starts_at",
-          "mutation_id",
-          "skill_id",
-          "student_ids"
-        ],
-        "title": "RecordDemonstrationBody",
         "type": "object"
       },
       "RecordExpenseRequest": {
@@ -32010,11 +32065,41 @@
             "title": "Expected Revision",
             "type": "integer"
           },
+          "group_lessons": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/GroupLessonView"
+                },
+                "maxItems": 12,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Lessons"
+          },
           "mutation_id": {
             "maxLength": 64,
             "minLength": 1,
             "title": "Mutation Id",
             "type": "string"
+          },
+          "passes": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PassClaimView"
+                },
+                "maxItems": 200,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passes"
           },
           "practice": {
             "items": {
@@ -34625,6 +34710,35 @@
         "title": "StudentScheduleResponse",
         "type": "object"
       },
+      "StudentVariation": {
+        "description": "A child in the group whose own next skill the drill does not cover.",
+        "properties": {
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          },
+          "skill_name": {
+            "title": "Skill Name",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "student_name",
+          "skill_id",
+          "skill_name"
+        ],
+        "title": "StudentVariation",
+        "type": "object"
+      },
       "SubmitClassReportBody": {
         "properties": {
           "class_starts_at": {
@@ -35040,6 +35154,58 @@
           "last_seen_at"
         ],
         "title": "SuppressionView",
+        "type": "object"
+      },
+      "TeachingAssignment": {
+        "properties": {
+          "card": {
+            "$ref": "#/components/schemas/LessonCardView"
+          },
+          "cue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cue"
+          },
+          "is_repeat": {
+            "default": false,
+            "title": "Is Repeat",
+            "type": "boolean"
+          },
+          "last_taught_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Taught At"
+          },
+          "need_count": {
+            "default": 0,
+            "title": "Need Count",
+            "type": "integer"
+          },
+          "variations": {
+            "items": {
+              "$ref": "#/components/schemas/StudentVariation"
+            },
+            "title": "Variations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "card"
+        ],
+        "title": "TeachingAssignment",
         "type": "object"
       },
       "TechniqueObservationBody": {
@@ -53840,58 +54006,6 @@
         ]
       }
     },
-    "/api/v2/coach/occurrences/{occurrence_id}/class-demonstrations": {
-      "post": {
-        "operationId": "record_class_demonstration_api_v2_coach_occurrences__occurrence_id__class_demonstrations_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "occurrence_id",
-            "required": true,
-            "schema": {
-              "title": "Occurrence Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RecordDemonstrationBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DemonstrationResultsView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Record Class Demonstration",
-        "tags": [
-          "coach.class-recap"
-        ]
-      }
-    },
     "/api/v2/coach/occurrences/{occurrence_id}/class-recap": {
       "get": {
         "operationId": "get_class_recap_api_v2_coach_occurrences__occurrence_id__class_recap_get",
@@ -58274,6 +58388,23 @@
             "schema": {
               "title": "Student Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],

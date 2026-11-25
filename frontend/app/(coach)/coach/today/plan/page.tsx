@@ -15,6 +15,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { reportVitals } from "@/lib/pwa/vitals";
 import { formatSessionTimeRange } from "@/lib/time/session-time";
 import { formatPlainDate } from "@/lib/format/plain-date";
+import { AssignmentSummary } from "@/components/teaching/assignment-summary";
 import { LessonCardView } from "@/components/teaching/lesson-card";
 import { StudentFocusRow } from "@/components/teaching/student-focus-row";
 import { RetryButton } from "@/components/coach/RetryButton";
@@ -153,6 +154,7 @@ function SessionPlan({
             programId={programId}
             sessionId={session.session_id}
             date={date}
+            timezone={session.timezone}
           />
         ))}
       </div>
@@ -178,11 +180,13 @@ function LevelSection({
   programId,
   sessionId,
   date,
+  timezone,
 }: {
   group: LevelTeachingGroup;
   programId: string;
   sessionId: string;
   date: string;
+  timezone?: string | null;
 }) {
   return (
     <section
@@ -192,6 +196,8 @@ function LevelSection({
       <h3 className="text-sm font-semibold text-rally-base">
         Level {group.level_sequence} · {group.level_name}
       </h3>
+
+      <AssignmentSummary group={group} timezone={timezone} />
 
       {group.lesson_card ? (
         <LessonCardView

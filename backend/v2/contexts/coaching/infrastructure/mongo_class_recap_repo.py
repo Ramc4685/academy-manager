@@ -17,9 +17,11 @@ from pymongo.errors import DuplicateKeyError
 
 from backend.v2.contexts.coaching.domain.class_recap import (
     CONFIRMED_PRESENT,
+    ChildPass,
     ChildPractice,
     ClassRecap,
     ClassReport,
+    GroupLesson,
     PassClaim,
 )
 from backend.v2.shared.tenancy import TenantScopedRepository
@@ -41,6 +43,19 @@ class MongoClassRecapRepository(TenantScopedRepository):
                 ChildPractice(student_id=str(row["student_id"]), skill_ids=tuple(row["skill_ids"]))
                 for row in doc.get("practice") or ()
             ),
+            passes=tuple(
+                ChildPass(
+                    student_id=str(row["student_id"]),
+                    skill_id=str(row["skill_id"]),
+                    added_revision=int(row["added_revision"]),
+                    settled=bool(row.get("settled")),
+                )
+                for row in doc.get("passes") or ()
+            ),
+            group_lessons=tuple(
+                GroupLesson(level_id=str(row["level_id"]), skill_ids=tuple(row["skill_ids"]))
+                for row in doc.get("group_lessons") or ()
+            ),
             revision=int(doc.get("revision") or 0),
             last_mutation_id=doc.get("last_mutation_id"),
             source=doc.get("source") or "direct",
@@ -60,6 +75,11 @@ class MongoClassRecapRepository(TenantScopedRepository):
             {"student_id": row.student_id, "skill_ids": list(row.skill_ids)}
             for row in recap.practice
         ]
+        body["passes"] = [row.model_dump() for row in recap.passes]
+        body["group_lessons"] = [
+            {"level_id": row.level_id, "skill_ids": list(row.skill_ids)}
+            for row in recap.group_lessons
+        ]
         if expected_revision == 0:
             try:
                 await self._insert_one(body)
@@ -72,10 +92,56 @@ class MongoClassRecapRepository(TenantScopedRepository):
         )
         return bool(result.matched_count)
 
+    async def list_for_session_before(
+        self, session_id: str, *, before: datetime, limit: int
+    ) -> list[ClassRecap]:
+        cursor = self._find_many(
+            {"session_id": session_id, "class_starts_at": {"$lt": before}},
+            sort=[("class_starts_at", -1)],  # one recap per class: no tie to break
+            limit=limit,
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def settle_passes(
+        self, occurrence_id: str, *, revision: int, pairs: list[tuple[str, str]]
+    ) -> None:
+        recap = await self.get(occurrence_id)
+        if recap is None or recap.revision != revision:
+            return  # a newer save owns the passes; it settles its own
+        done = set(pairs)
+        passes = [
+            {**row.model_dump(), "settled": row.settled or (row.student_id, row.skill_id) in done}
+            for row in recap.passes
+        ]
+        await self._update_one(
+            {"occurrence_id": occurrence_id, "revision": revision}, {"$set": {"passes": passes}}
+        )
+
     async def list_for_occurrences(self, occurrence_ids: list[str]) -> list[ClassRecap]:
         if not occurrence_ids:
             return []
         cursor = self._find_many({"occurrence_id": {"$in": occurrence_ids}})
+        return [self._to_domain(doc) async for doc in cursor]
+
+    async def page_for_occurrences(
+        self,
+        occurrence_ids: list[str],
+        *,
+        before: tuple[datetime, str] | None,
+        limit: int,
+    ) -> list[ClassRecap]:
+        if not occurrence_ids:
+            return []
+        filter_: dict[str, Any] = {"occurrence_id": {"$in": occurrence_ids}}
+        if before is not None:
+            at, occurrence_id = before
+            filter_["$or"] = [
+                {"class_starts_at": {"$lt": at}},
+                {"class_starts_at": at, "occurrence_id": {"$lt": occurrence_id}},
+            ]
+        cursor = self._find_many(
+            filter_, sort=[("class_starts_at", -1), ("occurrence_id", -1)], limit=limit
+        )
         return [self._to_domain(doc) async for doc in cursor]
 
 

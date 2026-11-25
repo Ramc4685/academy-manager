@@ -28,15 +28,16 @@ PROGRAM_ID = "prog-001"
 
 class _FakeGenerateTeachingPlan:
     def __init__(self) -> None:
-        self.calls: list[dict[str, str | None]] = []
+        self.calls: list[dict[str, object]] = []
 
     async def build_session_groups(
         self,
         *,
         session_id: str,
         program_id: str | None,
+        before: datetime | None = None,
     ) -> SessionGroups:
-        self.calls.append({"session_id": session_id, "program_id": program_id})
+        self.calls.append({"session_id": session_id, "program_id": program_id, "before": before})
         return SessionGroups(
             groups=[
                 {
@@ -134,7 +135,9 @@ def test_admin_occurrence_teaching_plan_returns_coach_plan_shape() -> None:
     assert body["pathway_configured"] is True
     assert body["program_id"] == PROGRAM_ID
     assert body["groups"][0]["students"][0]["student_id"] == "student-1"
-    assert app.state.teaching_plan.calls == [{"session_id": SESSION_ID, "program_id": PROGRAM_ID}]
+    assert [(c["session_id"], c["program_id"]) for c in app.state.teaching_plan.calls] == [
+        (SESSION_ID, PROGRAM_ID)
+    ]
 
 
 def test_admin_occurrence_teaching_plan_uses_template_session_for_roster_plan() -> None:
@@ -150,7 +153,12 @@ def test_admin_occurrence_teaching_plan_uses_template_session_for_roster_plan() 
     assert body["occurrence_id"] == OCCURRENCE_ID
     assert body["session_id"] == TEMPLATE_SESSION_ID
     assert app.state.teaching_plan.calls == [
-        {"session_id": TEMPLATE_SESSION_ID, "program_id": PROGRAM_ID}
+        {
+            "session_id": TEMPLATE_SESSION_ID,
+            "program_id": PROGRAM_ID,
+            # History stops at this class, not at "now".
+            "before": datetime(2026, 6, 11, 9, 0, tzinfo=UTC),
+        }
     ]
 
 

@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.v2.composition.ai import AiComposition
 from backend.v2.composition.coaching_lookups import EnrollmentOccurrenceLookup
+from backend.v2.composition.pathway import compose_student_progress
 from backend.v2.contexts.ai.application.use_cases.interpret_class_report import (
     ClassReportInput,
     InterpretClassReport,
@@ -28,7 +29,8 @@ from backend.v2.contexts.coaching.application.use_cases.class_recap import (
     GetClassRecap,
     ListChildClassRecaps,
     ListOpenClassReportHandoffs,
-    RecordClassDemonstration,
+    PassReceipt,
+    RecapGroup,
     ResolveClassReport,
     SaveClassRecap,
     SkillOption,
@@ -80,8 +82,14 @@ from backend.v2.contexts.student_progress.application.use_cases.mark_skill_maste
     MarkSkillMastered,
     MarkSkillMasteredCommand,
 )
+from backend.v2.contexts.student_progress.infrastructure.mongo_level_progress_repo import (
+    MongoStudentLevelProgressRepository,
+)
 from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_repo import (
     MongoStudentSkillProgressRepository,
+)
+from backend.v2.contexts.student_progress.infrastructure.mongo_test_attempt_repo import (
+    MongoTestAttemptRepository,
 )
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.http.errors import DomainError
@@ -133,6 +141,38 @@ class CurriculumRecapSkills:
         }
 
 
+class ActiveLevelGroups:
+    """``RecapGroupLookup``: children grouped by their active level in the
+    default program (one bulk read); unplaced children form no group."""
+
+    def __init__(self, *, level_progress: Any, levels: Any, resolve_default_program: Any) -> None:
+        self._level_progress = level_progress
+        self._levels = levels
+        self._resolve_default_program = resolve_default_program
+
+    async def for_students(self, student_ids: list[str]) -> list[RecapGroup]:
+        try:
+            program = await self._resolve_default_program.execute()
+        except DomainError:
+            return []
+        program_id = str(program.program_id)
+        members: dict[str, list[str]] = {}
+        for row in await self._level_progress.list_active_for_students(student_ids, program_id):
+            members.setdefault(str(row.level_id), []).append(str(row.student_id))
+        levels = {str(lvl.level_id): lvl for lvl in await self._levels.list_for_program(program_id)}
+        groups = [
+            RecapGroup(
+                level_id=lid,
+                name=str(levels[lid].name),
+                sequence=int(levels[lid].sequence),
+                student_ids=sorted(ids),
+            )
+            for lid, ids in members.items()
+            if lid in levels
+        ]
+        return sorted(groups, key=lambda g: (g.sequence, g.level_id))
+
+
 class EnrollmentStudentNames:
     def __init__(self, students: Any) -> None:
         self._students = students
@@ -158,20 +198,42 @@ class EnrollmentOccurrenceRosterNames:
         return {row.student_id: row.full_name for row in rows}
 
 
+def _utc(at: datetime) -> datetime:
+    return at if at.tzinfo else at.replace(tzinfo=UTC)
+
+
 class SkillProgressPasses:
-    """``PassedSkills``: a skill counts as passed only when the pass pipeline
-    has written a non-silent ``PASSED`` for this child (one read)."""
+    """``PassedSkills``: a class earned a skill when its finished observation
+    passed it, it is the child's latest such pass of that skill (a take-back
+    then a re-earn shows only the re-earn), and the pass pipeline still holds a
+    non-silent ``PASSED`` (two reads per page)."""
 
-    def __init__(self, progress: Any) -> None:
+    def __init__(self, progress: Any, attempts: Any) -> None:
         self._progress = progress
+        self._attempts = attempts
 
-    async def passed(self, student_id: str, skill_ids: list[str]) -> set[str]:
-        wanted = set(skill_ids)
-        return {
-            str(row.skill_id)
+    async def earned_at(self, student_id: str, occurrence_ids: list[str]) -> dict[str, set[str]]:
+        latest = {row.skill_id: row for row in await self._attempts.earned_for_student(student_id)}
+        wanted = set(occurrence_ids)
+        if not any(row.occurrence_id in wanted for row in latest.values()):
+            return {}
+        held = {
+            str(row.skill_id): _utc(row.last_updated_at)
             for row in await self._progress.list_passed_for_student(student_id)
-            if str(row.skill_id) in wanted
         }
+        out: dict[str, set[str]] = {}
+        for skill_id, row in latest.items():
+            passed_at = held.get(skill_id)
+            # The current pass must be this observation's: it landed while the
+            # observation ran. A later re-earn (a test, a tap) re-stamps it.
+            if (
+                passed_at is not None
+                and row.occurrence_id in wanted
+                and row.effects_done_at is not None
+                and _utc(row.tested_at) <= passed_at <= _utc(row.effects_done_at)
+            ):
+                out.setdefault(str(row.occurrence_id), set()).add(skill_id)
+        return out
 
 
 class ProgressClassDemonstrations:
@@ -179,9 +241,13 @@ class ProgressClassDemonstrations:
     (MarkSkillMastered -> RecordTestAttempt), with the program read from the
     skill itself rather than trusted from the client."""
 
-    def __init__(self, *, skills: Any, mark_mastered: MarkSkillMastered) -> None:
+    def __init__(
+        self, *, skills: Any, mark_mastered: MarkSkillMastered, attempts: Any, progress: Any
+    ) -> None:
         self._skills = skills
         self._mark = mark_mastered
+        self._attempts = attempts
+        self._progress = progress
 
     async def record(
         self,
@@ -193,7 +259,6 @@ class ProgressClassDemonstrations:
         session_id: str,
         occurrence_id: str,
         observed_at: datetime,
-        mutation_id: str,
     ) -> list[DemonstrationOutcome]:
         skill = await self._skills.get(skill_id)
         if skill is None:
@@ -211,10 +276,32 @@ class ProgressClassDemonstrations:
                 off_level_ok=True,
                 occurrence_id=occurrence_id,
                 observed_at=observed_at,
-                mutation_id=mutation_id,
             )
         )
         return [DemonstrationOutcome(**o.model_dump()) for o in outcomes]
+
+    async def receipts(
+        self, occurrence_id: str, passes: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], PassReceipt]:
+        # Same key MarkSkillMastered gives a class observation.
+        keys = {f"{occurrence_id}:{sid}:{skill}": (sid, skill) for sid, skill in passes}
+        stored = {
+            a.observation_key: a for a in await self._attempts.list_by_observations(list(keys))
+        }
+        out: dict[tuple[str, str], PassReceipt] = {}
+        for key, (sid, skill) in keys.items():
+            attempt = stored.get(key)
+            if attempt is not None and attempt.effects_done_at is None:
+                out[(sid, skill)] = "in_progress"
+                continue
+            row = await self._progress.get(sid, skill)
+            is_passed = row is not None and row.status == "PASSED"
+            if attempt is not None:
+                # Counted: an N_TRIES try short of N, or a pass since taken back.
+                out[(sid, skill)] = "recorded" if is_passed else "counted"
+            else:
+                out[(sid, skill)] = "earned_before" if is_passed else "not_recorded"
+        return out
 
 
 class AiClassReportInterpreter:
@@ -277,7 +364,6 @@ class ClassRecapComposition:
     list_handoffs: ListOpenClassReportHandoffs
     resolve_report: ResolveClassReport
     list_for_child: ListChildClassRecaps
-    record_demonstration: RecordClassDemonstration
     #: A model is wired; otherwise every report goes to the owner.
     ai_enabled: bool
 
@@ -288,17 +374,16 @@ def compose_class_recap(
     outbox: Outbox | None = None,
     idempotency_store: IdempotencyStore | None = None,
 ) -> ClassRecapComposition:
-    from backend.v2.composition.pathway import compose_student_progress
 
     recaps = MongoClassRecapRepository(db)
     reports = MongoClassReportRepository(db)
     occurrence_rows = MongoSessionOccurrenceRepository(db)
     occurrences = EnrollmentOccurrenceLookup(occurrence_rows)
     attendance = MongoAttendanceRepository(db)
+    levels = MongoLevelRepository(db)
+    resolve_program = ResolveDefaultActiveProgram(programs=MongoProgramRepository(db))
     skills = CurriculumRecapSkills(
-        skills=MongoSkillRepository(db),
-        levels=MongoLevelRepository(db),
-        resolve_default_program=ResolveDefaultActiveProgram(programs=MongoProgramRepository(db)),
+        skills=MongoSkillRepository(db), levels=levels, resolve_default_program=resolve_program
     )
     students = MongoStudentRepository(db)
     names = EnrollmentStudentNames(students)
@@ -322,12 +407,26 @@ def compose_class_recap(
         if ai_enabled
         else None
     )
+    writer = ProgressClassDemonstrations(
+        skills=MongoSkillRepository(db),
+        mark_mastered=compose_student_progress(
+            db, outbox, idempotency_store=idempotency_store
+        ).mark_skill_mastered,
+        attempts=MongoTestAttemptRepository(db),
+        progress=MongoStudentSkillProgressRepository(db),
+    )
+    groups = ActiveLevelGroups(
+        level_progress=MongoStudentLevelProgressRepository(db),
+        levels=levels,
+        resolve_default_program=resolve_program,
+    )
     save = SaveClassRecap(
         recaps=recaps,
         occurrences=occurrences,
         attendance=attendance,
         skills=skills,
         academy_id=current_academy_id,
+        writer=writer,
     )
     return ClassRecapComposition(
         get=GetClassRecap(
@@ -337,6 +436,8 @@ def compose_class_recap(
             attendance=attendance,
             skills=skills,
             names=names,
+            writer=writer,
+            groups=groups,
         ),
         save=save,
         submit_report=SubmitClassReport(
@@ -349,6 +450,7 @@ def compose_class_recap(
             interpreter=interpreter,
             save=save,
             academy_id=current_academy_id,
+            groups=groups,
         ),
         list_handoffs=ListOpenClassReportHandoffs(reports=reports),
         resolve_report=ResolveClassReport(reports=reports),
@@ -356,17 +458,8 @@ def compose_class_recap(
             recaps=recaps,
             attendance=StudentConfirmedAttendance(db),
             skills=skills,
-            passes=SkillProgressPasses(MongoStudentSkillProgressRepository(db)),
-        ),
-        record_demonstration=RecordClassDemonstration(
-            occurrences=occurrences,
-            attendance=attendance,
-            skills=skills,
-            writer=ProgressClassDemonstrations(
-                skills=MongoSkillRepository(db),
-                mark_mastered=compose_student_progress(
-                    db, outbox, idempotency_store=idempotency_store
-                ).mark_skill_mastered,
+            passes=SkillProgressPasses(
+                MongoStudentSkillProgressRepository(db), MongoTestAttemptRepository(db)
             ),
         ),
         ai_enabled=ai_enabled,

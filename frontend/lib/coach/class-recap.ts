@@ -1,4 +1,9 @@
-import type { ChildPractice, RecapRosterEntry, ReportOutcome } from "@/lib/api/class-recap";
+import type {
+  ChildPractice,
+  GroupLesson,
+  RecapRosterEntry,
+  ReportOutcome,
+} from "@/lib/api/class-recap";
 
 /** Only children marked present or late can be credited with practice. */
 export function practiceEligible(roster: RecapRosterEntry[]): RecapRosterEntry[] {
@@ -78,4 +83,25 @@ export function nextReportAttempt(
   return last && last.text === text && last.useAi === useAi
     ? last
     : { reportId: newId(), text, useAi };
+}
+
+/** Flip one skill in a group's lesson; a group with no skills left is dropped. */
+export function toggleGroupSkill(
+  lessons: GroupLesson[],
+  levelId: string,
+  skillId: string,
+): GroupLesson[] {
+  const current = lessons.find((l) => l.level_id === levelId)?.skill_ids ?? [];
+  const next = current.includes(skillId)
+    ? current.filter((id) => id !== skillId)
+    : [...current, skillId];
+  const others = lessons.filter((l) => l.level_id !== levelId);
+  return next.length ? [...others, { level_id: levelId, skill_ids: next }] : others;
+}
+
+/** Removing a taught skill also removes it from every group's lesson. */
+export function lessonsWithoutSkill(lessons: GroupLesson[], skillId: string): GroupLesson[] {
+  return lessons
+    .map((l) => ({ ...l, skill_ids: l.skill_ids.filter((id) => id !== skillId) }))
+    .filter((l) => l.skill_ids.length > 0);
 }

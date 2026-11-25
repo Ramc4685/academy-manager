@@ -32,6 +32,7 @@ const VIEW: ClassRecapView = {
     { student_id: "maya", skill_ids: ["sk-x"] },
     { student_id: "leo", skill_ids: ["sk-y"] },
   ],
+  passes: [],
   roster: [
     { student_id: "maya", name: "Maya Lopez", attendance: "present" },
     { student_id: "leo", name: "Leo Chen", attendance: "late" },
@@ -79,6 +80,66 @@ describe("ClassRecapPanel", () => {
       /data-testid="recap-credit-everyone"[^>]*>Credit everyone present \(2\)/,
     );
     expect(render({ can_edit: false })).not.toContain("recap-credit-everyone");
+  });
+
+  it("offers a pass per taught skill and locks a saved one with its receipt", () => {
+    const html = render({
+      passes: [
+        { student_id: "maya", skill_id: "sk-x", receipt: "in_progress", added_revision: 2 },
+      ],
+    });
+    expect(pressed(html, "pass-leo-sk-y")).toBe("false");
+    expect(html).not.toContain('data-testid="pass-maya-sk-x"');
+    expect(html).toContain("✓ Passed: Forehand grip");
+    expect(html).toMatch(
+      /data-testid="pass-receipt-maya-sk-x"[^>]*>Pass still saving\. Save again to finish it\./,
+    );
+    expect(html).toMatch(/data-testid="recap-save"[^>]*>Finish saving/);
+    expect(html).not.toContain("pass-ana-");
+  });
+
+  it("lets the coach take off a pass the skill rules never counted", () => {
+    const html = render({
+      passes: [
+        {
+          student_id: "maya",
+          skill_id: "sk-x",
+          receipt: "not_recorded",
+          added_revision: 2,
+        },
+      ],
+    });
+    expect(pressed(html, "pass-maya-sk-x")).toBe("true");
+    expect(html).toContain("Not counted by the skill rules");
+    expect(html).toMatch(/data-testid="recap-save"[^>]*>Save recap/);
+  });
+
+  it("shows a recorded pass read-only and no pass offers without edit rights", () => {
+    const html = render({
+      can_edit: false,
+      passes: [
+        { student_id: "maya", skill_id: "sk-x", receipt: "recorded", added_revision: 1 },
+      ],
+    });
+    expect(html).toContain("Pass recorded");
+    expect(html).not.toContain('data-testid="pass-leo-');
+  });
+
+  it("records what each level group worked on, over the taught skills", () => {
+    const groups = [
+      { level_id: "l1", name: "Level 1", student_ids: ["maya"] },
+      { level_id: "l3", name: "Level 3", student_ids: ["leo"] },
+    ];
+    const html = render({
+      groups,
+      group_lessons: [{ level_id: "l1", skill_ids: ["sk-x"] }],
+    });
+    expect(html).toContain("What each group worked on");
+    expect(pressed(html, "group-l1-sk-x")).toBe("true");
+    expect(pressed(html, "group-l1-sk-y")).toBe("false");
+    expect(pressed(html, "group-l3-sk-y")).toBe("false");
+    expect(render({ can_edit: false, groups })).not.toContain("recap-groups");
+    expect(render({ groups: [] })).not.toContain("recap-groups");
   });
 
   it("never offers practice for an absent child", () => {
@@ -168,11 +229,41 @@ describe("ClassRecapPanel", () => {
     );
     expect(html).toContain("Maya Lopez passed Forehand grip");
     expect(html).toContain("not recorded as a pass");
+    // The editor can add it; the recap save then runs the pass rules.
+    expect(html).toContain('data-testid="recap-claim-add-maya-sk-x"');
     expect(html).toContain("Mark handled");
     expect(html).toMatch(
       /<a[^>]*href="\/coach\/sessions\/occ-1\/skills\?date=2026-11-18"[^>]*data-testid="recap-skills-link"|<a[^>]*data-testid="recap-skills-link"[^>]*href="\/coach\/sessions\/occ-1\/skills\?date=2026-11-18"/,
     );
   });
+});
+
+it("offers no add for a claim the editor cannot record", () => {
+  const claim = (student_id: string, skill_id: string) => ({
+    report_id: `r-${student_id}`,
+    is_mine: true,
+    text: "passed",
+    submitted_at: "2026-11-18T21:00:00Z",
+    outcome: "applied" as const,
+    ai_used: true,
+    questions: [],
+    pass_claims: [{ student_id, skill_id }],
+    applied_revision: 2,
+    resolved_at: null,
+  });
+  const reports = [claim("ana", "sk-x"), claim("leo", "sk-z")];
+  // Ana is absent; Serve was not taught in this class.
+  const html = render({ reports });
+  expect(html).not.toContain("recap-claim-add-");
+  // Already passed in the recap: nothing to add.
+  const done = render({
+    reports: [claim("maya", "sk-x")],
+    passes: [
+      { student_id: "maya", skill_id: "sk-x", receipt: "recorded", added_revision: 2 },
+    ],
+  });
+  expect(done).not.toContain("recap-claim-add-");
+  expect(render({ reports, can_edit: false })).not.toContain("recap-claim-add-");
 });
 
 describe("report send failures", () => {

@@ -17,6 +17,7 @@ from backend.v2.contexts.coaching.application.use_cases.class_recap import (
     ListChildClassRecaps,
     ListOpenClassReportHandoffs,
     RecapActor,
+    RecapGroup,
     ResolveClassReport,
     SaveClassRecap,
     SaveClassRecapCommand,
@@ -28,6 +29,7 @@ from backend.v2.contexts.coaching.domain.class_recap import (
     ChildPractice,
     ClassRecap,
     ClassReport,
+    GroupLesson,
     PassClaim,
     PassStatement,
     PracticeClaim,
@@ -152,13 +154,15 @@ class Roster:
 
 
 class Passes:
-    """The pass pipeline's word, independent of anything a report said."""
+    """The pass pipeline's word, independent of anything a report said:
+    ``{student: {occurrence: skills earned there and still held}}``."""
 
-    def __init__(self, passed: dict[str, set[str]] | None = None) -> None:
-        self.passed_by = passed or {}
+    def __init__(self, earned: dict[str, dict[str, set[str]]] | None = None) -> None:
+        self.earned = earned or {}
 
-    async def passed(self, student_id: str, skill_ids: list[str]) -> set[str]:
-        return self.passed_by.get(student_id, set()) & set(skill_ids)
+    async def earned_at(self, student_id: str, occurrence_ids: list[str]) -> dict[str, set[str]]:
+        mine = self.earned.get(student_id, {})
+        return {occ: mine[occ] for occ in occurrence_ids if occ in mine}
 
 
 class Recaps:
@@ -179,8 +183,29 @@ class Recaps:
         self.saves += 1
         return True
 
-    async def list_for_occurrences(self, occurrence_ids: list[str]) -> list[ClassRecap]:
-        return [r for oid, r in self.rows.items() if oid in occurrence_ids]
+    async def page_for_occurrences(
+        self, occurrence_ids: list[str], *, before: Any, limit: int
+    ) -> list[ClassRecap]:
+        rows = sorted(
+            (r for oid, r in self.rows.items() if oid in occurrence_ids),
+            key=lambda r: (r.class_starts_at, r.occurrence_id),
+            reverse=True,
+        )
+        if before is not None:
+            rows = [r for r in rows if (r.class_starts_at, r.occurrence_id) < before]
+        return rows[:limit]
+
+    async def settle_passes(
+        self, occurrence_id: str, *, revision: int, pairs: list[tuple[str, str]]
+    ) -> None:
+        recap = self.rows.get(occurrence_id)
+        if recap is None or recap.revision != revision:
+            return
+        passes = tuple(
+            p.model_copy(update={"settled": True}) if (p.student_id, p.skill_id) in pairs else p
+            for p in recap.passes
+        )
+        self.rows[occurrence_id] = recap.model_copy(update={"passes": passes})
 
 
 class Reports:
@@ -238,8 +263,33 @@ class Interpreter:
         return self.facts
 
 
+class Writer:
+    """The pass pipeline seen from a recap: one observation per class, child
+    and skill; ``crash`` stops a record part way, as a dying process would."""
+
+    def __init__(self) -> None:
+        self.state: dict[tuple[str, str], str] = {}
+        self.calls: list[tuple[str, list[str]]] = []
+        self.crash = False
+
+    async def record(self, *, skill_id: str, student_ids: list[str], **_: Any) -> list[Any]:
+        self.calls.append((skill_id, list(student_ids)))
+        for sid in student_ids:
+            self.state[(sid, skill_id)] = "in_progress"
+            if self.crash:
+                self.crash = False
+                raise RuntimeError("process died")
+            self.state[(sid, skill_id)] = "recorded"
+        return []
+
+    async def receipts(self, occurrence_id: str, passes: list[tuple[str, str]]) -> dict[Any, str]:
+        return {pair: self.state.get(pair, "not_recorded") for pair in passes}
+
+
 class World:
-    def __init__(self, *, marks: dict[str, str] | None = None, **occ: Any) -> None:
+    def __init__(
+        self, *, marks: dict[str, str] | None = None, writer: Writer | None = None, **occ: Any
+    ) -> None:
         self.recaps, self.reports = Recaps(), Reports()
         self.occurrences, self.attendance = Occurrences(**occ), AttendanceRows(marks)
         self.save = SaveClassRecap(
@@ -249,9 +299,11 @@ class World:
             skills=Catalog(),
             academy_id=lambda: ACADEMY,
             clock=lambda: NOW,
+            writer=writer,
         )
+        self.writer = writer
 
-    def get(self) -> GetClassRecap:
+    def get(self, groups: Any = None) -> GetClassRecap:
         return GetClassRecap(
             recaps=self.recaps,
             reports=self.reports,
@@ -259,10 +311,17 @@ class World:
             attendance=self.attendance,
             skills=Catalog(),
             names=Names(),
+            writer=self.writer,
+            groups=groups,
         )
 
     def submit(
-        self, interpreter: Interpreter, roster: Roster | None = None, *, now: datetime = NOW
+        self,
+        interpreter: Interpreter,
+        roster: Roster | None = None,
+        *,
+        now: datetime = NOW,
+        groups: Any = None,
     ) -> SubmitClassReport:
         return SubmitClassReport(
             reports=self.reports,
@@ -275,6 +334,7 @@ class World:
             save=self.save,
             academy_id=lambda: ACADEMY,
             clock=lambda: now,
+            groups=groups,
         )
 
     def child(self, passes: Passes | None = None) -> ListChildClassRecaps:
@@ -504,6 +564,70 @@ def _recap(**kw: Any) -> ClassRecap:
 # --- SaveClassRecap --------------------------------------------------------
 
 
+def _lesson(level_id: str, *skills: str) -> GroupLesson:
+    return GroupLesson(level_id=level_id, skill_ids=skills)
+
+
+async def test_group_lessons_are_saved_deduped_and_kept_when_omitted() -> None:
+    w = World()
+    saved = await w.save.execute(
+        _cmd(
+            taught_skill_ids=[GRIP, SMASH],
+            group_lessons=[_lesson("lvl-1", GRIP, GRIP), _lesson("lvl-3", SMASH)],
+        ),
+        LEAD_ACTOR,
+    )
+    assert saved.group_lessons == (_lesson("lvl-1", GRIP), _lesson("lvl-3", SMASH))
+    kept = await w.save.execute(
+        _cmd(mutation_id="m-2", expected_revision=1, taught_skill_ids=[GRIP, SMASH]), LEAD_ACTOR
+    )
+    assert kept.group_lessons == saved.group_lessons
+    # Un-teaching a skill drops it from the kept lessons, and an empty one goes.
+    trimmed = await w.save.execute(_cmd(mutation_id="m-3", expected_revision=2), LEAD_ACTOR)
+    assert trimmed.group_lessons == (_lesson("lvl-1", GRIP),)
+
+
+async def test_a_term_clone_recap_is_filed_under_its_template_batch() -> None:
+    # The teaching plan reads a batch's history by the template session.
+    plain = await World().save.execute(_cmd(), LEAD_ACTOR)
+    clone = await World(template_session_id="tmpl-1").save.execute(_cmd(), LEAD_ACTOR)
+    assert (plain.session_id, clone.session_id) == (SESSION, "tmpl-1")
+
+
+@pytest.mark.parametrize(
+    "lessons",
+    [
+        [_lesson("lvl-1", GRIP), _lesson("lvl-1", GRIP)],  # one lesson per group
+        [_lesson("lvl-1", SMASH)],  # not taught in this class
+    ],
+)
+async def test_a_group_lesson_needs_its_own_group_and_taught_skills(
+    lessons: list[GroupLesson],
+) -> None:
+    w = World()
+    with pytest.raises(RecapInvalid):
+        await w.save.execute(_cmd(group_lessons=lessons), LEAD_ACTOR)
+    assert w.recaps.saves == 0
+
+
+class Groups:
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    async def for_students(self, student_ids: list[str]) -> list[RecapGroup]:
+        self.calls.append(student_ids)
+        return [RecapGroup(level_id="lvl-1", name="Level 1", sequence=1, student_ids=["maya"])]
+
+
+async def test_the_class_groups_are_read_once_for_an_editor_only() -> None:
+    w, groups = World(), Groups()
+    lead = await w.get(groups).execute(OCC, LEAD_ACTOR)
+    assistant = await w.get(groups).execute(OCC, ASSIST_ACTOR)
+    assert [g.level_id for g in lead.groups] == ["lvl-1"]
+    assert assistant.groups == []
+    assert [sorted(c) for c in groups.calls] == [[r.student_id for r in lead.roster]]
+
+
 async def test_direct_entry_records_split_practice_and_other_level_skill() -> None:
     w = World()
     recap = await w.save.execute(
@@ -581,6 +705,101 @@ async def test_replay_returns_the_saved_recap_and_stale_correction_conflicts() -
     assert corrected.recap_id == first.recap_id
 
 
+def _pass(sid: str, skill: str = GRIP) -> PassClaim:
+    return PassClaim(student_id=sid, skill_id=skill)
+
+
+async def test_a_pass_is_saved_with_the_recap_and_recorded_once() -> None:
+    w = World(writer=Writer())
+    recap = await w.save.execute(_cmd(passes=[_pass("maya"), _pass("maya")]), LEAD_ACTOR)
+    assert [(p.student_id, p.added_revision) for p in recap.passes] == [("maya", 1)]
+    assert w.writer.calls == [(GRIP, ["maya"])]
+    # A correction that keeps the pass never re-runs it.
+    await w.save.execute(
+        _cmd(mutation_id="m-2", expected_revision=1, passes=[_pass("maya"), _pass("leo")]),
+        LEAD_ACTOR,
+    )
+    assert w.writer.calls == [(GRIP, ["maya"]), (GRIP, ["leo"])]
+    state = await w.get().execute(OCC, LEAD_ACTOR)
+    assert state.pass_receipts[("maya", GRIP)] == "recorded"
+
+
+async def test_an_interrupted_save_shows_in_progress_and_its_replay_finishes() -> None:
+    w = World(writer=Writer())
+    w.writer.crash = True
+    with pytest.raises(RuntimeError):
+        await w.save.execute(_cmd(passes=[_pass("maya")]), LEAD_ACTOR)
+    assert (await w.get().execute(OCC, LEAD_ACTOR)).pass_receipts == {("maya", GRIP): "in_progress"}
+    await w.save.execute(_cmd(passes=[_pass("maya")]), LEAD_ACTOR)  # same mutation id
+    assert w.recaps.saves == 1
+    assert w.writer.state == {("maya", GRIP): "recorded"}
+
+
+async def test_a_correction_that_omits_passes_keeps_them() -> None:
+    w = World(writer=Writer())
+    await w.save.execute(_cmd(passes=[_pass("maya")]), LEAD_ACTOR)
+    kept = await w.save.execute(_cmd(mutation_id="m-2", expected_revision=1), LEAD_ACTOR)
+    assert [p.student_id for p in kept.passes] == ["maya"]
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        [_pass("ana")],  # absent
+        [_pass("maya", SMASH)],  # not taught
+    ],
+)
+async def test_a_pass_needs_a_present_child_and_a_taught_skill(claims: list[PassClaim]) -> None:
+    w = World(writer=Writer())
+    with pytest.raises(RecapInvalid):
+        await w.save.execute(_cmd(passes=claims), LEAD_ACTOR)
+    assert w.recaps.saves == 0 and w.writer.calls == []
+
+
+async def test_a_recorded_pass_cannot_be_dropped_by_an_edit() -> None:
+    w = World(writer=Writer())
+    await w.save.execute(_cmd(passes=[_pass("maya")]), LEAD_ACTOR)
+    with pytest.raises(RecapInvalid):
+        await w.save.execute(_cmd(mutation_id="m-2", expected_revision=1, passes=[]), LEAD_ACTOR)
+
+
+async def test_an_uncounted_pass_can_be_taken_off_and_an_old_one_is_not_retried() -> None:
+    w = World(writer=Writer())
+    await w.save.execute(_cmd(passes=[_pass("maya"), _pass("leo")]), LEAD_ACTOR)
+    w.writer.state[("leo", GRIP)] = "not_recorded"  # e.g. not placed
+    w.writer.calls.clear()
+    edited = await w.save.execute(
+        _cmd(mutation_id="m-2", expected_revision=1, passes=[_pass("maya"), _pass("leo")]),
+        LEAD_ACTOR,
+    )
+    assert w.writer.calls == []  # leo's pass is from revision 1: not re-run
+    dropped = await w.save.execute(
+        _cmd(mutation_id="m-3", expected_revision=edited.revision, passes=[_pass("maya")]),
+        LEAD_ACTOR,
+    )
+    assert [p.student_id for p in dropped.passes] == ["maya"]
+
+
+async def test_a_save_that_died_before_a_pass_ran_resumes_it_on_a_later_revision() -> None:
+    w = World(writer=Writer())
+    w.writer.crash = True  # dies on maya, before leo's pass ever runs
+    with pytest.raises(RuntimeError):
+        await w.save.execute(_cmd(passes=[_pass("maya"), _pass("leo")]), LEAD_ACTOR)
+    w.writer.calls.clear()
+    await w.save.execute(
+        _cmd(mutation_id="m-2", expected_revision=1, passes=[_pass("maya"), _pass("leo")]),
+        LEAD_ACTOR,
+    )
+    assert w.writer.calls == [(GRIP, ["maya", "leo"])]
+    assert w.writer.state[("leo", GRIP)] == "recorded"
+    assert all(p.settled for p in w.recaps.rows[OCC].passes)
+
+
+async def test_passes_need_the_pipeline() -> None:
+    with pytest.raises(RecapInvalid):
+        await World().save.execute(_cmd(passes=[_pass("maya")]), LEAD_ACTOR)
+
+
 async def test_cancelled_or_future_class_cannot_be_recapped() -> None:
     with pytest.raises(SessionCancelled):
         await World(status="cancelled").save.execute(_cmd(), LEAD_ACTOR)
@@ -642,6 +861,48 @@ async def test_split_report_applies_per_child_and_keeps_the_pass_as_follow_up() 
     assert seen["student_aliases"] == ["S1", "S2", "S3", "S4", "S5", "S6"]
     assert all(s.alias.startswith("K") for s in seen["skills"])
     assert "maya" not in repr(seen) and "Lopez" not in repr(seen)
+
+
+class LevelGroups:
+    """Maya and Sam on Level 1, Leo on Level 2."""
+
+    async def for_students(self, student_ids: list[str]) -> list[RecapGroup]:
+        rows = {"lvl-1": ["maya", "sam"], "lvl-2": ["leo"]}
+        return [
+            RecapGroup(
+                level_id=lid, name=lid, sequence=i, student_ids=[s for s in ids if s in student_ids]
+            )
+            for i, (lid, ids) in enumerate(rows.items())
+            if any(s in student_ids for s in ids)
+        ]
+
+
+async def test_a_report_files_each_groups_practice_as_its_lesson() -> None:
+    w = World()
+    await w.save.execute(
+        _cmd(
+            taught_skill_ids=[GRIP],
+            practice=_practice(sam=[GRIP]),
+            group_lessons=[GroupLesson(level_id="lvl-1", skill_ids=(GRIP,))],
+        ),
+        LEAD_ACTOR,
+    )
+    report = await w.submit(Interpreter(SPLIT), groups=LevelGroups()).execute(
+        _report(SPLIT_TEXT), LEAD_ACTOR
+    )
+    assert report.outcome == "applied"
+    lessons = {g.level_id: g.skill_ids for g in w.recaps.rows[OCC].group_lessons}
+    # Level 1 keeps its recorded lesson; Level 2 gains only what Leo practised.
+    assert lessons == {"lvl-1": (GRIP,), "lvl-2": (SMASH,)}
+
+
+async def test_a_taught_only_report_gives_no_group_a_lesson() -> None:
+    w = World()
+    facts = ReportFacts(taught=(TaughtClaim(skills=("K2",), evidence="introduced the jump smash"),))
+    await w.submit(Interpreter(facts), groups=LevelGroups()).execute(
+        _report("Today we introduced the jump smash."), LEAD_ACTOR
+    )
+    assert w.recaps.rows[OCC].group_lessons == ()
 
 
 async def test_partial_report_never_removes_existing_participants() -> None:
@@ -880,52 +1141,103 @@ async def test_owner_finds_and_closes_handoffs() -> None:
 # --- ListChildClassRecaps ---------------------------------------------------
 
 
-async def test_parent_view_is_own_child_only_with_passes_from_the_pipeline() -> None:
+async def test_parent_view_is_own_child_only_with_passes_dated_to_the_class() -> None:
     w = World()
     await w.save.execute(
         _cmd(taught_skill_ids=[GRIP, SMASH], practice=_practice(maya=[GRIP], leo=[SMASH])),
         LEAD_ACTOR,
     )
-    passes = Passes({"maya": {GRIP}, "leo": {SMASH}})
-    maya = await w.child(passes).execute("maya")
+    passes = Passes({"maya": {OCC: {GRIP}}})
+    maya = (await w.child(passes).execute("maya")).recaps
     assert [_skills(r.taught_skills) for r in maya] == [
-        [(GRIP, "Forehand grip", True), (SMASH, "Jump smash", False)]
+        [(GRIP, "Forehand grip"), (SMASH, "Jump smash")]
     ]
-    assert _skills(maya[0].practiced_skills) == [(GRIP, "Forehand grip", True)]
-    leo = await w.child(passes).execute("leo")
-    assert _skills(leo[0].practiced_skills) == [(SMASH, "Jump smash", True)]
-    # Present but credited with nothing: sees the class, no practice.
-    sam = await w.child(passes).execute("sam")
-    assert sam[0].practiced_skills == [] and not any(s.passed for s in sam[0].taught_skills)
-    assert await w.child(passes).execute("ana") == []  # absent: not their class
+    assert _skills(maya[0].practiced_skills) == [(GRIP, "Forehand grip")]
+    assert _skills(maya[0].earned_skills) == [(GRIP, "Forehand grip")]
+    leo = (await w.child(passes).execute("leo")).recaps
+    assert _skills(leo[0].practiced_skills) == [(SMASH, "Jump smash")]
+    assert leo[0].earned_skills == []
+    # Present but credited with nothing: sees the group lesson, no practice.
+    sam = (await w.child(passes).execute("sam")).recaps
+    assert sam[0].practiced_skills == [] and sam[0].earned_skills == []
+    assert (await w.child(passes).execute("ana")).recaps == []  # absent: not their class
 
 
 async def test_a_report_pass_claim_is_never_a_parent_visible_pass() -> None:
     w = World()
     await w.submit(Interpreter(SPLIT)).execute(_report(SPLIT_TEXT), LEAD_ACTOR)
-    row = (await w.child(Passes()).execute("maya"))[0]
-    assert not any(s.passed for s in (*row.taught_skills, *row.practiced_skills))
+    row = (await w.child(Passes()).execute("maya")).recaps[0]
+    assert row.earned_skills == []
 
 
-def _skills(rows: Any) -> list[tuple[str, str, bool]]:
-    return [(s.skill_id, s.name, s.passed) for s in rows]
+def _skills(rows: Any) -> list[tuple[str, str]]:
+    return [(s.skill_id, s.name) for s in rows]
 
 
 def _store(
-    w: World, occ: str, *, taught: tuple[str, ...], practice: tuple[ChildPractice, ...] = ()
+    w: World,
+    occ: str,
+    *,
+    taught: tuple[str, ...],
+    practice: tuple[ChildPractice, ...] = (),
+    at: datetime = NOW,
 ) -> None:
     w.recaps.rows[occ] = ClassRecap(
         recap_id=f"rc-{occ}",
         academy_id=ACADEMY,
         occurrence_id=occ,
         session_id=SESSION,
-        class_starts_at=NOW,
+        class_starts_at=at,
         taught_skill_ids=taught,
         practice=practice,
         revision=1,
         updated_by=LEAD,
         updated_at=NOW,
     )
+
+
+class Attended:
+    def __init__(self, *occs: str) -> None:
+        self.occs = list(occs)
+
+    async def confirmed_occurrence_ids(self, student_id: str, *, limit: int) -> list[str]:
+        return self.occs
+
+
+async def test_a_repeated_practice_shows_on_both_dates_and_the_pass_only_where_earned() -> None:
+    w = World()
+    week = timedelta(days=7)
+    _store(w, "occ-mon", taught=(GRIP,), practice=tuple(_practice(maya=[GRIP])), at=NOW - week)
+    _store(w, "occ-next", taught=(GRIP,), practice=tuple(_practice(maya=[GRIP])), at=NOW)
+    page = await ListChildClassRecaps(
+        recaps=w.recaps,
+        attendance=Attended("occ-mon", "occ-next"),
+        skills=Catalog(),
+        passes=Passes({"maya": {"occ-next": {GRIP}}}),
+    ).execute("maya")
+    assert [r.occurrence_id for r in page.recaps] == ["occ-next", "occ-mon"]
+    assert [len(r.practiced_skills) for r in page.recaps] == [1, 1]
+    assert [len(r.earned_skills) for r in page.recaps] == [1, 0]
+
+
+async def test_pages_are_newest_first_with_a_stable_tie_break() -> None:
+    w = World()
+    # Two batches the same evening share a start time: the id breaks the tie.
+    for occ, at in (("occ-a", NOW), ("occ-b", NOW), ("occ-c", NOW - timedelta(days=1))):
+        _store(w, occ, taught=(GRIP,), at=at)
+    listing = ListChildClassRecaps(
+        recaps=w.recaps,
+        attendance=Attended("occ-a", "occ-b", "occ-c"),
+        skills=Catalog(),
+        passes=Passes(),
+    )
+    first = await listing.execute("maya", limit=2)
+    assert [r.occurrence_id for r in first.recaps] == ["occ-b", "occ-a"]
+    second = await listing.execute("maya", cursor=first.next_cursor, limit=2)
+    assert [r.occurrence_id for r in second.recaps] == ["occ-c"]
+    assert second.next_cursor is None
+    with pytest.raises(RecapInvalid):
+        await listing.execute("maya", cursor="not-a-cursor")
 
 
 async def test_parent_pass_mark_follows_the_skill_id_not_a_shared_name() -> None:
@@ -942,13 +1254,14 @@ async def test_parent_pass_mark_follows_the_skill_id_not_a_shared_name() -> None
         recaps=w.recaps,
         attendance=w.attendance,
         skills=TwinCatalog(),
-        passes=Passes({"maya": {GRIP}}),
+        passes=Passes({"maya": {OCC: {GRIP}}}),
     )
-    row = (await listing.execute("maya"))[0]
-    assert _skills(row.taught_skills) == [(twin, "Forehand grip", False)]
+    row = (await listing.execute("maya")).recaps[0]
+    assert _skills(row.earned_skills) == [(GRIP, "Forehand grip")]
+    assert [s.skill_id for s in row.practiced_skills] == [twin]
 
 
-async def test_parent_list_reads_names_and_passes_once_for_all_recaps() -> None:
+async def test_parent_list_reads_names_and_passes_once_for_the_page() -> None:
     w = World()
     for occ in ("occ-a", "occ-b", "occ-c"):
         _store(w, occ, taught=(GRIP, SMASH))
@@ -960,23 +1273,22 @@ async def test_parent_list_reads_names_and_passes_once_for_all_recaps() -> None:
             return await super().names(skill_ids, active_only=active_only)
 
     class CountingPasses(Passes):
-        async def passed(self, student_id: str, skill_ids: list[str]) -> set[str]:
-            calls.append("passed")
-            return await super().passed(student_id, skill_ids)
+        async def earned_at(self, student_id: str, occurrence_ids: list[str]) -> Any:
+            calls.append("earned")
+            return await super().earned_at(student_id, occurrence_ids)
 
-    class AllPresent:
-        async def confirmed_occurrence_ids(self, student_id: str, *, limit: int) -> list[str]:
-            return ["occ-a", "occ-b", "occ-c"]
-
-    rows = await ListChildClassRecaps(
-        recaps=w.recaps, attendance=AllPresent(), skills=CountingCatalog(), passes=CountingPasses()
+    page = await ListChildClassRecaps(
+        recaps=w.recaps,
+        attendance=Attended("occ-a", "occ-b", "occ-c"),
+        skills=CountingCatalog(),
+        passes=CountingPasses(),
     ).execute("maya")
-    assert len(rows) == 3 and sorted(calls) == ["names", "passed"]
+    assert len(page.recaps) == 3 and sorted(calls) == ["earned", "names"]
 
 
 async def test_attendance_correction_withdraws_the_class_from_the_parent() -> None:
     w = World()
     await w.save.execute(_cmd(), LEAD_ACTOR)
-    assert len(await w.child().execute("maya")) == 1
+    assert len((await w.child().execute("maya")).recaps) == 1
     w.attendance.marks["maya"] = "absent"
-    assert await w.child().execute("maya") == []
+    assert (await w.child().execute("maya")).recaps == []

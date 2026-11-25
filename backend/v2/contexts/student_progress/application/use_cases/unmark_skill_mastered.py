@@ -17,6 +17,10 @@ from backend.v2.contexts.student_progress.application.ports import (
     SkillLookup,
     StudentLevelProgressRepository,
     StudentSkillProgressRepository,
+    TestAttemptRepository,
+)
+from backend.v2.contexts.student_progress.application.use_cases.record_test_attempt import (
+    close_unfinished_observations,
 )
 from backend.v2.contexts.student_progress.domain.errors import (
     LevelUpInProgress,
@@ -61,8 +65,10 @@ class UnmarkSkillMastered:
         skill_progress: StudentSkillProgressRepository,
         recommendations: LevelUpRecommendationRepository,
         skill_lookup: SkillLookup,
+        test_attempts: TestAttemptRepository,
         outbox: Outbox | None = None,
     ) -> None:
+        self._test_attempts = test_attempts
         self._level_progress = level_progress
         self._skill_progress = skill_progress
         self._recs = recommendations
@@ -139,6 +145,10 @@ class UnmarkSkillMastered:
                 status=existing.status,
                 withdrawn_rec_ids=withdrawn,
             )
+
+        await close_unfinished_observations(
+            self._test_attempts, cmd.student_id, cmd.skill_id, at=now
+        )
 
         updated = existing.model_copy(
             update={

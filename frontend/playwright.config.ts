@@ -146,7 +146,7 @@ export default defineConfig({
       // preview is a five-column table, scrolled sideways on a phone and
       // whole on a desktop.
       testMatch:
-        /admin-(shell|students|registrations|level-ups-lifecycle|month-close|messages|family-billing|families-index|family-record|public-page-settings|pipeline-board|family-import)\.spec\.ts/,
+        /admin-(shell|students|registrations|level-ups-lifecycle|month-close|messages|family-billing|families-index|family-record|public-page-settings|pipeline-board|family-import)\.spec\.ts|parent-class-timeline\.spec\.ts|coach-teaching-rotation\.spec\.ts/,
     },
     // D11 axe gate: chromium only, its own CI job in nightly-e2e.yml (nightly,
     // and on PRs that touch frontend/components/** or the a11y specs). The

@@ -673,6 +673,29 @@ export interface TeachingUnplacedStudent {
   student_name: string;
 }
 
+export interface StudentVariation {
+  student_id: string;
+  student_name: string;
+  skill_id: string;
+  skill_name: string;
+}
+
+/** The drill picked for a group from this batch's delivery history. */
+export interface TeachingAssignment {
+  card: LessonCard;
+  /** The first teaching point (or the goal) to say out loud. */
+  cue: string | null;
+  /** Children of the group whose next skill the drill covers. */
+  need_count: number;
+  /** Start of the class where this group last worked on one of the drill's
+   * skills (an instant; render it in the session's timezone). */
+  last_taught_at: string | null;
+  /** Every drill was just delivered: a deliberate repeat. */
+  is_repeat: boolean;
+  /** Children whose own next skill the drill does not cover. */
+  variations: StudentVariation[];
+}
+
 export interface LevelTeachingGroup {
   level_id: string;
   level_name: string;
@@ -681,6 +704,11 @@ export interface LevelTeachingGroup {
   /** `null` for level-up-ready groups. */
   lesson_card: LessonCard | null;
   students: TeachingStudentFocus[];
+  /** A recap of this batch recorded what this group worked on. */
+  history_known?: boolean;
+  assignment?: TeachingAssignment | null;
+  /** A drill from the level below, for a group above the first level. */
+  reinforcement?: TeachingAssignment | null;
 }
 
 export interface SessionTeachingPlan {

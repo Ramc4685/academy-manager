@@ -21,6 +21,7 @@ from backend.v2.contexts.student_progress.application.ports import (
 from backend.v2.contexts.student_progress.domain.errors import (
     OverrideNotPermitted,
     PassNeedsLeadCoach,
+    SkillAlreadyPassed,
     SkillNotOnCurrentLevel,
     StudentNotPlaced,
 )
@@ -48,6 +49,16 @@ from backend.v2.shared.tenancy import current_academy_id
 
 def _resolve_academy_id() -> str:
     return current_academy_id()
+
+
+async def close_unfinished_observations(
+    attempts: TestAttemptRepository, student_id: str, skill_id: str, *, at: datetime
+) -> None:
+    """A reassessment takes a pass back: a class pass still finishing would
+    otherwise resume on the next recap save and restore it."""
+    for attempt in await attempts.list_for_student_skill(student_id, skill_id):
+        if attempt.observation_key and attempt.effects_done_at is None:
+            await attempts.mark_effects_done(attempt.attempt_id, at=at, earned=False)
 
 
 class RecordTestAttemptCommand(BaseModel):
@@ -78,6 +89,9 @@ class RecordTestAttemptCommand(BaseModel):
     off_level_ok: bool = False
     #: When the skill was demonstrated (the dated class); entry time otherwise.
     observed_at: datetime | None = None
+    #: ``occurrence:student:skill`` for a class observation: one per class,
+    #: and every effect replays from the stored attempt (see ``finish_observation``).
+    observation_key: str | None = None
 
     @model_validator(mode="after")
     def _success_not_above_attempts(self) -> RecordTestAttemptCommand:
@@ -206,8 +220,20 @@ class RecordTestAttempt:
                 skill_id=cmd.skill_id,
             )
 
+        # A class observation is stored once per class, child and skill; a
+        # replay (retry, second writer, interrupted run) resumes from it.
+        prior = (
+            await self._test_attempts.get_by_observation(cmd.observation_key)
+            if cmd.observation_key
+            else None
+        )
+        if cmd.observation_key and prior is None and already_passed:
+            raise SkillAlreadyPassed(
+                "skill already passed", student_id=cmd.student_id, skill_id=cmd.skill_id
+            )
+
         now = datetime.now(UTC)
-        attempt = TestAttempt(
+        attempt = prior or TestAttempt(
             attempt_id=str(new_ulid()),
             academy_id=_resolve_academy_id(),
             student_id=cmd.student_id,
@@ -230,13 +256,20 @@ class RecordTestAttempt:
             # The observer is coach_id; a passing attempt (an N_TRIES try too)
             # names who signed it off.
             signed_off_by=cmd.coach_id if passed and cmd.can_sign_off else None,
+            observation_key=cmd.observation_key,
         )
-        await self._test_attempts.save(attempt)
+        if cmd.observation_key is None:
+            await self._test_attempts.save(attempt)
+        elif prior is None and not await self._test_attempts.insert_observation(attempt):
+            # Another writer stored this observation first: continue from theirs.
+            attempt = await self._test_attempts.get_by_observation(cmd.observation_key)  # type: ignore[assignment]
+        passed = attempt.passed
+        finished = prior is not None and prior.effects_done_at is not None
 
         # Update skill status
         tries = 0
         written = False
-        if passed and pass_rule == "N_TRIES" and already_passed:
+        if passed and pass_rule == "N_TRIES" and already_passed and cmd.observation_key is None:
             # A pass stays a pass: a credit (0 tries) or a pass from before the
             # skill moved to N_TRIES is not demoted by a later passing test.
             tries = existing_prog.tries if existing_prog is not None else 0
@@ -260,8 +293,18 @@ class RecordTestAttempt:
                     )
                 )
                 existing_prog = await self._skill_progress.get(cmd.student_id, cmd.skill_id)
-            tries = await self._skill_progress.increment_tries(cmd.student_id, cmd.skill_id, 1) or 0
-            passed = tries >= needed
+            if cmd.observation_key:
+                # Counted once per observation; its ordinal decides, so a late
+                # replay of an earlier try never claims the pass again.
+                tries = await self._skill_progress.add_try_once(
+                    cmd.student_id, cmd.skill_id, attempt.attempt_id
+                )
+                passed = tries == needed or (tries > needed and not already_passed)
+            else:
+                tries = (
+                    await self._skill_progress.increment_tries(cmd.student_id, cmd.skill_id, 1) or 0
+                )
+                passed = tries >= needed
             new_status = "PASSED" if passed else "PRACTICING"
             if not passed:
                 # Conditional: a concurrent tap may have passed it meanwhile.
@@ -273,7 +316,20 @@ class RecordTestAttempt:
                 written = True
         else:
             new_status = "PASSED" if passed else "NEEDS_REVIEW"
+        if finished and not already_passed:
+            # Finished, and the skill no longer stands on it: a reassessment
+            # took it back, so replaying it must not restore the pass.
+            passed = False
+        if prior is not None and (already_passed or finished):
+            # Resuming an observation whose pass already landed, or one that
+            # finished: re-stamping would announce it again (or undo a
+            # reassessment).
+            written = True
         if not written:
+            if cmd.observation_key is None and already_passed and new_status != "PASSED":
+                await close_unfinished_observations(
+                    self._test_attempts, cmd.student_id, cmd.skill_id, at=now
+                )
             if existing_prog is None:
                 updated_prog = StudentSkillProgress(
                     skill_progress_id=str(new_ulid()),
@@ -316,6 +372,7 @@ class RecordTestAttempt:
             academy_id = _resolve_academy_id()
             await self._outbox.append(
                 SkillTestAttempted(
+                    **self._event_id(attempt, "SkillTestAttempted"),
                     aggregate_id=attempt.attempt_id,
                     academy_id=academy_id,
                     payload=SkillTestAttemptedPayload(
@@ -335,6 +392,7 @@ class RecordTestAttempt:
             if passed:
                 await self._outbox.append(
                     SkillPassed(
+                        **self._event_id(attempt, "SkillPassed"),
                         aggregate_id=attempt.attempt_id,
                         academy_id=academy_id,
                         payload=SkillPassedPayload(
@@ -350,6 +408,7 @@ class RecordTestAttempt:
             if level_completed:
                 await self._outbox.append(
                     LevelCompleted(
+                        **self._event_id(attempt, "LevelCompleted"),
                         aggregate_id=active.progress_id,
                         academy_id=academy_id,
                         payload=LevelCompletedPayload(
@@ -369,6 +428,16 @@ class RecordTestAttempt:
             level_completed=level_completed,
             tries=tries,
         )
+
+    @staticmethod
+    def _event_id(attempt: TestAttempt, name: str) -> dict[str, str]:
+        """An observation's events have fixed ids, so a replay appends nothing new."""
+        return {"event_id": f"{attempt.attempt_id}:{name}"} if attempt.observation_key else {}
+
+    async def finish_observation(self, attempt_id: str, *, earned: bool) -> None:
+        """Every effect of this observation has landed (the receipt is
+        complete); ``earned`` when it is what passed the skill."""
+        await self._test_attempts.mark_effects_done(attempt_id, at=datetime.now(UTC), earned=earned)
 
     async def _in_active_curriculum(self, skill_meta: object, program_id: str) -> bool:
         """The skill and its level are live curriculum of this program."""

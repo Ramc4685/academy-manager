@@ -9,12 +9,13 @@ completes, queues or certifies anything, and the child's badge stays put.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
-from backend.v2.composition.class_recap import ProgressClassDemonstrations
+from backend.v2.composition.class_recap import ProgressClassDemonstrations, SkillProgressPasses
 from backend.v2.contexts.curriculum.infrastructure.mongo_level_repo import MongoLevelRepository
 from backend.v2.contexts.curriculum.infrastructure.mongo_skill_repo import MongoSkillRepository
 from backend.v2.contexts.student_progress.application.use_cases.mark_skill_mastered import (
@@ -29,6 +30,11 @@ from backend.v2.contexts.student_progress.application.use_cases.recommend_level_
 )
 from backend.v2.contexts.student_progress.application.use_cases.record_test_attempt import (
     RecordTestAttempt,
+    RecordTestAttemptCommand,
+)
+from backend.v2.contexts.student_progress.application.use_cases.unmark_skill_mastered import (
+    UnmarkSkillMastered,
+    UnmarkSkillMasteredCommand,
 )
 from backend.v2.contexts.student_progress.infrastructure.curriculum_lookup_adapter import (
     CurriculumSkillLookupAdapter,
@@ -45,7 +51,7 @@ from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_re
 from backend.v2.contexts.student_progress.infrastructure.mongo_test_attempt_repo import (
     MongoTestAttemptRepository,
 )
-from backend.v2.shared.idempotency.mongo_store import MongoIdempotencyStore
+from backend.v2.shared.events import MongoOutbox
 from backend.v2.shared.tenancy.context import tenant_scope
 
 pytestmark = pytest.mark.asyncio
@@ -66,12 +72,46 @@ class _Live:
         return set(student_ids)
 
 
-class _Events:
-    def __init__(self) -> None:
-        self.names: list[str] = []
+class _Crash(Exception):
+    """A process dying part way through a save."""
 
-    async def append(self, event: Any, **_: Any) -> None:
-        self.names.append(event.name.split(".")[-1])
+
+class _CrashingAttempts(MongoTestAttemptRepository):
+    crash_on: set[str]
+
+    async def insert_observation(self, attempt: Any) -> bool:
+        stored = await super().insert_observation(attempt)
+        if "after_attempt" in self.crash_on:
+            self.crash_on.discard("after_attempt")
+            raise _Crash
+        return stored
+
+    async def mark_effects_done(self, attempt_id: str, *, at: datetime, earned: bool) -> None:
+        if "before_done" in self.crash_on:
+            self.crash_on.discard("before_done")
+            raise _Crash
+        await super().mark_effects_done(attempt_id, at=at, earned=earned)
+
+
+class _CrashingProgress(MongoStudentSkillProgressRepository):
+    crash_on: set[str]
+
+    async def add_try_once(self, student_id: str, skill_id: str, contribution_id: str) -> int:
+        tries = await super().add_try_once(student_id, skill_id, contribution_id)
+        if "after_increment" in self.crash_on:
+            self.crash_on.discard("after_increment")
+            raise _Crash
+        return tries
+
+
+class _Events:
+    def __init__(self, db: Any) -> None:
+        self._db = db
+
+    async def count(self, name: str) -> int:
+        return await self._db["outbox_events"].count_documents(
+            {"academy_id": ACADEMY, "name": f"StudentProgress.{name}"}
+        )
 
 
 async def _seed(db: Any) -> None:
@@ -126,19 +166,22 @@ async def _seed(db: Any) -> None:
 
 def _wire(db: Any) -> dict[str, Any]:
     level_progress = MongoStudentLevelProgressRepository(db)
-    skill_progress = MongoStudentSkillProgressRepository(db)
+    skill_progress = _CrashingProgress(db)
+    skill_progress.crash_on = set()
+    attempts = _CrashingAttempts(db)
+    attempts.crash_on = set()
     recs = MongoLevelUpRecommendationRepository(db)
     lookup = CurriculumSkillLookupAdapter(
         skill_repo=MongoSkillRepository(db), level_repo=MongoLevelRepository(db)
     )
-    events = _Events()
+    # No idempotency store: a class observation must not lean on a cache
+    # that expires; the stored attempt is what makes it replayable.
     record = RecordTestAttempt(
         level_progress=level_progress,
         skill_progress=skill_progress,
-        test_attempts=MongoTestAttemptRepository(db),
+        test_attempts=attempts,
         skill_lookup=lookup,
-        outbox=events,  # type: ignore[arg-type]
-        idempotency_store=MongoIdempotencyStore(db),
+        outbox=MongoOutbox(db),
     )
     mark = MarkSkillMastered(
         level_progress=level_progress,
@@ -161,12 +204,25 @@ def _wire(db: Any) -> dict[str, Any]:
             recommendations=recs,
             enrollment_lookup=_Live(),
         ),
-        "class": ProgressClassDemonstrations(skills=MongoSkillRepository(db), mark_mastered=mark),
+        "class": ProgressClassDemonstrations(
+            skills=MongoSkillRepository(db),
+            mark_mastered=mark,
+            attempts=attempts,
+            progress=skill_progress,
+        ),
+        "record": record,
         "level_progress": level_progress,
         "skill_progress": skill_progress,
-        "attempts": MongoTestAttemptRepository(db),
+        "attempts": attempts,
         "recs": recs,
-        "events": events,
+        "events": _Events(db),
+        "unmark": UnmarkSkillMastered(
+            level_progress=level_progress,
+            skill_progress=skill_progress,
+            recommendations=recs,
+            skill_lookup=lookup,
+            test_attempts=attempts,
+        ),
     }
 
 
@@ -179,7 +235,7 @@ async def _place(w: dict[str, Any], kid: str, level_id: str) -> None:
 
 
 async def _record(
-    w: dict[str, Any], skill_id: str, kids: list[str], *, mutation: str = "m-1", sign: bool = True
+    w: dict[str, Any], skill_id: str, kids: list[str], *, occ: str = "occ-1", sign: bool = True
 ) -> dict[str, Any]:
     out = await w["class"].record(
         skill_id=skill_id,
@@ -187,9 +243,8 @@ async def _record(
         coach_id="sub-coach",
         can_sign_off=sign,
         session_id="sess-1",
-        occurrence_id="occ-1",
+        occurrence_id=occ,
         observed_at=CLASS_AT,
-        mutation_id=mutation,
     )
     return {o.student_id: o for o in out}
 
@@ -215,7 +270,7 @@ async def test_level_one_child_passes_a_level_three_skill_without_moving(real_db
         assert await w["recs"].list_recommended_for_student("maya") == []
         assert len(await w["recs"].list_recommended_for_student("leo")) == 1
         # One LevelCompleted only: Leo's. Maya's off-level pass completed nothing.
-        assert w["events"].names.count("LevelCompleted") == 1
+        assert await w["events"].count("LevelCompleted") == 1
         (attempt,) = await w["attempts"].list_for_student_skill("maya", "clear")
         assert attempt.level_id == "L3" and attempt.occurrence_id == "occ-1"
         assert attempt.observed_at.replace(tzinfo=UTC) == CLASS_AT
@@ -229,7 +284,7 @@ async def test_an_earlier_pass_is_preserved(real_db: Any) -> None:
         w = _wire(real_db)
         await _place(w, "maya", "L1")
         await _record(w, "clear", ["maya"])
-        again = await _record(w, "clear", ["maya"], mutation="m-2")
+        again = await _record(w, "clear", ["maya"], occ="occ-2")
         assert again["maya"].outcome == "already_mastered"
         assert (await w["skill_progress"].get("maya", "clear")).status == "PASSED"
         assert len(await w["attempts"].list_for_student_skill("maya", "clear")) == 1
@@ -242,14 +297,14 @@ async def test_n_tries_counts_once_per_retry_and_lead_skill_needs_a_signer(
     with tenant_scope(ACADEMY):
         w = _wire(real_db)
         await _place(w, "maya", "L1")
-        first = await _record(w, "drop", ["maya"], mutation="m-a")
-        retry = await _record(w, "drop", ["maya"], mutation="m-a")
+        first = await _record(w, "drop", ["maya"])
+        retry = await _record(w, "drop", ["maya"])
         assert (first["maya"].outcome, first["maya"].tries) == ("try_recorded", 1)
-        assert retry["maya"].tries == 1  # the retry replayed, no second try
-        second = await _record(w, "drop", ["maya"], mutation="m-b")
+        assert retry["maya"].tries == 1  # same class: one observation, no second try
+        second = await _record(w, "drop", ["maya"], occ="occ-2")
         assert second["maya"].outcome == "mastered"
 
-        unsigned = await _record(w, "lead", ["maya"], mutation="m-c", sign=False)
+        unsigned = await _record(w, "lead", ["maya"], sign=False)
         assert unsigned["maya"].outcome == "needs_lead"
         assert await w["skill_progress"].get("maya", "lead") is None
 
@@ -273,7 +328,7 @@ async def test_retired_foreign_or_unknown_skills_write_nothing(
         out = await _record(w, skill_id, ["maya"])
         assert out["maya"].outcome == outcome
         assert await w["attempts"].list_for_student_skill("maya", skill_id) == []
-        assert w["events"].names == []
+        assert await real_db["outbox_events"].count_documents({}) == 0
 
 
 async def test_another_academy_cannot_see_the_skill(real_db: Any) -> None:
@@ -282,3 +337,174 @@ async def test_another_academy_cannot_see_the_skill(real_db: Any) -> None:
         w = _wire(real_db)
         out = await _record(w, "clear", ["maya"])
         assert out["maya"].outcome == "not_on_level"
+
+
+# --- step 3: one save, recoverable -----------------------------------------
+
+
+@pytest.mark.parametrize("crash", ["after_attempt", "before_done"])
+async def test_an_interrupted_pass_resumes_to_one_pass_and_one_event(
+    real_db: Any, crash: str
+) -> None:
+    await _seed(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await _place(w, "maya", "L1")
+        w["attempts"].crash_on = {crash}
+        with pytest.raises(_Crash):
+            await _record(w, "clear", ["maya"])
+        assert (await w["class"].receipts("occ-1", [("maya", "clear")]))[
+            ("maya", "clear")
+        ] == "in_progress"
+
+        out = await _record(w, "clear", ["maya"])
+
+        assert out["maya"].outcome == "mastered"
+        (stored,) = await w["attempts"].list_for_student_skill("maya", "clear")
+        assert stored.earned_pass  # the dated evidence the parent timeline shows
+        assert await w["events"].count("SkillPassed") == 1
+        assert await w["events"].count("SkillTestAttempted") == 1
+        receipts = await w["class"].receipts("occ-1", [("maya", "clear"), ("maya", "grip")])
+        assert receipts == {("maya", "clear"): "recorded", ("maya", "grip"): "not_recorded"}
+
+
+async def test_interrupted_after_the_try_counts_it_once(real_db: Any) -> None:
+    await _seed(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await _place(w, "maya", "L1")
+        await _record(w, "drop", ["maya"])  # try 1 of 2, class one
+        w["skill_progress"].crash_on = {"after_increment"}
+        with pytest.raises(_Crash):
+            await _record(w, "drop", ["maya"], occ="occ-2")
+        out = await _record(w, "drop", ["maya"], occ="occ-2")
+        late = await _record(w, "drop", ["maya"])  # a stale retry of class one
+        assert out["maya"].outcome == "mastered" and out["maya"].tries == 2
+        assert (late["maya"].outcome, late["maya"].tries) == ("try_recorded", 1)
+        assert (await w["skill_progress"].get("maya", "drop")).tries == 2
+        assert await w["events"].count("SkillPassed") == 1  # one genuine transition
+        earned = await w["attempts"].earned_for_student("maya")
+        assert [a.occurrence_id for a in earned] == ["occ-2"]  # the try on occ-1 earned nothing
+
+
+async def test_two_writers_store_one_observation(real_db: Any) -> None:
+    await _seed(real_db)
+    with tenant_scope(ACADEMY):
+        w, other = _wire(real_db), _wire(real_db)
+        await _place(w, "maya", "L1")
+        await asyncio.gather(_record(w, "drop", ["maya"]), _record(other, "drop", ["maya"]))
+        assert len(await w["attempts"].list_for_student_skill("maya", "drop")) == 1
+        assert (await w["skill_progress"].get("maya", "drop")).tries == 1
+
+
+async def test_formal_tests_still_repeat(real_db: Any) -> None:
+    await _seed(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await _place(w, "maya", "L1")
+        for _ in range(2):
+            await w["record"].execute(
+                RecordTestAttemptCommand(
+                    student_id="maya",
+                    skill_id="grip",
+                    program_id="prog",
+                    coach_id="coach",
+                    can_sign_off=True,
+                    attempts_count=5,
+                    success_count=1,
+                )
+            )
+        assert len(await w["attempts"].list_for_student_skill("maya", "grip")) == 2
+
+
+async def test_an_undone_try_is_not_counted_toward_the_pass(real_db: Any) -> None:
+    await _seed(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await _place(w, "maya", "L1")
+        await _record(w, "drop", ["maya"])  # try 1 of 2
+        assert await w["skill_progress"].increment_tries("maya", "drop", -1) == 0  # undo
+        out = await _record(w, "drop", ["maya"], occ="occ-2")
+        assert (out["maya"].outcome, out["maya"].tries) == ("try_recorded", 1)
+        plain = await w["skill_progress"].increment_tries("maya", "drop", 1)  # a plain tap
+        replay = await _record(w, "drop", ["maya"], occ="occ-2")
+        assert plain == 2 and replay["maya"].tries == 1  # the replay keeps its own count
+        assert await w["events"].count("SkillPassed") == 0
+
+
+async def test_resuming_a_landed_pass_does_not_announce_it_again(real_db: Any) -> None:
+    await _seed(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await _place(w, "maya", "L1")
+        w["attempts"].crash_on = {"before_done"}
+        with pytest.raises(_Crash):
+            await _record(w, "clear", ["maya"])
+        first = (await w["skill_progress"].get("maya", "clear")).last_updated_at
+        await _record(w, "clear", ["maya"])
+        assert (await w["skill_progress"].get("maya", "clear")).last_updated_at == first
+
+
+async def test_a_take_back_wins_over_an_interrupted_pass(real_db: Any) -> None:
+    await _seed(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await _place(w, "maya", "L1")
+        w["attempts"].crash_on = {"before_done"}
+        with pytest.raises(_Crash):
+            await _record(w, "grip", ["maya"])
+        await w["unmark"].execute(
+            UnmarkSkillMasteredCommand(
+                student_id="maya",
+                skill_id="grip",
+                program_id="prog",
+                updated_by="owner",
+                can_sign_off=True,
+            )
+        )
+        receipts = await w["class"].receipts("occ-1", [("maya", "grip")])
+        assert receipts == {("maya", "grip"): "counted"}  # no longer resumable
+        await _record(w, "grip", ["maya"])  # a later recap save replays it
+        assert (await w["skill_progress"].get("maya", "grip")).status == "PRACTICING"
+
+
+def _formal(skill_id: str, *, success: int) -> RecordTestAttemptCommand:
+    return RecordTestAttemptCommand(
+        student_id="maya",
+        skill_id=skill_id,
+        program_id="prog",
+        coach_id="coach",
+        can_sign_off=True,
+        attempts_count=5,
+        success_count=success,
+    )
+
+
+async def test_a_failed_formal_test_wins_over_an_interrupted_class_pass(real_db: Any) -> None:
+    await _seed(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        await _place(w, "maya", "L1")
+        w["attempts"].crash_on = {"before_done"}
+        with pytest.raises(_Crash):
+            await _record(w, "grip", ["maya"])
+        await w["record"].execute(_formal("grip", success=1))  # reassessed: not there yet
+        assert await w["class"].receipts("occ-1", [("maya", "grip")]) == {
+            ("maya", "grip"): "counted"
+        }
+        await _record(w, "grip", ["maya"])  # a later recap save replays it
+        assert (await w["skill_progress"].get("maya", "grip")).status == "NEEDS_REVIEW"
+
+
+async def test_the_timeline_credits_a_class_only_for_the_pass_it_earned(real_db: Any) -> None:
+    await _seed(real_db)
+    with tenant_scope(ACADEMY):
+        w = _wire(real_db)
+        passes = SkillProgressPasses(w["skill_progress"], w["attempts"])
+        await _place(w, "maya", "L1")
+        await _record(w, "grip", ["maya"])
+        assert await passes.earned_at("maya", ["occ-1"]) == {"occ-1": {"grip"}}
+        await w["record"].execute(_formal("grip", success=1))  # taken back
+        await w["record"].execute(_formal("grip", success=5))  # re-earned by a test
+        assert (await w["skill_progress"].get("maya", "grip")).status == "PASSED"
+        assert await passes.earned_at("maya", ["occ-1"]) == {}

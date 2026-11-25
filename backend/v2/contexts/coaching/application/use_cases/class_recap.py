@@ -27,7 +27,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -47,17 +47,22 @@ from backend.v2.contexts.coaching.domain.class_recap import (
     merge_practice,
     resolve_report,
 )
+from backend.v2.contexts.coaching.domain.class_recap import MAX_GROUPS as MAX_GROUPS
 
 # Explicit re-exports: interfaces build commands and views from these without
 # importing the domain (tests/structural/test_layering.py).
 from backend.v2.contexts.coaching.domain.class_recap import (
     MAX_PARTICIPANTS as MAX_PARTICIPANTS,
 )
+from backend.v2.contexts.coaching.domain.class_recap import MAX_PASSES as MAX_PASSES
 from backend.v2.contexts.coaching.domain.class_recap import (
     MAX_TAUGHT_SKILLS as MAX_TAUGHT_SKILLS,
 )
+from backend.v2.contexts.coaching.domain.class_recap import ChildPass as ChildPass
 from backend.v2.contexts.coaching.domain.class_recap import ChildPractice as ChildPractice
 from backend.v2.contexts.coaching.domain.class_recap import ClassReport as ClassReport
+from backend.v2.contexts.coaching.domain.class_recap import GroupLesson as GroupLesson
+from backend.v2.contexts.coaching.domain.class_recap import PassClaim as PassClaim
 from backend.v2.contexts.coaching.domain.errors import (
     RecapConflict,
     RecapInvalid,
@@ -72,7 +77,10 @@ REPORT_MAX_CHARS = 2000
 #: How long a submit owns the reading of its report; after that a replay
 #: settles it (applied or the owner's) without another model call.
 REPORT_PROCESSING_LEASE = timedelta(minutes=5)
-CHILD_RECAP_LIMIT = 20
+CHILD_RECAP_PAGE = 10
+#: shortcut: a child's whole attended history is scanned for recaps; past a
+#: few hundred classes a year page the attendance read too.
+CHILD_ATTENDANCE_SCAN = 1000
 HANDOFF_LIMIT = 50
 
 
@@ -87,7 +95,23 @@ class ClassRecapRepository(Protocol):
         it is still at ``expected_revision``. False when it moved on."""
         ...
 
-    async def list_for_occurrences(self, occurrence_ids: list[str]) -> list[ClassRecap]: ...
+    async def page_for_occurrences(
+        self,
+        occurrence_ids: list[str],
+        *,
+        before: tuple[datetime, str] | None,
+        limit: int,
+    ) -> list[ClassRecap]:
+        """Recaps among ``occurrence_ids``, newest class first (ties by
+        occurrence id), strictly older than ``before`` when given."""
+        ...
+
+    async def settle_passes(
+        self, occurrence_id: str, *, revision: int, pairs: list[tuple[str, str]]
+    ) -> None:
+        """Mark these passes run by the pipeline, without a new revision;
+        a no-op once the recap moved past ``revision``."""
+        ...
 
 
 class ClassReportRepository(Protocol):
@@ -126,9 +150,9 @@ class StudentAttendanceReader(Protocol):
 class PassedSkills(Protocol):
     """The authoritative pass pipeline (student_progress), read only."""
 
-    async def passed(self, student_id: str, skill_ids: list[str]) -> set[str]:
-        """Ids among ``skill_ids`` this child genuinely passed (silent
-        placement credits excluded, like every parent-facing pass read)."""
+    async def earned_at(self, student_id: str, occurrence_ids: list[str]) -> dict[str, set[str]]:
+        """Per class, the skills this child passed by a demonstration in that
+        class and still holds (a pass since taken back is left out)."""
         ...
 
 
@@ -138,6 +162,23 @@ class SkillOption(BaseModel):
     skill_id: str
     name: str
     level_name: str = ""
+
+
+class RecapGroup(BaseModel):
+    """A proficiency group in the class: the children on one level."""
+
+    model_config = {"frozen": True}
+
+    level_id: str
+    name: str
+    sequence: int
+    student_ids: list[str]
+
+
+class RecapGroupLookup(Protocol):
+    async def for_students(self, student_ids: list[str]) -> list[RecapGroup]:
+        """The level groups these children form, lowest level first."""
+        ...
 
 
 class RecapSkillCatalog(Protocol):
@@ -236,6 +277,111 @@ def _attendance_map(rows: list[Attendance]) -> dict[str, str]:
     return {row.student_id: row.status for row in rows}
 
 
+# --- passes: the pass pipeline, per class ----------------------------------
+
+
+class DemonstrationOutcome(BaseModel):
+    """One child's result, as the pass pipeline decided it."""
+
+    model_config = {"frozen": True}
+
+    student_id: str
+    #: mastered, already_mastered, try_recorded, needs_lead, not_on_level, not_placed
+    outcome: str
+    off_level: bool = False
+    level_up_queued: bool = False
+    tries: int = 0
+
+
+#: recorded: every effect landed and the skill is passed; counted: it landed
+#: as a try short of N (or the pass was since taken back); in_progress: an
+#: earlier save stopped part way (saving again finishes it); earned_before:
+#: already passed elsewhere; not_recorded: the pipeline refused it (not
+#: placed, retired skill). A pass the pipeline has not run yet reads
+#: in_progress (see ``_pass_receipts``).
+PassReceipt = Literal["recorded", "counted", "in_progress", "earned_before", "not_recorded"]
+
+
+class ClassDemonstrationWriter(Protocol):
+    """The pass pipeline (student_progress), written for one dated class. It
+    resolves the program and level from the skill and applies the skill's
+    pass rule once per class, child and skill: a retry, a second writer or a
+    resumed save converges on one contribution. A skill of another level
+    counts there and never moves the child's active level."""
+
+    async def record(
+        self,
+        *,
+        skill_id: str,
+        student_ids: list[str],
+        coach_id: str,
+        can_sign_off: bool,
+        session_id: str,
+        occurrence_id: str,
+        observed_at: datetime,
+    ) -> list[DemonstrationOutcome]: ...
+
+    async def receipts(
+        self, occurrence_id: str, passes: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], PassReceipt]:
+        """State of each ``(student_id, skill_id)`` pass of this class."""
+        ...
+
+
+def _group_lessons(
+    cmd: SaveClassRecapCommand, current: ClassRecap | None, taught: list[str]
+) -> tuple[GroupLesson, ...]:
+    if cmd.group_lessons is None:
+        # Kept as recorded, less any skill this save no longer teaches.
+        kept = current.group_lessons if current is not None else ()
+        trimmed = (
+            row.model_copy(update={"skill_ids": tuple(s for s in row.skill_ids if s in taught)})
+            for row in kept
+        )
+        return tuple(row for row in trimmed if row.skill_ids)
+    levels = [row.level_id for row in cmd.group_lessons]
+    if len(set(levels)) != len(levels):
+        raise RecapInvalid("one lesson per group", level_ids=sorted(levels))
+    untaught = sorted({s for row in cmd.group_lessons for s in row.skill_ids} - set(taught))
+    if untaught:
+        raise RecapInvalid("a group's skills must be taught in this class", skill_ids=untaught)
+    return tuple(
+        row.model_copy(update={"skill_ids": tuple(dict.fromkeys(row.skill_ids))})
+        for row in cmd.group_lessons
+    )
+
+
+def _report_group_lessons(
+    current: ClassRecap | None, groups: list[RecapGroup], practice: Sequence[ChildPractice]
+) -> list[GroupLesson] | None:
+    """A report only adds: each level group gains the skills its own children
+    practised. Teaching alone credits no group, as it credits no child."""
+    kept = {row.level_id: row.skill_ids for row in current.group_lessons} if current else {}
+    if not groups:
+        return None
+    by_student = {row.student_id: row.skill_ids for row in practice}
+    lessons = dict(kept)
+    for group in groups:
+        practised = (s for sid in group.student_ids for s in by_student.get(sid, ()))
+        skills = tuple(dict.fromkeys((*kept.get(group.level_id, ()), *practised)))
+        if skills:
+            lessons[group.level_id] = skills
+    if len(lessons) > MAX_GROUPS:
+        return None  # more groups than a recap holds: keep the recorded ones
+    return [GroupLesson(level_id=lid, skill_ids=ids) for lid, ids in lessons.items()]
+
+
+async def _pass_receipts(
+    writer: ClassDemonstrationWriter, occurrence_id: str, passes: tuple[ChildPass, ...]
+) -> dict[tuple[str, str], PassReceipt]:
+    receipts = await writer.receipts(occurrence_id, [(p.student_id, p.skill_id) for p in passes])
+    for row in passes:
+        key = (row.student_id, row.skill_id)
+        if receipts.get(key) == "not_recorded" and not row.settled:
+            receipts[key] = "in_progress"  # saved, but a save stopped before running it
+    return receipts
+
+
 # --- save (the one guarded writer) -----------------------------------------
 
 
@@ -248,11 +394,20 @@ class SaveClassRecapCommand(BaseModel):
     expected_revision: int = Field(ge=0)
     taught_skill_ids: list[str] = Field(default_factory=list, max_length=MAX_TAUGHT_SKILLS)
     practice: list[ChildPractice] = Field(default_factory=list, max_length=MAX_PARTICIPANTS)
+    #: The class's passes, all of them; None keeps the current ones (a report).
+    passes: list[PassClaim] | None = Field(default=None, max_length=MAX_PASSES)
+    #: What each level group worked on, all of them; None keeps the current ones.
+    group_lessons: list[GroupLesson] | None = Field(default=None, max_length=MAX_GROUPS)
     source: RecapSource = "direct"
     source_report_id: str | None = None
 
 
 class SaveClassRecap:
+    """Saves the recap, then applies its passes. The passes ride in the
+    recap write (durable intent) and each is applied idempotently, so a save
+    that stops part way is finished by saving again, and the receipt on
+    :class:`GetClassRecap` shows what landed."""
+
     def __init__(
         self,
         *,
@@ -261,6 +416,7 @@ class SaveClassRecap:
         attendance: OccurrenceAttendanceReader,
         skills: RecapSkillCatalog,
         academy_id: Callable[[], str],
+        writer: ClassDemonstrationWriter | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._recaps = recaps
@@ -268,6 +424,7 @@ class SaveClassRecap:
         self._attendance = attendance
         self._skills = skills
         self._academy_id = academy_id
+        self._writer = writer
         self._now = clock
 
     async def execute(self, cmd: SaveClassRecapCommand, actor: RecapActor) -> ClassRecap:
@@ -277,7 +434,9 @@ class SaveClassRecap:
         )
         current = await self._recaps.get(cmd.occurrence_id)
         if current is not None and current.last_mutation_id == cmd.mutation_id:
-            return current  # replay of the write that produced this revision
+            # Replay of the write that produced this revision: finish its passes.
+            await self._apply_passes(occ, current, actor)
+            return current
         revision = current.revision if current is not None else 0
         if cmd.expected_revision != revision:
             raise RecapConflict(
@@ -315,15 +474,25 @@ class SaveClassRecap:
                 "only students marked present can be credited with practice",
                 student_ids=not_present,
             )
+        # A pass the pipeline never counted may be taken off (a mis-tap).
+        uncounted: set[tuple[str, str]] = set()
+        if self._writer is not None and current is not None and current.passes:
+            receipts = await _pass_receipts(self._writer, occ.occurrence_id, current.passes)
+            uncounted = {pair for pair, r in receipts.items() if r == "not_recorded"}
+        passes = self._passes(cmd, current, taught, marks, revision + 1, uncounted)
+        group_lessons = _group_lessons(cmd, current, taught)
 
         recap = ClassRecap(
             recap_id=current.recap_id if current is not None else str(new_ulid()),
             academy_id=self._academy_id(),
             occurrence_id=occ.occurrence_id,
-            session_id=occ.session_id,
+            # The batch the teaching plan reads history by (a term clone's template).
+            session_id=occ.template_session_id or occ.session_id,
             class_starts_at=occ.starts_at,
             taught_skill_ids=tuple(taught),
             practice=practice,
+            passes=passes,
+            group_lessons=group_lessons,
             revision=revision + 1,
             last_mutation_id=cmd.mutation_id,
             source=cmd.source,
@@ -336,105 +505,82 @@ class SaveClassRecap:
                 "this recap changed since you opened it; reload and try again",
                 occurrence_id=cmd.occurrence_id,
             )
+        await self._apply_passes(occ, recap, actor)
         return recap
 
-
-# --- demonstration during a dated class -------------------------------------
-
-
-class DemonstrationOutcome(BaseModel):
-    """One child's result, as the pass pipeline decided it."""
-
-    model_config = {"frozen": True}
-
-    student_id: str
-    #: mastered, already_mastered, try_recorded, needs_lead, not_on_level, not_placed
-    outcome: str
-    off_level: bool = False
-    level_up_queued: bool = False
-    tries: int = 0
-
-
-class ClassDemonstrationWriter(Protocol):
-    """The pass pipeline (student_progress), written for one dated class. It
-    resolves the program and level from the skill and applies the skill's
-    pass rule; a skill of another level counts there and never moves the
-    child's active level."""
-
-    async def record(
+    def _passes(
         self,
-        *,
-        skill_id: str,
-        student_ids: list[str],
-        coach_id: str,
-        can_sign_off: bool,
-        session_id: str,
-        occurrence_id: str,
-        observed_at: datetime,
-        mutation_id: str,
-    ) -> list[DemonstrationOutcome]: ...
-
-
-class RecordClassDemonstrationCommand(BaseModel):
-    model_config = {"frozen": True}
-
-    occurrence_id: str
-    class_starts_at: datetime
-    mutation_id: str = Field(min_length=1, max_length=64)
-    skill_id: str = Field(min_length=1)
-    student_ids: list[str] = Field(min_length=1, max_length=MAX_PARTICIPANTS)
-
-
-class RecordClassDemonstration:
-    """A child met a skill's criterion in this dated class.
-
-    Same gate as the recap: the class's lead coach (scheduled, actual or
-    substitute) or the owner, a started and uncancelled class, the date as
-    read. Only children marked present or late for THIS class can be
-    credited, so a past attendee who later moved batches still can, and a
-    child who was absent cannot."""
-
-    def __init__(
-        self,
-        *,
-        occurrences: OccurrenceLookup,
-        attendance: OccurrenceAttendanceReader,
-        skills: RecapSkillCatalog,
-        writer: ClassDemonstrationWriter,
-        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
-    ) -> None:
-        self._occurrences = occurrences
-        self._attendance = attendance
-        self._skills = skills
-        self._writer = writer
-        self._now = clock
-
-    async def execute(
-        self, cmd: RecordClassDemonstrationCommand, actor: RecapActor
-    ) -> list[DemonstrationOutcome]:
-        occ = await _writable_occurrence(
-            self._occurrences, cmd.occurrence_id, cmd.class_starts_at, actor, self._now()
+        cmd: SaveClassRecapCommand,
+        current: ClassRecap | None,
+        taught: list[str],
+        marks: dict[str, str],
+        revision: int,
+        uncounted: set[tuple[str, str]],
+    ) -> tuple[ChildPass, ...]:
+        kept = current.passes if current is not None else ()
+        if cmd.passes is None:
+            return kept
+        if (kept or cmd.passes) and self._writer is None:
+            raise RecapInvalid("passes cannot be recorded here")
+        wanted = list(dict.fromkeys((p.student_id, p.skill_id) for p in cmd.passes))
+        kept = tuple(
+            p
+            for p in kept
+            if (p.student_id, p.skill_id) in wanted or (p.student_id, p.skill_id) not in uncounted
         )
-        if not await self._skills.names([cmd.skill_id], active_only=True):
-            raise RecapInvalid("unknown curriculum skill", skill_ids=[cmd.skill_id])
-        student_ids = list(dict.fromkeys(cmd.student_ids))
-        marks = _attendance_map(await self._attendance.list_for_occurrence(occ.occurrence_id))
-        absent = [sid for sid in student_ids if marks.get(sid) not in CONFIRMED_PRESENT]
+        had = {(p.student_id, p.skill_id) for p in kept}
+        dropped = sorted(had - set(wanted))
+        if dropped:
+            # A recorded pass stands: taking it back is a formal reassessment.
+            raise RecapInvalid(
+                "a recorded pass can only be taken back by a formal reassessment",
+                student_ids=sorted({sid for sid, _ in dropped}),
+            )
+        new = [pair for pair in wanted if pair not in had]
+        untaught = sorted({skill for _, skill in new} - set(taught))
+        if untaught:
+            raise RecapInvalid("passed skills must be taught in this class", skill_ids=untaught)
+        absent = sorted({sid for sid, _ in new if marks.get(sid) not in CONFIRMED_PRESENT})
         if absent:
             raise RecapInvalid(
-                "only students marked present can be credited with a pass",
-                student_ids=absent,
+                "only students marked present can be credited with a pass", student_ids=absent
             )
-        return await self._writer.record(
-            skill_id=cmd.skill_id,
-            student_ids=student_ids,
-            coach_id=actor.user_id,
-            can_sign_off=not actor.is_assistant_only,
-            session_id=occ.session_id,
-            occurrence_id=occ.occurrence_id,
-            observed_at=occ.starts_at,
-            mutation_id=cmd.mutation_id,
+        return kept + tuple(
+            ChildPass(student_id=sid, skill_id=skill, added_revision=revision) for sid, skill in new
         )
+
+    async def _apply_passes(
+        self, occ: OccurrenceDetails, recap: ClassRecap, actor: RecapActor
+    ) -> None:
+        if self._writer is None or not recap.passes:
+            return
+        receipts = await _pass_receipts(self._writer, occ.occurrence_id, recap.passes)
+        by_skill: dict[str, list[str]] = {}
+        for row in recap.passes:
+            # Only unfinished passes run: landed ones are left alone, so a
+            # later edit never re-runs their side effects (a level-up the owner
+            # since rejected), and a refused one (or one earned before, then
+            # reassessed) never comes back on an edit.
+            if receipts.get((row.student_id, row.skill_id)) == "in_progress":
+                by_skill.setdefault(row.skill_id, []).append(row.student_id)
+        # Each is applied once per class, child and skill: a resumed one
+        # picks up where it stopped.
+        for skill_id, student_ids in by_skill.items():
+            await self._writer.record(
+                skill_id=skill_id,
+                student_ids=student_ids,
+                coach_id=actor.user_id,
+                can_sign_off=not actor.is_assistant_only,
+                session_id=occ.session_id,
+                occurrence_id=occ.occurrence_id,
+                observed_at=occ.starts_at,
+            )
+        if by_skill:
+            await self._recaps.settle_passes(
+                occ.occurrence_id,
+                revision=recap.revision,
+                pairs=[(sid, skill) for skill, sids in by_skill.items() for sid in sids],
+            )
 
 
 # --- read ------------------------------------------------------------------
@@ -460,6 +606,10 @@ class ClassRecapState(BaseModel):
     #: Taught skills that left the curriculum still need a name to render.
     skill_names: dict[str, str]
     reports: list[ClassReport]
+    #: ``(student_id, skill_id) -> receipt`` for each of the recap's passes.
+    pass_receipts: dict[tuple[str, str], PassReceipt] = Field(default_factory=dict)
+    #: The class's level groups, for recording what each worked on.
+    groups: list[RecapGroup] = Field(default_factory=list)
 
 
 class GetClassRecap:
@@ -472,13 +622,17 @@ class GetClassRecap:
         attendance: OccurrenceAttendanceReader,
         skills: RecapSkillCatalog,
         names: StudentNames,
+        writer: ClassDemonstrationWriter | None = None,
+        groups: RecapGroupLookup | None = None,
     ) -> None:
+        self._groups = groups
         self._recaps = recaps
         self._reports = reports
         self._occurrences = occurrences
         self._attendance = attendance
         self._skills = skills
         self._names = names
+        self._writer = writer
 
     async def execute(self, occurrence_id: str, actor: RecapActor) -> ClassRecapState:
         occ = await self._occurrences.get(occurrence_id)
@@ -506,6 +660,16 @@ class GetClassRecap:
             skill_options=await self._skills.options() if can_edit else [],
             skill_names=await self._skills.names(taught, active_only=False),
             reports=reports,
+            pass_receipts=(
+                await _pass_receipts(self._writer, occurrence_id, recap.passes)
+                if self._writer is not None and recap is not None and recap.passes
+                else {}
+            ),
+            groups=(
+                await self._groups.for_students([r.student_id for r in roster])
+                if can_edit and self._groups is not None and roster
+                else []
+            ),
         )
 
 
@@ -537,7 +701,9 @@ class SubmitClassReport:
         save: SaveClassRecap,
         academy_id: Callable[[], str],
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        groups: RecapGroupLookup | None = None,
     ) -> None:
+        self._groups = groups
         self._reports = reports
         self._recaps = recaps
         self._occurrences = occurrences
@@ -653,9 +819,16 @@ class SubmitClassReport:
         practice = merge_practice(
             current.practice if current is not None else (), resolved.practice
         )
-        if current is not None and (taught, practice) == (
-            current.taught_skill_ids,
-            current.practice,
+        practised = [row.student_id for row in practice]
+        groups = await self._groups.for_students(practised) if self._groups and practised else []
+        lessons = _report_group_lessons(current, groups, practice)
+        same_lessons = lessons is None or (
+            current is not None and tuple(lessons) == current.group_lessons
+        )
+        if (
+            current is not None
+            and (taught, practice) == (current.taught_skill_ids, current.practice)
+            and same_lessons
         ):
             # Nothing new: the recap already says all of this.
             return report.model_copy(
@@ -670,6 +843,7 @@ class SubmitClassReport:
                     expected_revision=current.revision if current is not None else 0,
                     taught_skill_ids=list(taught),
                     practice=list(practice),
+                    group_lessons=lessons,
                     source="report",
                     source_report_id=report.report_id,
                 ),
@@ -753,8 +927,6 @@ class ChildRecapSkill(BaseModel):
 
     skill_id: str
     name: str
-    #: Passed as of today by the pass pipeline (placement credits excluded).
-    passed: bool
 
 
 class ChildClassRecap(BaseModel):
@@ -764,13 +936,39 @@ class ChildClassRecap(BaseModel):
     class_starts_at: datetime
     taught_skills: list[ChildRecapSkill]
     practiced_skills: list[ChildRecapSkill]
+    #: Passed by a demonstration in this class (dated evidence), still held.
+    earned_skills: list[ChildRecapSkill]
+
+
+class ChildRecapPage(BaseModel):
+    model_config = {"frozen": True}
+
+    recaps: list[ChildClassRecap]
+    #: Pass back as ``cursor`` for older classes; None on the last page.
+    next_cursor: str | None
+
+
+def _encode_cursor(recap: ClassRecap) -> str:
+    return f"{_utc(recap.class_starts_at).isoformat()}|{recap.occurrence_id}"
+
+
+def _decode_cursor(cursor: str) -> tuple[datetime, str]:
+    at, sep, occurrence_id = cursor.partition("|")
+    try:
+        parsed = datetime.fromisoformat(at)
+    except ValueError:
+        parsed = None
+    if not sep or not occurrence_id or parsed is None or parsed.tzinfo is None:
+        raise RecapInvalid("bad cursor")
+    return parsed, occurrence_id
 
 
 class ListChildClassRecaps:
-    """Recent classes this child is marked present for that have a recap.
-    The route guards child ownership. Practice is the child's own row only;
-    passes come from the pass pipeline, never from a report. No report text,
-    no other children."""
+    """One child's class timeline, newest first, a page at a time: classes
+    the child is marked present for that have a recap. The route guards
+    child ownership. Practice is the child's own row only; a pass shows only
+    on the class whose demonstration earned it, never from a report. No
+    report text, no other children."""
 
     def __init__(
         self,
@@ -785,35 +983,48 @@ class ListChildClassRecaps:
         self._skills = skills
         self._passes = passes
 
-    async def execute(self, student_id: str) -> list[ChildClassRecap]:
+    async def execute(
+        self, student_id: str, *, cursor: str | None = None, limit: int = CHILD_RECAP_PAGE
+    ) -> ChildRecapPage:
+        before = _decode_cursor(cursor) if cursor else None
         attended = await self._attendance.confirmed_occurrence_ids(
-            student_id, limit=CHILD_RECAP_LIMIT * 2
+            student_id, limit=CHILD_ATTENDANCE_SCAN
         )
-        recaps = await self._recaps.list_for_occurrences(attended)
-        recaps.sort(key=lambda r: _utc(r.class_starts_at), reverse=True)
-        recaps = recaps[:CHILD_RECAP_LIMIT]
-        # One names read and one passes read for the whole list, not per recap.
+        page = await self._recaps.page_for_occurrences(attended, before=before, limit=limit + 1)
+        more = len(page) > limit
+        recaps = page[:limit]
+        earned = (
+            await self._passes.earned_at(student_id, [r.occurrence_id for r in recaps])
+            if recaps
+            else {}
+        )
+        # One names read for the whole page, not per recap.
         ids = list(
             dict.fromkeys(
-                s for r in recaps for s in (*r.taught_skill_ids, *r.practiced_by(student_id))
+                s
+                for r in recaps
+                for s in (
+                    *r.taught_skill_ids,
+                    *r.practiced_by(student_id),
+                    *sorted(earned.get(r.occurrence_id, ())),
+                )
             )
         )
         names = await self._skills.names(ids, active_only=False) if ids else {}
-        passed = await self._passes.passed(student_id, ids) if ids else set()
 
         def skills(skill_ids: Sequence[str]) -> list[ChildRecapSkill]:
-            return [
-                ChildRecapSkill(skill_id=s, name=names[s], passed=s in passed)
-                for s in skill_ids
-                if s in names
-            ]
+            return [ChildRecapSkill(skill_id=s, name=names[s]) for s in skill_ids if s in names]
 
-        return [
-            ChildClassRecap(
-                occurrence_id=r.occurrence_id,
-                class_starts_at=r.class_starts_at,
-                taught_skills=skills(r.taught_skill_ids),
-                practiced_skills=skills(r.practiced_by(student_id)),
-            )
-            for r in recaps
-        ]
+        return ChildRecapPage(
+            recaps=[
+                ChildClassRecap(
+                    occurrence_id=r.occurrence_id,
+                    class_starts_at=r.class_starts_at,
+                    taught_skills=skills(r.taught_skill_ids),
+                    practiced_skills=skills(r.practiced_by(student_id)),
+                    earned_skills=skills(sorted(earned.get(r.occurrence_id, ()))),
+                )
+                for r in recaps
+            ],
+            next_cursor=_encode_cursor(recaps[-1]) if more else None,
+        )
