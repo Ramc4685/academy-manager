@@ -13,6 +13,7 @@ the caller can sign off (not assistant-only).
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -34,6 +35,7 @@ from backend.v2.contexts.student_progress.domain.errors import (
     ActiveRecommendationExists,
     EnrollmentEnded,
     PassNeedsLeadCoach,
+    SkillNotOnCurrentLevel,
 )
 from backend.v2.contexts.student_progress.domain.logic import check_level_completion
 
@@ -58,6 +60,13 @@ class MarkSkillMasteredCommand(BaseModel):
     session_id: str | None = None
     #: False for an assistant-only coach: LEAD_COACH skills then need a lead.
     can_sign_off: bool
+    #: Trusted class entry point only (see ``RecordTestAttemptCommand``): a
+    #: skill of another active level counts there and never queues a level-up.
+    off_level_ok: bool = False
+    occurrence_id: str | None = None
+    observed_at: datetime | None = None
+    #: Per-student retries replay instead of counting another N_TRIES try.
+    mutation_id: str | None = None
 
 
 class MasteredOutcome(BaseModel):
@@ -67,6 +76,8 @@ class MasteredOutcome(BaseModel):
     level_up_queued: bool = False
     #: Taps counted so far on an N_TRIES skill.
     tries: int = 0
+    #: The skill sits on another level than the student's active one.
+    off_level: bool = False
 
 
 class MarkSkillMastered:
@@ -100,10 +111,15 @@ class MarkSkillMastered:
         if active is None:
             return MasteredOutcome(student_id=student_id, outcome="not_placed")
         # Only the active level's skills count toward moving up; a skill from
-        # another level would never complete anything.
-        if skill_level_id != active.level_id:
+        # another level never completes anything.
+        on_level = skill_level_id == active.level_id
+        if not on_level and not cmd.off_level_ok:
             return MasteredOutcome(student_id=student_id, outcome="not_on_level")
         existing = await self._skill_progress.get(student_id, cmd.skill_id)
+        if existing is not None and existing.status == "PASSED" and not on_level:
+            return MasteredOutcome(
+                student_id=student_id, outcome="already_mastered", off_level=True
+            )
         if existing is not None and existing.status == "PASSED":
             # Skills passed before tap-to-master (or a level-up the owner
             # rejected) leave a complete level with nothing queued; a re-tap
@@ -125,21 +141,37 @@ class MarkSkillMastered:
                     coach_id=cmd.coach_id,
                     can_sign_off=cmd.can_sign_off,
                     session_id=cmd.session_id,
+                    occurrence_id=cmd.occurrence_id,
                     scoring_type="COACH_APPROVAL",
                     attempts_count=1,
                     success_count=1,
                     notes=MASTERED_NOTE,
+                    off_level_ok=cmd.off_level_ok,
+                    observed_at=cmd.observed_at,
+                    mutation_id=f"{cmd.mutation_id}:{student_id}" if cmd.mutation_id else None,
                 )
             )
         except PassNeedsLeadCoach:
-            return MasteredOutcome(student_id=student_id, outcome="needs_lead")
+            return MasteredOutcome(
+                student_id=student_id, outcome="needs_lead", off_level=not on_level
+            )
+        except SkillNotOnCurrentLevel:
+            # Off-level and not live curriculum of this program (retired skill or level).
+            return MasteredOutcome(student_id=student_id, outcome="not_on_level", off_level=True)
         if not result.passed:
             return MasteredOutcome(
-                student_id=student_id, outcome="try_recorded", tries=result.tries
+                student_id=student_id,
+                outcome="try_recorded",
+                tries=result.tries,
+                off_level=not on_level,
             )
-        queued = result.level_completed and await self._queue_level_up(cmd, student_id)
+        queued = on_level and result.level_completed and await self._queue_level_up(cmd, student_id)
         return MasteredOutcome(
-            student_id=student_id, outcome="mastered", level_up_queued=queued, tries=result.tries
+            student_id=student_id,
+            outcome="mastered",
+            level_up_queued=queued,
+            tries=result.tries,
+            off_level=not on_level,
         )
 
     async def _level_complete(self, student_id: str, level_id: str) -> bool:

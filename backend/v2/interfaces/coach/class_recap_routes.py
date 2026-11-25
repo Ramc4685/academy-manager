@@ -4,6 +4,7 @@ GET  /coach/occurrences/{occurrence_id}/class-recap      read (lead, assistant, 
 PUT  /coach/occurrences/{occurrence_id}/class-recap      direct entry (lead coach or owner)
 POST /coach/occurrences/{occurrence_id}/class-reports    after-class report (lead coach or owner)
 POST /coach/occurrences/{occurrence_id}/class-reports/{report_id}/resolve   owner closes a handoff
+POST /coach/occurrences/{occurrence_id}/class-demonstrations   a child met a skill's criterion (lead coach or owner)
 
 Writes carry ``class_starts_at`` as read, so a write meant for one dated
 class cannot land on a rescheduled one. The use cases own every rule (who may
@@ -27,7 +28,9 @@ from backend.v2.contexts.coaching.application.use_cases.class_recap import (
     ChildPractice,
     ClassRecapState,
     ClassReport,
+    DemonstrationOutcome,
     RecapActor,
+    RecordClassDemonstrationCommand,
     SaveClassRecapCommand,
     SubmitClassReportCommand,
 )
@@ -101,6 +104,25 @@ class SubmitClassReportBody(BaseModel):
     report_id: str = Field(min_length=1, max_length=64)
     text: str = Field(min_length=1, max_length=REPORT_MAX_CHARS)
     use_ai: bool = False
+
+
+class RecordDemonstrationBody(BaseModel):
+    class_starts_at: datetime
+    mutation_id: str = Field(min_length=1, max_length=64)
+    skill_id: str = Field(min_length=1, max_length=64)
+    student_ids: list[str] = Field(min_length=1, max_length=MAX_PARTICIPANTS)
+
+
+class DemonstrationOutcomeView(BaseModel):
+    student_id: str
+    outcome: str
+    off_level: bool
+    level_up_queued: bool
+    tries: int
+
+
+class DemonstrationResultsView(BaseModel):
+    results: list[DemonstrationOutcomeView]
 
 
 def _recap(request: Request) -> ClassRecapComposition:
@@ -225,3 +247,22 @@ async def resolve_class_report(
 ) -> ClassReportView:
     report = await recap.resolve_report.execute(occurrence_id, report_id, _actor(claims))
     return _report_view(report, claims.user_id)
+
+
+@router.post(
+    "/occurrences/{occurrence_id}/class-demonstrations",
+    response_model=DemonstrationResultsView,
+)
+async def record_class_demonstration(
+    occurrence_id: str,
+    body: RecordDemonstrationBody,
+    claims: AuthClaims = Depends(require_coach_surface()),
+    recap: ClassRecapComposition = Depends(_recap),
+) -> DemonstrationResultsView:
+    outcomes: list[DemonstrationOutcome] = await recap.record_demonstration.execute(
+        RecordClassDemonstrationCommand(occurrence_id=occurrence_id, **body.model_dump()),
+        _actor(claims),
+    )
+    return DemonstrationResultsView(
+        results=[DemonstrationOutcomeView(**o.model_dump()) for o in outcomes]
+    )

@@ -30,6 +30,8 @@ class MongoTestAttemptRepository(TenantScopedRepository):
             override_reason=str(doc["override_reason"]) if doc.get("override_reason") else None,
             notes=str(doc.get("notes", "")),
             tested_at=doc["tested_at"],
+            observed_at=doc.get("observed_at"),
+            signed_off_by=str(doc["signed_off_by"]) if doc.get("signed_off_by") else None,
         )
 
     async def save(self, attempt: TestAttempt) -> None:
@@ -52,6 +54,8 @@ class MongoTestAttemptRepository(TenantScopedRepository):
                 "override_reason": attempt.override_reason,
                 "notes": attempt.notes,
                 "tested_at": attempt.tested_at,
+                "observed_at": attempt.observed_at,
+                "signed_off_by": attempt.signed_off_by,
             }
         )
 

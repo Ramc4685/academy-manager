@@ -131,7 +131,12 @@ class TestAttempt(BaseModel):
     coach_override: bool = False
     override_reason: str | None = None
     notes: str = ""
+    #: When it was entered.
     tested_at: datetime
+    #: When it happened (the dated class); older rows only have tested_at.
+    observed_at: datetime | None = None
+    #: Who signed a pass off; None for a fail or an assistant's tap.
+    signed_off_by: str | None = None
 
 
 class LevelUpRecommendation(BaseModel):

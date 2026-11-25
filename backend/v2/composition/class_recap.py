@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from backend.v2.composition.ai import AiComposition
@@ -23,9 +24,11 @@ from backend.v2.contexts.ai.application.use_cases.interpret_class_report import 
 )
 from backend.v2.contexts.ai.infrastructure.disabled_llm_port import DisabledLlmPort
 from backend.v2.contexts.coaching.application.use_cases.class_recap import (
+    DemonstrationOutcome,
     GetClassRecap,
     ListChildClassRecaps,
     ListOpenClassReportHandoffs,
+    RecordClassDemonstration,
     ResolveClassReport,
     SaveClassRecap,
     SkillOption,
@@ -73,10 +76,16 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_roster_repo 
 from backend.v2.contexts.enrollment.infrastructure.mongo_student_repo import (
     MongoStudentRepository,
 )
+from backend.v2.contexts.student_progress.application.use_cases.mark_skill_mastered import (
+    MarkSkillMastered,
+    MarkSkillMasteredCommand,
+)
 from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_repo import (
     MongoStudentSkillProgressRepository,
 )
+from backend.v2.shared.events import Outbox
 from backend.v2.shared.http.errors import DomainError
+from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.tenancy import current_academy_id
 
 log = logging.getLogger(__name__)
@@ -165,6 +174,49 @@ class SkillProgressPasses:
         }
 
 
+class ProgressClassDemonstrations:
+    """``ClassDemonstrationWriter`` over student_progress's one pass writer
+    (MarkSkillMastered -> RecordTestAttempt), with the program read from the
+    skill itself rather than trusted from the client."""
+
+    def __init__(self, *, skills: Any, mark_mastered: MarkSkillMastered) -> None:
+        self._skills = skills
+        self._mark = mark_mastered
+
+    async def record(
+        self,
+        *,
+        skill_id: str,
+        student_ids: list[str],
+        coach_id: str,
+        can_sign_off: bool,
+        session_id: str,
+        occurrence_id: str,
+        observed_at: datetime,
+        mutation_id: str,
+    ) -> list[DemonstrationOutcome]:
+        skill = await self._skills.get(skill_id)
+        if skill is None:
+            return [
+                DemonstrationOutcome(student_id=sid, outcome="not_on_level") for sid in student_ids
+            ]
+        outcomes = await self._mark.execute(
+            MarkSkillMasteredCommand(
+                skill_id=skill_id,
+                program_id=str(skill.program_id),
+                student_ids=student_ids,
+                coach_id=coach_id,
+                session_id=session_id,
+                can_sign_off=can_sign_off,
+                off_level_ok=True,
+                occurrence_id=occurrence_id,
+                observed_at=observed_at,
+                mutation_id=mutation_id,
+            )
+        )
+        return [DemonstrationOutcome(**o.model_dump()) for o in outcomes]
+
+
 class AiClassReportInterpreter:
     """``ClassReportInterpreter`` over the AI context's use case."""
 
@@ -225,11 +277,19 @@ class ClassRecapComposition:
     list_handoffs: ListOpenClassReportHandoffs
     resolve_report: ResolveClassReport
     list_for_child: ListChildClassRecaps
+    record_demonstration: RecordClassDemonstration
     #: A model is wired; otherwise every report goes to the owner.
     ai_enabled: bool
 
 
-def compose_class_recap(db: Any, ai: AiComposition) -> ClassRecapComposition:
+def compose_class_recap(
+    db: Any,
+    ai: AiComposition,
+    outbox: Outbox | None = None,
+    idempotency_store: IdempotencyStore | None = None,
+) -> ClassRecapComposition:
+    from backend.v2.composition.pathway import compose_student_progress
+
     recaps = MongoClassRecapRepository(db)
     reports = MongoClassReportRepository(db)
     occurrence_rows = MongoSessionOccurrenceRepository(db)
@@ -297,6 +357,17 @@ def compose_class_recap(db: Any, ai: AiComposition) -> ClassRecapComposition:
             attendance=StudentConfirmedAttendance(db),
             skills=skills,
             passes=SkillProgressPasses(MongoStudentSkillProgressRepository(db)),
+        ),
+        record_demonstration=RecordClassDemonstration(
+            occurrences=occurrences,
+            attendance=attendance,
+            skills=skills,
+            writer=ProgressClassDemonstrations(
+                skills=MongoSkillRepository(db),
+                mark_mastered=compose_student_progress(
+                    db, outbox, idempotency_store=idempotency_store
+                ).mark_skill_mastered,
+            ),
         ),
         ai_enabled=ai_enabled,
     )

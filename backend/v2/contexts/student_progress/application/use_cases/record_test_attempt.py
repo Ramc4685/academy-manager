@@ -72,6 +72,12 @@ class RecordTestAttemptCommand(BaseModel):
     # network retries return the original result instead of inserting
     # duplicate attempts and re-emitting progress events.
     mutation_id: str | None = None
+    #: Set only by the trusted class entry point: the skill may sit on another
+    #: active level of the same program. Its pass counts toward its own level
+    #: and never completes (so never queues or certifies) the active level.
+    off_level_ok: bool = False
+    #: When the skill was demonstrated (the dated class); entry time otherwise.
+    observed_at: datetime | None = None
 
     @model_validator(mode="after")
     def _success_not_above_attempts(self) -> RecordTestAttemptCommand:
@@ -162,14 +168,18 @@ class RecordTestAttempt:
 
         skill_meta = await self._skill_lookup.get_skill(cmd.skill_id)
         # Only the active level's skills count: a client-sent level_id used to
-        # land attempts (and passes) on a level the student is not in.
-        if getattr(skill_meta, "level_id", None) != active.level_id:
+        # land attempts (and passes) on a level the student is not in. The
+        # class entry point may also record another active level's skill.
+        on_level = getattr(skill_meta, "level_id", None) == active.level_id
+        if not on_level and not (
+            cmd.off_level_ok and await self._in_active_curriculum(skill_meta, cmd.program_id)
+        ):
             raise SkillNotOnCurrentLevel(
                 "skill is not on the student's current level",
                 student_id=cmd.student_id,
                 skill_id=cmd.skill_id,
             )
-        level_id = active.level_id
+        level_id: str = skill_meta.level_id  # type: ignore[union-attr]
         threshold_pct: float = getattr(skill_meta, "pass_threshold_pct", 70.0)
         coach_override_allowed: bool = getattr(skill_meta, "coach_override_allowed", False)
 
@@ -216,6 +226,9 @@ class RecordTestAttempt:
             override_reason=cmd.override_reason if cmd.coach_override else None,
             notes=cmd.notes,
             tested_at=now,
+            observed_at=cmd.observed_at or now,
+            # The observer is coach_id; a pass also names who signed it off.
+            signed_off_by=cmd.coach_id if passed and cmd.can_sign_off else None,
         )
         await self._test_attempts.save(attempt)
 
@@ -287,7 +300,7 @@ class RecordTestAttempt:
 
         # Check level completion if skill just passed
         level_completed = False
-        if passed:
+        if passed and on_level:
             all_skills = await self._skill_lookup.list_skills_for_level(level_id)
             required_ids = [s.skill_id for s in all_skills if getattr(s, "is_required", True)]
             passed_records = await self._skill_progress.list_passed_for_student_level(
@@ -355,3 +368,12 @@ class RecordTestAttempt:
             level_completed=level_completed,
             tries=tries,
         )
+
+    async def _in_active_curriculum(self, skill_meta: object, program_id: str) -> bool:
+        """The skill and its level are live curriculum of this program."""
+        if skill_meta is None or getattr(skill_meta, "program_id", None) != program_id:
+            return False
+        if not getattr(skill_meta, "is_active", True):
+            return False
+        level = await self._skill_lookup.get_level(skill_meta.level_id)  # type: ignore[attr-defined]
+        return level is not None and bool(getattr(level, "is_active", True))

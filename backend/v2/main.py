@@ -1178,7 +1178,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # report read by AI when a model is wired (manual entry otherwise).
     from backend.v2.composition.class_recap import compose_class_recap
 
-    app.state.class_recap = compose_class_recap(db, app.state.ai)
+    app.state.class_recap = compose_class_recap(db, app.state.ai, outbox, idempotency_store)
     # Parent drop-off check-in: parent reports arrival, staff confirm, and the
     # confirmation writes the attendance mark through MarkAttendance.
     from backend.v2.composition.dropoff_checkins import compose_dropoff_checkins

@@ -5475,6 +5475,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/coach/occurrences/{occurrence_id}/class-demonstrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Class Demonstration */
+        post: operations["record_class_demonstration_api_v2_coach_occurrences__occurrence_id__class_demonstrations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/coach/occurrences/{occurrence_id}/class-recap": {
         parameters: {
             query?: never;
@@ -14360,6 +14377,24 @@ export interface components {
             /** Suppressed Emails */
             suppressed_emails: string[];
         };
+        /** DemonstrationOutcomeView */
+        DemonstrationOutcomeView: {
+            /** Level Up Queued */
+            level_up_queued: boolean;
+            /** Off Level */
+            off_level: boolean;
+            /** Outcome */
+            outcome: string;
+            /** Student Id */
+            student_id: string;
+            /** Tries */
+            tries: number;
+        };
+        /** DemonstrationResultsView */
+        DemonstrationResultsView: {
+            /** Results */
+            results: components["schemas"]["DemonstrationOutcomeView"][];
+        };
         /** DenyMakeupRequestBody */
         DenyMakeupRequestBody: {
             /** Reason */
@@ -19162,6 +19197,20 @@ export interface components {
             accepted_by: string;
             /** Agreement Version */
             agreement_version: string;
+        };
+        /** RecordDemonstrationBody */
+        RecordDemonstrationBody: {
+            /**
+             * Class Starts At
+             * Format: date-time
+             */
+            class_starts_at: string;
+            /** Mutation Id */
+            mutation_id: string;
+            /** Skill Id */
+            skill_id: string;
+            /** Student Ids */
+            student_ids: string[];
         };
         /** RecordExpenseRequest */
         RecordExpenseRequest: {
@@ -32231,6 +32280,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StaffDropoffCheckinView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_class_demonstration_api_v2_coach_occurrences__occurrence_id__class_demonstrations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                occurrence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordDemonstrationBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemonstrationResultsView"];
                 };
             };
             /** @description Validation Error */
