@@ -508,6 +508,10 @@ test.describe("SaaS v2 — waiver status on each child", () => {
     });
     await stubParentMessages(page);
     await stubParentAcademy(page);
+    // Profile loads the email-preferences card; unstubbed it 502s into the console check.
+    await page.route("**/api/v2/parent/email-preferences", (route) =>
+      fulfillJson(route, { campaigns_opted_out: false, digests_opted_out: false, notifications_opted_out: false }),
+    );
     const students = [
       { student_id: "st-1", student_name: "Asha Rao", status: "pending", signed_at: null, waiver_version: null },
       {
