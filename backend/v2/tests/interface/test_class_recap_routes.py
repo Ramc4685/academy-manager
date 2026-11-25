@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from backend.v2.contexts.coaching.application.use_cases.class_recap import (
     ChildClassRecap,
+    ChildRecapPage,
     ChildRecapSkill,
     ClassRecapState,
     RecapRosterEntry,
@@ -59,14 +60,18 @@ REPORT = ClassReport(
     submitted_at=NOW,
     outcome="sent_to_owner",
 )
-CHILD_ROW = ChildClassRecap(
-    occurrence_id="occ-1",
-    class_starts_at=NOW,
-    taught_skills=[
-        ChildRecapSkill(skill_id="s-grip", name="Forehand grip", passed=True),
-        ChildRecapSkill(skill_id="s-smash", name="Jump smash", passed=False),
+GRIP_VIEW = ChildRecapSkill(skill_id="s-grip", name="Forehand grip")
+CHILD_PAGE = ChildRecapPage(
+    recaps=[
+        ChildClassRecap(
+            occurrence_id="occ-1",
+            class_starts_at=NOW,
+            taught_skills=[GRIP_VIEW, ChildRecapSkill(skill_id="s-smash", name="Jump smash")],
+            practiced_skills=[GRIP_VIEW],
+            earned_skills=[GRIP_VIEW],
+        )
     ],
-    practiced_skills=[ChildRecapSkill(skill_id="s-grip", name="Forehand grip", passed=True)],
+    next_cursor="2026-11-18T20:00:00+00:00|occ-1",
 )
 
 
@@ -75,8 +80,8 @@ class Spy:
         self.result = result
         self.calls: list[tuple[Any, ...]] = []
 
-    async def execute(self, *args: Any) -> Any:
-        self.calls.append(args)
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        self.calls.append(args + tuple(kwargs.values()))
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
@@ -104,7 +109,7 @@ def _client(roles: tuple[str, ...], user_id: str = "coach-1", **recap: Any) -> T
         submit_report=recap.get("submit", Spy(REPORT)),
         resolve_report=Spy(REPORT),
         list_handoffs=Spy([REPORT]),
-        list_for_child=Spy([CHILD_ROW]),
+        list_for_child=Spy(CHILD_PAGE),
         ai_enabled=True,
     )
 
@@ -234,24 +239,24 @@ def test_parent_sees_only_own_child_view_without_report_text() -> None:
     client = _client(("parent",), user_id="parent-1")
     response = client.get("/api/v2/parent/students/maya/class-recaps")
     assert response.status_code == 200
+    grip = {"skill_id": "s-grip", "name": "Forehand grip"}
     assert response.json() == {
         "recaps": [
             {
                 "occurrence_id": "occ-1",
                 "class_starts_at": WHEN,
-                "taught_skills": [
-                    {"skill_id": "s-grip", "name": "Forehand grip", "passed": True},
-                    {"skill_id": "s-smash", "name": "Jump smash", "passed": False},
-                ],
-                "practiced_skills": [
-                    {"skill_id": "s-grip", "name": "Forehand grip", "passed": True}
-                ],
+                "taught_skills": [grip, {"skill_id": "s-smash", "name": "Jump smash"}],
+                "practiced_skills": [grip],
+                "earned_skills": [grip],
             }
-        ]
+        ],
+        "next_cursor": "2026-11-18T20:00:00+00:00|occ-1",
     }
     assert SECRET not in response.text and "leo" not in response.text
     assert client.get("/api/v2/parent/students/leo/class-recaps").status_code == 404
-    assert client.composition.list_for_child.calls == [("maya",)]  # type: ignore[attr-defined]
+    older = client.get("/api/v2/parent/students/maya/class-recaps", params={"cursor": "c-1"})
+    assert older.status_code == 200
+    assert client.composition.list_for_child.calls == [("maya", None), ("maya", "c-1")]  # type: ignore[attr-defined]
 
 
 def test_coach_cannot_use_the_parent_route() -> None:

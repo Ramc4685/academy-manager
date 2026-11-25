@@ -13271,6 +13271,17 @@
       },
       "ChildClassRecapList": {
         "properties": {
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
           "recaps": {
             "items": {
               "$ref": "#/components/schemas/ChildClassRecapView"
@@ -13291,6 +13302,13 @@
             "format": "date-time",
             "title": "Class Starts At",
             "type": "string"
+          },
+          "earned_skills": {
+            "items": {
+              "$ref": "#/components/schemas/ChildRecapSkillView"
+            },
+            "title": "Earned Skills",
+            "type": "array"
           },
           "occurrence_id": {
             "title": "Occurrence Id",
@@ -13315,7 +13333,8 @@
           "occurrence_id",
           "class_starts_at",
           "taught_skills",
-          "practiced_skills"
+          "practiced_skills",
+          "earned_skills"
         ],
         "title": "ChildClassRecapView",
         "type": "object"
@@ -13424,10 +13443,6 @@
             "title": "Name",
             "type": "string"
           },
-          "passed": {
-            "title": "Passed",
-            "type": "boolean"
-          },
           "skill_id": {
             "title": "Skill Id",
             "type": "string"
@@ -13435,8 +13450,7 @@
         },
         "required": [
           "skill_id",
-          "name",
-          "passed"
+          "name"
         ],
         "title": "ChildRecapSkillView",
         "type": "object"
@@ -58102,6 +58116,23 @@
             "schema": {
               "title": "Student Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],

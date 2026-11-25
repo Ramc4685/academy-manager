@@ -163,19 +163,28 @@ class EnrollmentOccurrenceRosterNames:
 
 
 class SkillProgressPasses:
-    """``PassedSkills``: a skill counts as passed only when the pass pipeline
-    has written a non-silent ``PASSED`` for this child (one read)."""
+    """``PassedSkills``: a class earned a skill when its finished observation
+    passed it, it is the child's latest such pass of that skill (a take-back
+    then a re-earn shows only the re-earn), and the pass pipeline still holds a
+    non-silent ``PASSED`` (two reads per page)."""
 
-    def __init__(self, progress: Any) -> None:
+    def __init__(self, progress: Any, attempts: Any) -> None:
         self._progress = progress
+        self._attempts = attempts
 
-    async def passed(self, student_id: str, skill_ids: list[str]) -> set[str]:
-        wanted = set(skill_ids)
-        return {
-            str(row.skill_id)
-            for row in await self._progress.list_passed_for_student(student_id)
-            if str(row.skill_id) in wanted
+    async def earned_at(self, student_id: str, occurrence_ids: list[str]) -> dict[str, set[str]]:
+        latest = {row.skill_id: row for row in await self._attempts.earned_for_student(student_id)}
+        wanted = set(occurrence_ids)
+        if not any(row.occurrence_id in wanted for row in latest.values()):
+            return {}
+        held = {
+            str(row.skill_id) for row in await self._progress.list_passed_for_student(student_id)
         }
+        out: dict[str, set[str]] = {}
+        for skill_id, row in latest.items():
+            if skill_id in held and row.occurrence_id in wanted:
+                out.setdefault(str(row.occurrence_id), set()).add(skill_id)
+        return out
 
 
 class ProgressClassDemonstrations:
@@ -393,7 +402,9 @@ def compose_class_recap(
             recaps=recaps,
             attendance=StudentConfirmedAttendance(db),
             skills=skills,
-            passes=SkillProgressPasses(MongoStudentSkillProgressRepository(db)),
+            passes=SkillProgressPasses(
+                MongoStudentSkillProgressRepository(db), MongoTestAttemptRepository(db)
+            ),
         ),
         ai_enabled=ai_enabled,
     )

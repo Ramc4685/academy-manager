@@ -1,7 +1,8 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
+import { Button } from "@/components/ds/button";
 import {
   listChildClassRecaps,
   type ChildClassRecap,
@@ -11,15 +12,7 @@ import { getParentAcademy } from "@/lib/api/parent";
 import { parseAcademyInstant, resolveAcademyTimeZone } from "@/lib/format/academy-time";
 import { queryKeys } from "@/lib/query/keys";
 
-function SkillLine({ skills }: { skills: ChildRecapSkill[] }) {
-  return (
-    <>
-      {skills.map((s, i) => (
-        <span key={s.skill_id}>{`${i > 0 ? ", " : ""}${s.name}${s.passed ? " ✓" : ""}`}</span>
-      ))}
-    </>
-  );
-}
+const names = (skills: ChildRecapSkill[]) => skills.map((s) => s.name).join(", ");
 
 export function ClassRecapItems({
   recaps,
@@ -32,64 +25,86 @@ export function ClassRecapItems({
 }) {
   const zone = resolveAcademyTimeZone(timeZone).timeZone;
   return (
-    <div className="rounded-2xl border border-rally-line bg-white p-4" data-testid="parent-class-recaps">
-      <p className="text-sm font-bold text-rally-ink">{`What ${firstName} did in class`}</p>
-      <ul className="mt-2 divide-y divide-rally-line">
-        {recaps.map((r) => {
-          return (
-            <li key={r.occurrence_id} className="py-2 text-sm">
-              <p className="text-xs text-rally-muted">
-                {parseAcademyInstant(r.class_starts_at).toLocaleDateString("en-US", {
-                  weekday: "short",
-                  month: "short",
-                  day: "numeric",
-                  timeZone: zone,
-                })}
-              </p>
-              <p className="text-rally-ink">
-                Class worked on: <SkillLine skills={r.taught_skills} />
-              </p>
-              <p className="text-rally-ink">
-                {r.practiced_skills.length > 0 ? (
-                  <>
-                    {`${firstName} practised: `}
-                    <SkillLine skills={r.practiced_skills} />
-                  </>
-                ) : (
-                  <span className="text-rally-muted">
-                    {`The coach did not record which skills ${firstName} practised.`}
-                  </span>
-                )}
-              </p>
-            </li>
-          );
-        })}
-      </ul>
-      {recaps.some((r) => [...r.taught_skills, ...r.practiced_skills].some((s) => s.passed)) && (
-        <p className="mt-2 text-xs text-rally-muted" data-testid="parent-class-recaps-pass-note">
-          {`✓ means ${firstName} has passed that skill as of today. It may have been passed at a later class, not the one shown.`}
-        </p>
-      )}
-    </div>
+    <ol className="mt-2 divide-y divide-rally-line">
+      {recaps.map((r) => (
+        <li key={r.occurrence_id} className="py-3 text-sm" data-testid="parent-class-recap-item">
+          <p className="text-xs font-semibold text-rally-muted">
+            {parseAcademyInstant(r.class_starts_at).toLocaleDateString("en-US", {
+              weekday: "short",
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+              timeZone: zone,
+            })}
+          </p>
+          {r.earned_skills.length > 0 && (
+            <p
+              className="mt-1 font-semibold text-rally-ink"
+              data-testid="parent-class-recap-earned"
+            >
+              {`🏅 Passed at this class: ${names(r.earned_skills)}`}
+            </p>
+          )}
+          <p className="mt-1 text-rally-ink">{`Class lesson: ${names(r.taught_skills)}`}</p>
+          <p className="text-rally-ink">
+            {r.practiced_skills.length > 0 ? (
+              `${firstName} practised: ${names(r.practiced_skills)}`
+            ) : (
+              <span className="text-rally-muted">
+                {`The coach did not record which skills ${firstName} practised.`}
+              </span>
+            )}
+          </p>
+        </li>
+      ))}
+    </ol>
   );
 }
 
-/** The parent's own child only: no report text, no other children. */
+/**
+ * The child's own classes, newest first, a page at a time. A pass shows on
+ * the class that earned it; current level progress is shown separately.
+ * The parent's own child only: no report text, no other children.
+ */
 export function ClassRecapList({ studentId, firstName }: { studentId: string; firstName: string }) {
-  const { data } = useQuery({
+  const timeline = useInfiniteQuery({
     queryKey: queryKeys.parent.classRecaps(studentId),
-    queryFn: () => listChildClassRecaps(studentId),
+    queryFn: ({ pageParam }) => listChildClassRecaps(studentId, pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next_cursor,
   });
   const { data: academy } = useQuery({
     queryKey: queryKeys.parent.academy(),
     queryFn: getParentAcademy,
   });
-  if (!data || data.recaps.length === 0) return null;
+  const recaps = timeline.data?.pages.flatMap((p) => p.recaps) ?? [];
+  if (recaps.length === 0) return null;
   return (
-    <ClassRecapItems
-      recaps={data.recaps}
-      firstName={firstName}
-      timeZone={academy?.timezone ?? null}
-    />
+    <section
+      className="rounded-2xl border border-rally-line bg-white p-4"
+      data-testid="parent-class-recaps"
+      aria-labelledby="parent-class-recaps-title"
+    >
+      <h2 id="parent-class-recaps-title" className="text-sm font-bold text-rally-ink">
+        {`${firstName}'s classes`}
+      </h2>
+      <ClassRecapItems
+        recaps={recaps}
+        firstName={firstName}
+        timeZone={academy?.timezone ?? null}
+      />
+      {timeline.hasNextPage && (
+        <Button
+          variant="secondary"
+          size="sm"
+          className="mt-2"
+          data-testid="parent-class-recaps-more"
+          disabled={timeline.isFetchingNextPage}
+          onClick={() => void timeline.fetchNextPage()}
+        >
+          {timeline.isFetchingNextPage ? "Loading…" : "Show older classes"}
+        </Button>
+      )}
+    </section>
   );
 }

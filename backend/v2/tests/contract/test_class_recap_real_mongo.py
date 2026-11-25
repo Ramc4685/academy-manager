@@ -27,6 +27,9 @@ from backend.v2.contexts.curriculum.infrastructure.mongo_skill_repo import Mongo
 from backend.v2.contexts.student_progress.infrastructure.mongo_skill_progress_repo import (
     MongoStudentSkillProgressRepository,
 )
+from backend.v2.contexts.student_progress.infrastructure.mongo_test_attempt_repo import (
+    MongoTestAttemptRepository,
+)
 from backend.v2.shared.tenancy import tenant_scope
 
 pytestmark = pytest.mark.asyncio
@@ -77,9 +80,24 @@ async def test_one_recap_per_occurrence_with_revision_cas(real_db: Any) -> None:
         assert await repo.save(_recap(2, practice=()), expected_revision=1)
         assert not await repo.save(_recap(2), expected_revision=1)  # stale
         assert (await repo.get("occ-1")).practice == ()  # type: ignore[union-attr]
-        assert [r.occurrence_id for r in await repo.list_for_occurrences(["occ-1", "x"])] == [
-            "occ-1"
-        ]
+        assert [
+            r.occurrence_id
+            for r in await repo.page_for_occurrences(["occ-1", "x"], before=None, limit=5)
+        ] == ["occ-1"]
+        # Same start time: the occurrence id breaks the tie, and the cursor
+        # resumes strictly after it.
+        await repo.save(_recap(1, recap_id="rc-0", occurrence_id="occ-0"), expected_revision=0)
+        await repo.save(
+            _recap(
+                1, recap_id="rc-9", occurrence_id="occ-9", class_starts_at=NOW - timedelta(days=1)
+            ),
+            expected_revision=0,
+        )
+        ids = ["occ-0", "occ-1", "occ-9"]
+        first = await repo.page_for_occurrences(ids, before=None, limit=2)
+        assert [r.occurrence_id for r in first] == ["occ-1", "occ-0"]
+        rest = await repo.page_for_occurrences(ids, before=(NOW, "occ-0"), limit=2)
+        assert [r.occurrence_id for r in rest] == ["occ-9"]
     with tenant_scope(OTHER):
         assert await repo.get("occ-1") is None
         assert await repo.save(_recap(1, academy_id=OTHER), expected_revision=0)
@@ -199,7 +217,38 @@ async def test_parent_adapters_read_in_bulk_per_academy_and_skip_silent_passes(
     catalog = CurriculumRecapSkills(
         skills=MongoSkillRepository(real_db), levels=None, resolve_default_program=None
     )
-    passes = SkillProgressPasses(MongoStudentSkillProgressRepository(real_db))
+    later = NOW + timedelta(days=7)
+    for academy, attempt_id, skill_id, occ, earned, at in (
+        (ACADEMY, "t-1", "s-live", "occ-1", True, NOW),
+        (ACADEMY, "t-2", "s-learning", "occ-1", True, NOW),  # pass since taken back
+        (ACADEMY, "t-3", "s-live", "occ-2", False, NOW),  # a try, not the pass
+        (OTHER, "t-4", "s-other", "occ-1", True, NOW),
+        (OTHER, "t-5", "s-other", "occ-3", True, later),  # taken back, re-earned later
+    ):
+        await real_db["test_attempts"].insert_one(
+            {
+                "academy_id": academy,
+                "attempt_id": attempt_id,
+                "student_id": "maya",
+                "skill_id": skill_id,
+                "occurrence_id": occ,
+                "observation_key": f"{occ}:maya:{skill_id}",
+                "effects_done_at": NOW,
+                "earned_pass": earned,
+                "level_id": "lvl-1",
+                "program_id": "prog-1",
+                "coach_id": "coach-1",
+                "scoring_type": "COACH_APPROVAL",
+                "attempts_count": 1,
+                "success_count": 1,
+                "score": 100.0,
+                "passed": True,
+                "tested_at": at,
+            }
+        )
+    passes = SkillProgressPasses(
+        MongoStudentSkillProgressRepository(real_db), MongoTestAttemptRepository(real_db)
+    )
     ids = ["s-live", "s-retired", "s-other", "s-learning"]
     with tenant_scope(ACADEMY):
         assert await catalog.names(ids, active_only=False) == {
@@ -207,9 +256,10 @@ async def test_parent_adapters_read_in_bulk_per_academy_and_skip_silent_passes(
             "s-retired": "Name s-retired",
         }
         assert await catalog.names(ids, active_only=True) == {"s-live": "Name s-live"}
-        assert await passes.passed("maya", ids) == {"s-live"}
+        assert await passes.earned_at("maya", ["occ-1", "occ-2"]) == {"occ-1": {"s-live"}}
     with tenant_scope(OTHER):
-        assert await passes.passed("maya", ids) == {"s-other"}
+        assert await passes.earned_at("maya", ["occ-1", "occ-2"]) == {}  # only the re-earn shows
+        assert await passes.earned_at("maya", ["occ-3"]) == {"occ-3": {"s-other"}}
 
 
 async def test_migration_0243_indexes_back_the_repository_claims(real_db: Any) -> None:

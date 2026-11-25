@@ -142,6 +142,9 @@ class TestAttempt(BaseModel):
     observation_key: str | None = None
     #: When every effect of a class observation landed; None while partial.
     effects_done_at: datetime | None = None
+    #: This class observation is what passed the skill (the dated evidence
+    #: the parent timeline shows on that class day).
+    earned_pass: bool = False
 
 
 class LevelUpRecommendation(BaseModel):

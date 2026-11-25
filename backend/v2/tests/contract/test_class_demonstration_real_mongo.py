@@ -82,11 +82,11 @@ class _CrashingAttempts(MongoTestAttemptRepository):
             raise _Crash
         return stored
 
-    async def mark_effects_done(self, attempt_id: str, *, at: datetime) -> None:
+    async def mark_effects_done(self, attempt_id: str, *, at: datetime, earned: bool) -> None:
         if "before_done" in self.crash_on:
             self.crash_on.discard("before_done")
             raise _Crash
-        await super().mark_effects_done(attempt_id, at=at)
+        await super().mark_effects_done(attempt_id, at=at, earned=earned)
 
 
 class _CrashingProgress(MongoStudentSkillProgressRepository):
@@ -349,7 +349,8 @@ async def test_an_interrupted_pass_resumes_to_one_pass_and_one_event(
         out = await _record(w, "clear", ["maya"])
 
         assert out["maya"].outcome == "mastered"
-        assert len(await w["attempts"].list_for_student_skill("maya", "clear")) == 1
+        (stored,) = await w["attempts"].list_for_student_skill("maya", "clear")
+        assert stored.earned_pass  # the dated evidence the parent timeline shows
         assert await w["events"].count("SkillPassed") == 1
         assert await w["events"].count("SkillTestAttempted") == 1
         receipts = await w["class"].receipts("occ-1", [("maya", "clear"), ("maya", "grip")])
@@ -371,6 +372,8 @@ async def test_interrupted_after_the_try_counts_it_once(real_db: Any) -> None:
         assert (late["maya"].outcome, late["maya"].tries) == ("try_recorded", 1)
         assert (await w["skill_progress"].get("maya", "drop")).tries == 2
         assert await w["events"].count("SkillPassed") == 1  # one genuine transition
+        earned = await w["attempts"].earned_for_student("maya")
+        assert [a.occurrence_id for a in earned] == ["occ-2"]  # the try on occ-1 earned nothing
 
 
 async def test_two_writers_store_one_observation(real_db: Any) -> None:

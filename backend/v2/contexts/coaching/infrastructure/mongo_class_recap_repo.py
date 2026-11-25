@@ -88,6 +88,27 @@ class MongoClassRecapRepository(TenantScopedRepository):
         cursor = self._find_many({"occurrence_id": {"$in": occurrence_ids}})
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def page_for_occurrences(
+        self,
+        occurrence_ids: list[str],
+        *,
+        before: tuple[datetime, str] | None,
+        limit: int,
+    ) -> list[ClassRecap]:
+        if not occurrence_ids:
+            return []
+        filter_: dict[str, Any] = {"occurrence_id": {"$in": occurrence_ids}}
+        if before is not None:
+            at, occurrence_id = before
+            filter_["$or"] = [
+                {"class_starts_at": {"$lt": at}},
+                {"class_starts_at": at, "occurrence_id": {"$lt": occurrence_id}},
+            ]
+        cursor = self._find_many(
+            filter_, sort=[("class_starts_at", -1), ("occurrence_id", -1)], limit=limit
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
 
 class MongoClassReportRepository(TenantScopedRepository):
     collection_name = "class_recap_reports"

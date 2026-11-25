@@ -163,11 +163,11 @@ class MarkSkillMastered:
                 off_level=not on_level,
             )
             if observation_key:
-                await self._record.finish_observation(result.attempt_id)
+                await self._record.finish_observation(result.attempt_id, earned=False)
             return outcome
         queued = on_level and result.level_completed and await self._queue_level_up(cmd, student_id)
         if observation_key:
-            await self._record.finish_observation(result.attempt_id)
+            await self._record.finish_observation(result.attempt_id, earned=True)
         return MasteredOutcome(
             student_id=student_id,
             outcome="mastered",

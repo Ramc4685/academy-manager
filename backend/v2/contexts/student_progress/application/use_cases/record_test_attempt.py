@@ -414,9 +414,10 @@ class RecordTestAttempt:
         """An observation's events have fixed ids, so a replay appends nothing new."""
         return {"event_id": f"{attempt.attempt_id}:{name}"} if attempt.observation_key else {}
 
-    async def finish_observation(self, attempt_id: str) -> None:
-        """Every effect of this observation has landed (the receipt is complete)."""
-        await self._test_attempts.mark_effects_done(attempt_id, at=datetime.now(UTC))
+    async def finish_observation(self, attempt_id: str, *, earned: bool) -> None:
+        """Every effect of this observation has landed (the receipt is
+        complete); ``earned`` when it is what passed the skill."""
+        await self._test_attempts.mark_effects_done(attempt_id, at=datetime.now(UTC), earned=earned)
 
     async def _in_active_curriculum(self, skill_meta: object, program_id: str) -> bool:
         """The skill and its level are live curriculum of this program."""

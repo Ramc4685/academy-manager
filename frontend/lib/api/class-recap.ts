@@ -105,8 +105,6 @@ export interface ClassReportHandoff {
 export interface ChildRecapSkill {
   skill_id: string;
   name: string;
-  /** Passed as of today (the skill pipeline), not necessarily at this class. */
-  passed: boolean;
 }
 
 export interface ChildClassRecap {
@@ -114,6 +112,14 @@ export interface ChildClassRecap {
   class_starts_at: string;
   taught_skills: ChildRecapSkill[];
   practiced_skills: ChildRecapSkill[];
+  /** Passed by a demonstration in this class, and still held. */
+  earned_skills: ChildRecapSkill[];
+}
+
+export interface ChildClassRecapPage {
+  recaps: ChildClassRecap[];
+  /** Pass back for older classes; null on the last page. */
+  next_cursor: string | null;
 }
 
 const recapPath = (occurrenceId: string) =>
@@ -158,9 +164,13 @@ export function listClassReportHandoffs(): Promise<{ reports: ClassReportHandoff
   });
 }
 
-export function listChildClassRecaps(studentId: string): Promise<{ recaps: ChildClassRecap[] }> {
-  return apiFetch<{ recaps: ChildClassRecap[] }>(
-    `/parent/students/${encodeURIComponent(studentId)}/class-recaps`,
+export function listChildClassRecaps(
+  studentId: string,
+  cursor: string | null = null,
+): Promise<ChildClassRecapPage> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return apiFetch<ChildClassRecapPage>(
+    `/parent/students/${encodeURIComponent(studentId)}/class-recaps${query}`,
     { method: "GET" },
   );
 }

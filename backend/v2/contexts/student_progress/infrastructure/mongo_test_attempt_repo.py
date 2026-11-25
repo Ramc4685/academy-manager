@@ -38,6 +38,7 @@ class MongoTestAttemptRepository(TenantScopedRepository):
             signed_off_by=str(doc["signed_off_by"]) if doc.get("signed_off_by") else None,
             observation_key=doc.get("observation_key"),
             effects_done_at=doc.get("effects_done_at"),
+            earned_pass=bool(doc.get("earned_pass", False)),
         )
 
     @staticmethod
@@ -89,10 +90,18 @@ class MongoTestAttemptRepository(TenantScopedRepository):
         cursor = self._find_many({"observation_key": {"$in": observation_keys}})
         return [self._to_domain(d) async for d in cursor]
 
-    async def mark_effects_done(self, attempt_id: str, *, at: datetime) -> None:
+    async def mark_effects_done(self, attempt_id: str, *, at: datetime, earned: bool) -> None:
         await self._update_one(
-            {"attempt_id": attempt_id, "effects_done_at": None}, {"$set": {"effects_done_at": at}}
+            {"attempt_id": attempt_id, "effects_done_at": None},
+            {"$set": {"effects_done_at": at, "earned_pass": earned}},
         )
+
+    async def earned_for_student(self, student_id: str) -> list[TestAttempt]:
+        cursor = self._find_many(
+            {"student_id": student_id, "earned_pass": True, "effects_done_at": {"$ne": None}},
+            sort=[("tested_at", 1)],
+        )
+        return [self._to_domain(doc) async for doc in cursor]
 
     async def list_for_student_skill(self, student_id: str, skill_id: str) -> list[TestAttempt]:
         cursor = self._find_many(

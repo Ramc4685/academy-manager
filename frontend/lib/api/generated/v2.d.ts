@@ -12953,6 +12953,8 @@ export interface components {
         };
         /** ChildClassRecapList */
         ChildClassRecapList: {
+            /** Next Cursor */
+            next_cursor?: string | null;
             /** Recaps */
             recaps: components["schemas"]["ChildClassRecapView"][];
         };
@@ -12963,6 +12965,8 @@ export interface components {
              * Format: date-time
              */
             class_starts_at: string;
+            /** Earned Skills */
+            earned_skills: components["schemas"]["ChildRecapSkillView"][];
             /** Occurrence Id */
             occurrence_id: string;
             /** Practiced Skills */
@@ -13031,8 +13035,6 @@ export interface components {
         ChildRecapSkillView: {
             /** Name */
             name: string;
-            /** Passed */
-            passed: boolean;
             /** Skill Id */
             skill_id: string;
         };
@@ -35263,7 +35265,9 @@ export interface operations {
     };
     list_child_class_recaps_api_v2_parent_students__student_id__class_recaps_get: {
         parameters: {
-            query?: never;
+            query?: {
+                cursor?: string | null;
+            };
             header?: never;
             path: {
                 student_id: string;

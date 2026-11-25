@@ -75,7 +75,10 @@ REPORT_MAX_CHARS = 2000
 #: How long a submit owns the reading of its report; after that a replay
 #: settles it (applied or the owner's) without another model call.
 REPORT_PROCESSING_LEASE = timedelta(minutes=5)
-CHILD_RECAP_LIMIT = 20
+CHILD_RECAP_PAGE = 10
+#: shortcut: a child's whole attended history is scanned for recaps; past a
+#: few hundred classes a year page the attendance read too.
+CHILD_ATTENDANCE_SCAN = 1000
 HANDOFF_LIMIT = 50
 
 
@@ -90,7 +93,16 @@ class ClassRecapRepository(Protocol):
         it is still at ``expected_revision``. False when it moved on."""
         ...
 
-    async def list_for_occurrences(self, occurrence_ids: list[str]) -> list[ClassRecap]: ...
+    async def page_for_occurrences(
+        self,
+        occurrence_ids: list[str],
+        *,
+        before: tuple[datetime, str] | None,
+        limit: int,
+    ) -> list[ClassRecap]:
+        """Recaps among ``occurrence_ids``, newest class first (ties by
+        occurrence id), strictly older than ``before`` when given."""
+        ...
 
 
 class ClassReportRepository(Protocol):
@@ -129,9 +141,9 @@ class StudentAttendanceReader(Protocol):
 class PassedSkills(Protocol):
     """The authoritative pass pipeline (student_progress), read only."""
 
-    async def passed(self, student_id: str, skill_ids: list[str]) -> set[str]:
-        """Ids among ``skill_ids`` this child genuinely passed (silent
-        placement credits excluded, like every parent-facing pass read)."""
+    async def earned_at(self, student_id: str, occurrence_ids: list[str]) -> dict[str, set[str]]:
+        """Per class, the skills this child passed by a demonstration in that
+        class and still holds (a pass since taken back is left out)."""
         ...
 
 
@@ -811,8 +823,6 @@ class ChildRecapSkill(BaseModel):
 
     skill_id: str
     name: str
-    #: Passed as of today by the pass pipeline (placement credits excluded).
-    passed: bool
 
 
 class ChildClassRecap(BaseModel):
@@ -822,13 +832,39 @@ class ChildClassRecap(BaseModel):
     class_starts_at: datetime
     taught_skills: list[ChildRecapSkill]
     practiced_skills: list[ChildRecapSkill]
+    #: Passed by a demonstration in this class (dated evidence), still held.
+    earned_skills: list[ChildRecapSkill]
+
+
+class ChildRecapPage(BaseModel):
+    model_config = {"frozen": True}
+
+    recaps: list[ChildClassRecap]
+    #: Pass back as ``cursor`` for older classes; None on the last page.
+    next_cursor: str | None
+
+
+def _encode_cursor(recap: ClassRecap) -> str:
+    return f"{_utc(recap.class_starts_at).isoformat()}|{recap.occurrence_id}"
+
+
+def _decode_cursor(cursor: str) -> tuple[datetime, str]:
+    at, sep, occurrence_id = cursor.partition("|")
+    try:
+        parsed = datetime.fromisoformat(at)
+    except ValueError:
+        parsed = None
+    if not sep or not occurrence_id or parsed is None or parsed.tzinfo is None:
+        raise RecapInvalid("bad cursor")
+    return parsed, occurrence_id
 
 
 class ListChildClassRecaps:
-    """Recent classes this child is marked present for that have a recap.
-    The route guards child ownership. Practice is the child's own row only;
-    passes come from the pass pipeline, never from a report. No report text,
-    no other children."""
+    """One child's class timeline, newest first, a page at a time: classes
+    the child is marked present for that have a recap. The route guards
+    child ownership. Practice is the child's own row only; a pass shows only
+    on the class whose demonstration earned it, never from a report. No
+    report text, no other children."""
 
     def __init__(
         self,
@@ -843,35 +879,48 @@ class ListChildClassRecaps:
         self._skills = skills
         self._passes = passes
 
-    async def execute(self, student_id: str) -> list[ChildClassRecap]:
+    async def execute(
+        self, student_id: str, *, cursor: str | None = None, limit: int = CHILD_RECAP_PAGE
+    ) -> ChildRecapPage:
+        before = _decode_cursor(cursor) if cursor else None
         attended = await self._attendance.confirmed_occurrence_ids(
-            student_id, limit=CHILD_RECAP_LIMIT * 2
+            student_id, limit=CHILD_ATTENDANCE_SCAN
         )
-        recaps = await self._recaps.list_for_occurrences(attended)
-        recaps.sort(key=lambda r: _utc(r.class_starts_at), reverse=True)
-        recaps = recaps[:CHILD_RECAP_LIMIT]
-        # One names read and one passes read for the whole list, not per recap.
+        page = await self._recaps.page_for_occurrences(attended, before=before, limit=limit + 1)
+        more = len(page) > limit
+        recaps = page[:limit]
+        earned = (
+            await self._passes.earned_at(student_id, [r.occurrence_id for r in recaps])
+            if recaps
+            else {}
+        )
+        # One names read for the whole page, not per recap.
         ids = list(
             dict.fromkeys(
-                s for r in recaps for s in (*r.taught_skill_ids, *r.practiced_by(student_id))
+                s
+                for r in recaps
+                for s in (
+                    *r.taught_skill_ids,
+                    *r.practiced_by(student_id),
+                    *sorted(earned.get(r.occurrence_id, ())),
+                )
             )
         )
         names = await self._skills.names(ids, active_only=False) if ids else {}
-        passed = await self._passes.passed(student_id, ids) if ids else set()
 
         def skills(skill_ids: Sequence[str]) -> list[ChildRecapSkill]:
-            return [
-                ChildRecapSkill(skill_id=s, name=names[s], passed=s in passed)
-                for s in skill_ids
-                if s in names
-            ]
+            return [ChildRecapSkill(skill_id=s, name=names[s]) for s in skill_ids if s in names]
 
-        return [
-            ChildClassRecap(
-                occurrence_id=r.occurrence_id,
-                class_starts_at=r.class_starts_at,
-                taught_skills=skills(r.taught_skill_ids),
-                practiced_skills=skills(r.practiced_by(student_id)),
-            )
-            for r in recaps
-        ]
+        return ChildRecapPage(
+            recaps=[
+                ChildClassRecap(
+                    occurrence_id=r.occurrence_id,
+                    class_starts_at=r.class_starts_at,
+                    taught_skills=skills(r.taught_skill_ids),
+                    practiced_skills=skills(r.practiced_by(student_id)),
+                    earned_skills=skills(sorted(earned.get(r.occurrence_id, ()))),
+                )
+                for r in recaps
+            ],
+            next_cursor=_encode_cursor(recaps[-1]) if more else None,
+        )

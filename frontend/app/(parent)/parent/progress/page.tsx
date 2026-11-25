@@ -310,6 +310,8 @@ function ChildJourney({ studentId, childName }: { studentId: string; childName: 
 
   return (
     <div className="space-y-4" data-testid="parent-progress-journey">
+      {/* Timeline first: what happened class by class. Current level progress follows. */}
+      <ClassRecapList studentId={studentId} firstName={firstName} />
       {journey.levels?.length > 0 && <LevelStrip firstName={firstName} journey={journey} />}
       {current ? (
         <>
@@ -327,7 +329,6 @@ function ChildJourney({ studentId, childName }: { studentId: string; childName: 
       )}
       <MilestoneList milestones={journey.milestones ?? []} firstName={firstName} />
       <RecentWins wins={journey.recent_wins} studentId={studentId} />
-      <ClassRecapList studentId={studentId} firstName={firstName} />
       {journey.practice_drill && <PracticeDrillCard drill={journey.practice_drill} />}
       {certs && certs.length > 0 && <CertificateList certs={certs} />}
     </div>

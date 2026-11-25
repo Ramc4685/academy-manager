@@ -152,13 +152,15 @@ class Roster:
 
 
 class Passes:
-    """The pass pipeline's word, independent of anything a report said."""
+    """The pass pipeline's word, independent of anything a report said:
+    ``{student: {occurrence: skills earned there and still held}}``."""
 
-    def __init__(self, passed: dict[str, set[str]] | None = None) -> None:
-        self.passed_by = passed or {}
+    def __init__(self, earned: dict[str, dict[str, set[str]]] | None = None) -> None:
+        self.earned = earned or {}
 
-    async def passed(self, student_id: str, skill_ids: list[str]) -> set[str]:
-        return self.passed_by.get(student_id, set()) & set(skill_ids)
+    async def earned_at(self, student_id: str, occurrence_ids: list[str]) -> dict[str, set[str]]:
+        mine = self.earned.get(student_id, {})
+        return {occ: mine[occ] for occ in occurrence_ids if occ in mine}
 
 
 class Recaps:
@@ -179,8 +181,17 @@ class Recaps:
         self.saves += 1
         return True
 
-    async def list_for_occurrences(self, occurrence_ids: list[str]) -> list[ClassRecap]:
-        return [r for oid, r in self.rows.items() if oid in occurrence_ids]
+    async def page_for_occurrences(
+        self, occurrence_ids: list[str], *, before: Any, limit: int
+    ) -> list[ClassRecap]:
+        rows = sorted(
+            (r for oid, r in self.rows.items() if oid in occurrence_ids),
+            key=lambda r: (r.class_starts_at, r.occurrence_id),
+            reverse=True,
+        )
+        if before is not None:
+            rows = [r for r in rows if (r.class_starts_at, r.occurrence_id) < before]
+        return rows[:limit]
 
 
 class Reports:
@@ -988,52 +999,103 @@ async def test_owner_finds_and_closes_handoffs() -> None:
 # --- ListChildClassRecaps ---------------------------------------------------
 
 
-async def test_parent_view_is_own_child_only_with_passes_from_the_pipeline() -> None:
+async def test_parent_view_is_own_child_only_with_passes_dated_to_the_class() -> None:
     w = World()
     await w.save.execute(
         _cmd(taught_skill_ids=[GRIP, SMASH], practice=_practice(maya=[GRIP], leo=[SMASH])),
         LEAD_ACTOR,
     )
-    passes = Passes({"maya": {GRIP}, "leo": {SMASH}})
-    maya = await w.child(passes).execute("maya")
+    passes = Passes({"maya": {OCC: {GRIP}}})
+    maya = (await w.child(passes).execute("maya")).recaps
     assert [_skills(r.taught_skills) for r in maya] == [
-        [(GRIP, "Forehand grip", True), (SMASH, "Jump smash", False)]
+        [(GRIP, "Forehand grip"), (SMASH, "Jump smash")]
     ]
-    assert _skills(maya[0].practiced_skills) == [(GRIP, "Forehand grip", True)]
-    leo = await w.child(passes).execute("leo")
-    assert _skills(leo[0].practiced_skills) == [(SMASH, "Jump smash", True)]
-    # Present but credited with nothing: sees the class, no practice.
-    sam = await w.child(passes).execute("sam")
-    assert sam[0].practiced_skills == [] and not any(s.passed for s in sam[0].taught_skills)
-    assert await w.child(passes).execute("ana") == []  # absent: not their class
+    assert _skills(maya[0].practiced_skills) == [(GRIP, "Forehand grip")]
+    assert _skills(maya[0].earned_skills) == [(GRIP, "Forehand grip")]
+    leo = (await w.child(passes).execute("leo")).recaps
+    assert _skills(leo[0].practiced_skills) == [(SMASH, "Jump smash")]
+    assert leo[0].earned_skills == []
+    # Present but credited with nothing: sees the group lesson, no practice.
+    sam = (await w.child(passes).execute("sam")).recaps
+    assert sam[0].practiced_skills == [] and sam[0].earned_skills == []
+    assert (await w.child(passes).execute("ana")).recaps == []  # absent: not their class
 
 
 async def test_a_report_pass_claim_is_never_a_parent_visible_pass() -> None:
     w = World()
     await w.submit(Interpreter(SPLIT)).execute(_report(SPLIT_TEXT), LEAD_ACTOR)
-    row = (await w.child(Passes()).execute("maya"))[0]
-    assert not any(s.passed for s in (*row.taught_skills, *row.practiced_skills))
+    row = (await w.child(Passes()).execute("maya")).recaps[0]
+    assert row.earned_skills == []
 
 
-def _skills(rows: Any) -> list[tuple[str, str, bool]]:
-    return [(s.skill_id, s.name, s.passed) for s in rows]
+def _skills(rows: Any) -> list[tuple[str, str]]:
+    return [(s.skill_id, s.name) for s in rows]
 
 
 def _store(
-    w: World, occ: str, *, taught: tuple[str, ...], practice: tuple[ChildPractice, ...] = ()
+    w: World,
+    occ: str,
+    *,
+    taught: tuple[str, ...],
+    practice: tuple[ChildPractice, ...] = (),
+    at: datetime = NOW,
 ) -> None:
     w.recaps.rows[occ] = ClassRecap(
         recap_id=f"rc-{occ}",
         academy_id=ACADEMY,
         occurrence_id=occ,
         session_id=SESSION,
-        class_starts_at=NOW,
+        class_starts_at=at,
         taught_skill_ids=taught,
         practice=practice,
         revision=1,
         updated_by=LEAD,
         updated_at=NOW,
     )
+
+
+class Attended:
+    def __init__(self, *occs: str) -> None:
+        self.occs = list(occs)
+
+    async def confirmed_occurrence_ids(self, student_id: str, *, limit: int) -> list[str]:
+        return self.occs
+
+
+async def test_a_repeated_practice_shows_on_both_dates_and_the_pass_only_where_earned() -> None:
+    w = World()
+    week = timedelta(days=7)
+    _store(w, "occ-mon", taught=(GRIP,), practice=tuple(_practice(maya=[GRIP])), at=NOW - week)
+    _store(w, "occ-next", taught=(GRIP,), practice=tuple(_practice(maya=[GRIP])), at=NOW)
+    page = await ListChildClassRecaps(
+        recaps=w.recaps,
+        attendance=Attended("occ-mon", "occ-next"),
+        skills=Catalog(),
+        passes=Passes({"maya": {"occ-next": {GRIP}}}),
+    ).execute("maya")
+    assert [r.occurrence_id for r in page.recaps] == ["occ-next", "occ-mon"]
+    assert [len(r.practiced_skills) for r in page.recaps] == [1, 1]
+    assert [len(r.earned_skills) for r in page.recaps] == [1, 0]
+
+
+async def test_pages_are_newest_first_with_a_stable_tie_break() -> None:
+    w = World()
+    # Two batches the same evening share a start time: the id breaks the tie.
+    for occ, at in (("occ-a", NOW), ("occ-b", NOW), ("occ-c", NOW - timedelta(days=1))):
+        _store(w, occ, taught=(GRIP,), at=at)
+    listing = ListChildClassRecaps(
+        recaps=w.recaps,
+        attendance=Attended("occ-a", "occ-b", "occ-c"),
+        skills=Catalog(),
+        passes=Passes(),
+    )
+    first = await listing.execute("maya", limit=2)
+    assert [r.occurrence_id for r in first.recaps] == ["occ-b", "occ-a"]
+    second = await listing.execute("maya", cursor=first.next_cursor, limit=2)
+    assert [r.occurrence_id for r in second.recaps] == ["occ-c"]
+    assert second.next_cursor is None
+    with pytest.raises(RecapInvalid):
+        await listing.execute("maya", cursor="not-a-cursor")
 
 
 async def test_parent_pass_mark_follows_the_skill_id_not_a_shared_name() -> None:
@@ -1050,13 +1112,14 @@ async def test_parent_pass_mark_follows_the_skill_id_not_a_shared_name() -> None
         recaps=w.recaps,
         attendance=w.attendance,
         skills=TwinCatalog(),
-        passes=Passes({"maya": {GRIP}}),
+        passes=Passes({"maya": {OCC: {GRIP}}}),
     )
-    row = (await listing.execute("maya"))[0]
-    assert _skills(row.taught_skills) == [(twin, "Forehand grip", False)]
+    row = (await listing.execute("maya")).recaps[0]
+    assert _skills(row.earned_skills) == [(GRIP, "Forehand grip")]
+    assert [s.skill_id for s in row.practiced_skills] == [twin]
 
 
-async def test_parent_list_reads_names_and_passes_once_for_all_recaps() -> None:
+async def test_parent_list_reads_names_and_passes_once_for_the_page() -> None:
     w = World()
     for occ in ("occ-a", "occ-b", "occ-c"):
         _store(w, occ, taught=(GRIP, SMASH))
@@ -1068,23 +1131,22 @@ async def test_parent_list_reads_names_and_passes_once_for_all_recaps() -> None:
             return await super().names(skill_ids, active_only=active_only)
 
     class CountingPasses(Passes):
-        async def passed(self, student_id: str, skill_ids: list[str]) -> set[str]:
-            calls.append("passed")
-            return await super().passed(student_id, skill_ids)
+        async def earned_at(self, student_id: str, occurrence_ids: list[str]) -> Any:
+            calls.append("earned")
+            return await super().earned_at(student_id, occurrence_ids)
 
-    class AllPresent:
-        async def confirmed_occurrence_ids(self, student_id: str, *, limit: int) -> list[str]:
-            return ["occ-a", "occ-b", "occ-c"]
-
-    rows = await ListChildClassRecaps(
-        recaps=w.recaps, attendance=AllPresent(), skills=CountingCatalog(), passes=CountingPasses()
+    page = await ListChildClassRecaps(
+        recaps=w.recaps,
+        attendance=Attended("occ-a", "occ-b", "occ-c"),
+        skills=CountingCatalog(),
+        passes=CountingPasses(),
     ).execute("maya")
-    assert len(rows) == 3 and sorted(calls) == ["names", "passed"]
+    assert len(page.recaps) == 3 and sorted(calls) == ["earned", "names"]
 
 
 async def test_attendance_correction_withdraws_the_class_from_the_parent() -> None:
     w = World()
     await w.save.execute(_cmd(), LEAD_ACTOR)
-    assert len(await w.child().execute("maya")) == 1
+    assert len((await w.child().execute("maya")).recaps) == 1
     w.attendance.marks["maya"] = "absent"
-    assert await w.child().execute("maya") == []
+    assert (await w.child().execute("maya")).recaps == []
