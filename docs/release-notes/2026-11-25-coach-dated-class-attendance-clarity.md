@@ -1,6 +1,6 @@
 # coach-dated-class-attendance-clarity
 
-PR: #TBD
+PR: #1241
 
 ## What changed
 Fixes from the Nov 25 academy usability study, so a coach picks the right dated
