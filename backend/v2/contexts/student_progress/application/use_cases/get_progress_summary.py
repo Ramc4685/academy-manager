@@ -6,6 +6,9 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel
 
+from backend.v2.contexts.student_progress.application.level_skill_counts import (
+    count_level_skills,
+)
 from backend.v2.contexts.student_progress.application.ports import (
     CertificateRepository,
     LevelUpRecommendationRepository,
@@ -168,38 +171,18 @@ class GetProgressSummary:
         progress: Sequence[StudentSkillProgress],
     ) -> StudentProgressOverview:
         level_up_status = getattr(rec, "status", None) if rec else None
-        progress_by_skill = {row.skill_id: row for row in progress}
-
-        required_skill_count = 0
-        required_skills_passed = 0
-        total_skills_passed = 0
-        in_progress_count = 0
-        not_started_count = 0
-        test_ready_count = 0
-
-        for skill in skills:
-            skill_id = skill.skill_id  # type: ignore[attr-defined]
-            is_required = getattr(skill, "is_required", True)
-            status = getattr(progress_by_skill.get(skill_id), "status", "NOT_STARTED")
-
-            if is_required:
-                required_skill_count += 1
-
-            if status == "PASSED":
-                total_skills_passed += 1
-                if is_required:
-                    required_skills_passed += 1
-            elif status == "NOT_STARTED":
-                not_started_count += 1
-            else:
-                in_progress_count += 1
-                if status == "TEST_READY":
-                    test_ready_count += 1
-
-        total_skill_count = len(skills)
-        required_complete = (
-            required_skill_count > 0 and required_skills_passed == required_skill_count
-        )
+        statuses = {row.skill_id: row.status for row in progress}
+        counts = count_level_skills(skills, statuses)
+        active_statuses = [
+            statuses.get(skill_id, "NOT_STARTED")
+            for skill_id in {str(getattr(s, "skill_id", "")) for s in skills}
+        ]
+        not_started_count = active_statuses.count("NOT_STARTED")
+        test_ready_count = active_statuses.count("TEST_READY")
+        total_skill_count = counts.required_total + counts.optional_total
+        total_skills_passed = counts.required_passed + counts.optional_passed
+        in_progress_count = total_skill_count - not_started_count - total_skills_passed
+        required_complete = counts.required_complete
         level_completion_status = self._level_completion_status(
             required_complete=required_complete,
             test_ready_count=test_ready_count,
@@ -223,8 +206,8 @@ class GetProgressSummary:
             current_level_id=active.level_id,
             current_level_name=getattr(level, "name", None) if level else None,
             current_level_sequence=getattr(level, "sequence", None) if level else None,
-            required_skill_count=required_skill_count,
-            required_skills_passed=required_skills_passed,
+            required_skill_count=counts.required_total,
+            required_skills_passed=counts.required_passed,
             total_skill_count=total_skill_count,
             total_skills_passed=total_skills_passed,
             in_progress_count=in_progress_count,

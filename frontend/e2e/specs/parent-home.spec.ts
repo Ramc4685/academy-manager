@@ -353,14 +353,48 @@ test.describe("parent home — Progress deep link", () => {
         student_id: forBo ? "st-2" : "st-1",
         program_id: "prog-1",
         levels: [
-          { level_id: "l1", name: "Grip & Control", number: 1, state: "done", color: "#FDE047" },
-          { level_id: "l2", name: "Net & Movement", number: 2, state: "current", color: "#FB923C" },
-          { level_id: "l3", name: "Serve", number: 3, state: "upcoming", color: "#16A34A" },
+          {
+            level_id: "l1",
+            name: "Grip & Control",
+            number: 1,
+            state: "done",
+            color: "#FDE047",
+            required_passed: 2,
+            required_total: 2,
+            optional_passed: 0,
+            optional_total: 0,
+          },
+          {
+            level_id: "l2",
+            name: "Net & Movement",
+            number: 2,
+            state: "current",
+            color: "#FB923C",
+            required_passed: 1,
+            required_total: 2,
+            optional_passed: 0,
+            optional_total: 0,
+          },
+          {
+            level_id: "l3",
+            name: "Serve",
+            number: 3,
+            state: "upcoming",
+            color: "#16A34A",
+            required_passed: 1,
+            required_total: 3,
+            optional_passed: 1,
+            optional_total: 2,
+          },
         ],
         current_level: {
           level_id: "l2",
           name: "Net & Movement",
           number: 2,
+          required_passed: 1,
+          required_total: 2,
+          optional_passed: 0,
+          optional_total: 0,
           skills_done: 1,
           skills_total: 2,
           skills_remaining: 1,
@@ -410,6 +444,7 @@ test.describe("parent home — Progress deep link", () => {
     await expect(journey.getByText("Bo's badminton journey")).toBeVisible();
     await expect(journey.getByText("Level 2 of 3")).toBeVisible();
     await expect(journey.getByText("1 skill to Level 3")).toBeVisible();
+    await expect(journey.getByText("1/3 required skills passed · 1/2 optional skills passed")).toBeVisible();
     // No pace line without enough recent passes to estimate one.
     await expect(journey.getByText(/At this pace/)).toHaveCount(0);
     await expect(journey.getByText("Mastered Bo's overhead clear")).toBeVisible();

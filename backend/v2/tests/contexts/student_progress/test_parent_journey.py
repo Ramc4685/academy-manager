@@ -85,6 +85,13 @@ class _Lookup:
     async def list_skills_for_level(self, level_id: str) -> list[object]:
         return list(SKILLS.get(level_id, []))
 
+    async def list_skills_for_program(self, program_id: str) -> list[object]:
+        return [
+            SimpleNamespace(**{**vars(s), "level_id": level_id})
+            for level_id, skills in SKILLS.items()
+            for s in skills
+        ]
+
     async def list_levels_for_program(self, program_id: str) -> list[object]:
         return list(reversed(LEVELS))  # order must not matter
 
@@ -179,6 +186,11 @@ class _Repos:
     ) -> list[StudentSkillProgress]:
         return [r for r in self.rows if r.level_id == level_id]
 
+    async def list_for_student_program(
+        self, student_id: str, program_id: str
+    ) -> list[StudentSkillProgress]:
+        return [r for r in self.rows if r.student_id == student_id and r.program_id == program_id]
+
     async def list_recent_for_student(
         self, student_id: str, limit: int = 10
     ) -> list[StudentSkillProgress]:
@@ -243,8 +255,8 @@ async def test_journey_shapes_levels_ring_checklist_and_focus() -> None:
     assert (current.number, current.name) == (2, "Net & Movement")
     assert (current.skills_done, current.skills_total, current.skills_remaining) == (2, 4, 2)
     assert current.has_next_level is True
-    # 3 passes in 20 days (~2.9 weeks) -> ~1.05/week -> 2 left -> 2 weeks
-    assert current.pace_weeks == 2
+    # The third recent pass belongs to an earlier level.
+    assert current.pace_weeks is None
     assert [(s.name, s.state) for s in journey.skills] == [
         ("Lunge", "got_it"),
         ("Split step", "got_it"),
@@ -273,7 +285,7 @@ async def test_unplaced_child_still_sees_wins_but_no_level() -> None:
     journey = await _use_case(_Repos(placed=False)).execute(STUDENT, PROGRAM, now=NOW)
 
     assert journey.current_level is None
-    assert journey.levels == []
+    assert [lv.state for lv in journey.levels] == ["done", "upcoming", "upcoming"]
     assert journey.skills == []
     assert journey.focus_skill_id is None
     assert len(journey.recent_wins) == 4
@@ -300,7 +312,7 @@ async def test_completed_earlier_level_without_active_row_is_still_unplaced() ->
     )
 
     assert journey.pathway_complete is False
-    assert journey.levels == []
+    assert [lv.state for lv in journey.levels] == ["done", "upcoming", "upcoming"]
 
 
 async def test_coach_note_and_level_colours_reach_the_parent() -> None:
@@ -321,3 +333,58 @@ async def test_coach_note_and_level_colours_reach_the_parent() -> None:
     notes = {w.title: w.coach_note for w in journey.recent_wins if w.kind == "skill"}
     # Only the parent-facing mastery note travels; a win without one stays None.
     assert notes == {"Lunge": None, "Split step": "Lovely split step", "Grip": None}
+
+
+async def test_unearned_lower_level_and_earned_higher_level(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        SKILLS, "L3", [_skill("serve", 1, "Serve"), _skill("bonus", 2, "Bonus", required=False)]
+    )
+    repos = _Repos()
+    repos.rows = [
+        _progress("retired", "PASSED", NOW, level_id="L1"),
+        _progress("serve", "PRACTICING", NOW, level_id="L3"),
+        _progress("bonus", "PASSED", NOW, level_id="L3").model_copy(update={"silent": True}),
+    ]
+    journey = await _use_case(repos).execute(STUDENT, PROGRAM, now=NOW)
+    lower, current, higher = journey.levels
+    assert (lower.state, lower.required_passed, lower.required_total) == ("upcoming", 0, 1)
+    assert current.state == "current"
+    assert (higher.required_passed, higher.required_total) == (0, 1)
+    assert (higher.optional_passed, higher.optional_total) == (1, 1)
+    assert all(win.title != "Bonus" for win in journey.recent_wins)
+
+    repos.rows[1] = repos.rows[1].model_copy(update={"status": "PASSED"})
+    journey = await _use_case(repos).execute(STUDENT, PROGRAM, now=NOW)
+    assert journey.current_level and journey.current_level.level_id == "L2"
+    assert journey.levels[2].required_passed == 1
+
+
+async def test_pace_uses_only_current_required_earned_skills(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repos = _Repos()
+    base = SKILLS["L2"]
+    monkeypatch.setitem(SKILLS, "L2", [*base, _skill("bonus", 5, "Bonus", required=False)])
+    repos.rows += [
+        _progress("bonus", "PASSED", NOW - timedelta(days=15)),
+        _progress("rally", "PASSED", NOW - timedelta(days=16)).model_copy(update={"silent": True}),
+    ]
+    first = await _use_case(repos).execute(STUDENT, PROGRAM, now=NOW)
+    assert first.current_level and first.current_level.pace_weeks is None
+    repos.rows[-1] = repos.rows[-1].model_copy(update={"silent": False})
+    earned = await _use_case(repos).execute(STUDENT, PROGRAM, now=NOW)
+    assert earned.current_level and earned.current_level.pace_weeks == 1
+
+
+async def test_level_without_required_skills_is_never_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(SKILLS, "L3", [_skill("bonus", 1, "Bonus", required=False)])
+    repos = _Repos()
+    repos.rows.append(_progress("bonus", "PASSED", NOW, level_id="L3"))
+    journey = await _use_case(repos).execute(STUDENT, PROGRAM, now=NOW)
+    last = journey.levels[2]
+    assert (last.required_total, last.optional_passed) == (0, 1)
+    assert last.state == "upcoming"

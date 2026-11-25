@@ -310,27 +310,20 @@ function ChildJourney({ studentId, childName }: { studentId: string; childName: 
 
   return (
     <div className="space-y-4" data-testid="parent-progress-journey">
+      {journey.levels?.length > 0 && <LevelStrip firstName={firstName} journey={journey} />}
       {current ? (
         <>
-          <LevelStrip firstName={firstName} journey={journey} />
           <LevelRing current={current} />
           <SkillChecklist skills={journey.skills} />
         </>
       ) : journey.pathway_complete ? (
-        <>
-          <LevelStrip firstName={firstName} journey={journey} />
-          <p className="rounded-2xl p-4 bg-white border border-rally-line text-sm text-rally-muted">
-            {firstName} has finished every level of this pathway. Their certificates are below.
-          </p>
-        </>
+        <p className="rounded-2xl p-4 bg-white border border-rally-line text-sm text-rally-muted">
+          {firstName} has completed this pathway. Their certificates are below.
+        </p>
       ) : (
-        <div className="rounded-2xl p-4 bg-white border border-rally-line">
-          <p className="text-sm font-bold text-rally-ink">{firstName}&apos;s badminton journey</p>
-          <p className="mt-1 text-sm text-rally-muted">
-            {firstName} hasn&apos;t been placed in a level yet. Their coach places them after
-            the first classes, and their skills will show up here.
-          </p>
-        </div>
+        <p className="rounded-2xl p-4 bg-white border border-rally-line text-sm text-rally-muted">
+          Their coach will assign a level after the first classes.
+        </p>
       )}
       <MilestoneList milestones={journey.milestones ?? []} firstName={firstName} />
       <RecentWins wins={journey.recent_wins} studentId={studentId} />

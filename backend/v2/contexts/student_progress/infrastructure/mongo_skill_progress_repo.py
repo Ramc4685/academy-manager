@@ -152,6 +152,12 @@ class MongoStudentSkillProgressRepository(TenantScopedRepository):
         )
         return [self._to_domain(doc) async for doc in cursor]
 
+    async def list_for_student_program(
+        self, student_id: str, program_id: str
+    ) -> list[StudentSkillProgress]:
+        cursor = self._find_many({"student_id": student_id, "program_id": program_id})
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def list_passed_for_student_level(
         self, student_id: str, level_id: str
     ) -> list[StudentSkillProgress]:

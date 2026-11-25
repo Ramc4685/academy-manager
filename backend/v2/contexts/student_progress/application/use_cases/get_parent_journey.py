@@ -1,18 +1,24 @@
 """Use case: the parent "how far along" view for one child in one program.
 
 One read model for the page parents land on from the evening win email:
-where the child sits on the level ladder, how much of the current level is
-done, a pace estimate (only when recent passes support one), the level's
+where the child sits on the level ladder, required and optional skills
+passed in every level, a pace estimate when recent passes support one, the level's
 skill checklist, recent wins and the skill to practise at home.
 """
 
 from __future__ import annotations
 
+import asyncio
+from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel
 
+from backend.v2.contexts.student_progress.application.level_skill_counts import (
+    LevelSkillCounts,
+    count_level_skills,
+)
 from backend.v2.contexts.student_progress.application.ports import (
     CertificateRepository,
     SkillLookup,
@@ -24,7 +30,7 @@ from backend.v2.contexts.student_progress.application.use_cases.get_teaching_foc
     _pick_next_skill,
 )
 from backend.v2.contexts.student_progress.domain.logic import estimate_weeks_to_next_level
-from backend.v2.contexts.student_progress.domain.models import SkillStatus
+from backend.v2.contexts.student_progress.domain.models import SkillStatus, StudentSkillProgress
 
 JourneyLevelState = Literal["done", "current", "upcoming"]
 JourneySkillState = Literal["got_it", "working_on_it", "coming_up"]
@@ -33,8 +39,7 @@ RECENT_PASS_LOOKBACK = 20
 RECENT_WINS_LIMIT = 6
 
 
-class JourneyLevel(BaseModel):
-    model_config = {"frozen": True}
+class JourneyLevel(LevelSkillCounts):
     level_id: str
     name: str
     number: int
@@ -49,8 +54,7 @@ class JourneySkill(BaseModel):
     state: JourneySkillState
 
 
-class JourneyCurrentLevel(BaseModel):
-    model_config = {"frozen": True}
+class JourneyCurrentLevel(LevelSkillCounts):
     level_id: str
     name: str
     number: int
@@ -85,7 +89,7 @@ class ParentJourney(BaseModel):
     #: The skill the coach works on next; the BFF looks up its drill video.
     focus_skill_id: str | None
     focus_skill_name: str | None
-    #: Finished the program's last level: no active row, every level done.
+    #: The latest completed placement was the program's last level.
     pathway_complete: bool = False
 
 
@@ -122,31 +126,76 @@ class GetParentJourney:
         self, student_id: str, program_id: str, *, now: datetime | None = None
     ) -> ParentJourney:
         now = now or datetime.now(UTC)
-        recent_wins = await self._recent_wins(student_id)
         active = await self._level_progress.get_active(student_id, program_id)
         program_levels = sorted(
             await self._skill_lookup.list_levels_for_program(program_id),
             key=lambda lvl: getattr(lvl, "sequence", 0),
         )
+        level_ids = [str(getattr(lvl, "level_id", "")) for lvl in program_levels]
+        current_index = (
+            level_ids.index(active.level_id) if active and active.level_id in level_ids else None
+        )
+        catalog, progress = await asyncio.gather(
+            self._skill_lookup.list_skills_for_program(program_id),
+            self._skill_progress.list_for_student_program(student_id, program_id),
+        )
+        skills_by_level: dict[str, list[object]] = defaultdict(list)
+        for skill in catalog:
+            skills_by_level[str(getattr(skill, "level_id", ""))].append(skill)
+        statuses = {row.skill_id: row.status for row in progress}
+        counts = {
+            level_id: count_level_skills(skills, statuses)
+            for level_id, skills in skills_by_level.items()
+        }
+
+        recent_pass_rows = sorted(
+            (row for row in progress if row.status == "PASSED" and not row.silent),
+            key=lambda row: _as_utc(row.last_updated_at),
+            reverse=True,
+        )
+        recent_wins = await self._recent_wins(student_id, program_id, recent_pass_rows)
+        completed_rows = [
+            row
+            for row in await self._level_progress.list_for_student(student_id)
+            if row.program_id == program_id and row.status == "completed" and row.completed_at
+        ]
+        completed = {row.level_id for row in completed_rows}
+        last_completed = max(
+            completed_rows, key=lambda r: _as_utc(r.completed_at or r.started_at), default=None
+        )
+        complete = bool(
+            active is None
+            and level_ids
+            and last_completed
+            and last_completed.level_id == level_ids[-1]
+        )
+
+        def position(index: int) -> JourneyLevelState:
+            if index == current_index:
+                return "current"
+            level_id = level_ids[index]
+            if level_id in completed or (level_id in counts and counts[level_id].required_complete):
+                return "done"
+            return "upcoming"
+
+        empty_counts = count_level_skills([], {})
+        levels = [
+            JourneyLevel(
+                level_id=level_ids[i],
+                name=str(getattr(lvl, "name", "")),
+                number=i + 1,
+                color=getattr(lvl, "display_color", None),
+                state=position(i),
+                **counts.get(level_ids[i], empty_counts).model_dump(),
+            )
+            for i, lvl in enumerate(program_levels)
+        ]
         if active is None:
-            # Approving the last level completes the active row without
-            # opening another, so "no active row" also means "finished".
-            complete = await self._finished_pathway(student_id, program_id, program_levels)
+            # Graduates and unplaced learners both lack an active placement.
             return ParentJourney(
                 student_id=student_id,
                 program_id=program_id,
-                levels=[
-                    JourneyLevel(
-                        level_id=str(getattr(lvl, "level_id", "")),
-                        name=str(getattr(lvl, "name", "")),
-                        number=i + 1,
-                        state="done",
-                        color=getattr(lvl, "display_color", None),
-                    )
-                    for i, lvl in enumerate(program_levels)
-                ]
-                if complete
-                else [],
+                levels=levels,
                 current_level=None,
                 skills=[],
                 recent_wins=recent_wins,
@@ -155,51 +204,21 @@ class GetParentJourney:
                 pathway_complete=complete,
             )
 
-        current_index = next(
-            (
-                i
-                for i, lvl in enumerate(program_levels)
-                if getattr(lvl, "level_id", None) == active.level_id
-            ),
-            None,
-        )
-        levels = [
-            JourneyLevel(
-                level_id=str(getattr(lvl, "level_id", "")),
-                name=str(getattr(lvl, "name", "")),
-                number=i + 1,
-                color=getattr(lvl, "display_color", None),
-                state=(
-                    "current"
-                    if i == current_index
-                    else "done"
-                    if current_index is not None and i < current_index
-                    else "upcoming"
-                ),
-            )
-            for i, lvl in enumerate(program_levels)
-        ]
-
-        skills = sorted(
-            await self._skill_lookup.list_skills_for_level(active.level_id),
-            key=lambda s: getattr(s, "sequence", 0),
-        )
-        rows = await self._skill_progress.list_for_student_level(student_id, active.level_id)
-        status_by_skill: dict[str, SkillStatus] = {r.skill_id: r.status for r in rows}
+        skills = sorted(skills_by_level[active.level_id], key=lambda s: getattr(s, "sequence", 0))
 
         def status_of(skill: object) -> SkillStatus:
-            return status_by_skill.get(str(getattr(skill, "skill_id", "")), "NOT_STARTED")
+            return statuses.get(str(getattr(skill, "skill_id", "")), "NOT_STARTED")
 
-        remaining = sum(
-            1 for s in skills if getattr(s, "is_required", True) and status_of(s) != "PASSED"
-        )
+        current_counts = counts.get(active.level_id, empty_counts)
+        remaining = current_counts.required_total - current_counts.required_passed
+        required_ids = {
+            str(getattr(skill, "skill_id", ""))
+            for skill in skills
+            if getattr(skill, "is_required", True)
+        }
         recent_passes = [
-            _as_utc(r.last_updated_at)
-            for r in await self._skill_progress.list_recent_for_student(
-                student_id, limit=RECENT_PASS_LOOKBACK
-            )
-            if r.status == "PASSED"
-        ]
+            _as_utc(row.last_updated_at) for row in recent_pass_rows if row.skill_id in required_ids
+        ][:RECENT_PASS_LOOKBACK]
         level_meta = (
             program_levels[current_index]
             if current_index is not None
@@ -222,6 +241,7 @@ class GetParentJourney:
                 and current_index < len(program_levels) - 1,
                 pace_weeks=estimate_weeks_to_next_level(recent_passes, remaining, now),
                 color=getattr(level_meta, "display_color", None),
+                **current_counts.model_dump(),
             ),
             skills=[
                 JourneySkill(
@@ -236,27 +256,11 @@ class GetParentJourney:
             focus_skill_name=str(getattr(focus, "name", "")) if focus else None,
         )
 
-    async def _finished_pathway(
-        self, student_id: str, program_id: str, program_levels: list[object]
-    ) -> bool:
-        if not program_levels:
-            return False
-        completed = [
-            r
-            for r in await self._level_progress.list_for_student(student_id)
-            if r.program_id == program_id and r.status == "completed" and r.completed_at
-        ]
-        if not completed:
-            return False
-        latest = max(completed, key=lambda r: _as_utc(r.completed_at or r.started_at))
-        return bool(latest.level_id == getattr(program_levels[-1], "level_id", None))
-
-    async def _recent_wins(self, student_id: str) -> list[JourneyWin]:
-        rows = await self._skill_progress.list_recent_for_student(
-            student_id, limit=RECENT_PASS_LOOKBACK
-        )
+    async def _recent_wins(
+        self, student_id: str, program_id: str, passed: list[StudentSkillProgress]
+    ) -> list[JourneyWin]:
         wins: list[JourneyWin] = []
-        for row in [r for r in rows if r.status == "PASSED"][:RECENT_WINS_LIMIT]:
+        for row in passed[:RECENT_WINS_LIMIT]:
             skill = await self._skill_lookup.get_skill(row.skill_id)
             # Only the pass date comes from the attempt: its notes are
             # coach-facing, with no parent visibility flag (unlike ProgressNote).
@@ -273,6 +277,8 @@ class GetParentJourney:
                 )
             )
         for cert in await self._certs.list_for_student(student_id):
+            if cert.program_id != program_id:
+                continue
             wins.append(
                 JourneyWin(
                     kind="certificate",

@@ -59,10 +59,10 @@ describe("LevelRing", () => {
     expect(last).toContain("1 skill to finish the pathway");
     const done = text(
       renderToStaticMarkup(
-        createElement(LevelRing, { current: current({ skills_done: 6, skills_remaining: 0 }) }),
+        createElement(LevelRing, { current: current({ required_passed: 6, required_total: 6, skills_remaining: 0 }) }),
       ),
     );
-    expect(done).toContain("Level 2 done, moving up to Level 3");
+    expect(done).toContain("Ready for level review");
   });
 });
 
@@ -80,7 +80,8 @@ describe("LevelStrip", () => {
     const html = renderToStaticMarkup(createElement(LevelStrip, { firstName: "Aarav", journey }));
     expect(text(html)).toContain("Level 2 of 3");
     expect(html).toContain('aria-current="step"');
-    expect(text(html)).toContain("Level 1, Grip: done");
+    expect(text(html)).toContain("Current level");
+    expect(text(html)).not.toContain("✓");
   });
 });
 
@@ -97,8 +98,46 @@ describe("LevelStrip after the last level", () => {
       })),
     } as unknown as ParentProgressJourney;
     const html = renderToStaticMarkup(createElement(LevelStrip, { firstName: "Aarav", journey }));
-    expect(text(html)).toContain("All 2 levels done");
+    expect(text(html)).toContain("Pathway complete");
     expect(html).not.toContain('aria-current="step"');
+  });
+});
+
+describe("cross-level progress", () => {
+  it("shows higher-level credit alongside a beginner placement", () => {
+    const journey = {
+      current_level: current({ level_id: "l1", number: 1 }),
+      levels: [
+        {
+          level_id: "l1", name: "Grip", number: 1, state: "current",
+          required_passed: 0, required_total: 3, optional_passed: 0, optional_total: 0,
+        },
+        {
+          level_id: "l2", name: "Net", number: 2, state: "upcoming",
+          required_passed: 1, required_total: 4, optional_passed: 1, optional_total: 2,
+        },
+      ],
+    } as ParentProgressJourney;
+    const out = text(renderToStaticMarkup(createElement(LevelStrip, { firstName: "Maya", journey })));
+    expect(out).toContain("Level 1 of 2");
+    expect(out).toContain("1/4 required skills passed");
+    expect(out).toContain("1/2 optional skills passed");
+    const unplaced = { ...journey, current_level: null, pathway_complete: false };
+    const pending = text(renderToStaticMarkup(createElement(LevelStrip, { firstName: "Maya", journey: unplaced })));
+    expect(pending).toContain("Awaiting level placement");
+    expect(pending).toContain("1/4 required skills passed");
+  });
+
+  it("uses only required passes for the ring and handles unconfigured levels", () => {
+    const render = (fields: Partial<Current>) =>
+      text(renderToStaticMarkup(createElement(LevelRing, { current: current(fields) })));
+    expect(render({ required_total: 4, required_passed: 1 })).toContain("1/4");
+    const empty = render({ required_total: 0, required_passed: 0, skills_remaining: 0 });
+    expect(empty).toContain("No required skills configured");
+    expect(empty).not.toContain("Ready for level review");
+    const legacy = render({ skills_total: 3, skills_done: 3, skills_remaining: 0 });
+    expect(legacy).toContain("Your coach reviews level placement");
+    expect(legacy).not.toContain("Ready for level review");
   });
 });
 

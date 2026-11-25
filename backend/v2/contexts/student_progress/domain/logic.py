@@ -37,10 +37,10 @@ def check_level_completion(
         passed_skill_ids: IDs of skills whose status is PASSED.
 
     Returns:
-        True if all required skills appear in the passed set.
+        True if the level has configured requirements and each one has been passed.
     """
     if not required_skill_ids:
-        return True
+        return False
     return all(skill_id in passed_skill_ids for skill_id in required_skill_ids)
 
 

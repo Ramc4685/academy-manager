@@ -215,17 +215,25 @@ export interface ParentJourneyMilestone {
   reached_at: string;
 }
 
+// Older cached journey responses can predate the required/optional breakdown.
+interface JourneySkillCounts {
+  required_passed?: number;
+  required_total?: number;
+  optional_passed?: number;
+  optional_total?: number;
+}
+
 export interface ParentProgressJourney {
   student_id: string;
   program_id: string;
-  levels: {
+  levels: (JourneySkillCounts & {
     level_id: string;
     name: string;
     number: number;
     state: "done" | "current" | "upcoming";
     color?: string | null;
-  }[];
-  current_level: {
+  })[];
+  current_level: (JourneySkillCounts & {
     level_id: string;
     name: string;
     number: number;
@@ -236,7 +244,7 @@ export interface ParentProgressJourney {
     /** Omitted (null) when recent passes are too few to estimate honestly. */
     pace_weeks: number | null;
     color?: string | null;
-  } | null;
+  }) | null;
   skills: {
     skill_id: string;
     name: string;
