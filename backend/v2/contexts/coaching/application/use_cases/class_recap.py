@@ -339,6 +339,104 @@ class SaveClassRecap:
         return recap
 
 
+# --- demonstration during a dated class -------------------------------------
+
+
+class DemonstrationOutcome(BaseModel):
+    """One child's result, as the pass pipeline decided it."""
+
+    model_config = {"frozen": True}
+
+    student_id: str
+    #: mastered, already_mastered, try_recorded, needs_lead, not_on_level, not_placed
+    outcome: str
+    off_level: bool = False
+    level_up_queued: bool = False
+    tries: int = 0
+
+
+class ClassDemonstrationWriter(Protocol):
+    """The pass pipeline (student_progress), written for one dated class. It
+    resolves the program and level from the skill and applies the skill's
+    pass rule; a skill of another level counts there and never moves the
+    child's active level."""
+
+    async def record(
+        self,
+        *,
+        skill_id: str,
+        student_ids: list[str],
+        coach_id: str,
+        can_sign_off: bool,
+        session_id: str,
+        occurrence_id: str,
+        observed_at: datetime,
+        mutation_id: str,
+    ) -> list[DemonstrationOutcome]: ...
+
+
+class RecordClassDemonstrationCommand(BaseModel):
+    model_config = {"frozen": True}
+
+    occurrence_id: str
+    class_starts_at: datetime
+    mutation_id: str = Field(min_length=1, max_length=64)
+    skill_id: str = Field(min_length=1)
+    student_ids: list[str] = Field(min_length=1, max_length=MAX_PARTICIPANTS)
+
+
+class RecordClassDemonstration:
+    """A child met a skill's criterion in this dated class.
+
+    Same gate as the recap: the class's lead coach (scheduled, actual or
+    substitute) or the owner, a started and uncancelled class, the date as
+    read. Only children marked present or late for THIS class can be
+    credited, so a past attendee who later moved batches still can, and a
+    child who was absent cannot."""
+
+    def __init__(
+        self,
+        *,
+        occurrences: OccurrenceLookup,
+        attendance: OccurrenceAttendanceReader,
+        skills: RecapSkillCatalog,
+        writer: ClassDemonstrationWriter,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._occurrences = occurrences
+        self._attendance = attendance
+        self._skills = skills
+        self._writer = writer
+        self._now = clock
+
+    async def execute(
+        self, cmd: RecordClassDemonstrationCommand, actor: RecapActor
+    ) -> list[DemonstrationOutcome]:
+        occ = await _writable_occurrence(
+            self._occurrences, cmd.occurrence_id, cmd.class_starts_at, actor, self._now()
+        )
+        if not await self._skills.names([cmd.skill_id], active_only=True):
+            raise RecapInvalid("unknown curriculum skill", skill_ids=[cmd.skill_id])
+        student_ids = list(dict.fromkeys(cmd.student_ids))
+        marks = _attendance_map(await self._attendance.list_for_occurrence(occ.occurrence_id))
+        absent = [sid for sid in student_ids if marks.get(sid) not in CONFIRMED_PRESENT]
+        if absent:
+            raise RecapInvalid(
+                "only students marked present can be credited with a pass",
+                student_ids=absent,
+            )
+        return await self._writer.record(
+            skill_id=cmd.skill_id,
+            student_ids=student_ids,
+            coach_id=actor.user_id,
+            can_sign_off=not actor.is_assistant_only,
+            session_id=occ.session_id,
+            occurrence_id=occ.occurrence_id,
+            observed_at=occ.starts_at,
+            mutation_id=cmd.mutation_id,
+        )
+
+
 # --- read ------------------------------------------------------------------
 
 
