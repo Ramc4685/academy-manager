@@ -149,7 +149,9 @@ class UnmarkSkillMastered:
             cmd.student_id, cmd.skill_id
         ):
             if attempt.observation_key and attempt.effects_done_at is None:
-                await self._test_attempts.mark_effects_done(attempt.attempt_id, at=now)
+                await self._test_attempts.mark_effects_done(
+                    attempt.attempt_id, at=now, earned=False
+                )
 
         updated = existing.model_copy(
             update={
