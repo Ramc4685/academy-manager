@@ -601,7 +601,8 @@ function LevelAccordion({
           </div>
         </div>
       )}
-      {deletable && (
+      {/* Stay mounted while open: a 409 refetches usage and must not hide its reason. */}
+      {(deletable || confirmDelete) && (
         <DeleteLevelDialog
           pathwayLevel={pathwayLevel}
           open={confirmDelete}
