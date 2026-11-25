@@ -266,9 +266,9 @@ export default function RegisterPage({ academyName, logoUrl, brandColor }: Acade
               </button>
             )}
 
-            <div className="mt-5 flex items-center gap-3 text-xs uppercase text-slate-400">
+            <div className="mt-5 flex items-center gap-3 text-xs uppercase text-slate-600">
               <div className="h-px flex-1 bg-slate-200" />
-              <span>Email option</span>
+              <span>Or sign up with email</span>
               <div className="h-px flex-1 bg-slate-200" />
             </div>
 
@@ -322,7 +322,12 @@ export default function RegisterPage({ academyName, logoUrl, brandColor }: Acade
                 type="submit"
                 disabled={busy}
                 data-testid="register-submit"
-                className="flex min-h-touch w-full items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                className={`flex min-h-touch w-full items-center justify-center rounded-md px-4 text-sm font-medium shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                  // Secondary beside a social button so the two choices read apart (usability study).
+                  offerGoogle || offerApple
+                    ? "border border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
+                    : "bg-blue-600 text-white hover:bg-blue-500"
+                }`}
               >
                 {loading ? "Creating account..." : "Create account"}
               </button>

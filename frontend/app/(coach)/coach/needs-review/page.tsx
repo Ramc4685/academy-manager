@@ -175,7 +175,8 @@ export default function NeedsReviewPage() {
 
       {!loading && items.length === 0 && (
         <p data-testid="tray-empty" className="text-neutral-500">
-          Everything is synced.
+          Everything is synced. This list only holds attendance marks that did not save on
+          this phone. To write a class recap, open the class and tap Class recap.
         </p>
       )}
 

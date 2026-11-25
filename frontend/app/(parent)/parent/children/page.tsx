@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { ChildWaiverStatus } from "@/components/parent/child-waiver-status";
 import { Button } from "@/components/ds/button";
 import { Modal } from "@/components/ds/modal";
 import { Skeleton } from "@/components/ds/skeleton";
@@ -218,6 +219,10 @@ function ChildCard({
             <p className="text-white/60 text-[10px] mt-0.5">Absent</p>
           </div>
         </div>
+      </div>
+
+      <div className="px-4 py-2 border-b border-rally-line empty:hidden">
+        <ChildWaiverStatus studentId={child.student_id} />
       </div>
 
       {/* Sessions */}

@@ -11,6 +11,8 @@
  * Pure functions in the node vitest environment — no React, no fetch.
  */
 
+import { parseAcademyInstant } from "@/lib/format/academy-time";
+
 export interface MarkableRosterEntry {
   student_id: string;
   attendance_status?: string | null;
@@ -48,7 +50,8 @@ export function markingNotOpenYet(
   startAt: string,
   now: Date = new Date(),
 ): boolean {
-  const start = new Date(startAt).getTime();
+  // Same parser as the "opens at" label: a naive timestamp is UTC (server truth).
+  const start = parseAcademyInstant(startAt).getTime();
   return !Number.isNaN(start) && start - now.getTime() > MARK_LEAD_TIME_MS;
 }
 

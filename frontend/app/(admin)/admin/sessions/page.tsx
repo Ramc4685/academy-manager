@@ -263,6 +263,12 @@ export default function AdminSessionsPage() {
         </Card>
       )}
 
+      {/* A tester opened the wrong recurring class looking for one date (usability study). */}
+      <p data-testid="sessions-dates-hint" className="text-sm text-rally-muted">
+        Days and times are each class&apos;s regular schedule. A one-off or moved class can fall on
+        another day, so open Class dates to find one date and its attendance and recap.
+      </p>
+
       {view === "calendar" ? (
         <Card p={16}>
           <AdminCalendarView sessions={sessions} />
@@ -442,7 +448,7 @@ function SessionList({
             <tr className="border-b border-rally-line text-left">
               <Th>Session</Th>
               <Th>Location</Th>
-              <Th>Day</Th>
+              <Th>Regular days</Th>
               <Th>Time</Th>
               <Th>Coach</Th>
               <Th align="right">Fee</Th>
@@ -506,6 +512,14 @@ function SessionList({
                   </td>
                   <td className={`${actionCellClass} bg-white text-right`}>
                     <div className="flex justify-end gap-2">
+                      <Link
+                        href={`/admin/sessions/${s.session_id}?tab=dates` as Route}
+                        data-testid={`session-dates-link-${s.session_id}`}
+                        aria-label={`Class dates for ${s.title}`}
+                        className="inline-flex h-[30px] items-center whitespace-nowrap rounded-md border border-rally-line bg-white px-3 text-xs font-semibold text-rally-ink hover:bg-rally-paper"
+                      >
+                        Class dates
+                      </Link>
                       <Button
                         variant="secondary"
                         size="sm"
@@ -585,6 +599,11 @@ function SessionPhoneList({
                 label: "Open session",
                 href: `/admin/sessions/${s.session_id}` as Route,
               },
+              {
+                key: "dates",
+                label: "Class dates",
+                href: `/admin/sessions/${s.session_id}?tab=dates` as Route,
+              },
               { key: "edit", label: "Edit", onSelect: () => onEdit(s) },
               {
                 key: "cancel",
@@ -597,7 +616,7 @@ function SessionPhoneList({
             secondary={
               <>
                 <div className="font-mono text-xs tabular-nums text-rally-base">
-                  {sessionDayLabel(s)} · {formatSessionTimeRange(s)}
+                  Regular: {sessionDayLabel(s)} · {formatSessionTimeRange(s)}
                 </div>
                 <div className="break-words">
                   {s.location} · {s.coach_name || "Coach assigned"}

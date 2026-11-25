@@ -120,8 +120,10 @@ export function ReplacementCoachTable({
 
   const dateLabel = (occurrence: AdminSessionOccurrenceView) =>
     parseAcademyInstant(occurrence.start_at).toLocaleDateString("en-US", {
+      weekday: "short",
       month: "short",
       day: "numeric",
+      year: "numeric",
       timeZone,
     });
   const timeLabel = (occurrence: AdminSessionOccurrenceView) =>

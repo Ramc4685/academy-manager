@@ -277,6 +277,8 @@ class SkillPassportEntry(BaseModel):
     last_test_passed: bool | None
     last_tested_at: datetime | None
     test_attempt_count: int
+    #: A PASSED row's last update (the pass date used by milestones); None otherwise.
+    passed_at: datetime | None = None
 
 
 class SkillBoardStudentRef(BaseModel):

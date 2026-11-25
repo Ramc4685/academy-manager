@@ -597,3 +597,73 @@ test.describe("admin students", () => {
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
 });
+
+// Usability study: an admin could not find when a student passed a skill.
+test("student progress shows the date each skill was passed", async ({ page }) => {
+  await stubMe(page);
+  await stubAdminAcademy(page);
+  // A Chicago academy: an evening pass is stored as the next UTC day.
+  await page.route(/\/api\/v2\/admin\/academy(?:\?.*)?$/, (route) =>
+    fulfillJson(route, { academy_id: "academy-e2e", display_name: "Academy E2E", timezone: "America/Chicago" }),
+  );
+  await page.route("**/api/v2/admin/students/student-1", (route) =>
+    route.request().method() === "GET"
+      ? fulfillJson(route, {
+          student_id: "student-1",
+          full_name: "Amit Rao",
+          parent_id: "parent-1",
+          parent_name: "Rohan Rao",
+          lifecycle: "active",
+          recent_attendance: [],
+          enrolled_sessions: [],
+        })
+      : route.fallback(),
+  );
+  await page.route("**/api/v2/admin/curriculum/programs*", (route) =>
+    fulfillJson(route, { programs: [{ program_id: "prog-1", name: "Junior Pathway" }] }),
+  );
+  await page.route("**/api/v2/admin/students/student-1/progress*", (route) =>
+    fulfillJson(route, {
+      student_id: "student-1",
+      program_id: "prog-1",
+      program_name: "Junior Pathway",
+      current_level_id: "lvl-1",
+      current_level_name: "Level 1",
+      current_level_sequence: 1,
+      total_skills: 2,
+      passed_skills: 1,
+      in_progress_skills: 1,
+      not_started_skills: 0,
+      level_up_status: null,
+    }),
+  );
+  await page.route("**/api/v2/admin/students/student-1/certificates*", (route) =>
+    fulfillJson(route, { certificates: [] }),
+  );
+  const entry = (skill_id: string, name: string, sequence: number, status: string, passed_at: string | null) => ({
+    skill_id,
+    level_id: "lvl-1",
+    program_id: "prog-1",
+    skill_name: name,
+    skill_description: "",
+    sequence,
+    is_required: true,
+    status,
+    last_test_passed: null,
+    last_tested_at: null,
+    test_attempt_count: 0,
+    passed_at,
+  });
+  await page.route("**/api/v2/admin/students/student-1/passport*", (route) =>
+    fulfillJson(route, {
+      passport: [
+        entry("sk-grip", "Grip", 1, "PASSED", "2026-11-11T02:30:00"),
+        entry("sk-serve", "Serve", 2, "PRACTICING", null),
+      ],
+    }),
+  );
+
+  await page.goto("/admin/students/student-1/progress?program_id=prog-1");
+  await expect(page.getByTestId("skill-passed-at-sk-grip")).toHaveText("Passed Tue, Nov 10");
+  await expect(page.getByTestId("skill-passed-at-sk-serve")).toHaveCount(0);
+});
