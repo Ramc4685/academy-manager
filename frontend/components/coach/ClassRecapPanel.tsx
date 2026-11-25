@@ -407,6 +407,12 @@ export function ClassRecapBody({
           {save.isPending ? "Saving…" : "Save recap"}
         </Button>
       )}
+      {/* Testers could not tell whether a recap had saved (usability study). */}
+      {view.can_edit && !save.isPending && (
+        <p role="status" data-testid="recap-save-state" className="text-xs text-rally-subtle">
+          {dirty ? "Unsaved changes." : view.revision > 0 ? "Recap saved." : "No recap saved yet."}
+        </p>
+      )}
       {!view.can_edit && (
         <p className="text-xs text-rally-subtle" data-testid="recap-read-only">
           Only the class&apos;s lead coach or the owner can change this recap.
