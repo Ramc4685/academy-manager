@@ -267,3 +267,63 @@ test.describe("Class sync status", () => {
     );
   });
 });
+
+// Usability study: the coach could not tell what had saved, mistook the Skills
+// screen for attendance, and looked for recaps in Needs review.
+test.describe("Recap and skills feedback", () => {
+  test("a saved recap says so, and the skills screen says it is not attendance", async ({
+    page,
+    mock,
+  }) => {
+    void mock;
+    const saves: Record<string, unknown>[] = [];
+    let revision = 0;
+    const view = () => ({
+      occurrence_id: "occ-today-1",
+      class_starts_at: mock.today.sessions[0].start_at,
+      can_edit: true,
+      can_resolve: false,
+      ai_enabled: false,
+      revision,
+      source: revision ? "coach" : null,
+      updated_at: revision ? new Date().toISOString() : null,
+      taught_skills:
+        revision > 0 ? [{ skill_id: "sk-serve", name: "Serve", level_name: "Level 1" }] : [],
+      practice: [],
+      roster: [{ student_id: "st1", name: "Alice", attendance: "present" }],
+      skill_options: [{ skill_id: "sk-serve", name: "Serve", level_name: "Level 1" }],
+      reports: [],
+    });
+    await page.route("**/api/v2/coach/occurrences/*/class-recap", async (route) => {
+      if (route.request().method() === "PUT") {
+        saves.push(route.request().postDataJSON() as Record<string, unknown>);
+        revision += 1;
+      }
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify(view()) });
+    });
+
+    await page.goto("/coach/sessions/occ-today-1?recap=open");
+    await expect(page.getByTestId("recap-save-state")).toHaveText("No recap saved yet.");
+    await page.getByTestId("recap-skill-select").selectOption("sk-serve");
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await expect(page.getByTestId("recap-save-state")).toHaveText("Unsaved changes.");
+    await page.getByTestId("recap-save").click();
+    await expect(page.getByTestId("recap-save-state")).toHaveText("Recap saved.");
+    expect(saves).toHaveLength(1);
+    expect(saves[0]).toMatchObject({ expected_revision: 0, taught_skill_ids: ["sk-serve"] });
+
+    await page.goto(`/coach/sessions/occ-today-1/skills?date=${mock.today.date}`);
+    await expect(page.getByTestId("skills-not-attendance")).toContainText(
+      "don't record attendance",
+    );
+  });
+
+  test("an empty Needs review explains it holds unsaved marks, not recaps", async ({
+    page,
+    mock,
+  }) => {
+    void mock;
+    await page.goto("/coach/needs-review");
+    await expect(page.getByTestId("tray-empty")).toContainText("tap Class recap");
+  });
+});

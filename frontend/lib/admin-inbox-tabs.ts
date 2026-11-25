@@ -17,16 +17,17 @@ export type InboxTab =
   | "pauses"
   | "attendance";
 
+// Labels say "request"/"notice": an admin hunting a parent request missed these tabs (usability study).
 /** Counted ids match the backend's `INBOX_QUEUE_IDS`; `?tab=` values key off them. */
 export const INBOX_TABS: { id: InboxTab; label: string }[] = [
   { id: "registrations", label: "Registrations" },
   { id: "waitlist", label: "Waitlist" },
   { id: "level-ups", label: "Level-ups" },
-  { id: "makeups", label: "Makeups" },
+  { id: "makeups", label: "Makeup requests" },
   { id: "trials", label: "Trials" },
-  { id: "absences", label: "Absences" },
+  { id: "absences", label: "Absence notices" },
   { id: "cancellations", label: "Cancellations" },
-  { id: "pauses", label: "Pauses" },
+  { id: "pauses", label: "Pause requests" },
   { id: "attendance", label: "Attendance" },
 ];
 

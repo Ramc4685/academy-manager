@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { UrlObject } from "url";
@@ -93,6 +94,14 @@ export default function AdminSettingsPage() {
     <SettingsDirtyProvider>
       <section data-testid="admin-settings" className="space-y-6">
         <SettingsTabs active={active} hrefFor={hrefForPanel} tabs={tabs} />
+        {/* Testers looked for staff access under Settings (usability study). */}
+        <p data-testid="settings-staff-pointer" className="text-sm text-rally-muted">
+          Giving a coach or admin access? Go to{" "}
+          <Link href="/admin/users" className="font-medium underline underline-offset-2">
+            Staff
+          </Link>
+          .
+        </p>
         {ownerOnlyHere && <OwnerOnlyPanel />}
         {active === "academy" && (
           <div className="space-y-6">
