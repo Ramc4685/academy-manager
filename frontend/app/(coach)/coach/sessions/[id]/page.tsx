@@ -880,10 +880,12 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   // A future class cannot be marked (the server refuses it too).
   const notOpenYet = markingNotOpenYet(session.start_at, now);
   // One opening time for the banner and the disabled button (they disagreed).
-  const opensAt = formatAcademyClock(
-    new Date(parseAcademyInstant(session.start_at).getTime() - MARK_LEAD_TIME_MS).toISOString(),
-    session.timezone,
-  );
+  const opensAt = notOpenYet
+    ? formatAcademyClock(
+        new Date(parseAcademyInstant(session.start_at).getTime() - MARK_LEAD_TIME_MS).toISOString(),
+        session.timezone,
+      )
+    : "";
 
   return (
     <section data-testid="session-detail">
