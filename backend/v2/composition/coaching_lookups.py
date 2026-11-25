@@ -13,7 +13,11 @@ from typing import Any, Protocol
 
 from backend.v2.contexts.coaching.application.ports import (
     AttendanceEligibility,
+    DropoffPolicy,
+    DropoffPolicyLookup,
     EnrollmentLookup,
+    ExpectedRosterLookup,
+    GuardianLookup,
     OccurrenceDetails,
     OccurrenceLookup,
     SessionLookup,
@@ -22,7 +26,8 @@ from backend.v2.contexts.enrollment.application.ports import SessionQuery
 from backend.v2.contexts.enrollment.application.use_cases.get_occurrence_roster import (
     OccurrenceRosterQuery,
 )
-from backend.v2.contexts.enrollment.domain.models import Enrollment
+from backend.v2.contexts.enrollment.domain.models import Enrollment, Student
+from backend.v2.contexts.enrollment.domain.self_service import ParentSelfServicePolicy
 
 
 class EnrollmentSessionLookup(SessionLookup):
@@ -133,3 +138,65 @@ class EnrollmentOccurrenceLookup(OccurrenceLookup):
             template_session_id=occurrence.template_session_id,
             assistant_coach_ids=occurrence.assistant_coach_ids,
         )
+
+
+class _PolicyReads(Protocol):
+    async def get_or_default(self) -> ParentSelfServicePolicy: ...
+
+
+class SelfServiceDropoffPolicyLookup(DropoffPolicyLookup):
+    """Coaching's drop-off switch and window, read from Enrollment's
+    per-academy self-service policy (tenant from the request context)."""
+
+    def __init__(self, policies: _PolicyReads) -> None:
+        self._policies = policies
+
+    async def get(self) -> DropoffPolicy:
+        policy = await self._policies.get_or_default()
+        return DropoffPolicy(
+            enabled=policy.dropoff_checkin_enabled,
+            opens_minutes_before=policy.dropoff_checkin_opens_minutes_before,
+            closes_minutes_after=policy.dropoff_checkin_closes_minutes_after,
+        )
+
+
+class _ParentStudentReads(Protocol):
+    async def get_for_parent(self, parent_id: str, student_id: str) -> Student | None: ...
+
+
+class StudentGuardianLookup(GuardianLookup):
+    """Parent ownership via the tenant-scoped ``get_for_parent`` read, the
+    same check ``SubmitAbsenceNotice`` makes."""
+
+    def __init__(self, students: _ParentStudentReads) -> None:
+        self._students = students
+
+    async def is_guardian(self, parent_id: str, student_id: str) -> bool:
+        return await self._students.get_for_parent(parent_id, student_id) is not None
+
+
+class _ActiveEnrollmentReads(Protocol):
+    async def active_for_session(self, session_id: str) -> list[Enrollment]: ...
+
+
+class EnrollmentExpectedRosterLookup(ExpectedRosterLookup):
+    """Who staff expect at a class date, for the drop-off breakdown."""
+
+    def __init__(
+        self, enrollments: _ActiveEnrollmentReads, occurrence_roster: OccurrenceRosterQuery
+    ) -> None:
+        self._enrollments = enrollments
+        self._occurrence_roster = occurrence_roster
+
+    async def expected_student_ids(
+        self, *, occurrence_id: str, session_id: str, template_session_id: str | None
+    ) -> list[str]:
+        ids: dict[str, None] = {}
+        for sid in dict.fromkeys(s for s in (session_id, template_session_id) if s):
+            for enrollment in await self._enrollments.active_for_session(sid):
+                ids[enrollment.student_id] = None
+        # shortcut: make-up rows are counted without the live-enrollment check
+        # attendance_eligibility makes; this is a headcount, never a mark.
+        for entry in await self._occurrence_roster.list_for_occurrence(occurrence_id):
+            ids[entry.student_id] = None
+        return list(ids)

@@ -141,6 +141,7 @@ async function stubPayments(page: Page): Promise<void> {
         autopay_enrollment_status: null,
       },
     ],
+    billing_portal_available: true,
   });
 }
 

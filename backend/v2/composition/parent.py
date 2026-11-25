@@ -7,7 +7,7 @@ import hashlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol, TypeVar
 from zoneinfo import ZoneInfo
 
@@ -128,6 +128,7 @@ from backend.v2.contexts.billing.infrastructure.mongo_credit_ledger_repo import 
 )
 from backend.v2.contexts.billing.infrastructure.mongo_parent_billing_customer_repo import (
     MongoParentBillingCustomerRepository,
+    academy_card_route,
     stored_stripe_account,
 )
 from backend.v2.contexts.billing.infrastructure.mongo_payment_dispute_repo import (
@@ -187,6 +188,7 @@ from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_
     ListParentAvailableSessions,
 )
 from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
+    DescribeAbsenceMakeups,
     ListEligibleMakeupTargets,
     ListMakeupCandidates,
     ListParentMakeups,
@@ -431,6 +433,8 @@ class ParentComposition:
     # cannot place a non-default field after a defaulted one.
     list_messages: object = None  # Callable[[str], Awaitable[list[Message]]]
     mark_message_read: object = None  # Callable[[str, str], Awaitable[None]]
+    #: callable(parent_id) -> bool: the Stripe portal can open for this parent.
+    billing_portal_available: object = None
     # Waivers to sign for a chosen class + whether any is program-scoped
     # (Settings Phase 6): callable(session_id | None) -> (list[Waiver], bool).
     get_registration_waivers: object = None
@@ -444,6 +448,8 @@ class ParentComposition:
     calendar_feed: object = None
     # #1037/#1041: parent makeup picker candidates (server-eligible missed classes).
     list_makeup_candidates: ListMakeupCandidates | None = None
+    # Makeup state of each reported absence (Reported / eligible / booked ...).
+    describe_absence_makeups: DescribeAbsenceMakeups | None = None
 
 
 class _MongoTransactionRunner:
@@ -944,6 +950,7 @@ def compose_parent(
         # #1038: approved make-up / trial attendance (one-time roster rows).
         occurrence_roster=occurrence_roster_repo,
         one_time_occurrences=occurrences_query,
+        absence_notices=absence_notices_repo,
     )
     resolve_assigned_occurrences_uc = ResolveAssignedOccurrences(
         occurrences=occurrences_query,
@@ -977,6 +984,14 @@ def compose_parent(
         enrollments=enrollments_query,
         occurrences=occurrences_query,
         sessions=sessions_query,
+        notices=absence_notices_repo,
+        makeups=makeup_requests_repo,
+        policies=self_service_policies_repo,
+        attendance=student_presence,
+    )
+    describe_absence_makeups = DescribeAbsenceMakeups(
+        occurrences=occurrences_query,
+        enrollments=enrollments_query,
         notices=absence_notices_repo,
         makeups=makeup_requests_repo,
         policies=self_service_policies_repo,
@@ -1553,12 +1568,51 @@ def compose_parent(
             return None
         return await get_parent_profile(parent_id)
 
+    async def _next_autopay_fee_cents(
+        academy_id: str, session_doc: dict[str, Any], timezone_name: str | None
+    ) -> int:
+        """The fee the first autopay charge collects: next month's class fee."""
+        timezone_name = timezone_name or resolve_session_timezone(
+            None, await academy_timezone_lookup(db)(academy_id)
+        )
+        autopay_period = next_period(_local_period_label(clock(), timezone_name))
+        return await class_fee_cents_for_period(db, session_doc, autopay_period)
+
+    async def _online_offer() -> str:
+        """What a priced class offers, from the route autopay start checks.
+        Only an academy with no Stripe account is paid at the desk; a broken
+        account is a temporary "unavailable", not a payment policy. An
+        unreadable route keeps the button, as before this offer existed."""
+        route = await academy_card_route(db)
+        if route is None or route.payments_possible:
+            return "available"
+        return "manual_payments" if route.kind == "no_account" else "unavailable"
+
+    async def _autopay_offer(
+        academy_id: str, enrollment: dict[str, Any], session: dict[str, Any] | None, online: str
+    ) -> str:
+        # Mirrors start_autopay_for_enrollment's refusals so the page never
+        # offers a button that can only fail.
+        if str(enrollment.get("status") or "active") != "active" or session is None:
+            return "not_active"
+        if await _next_autopay_fee_cents(academy_id, session, session.get("timezone")) <= 0:
+            return "free_class"
+        return online
+
+    async def billing_portal_available(parent_id: str) -> bool:
+        """The portal opens only for a parent with a Stripe customer here
+        (open_billing_portal's own precondition)."""
+        with tenant_scope(request_academy_id()):
+            customer_doc = await parent_customers_repo.get_academy_customer(parent_id=parent_id)
+        return bool((customer_doc or {}).get("stripe_customer_id"))
+
     async def list_enrollments_for_parent(parent_id: str) -> list[dict[str, Any]]:
         academy_id = current_academy_id()  # request-time tenant (C4)
         students = await _parent_students(parent_id)
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
         if not by_id:
             return []
+        online = await _online_offer()
         # #981: a card on another Stripe account than autopay charges is no card.
         billing_customer = await parent_customers_repo.get_display_customer(parent_id=parent_id)
         autopay_payment_method_type = None
@@ -1645,6 +1699,7 @@ def compose_parent(
                     "autopay_payment_method_label": autopay_payment_method_label,
                     "autopay_payment_method_last4": autopay_payment_method_last4,
                     "autopay_setup_status": autopay_setup_status,
+                    "autopay_offer": await _autopay_offer(academy_id, enrollment, session, online),
                 }
             )
         rows.extend(await _departed_enrollment_rows(academy_id, by_id))
@@ -1737,6 +1792,7 @@ def compose_parent(
                     "autopay_payment_method_label": None,
                     "autopay_payment_method_last4": None,
                     "autopay_setup_status": None,
+                    "autopay_offer": "not_active",
                 }
             )
         departed.sort(
@@ -1846,11 +1902,15 @@ def compose_parent(
         return rows, total
 
     async def list_progress_for_parent(
-        parent_id: str, *, limit: int = 50, offset: int = 0
+        parent_id: str, *, limit: int = 50, offset: int = 0, student_id: str | None = None
     ) -> tuple[list[dict[str, Any]], int]:
         academy_id = current_academy_id()  # request-time tenant (C4)
         students = await _parent_students(parent_id)
         by_id = {str(s.get("student_id") or s["_id"]): s for s in students}
+        # One child's notes (the Progress tab). A child outside this family
+        # reads as empty, never as another family's notes.
+        if student_id is not None:
+            by_id = {student_id: by_id[student_id]} if student_id in by_id else {}
         if not by_id:
             return [], 0
         query = {"academy_id": academy_id, "student_id": {"$in": list(by_id)}}
@@ -2533,11 +2593,9 @@ def compose_parent(
         # session's own clock (the month the checkout quote calls "Starting
         # next month"). Read through the same month-aware fee every charge path
         # uses, so a scheduled plan price change is reflected here too.
-        timezone_name = session.timezone or resolve_session_timezone(
-            None, await academy_timezone_lookup(db)(academy_id)
+        amount_cents = await _next_autopay_fee_cents(
+            academy_id, session_doc or {}, session.timezone
         )
-        autopay_period = next_period(_local_period_label(clock(), timezone_name))
-        amount_cents = await class_fee_cents_for_period(db, session_doc or {}, autopay_period)
         if amount_cents <= 0:
             # An unpriced class reads $0, exactly as checkout reads it (a $0
             # quote skips payment): there is no monthly charge to automate.
@@ -2637,6 +2695,7 @@ def compose_parent(
             "can_request_cancel": policy.can_request_cancel,
             "can_claim_waitlist_offer": policy.can_claim_waitlist_offer,
             "can_request_trial": trials_open,
+            "dropoff_checkin_enabled": policy.dropoff_checkin_enabled,
         }
         if not doc:
             return {
@@ -2674,6 +2733,7 @@ def compose_parent(
         to: date | None = None,
         limit: int = 50,
         offset: int = 0,
+        include_started_within: timedelta = timedelta(0),
     ):
         return await get_child_schedule_uc.execute(
             parent_id,
@@ -2682,6 +2742,7 @@ def compose_parent(
             to=to,
             limit=limit,
             offset=offset,
+            include_started_within=include_started_within,
         )
 
     async def resolve_assigned_classes(occurrence_ids: list[str]) -> dict[str, dict[str, Any]]:
@@ -3069,6 +3130,7 @@ def compose_parent(
         list_credits_for_parent=list_credits_for_parent,
         list_children_for_parent=list_children_for_parent,
         list_enrollments_for_parent=list_enrollments_for_parent,
+        billing_portal_available=billing_portal_available,
         request_enrollment_pause=request_pause,
         list_parent_pause_requests=list_parent_pause_requests,
         submit_absence_notice=submit_absence_notice,
@@ -3077,6 +3139,7 @@ def compose_parent(
         list_parent_makeups=list_parent_makeups,
         list_eligible_makeup_targets=list_eligible_makeup_targets,
         list_makeup_candidates=list_makeup_candidates,
+        describe_absence_makeups=describe_absence_makeups,
         submit_trial_request=submit_trial_request,
         list_parent_trial_requests=list_parent_trial_requests,
         preview_self_cancel=preview_self_cancel,

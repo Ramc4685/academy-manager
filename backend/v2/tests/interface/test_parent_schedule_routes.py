@@ -58,6 +58,7 @@ class _FakeParentUseCases:
         to,
         limit: int,
         offset: int,
+        include_started_within: timedelta = timedelta(0),
     ) -> tuple[list[ChildScheduleEntry], int]:
         if student_id not in self._owned_ids:
             raise StudentNotOwnedByParent("not owned")
@@ -181,3 +182,45 @@ def test_schedule_exposes_the_one_time_source_label() -> None:
         ("occ-makeup", "makeup"),
         ("occ-trial", "trial"),
     ]
+
+
+def test_schedule_exposes_already_reported_dates() -> None:
+    entries = [
+        _entry("occ-reported", 1).model_copy(update={"absence_reported": True}),
+        _entry("occ-open", 2),
+    ]
+    with _make_client(entries=entries) as client:
+        response = client.get("/api/v2/parent/children/student-1/schedule")
+
+    assert response.status_code == 200, response.text
+    assert [(e["occurrence_id"], e["absence_reported"]) for e in response.json()["entries"]] == [
+        ("occ-reported", True),
+        ("occ-open", False),
+    ]
+
+
+def test_schedule_describes_only_reported_dates_makeup_state(monkeypatch) -> None:
+    from backend.v2.contexts.enrollment.application.use_cases.makeup_requests import (
+        AbsenceMakeupStatus,
+    )
+
+    asked: list[list[tuple[str, str]]] = []
+
+    class _Describe:
+        async def execute(self, keys):
+            asked.append(keys)
+            return {k: AbsenceMakeupStatus(state="reported") for k in keys}
+
+    entries = [
+        _entry("occ-reported", 1).model_copy(update={"absence_reported": True}),
+        _entry("occ-open", 2),
+    ]
+    monkeypatch.setattr(_FakeParentUseCases, "describe_absence_makeups", _Describe(), raising=False)
+    with _make_client(entries=entries) as client:
+        response = client.get("/api/v2/parent/children/student-1/schedule")
+
+    assert response.status_code == 200, response.text
+    assert asked == [[("student-1", "occ-reported")]]
+    makeups = {e["occurrence_id"]: e["absence_makeup"] for e in response.json()["entries"]}
+    assert makeups["occ-reported"]["state"] == "reported"
+    assert makeups["occ-open"] is None

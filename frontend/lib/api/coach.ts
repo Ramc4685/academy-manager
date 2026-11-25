@@ -7,6 +7,7 @@
  */
 
 import { apiFetch, type ApiError } from "./client";
+import type { components } from "./generated/v2";
 import type { TechniqueObservationDraft } from "@/lib/coach/technique-observation";
 import {
   coachDayHubPath,
@@ -61,6 +62,24 @@ export interface CoachRosterEntry {
    * sees — the per-row billing drawer was removed in the same change.
    */
   payment_due_cents?: number | null;
+  /** Set only when a parent reported a drop-off for this class date. */
+  checkin?: StaffDropoffCheckinView | null;
+}
+
+export type StaffDropoffCheckinView = components["schemas"]["StaffDropoffCheckinView"];
+
+/**
+ * Confirm a parent-reported drop-off: the server writes (or links to) the one
+ * official Present mark. Safe to retry; online only, never queued.
+ */
+export function confirmDropoff(
+  occurrenceId: string,
+  studentId: string,
+): Promise<StaffDropoffCheckinView> {
+  return apiFetch(
+    `/coach/occurrences/${encodeURIComponent(occurrenceId)}/checkins/${encodeURIComponent(studentId)}/confirm`,
+    { method: "POST" },
+  );
 }
 
 export interface CoachSession {
@@ -83,6 +102,11 @@ export interface CoachSession {
   cancellation_reason?: string | null;
   /** L9: families with no account who booked a free trial on the public page. */
   trial_guests?: CoachTrialGuest[];
+  /** True once this class's recap names a taught skill (Today's recap shortcut). */
+  recap_saved?: boolean;
+  /** Drop-off check-in window for this date; null when the academy has it off. */
+  dropoff_window_opens_at?: string | null;
+  dropoff_window_closes_at?: string | null;
 }
 
 /** The coach sees the parent's name and the player's age only. */

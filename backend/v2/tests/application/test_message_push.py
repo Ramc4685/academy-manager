@@ -157,9 +157,44 @@ async def test_dm_push_opens_the_recipients_own_inbox() -> None:
         for who in ("coach1", "p1", "staff"):
             await notifier.direct_message(_msg("dm", recipient_id=who))
         await notifier.academy_broadcast(_msg())
+    # Parent and coach inboxes highlight the message; the admin inbox opens
+    # the thread with the person who wrote it.
     assert sender.urls == [
-        "/coach/messages",
-        "/parent/messages",
-        "/admin/messages",
-        "/parent/messages",
+        "/coach/messages?message=m1",
+        "/parent/messages?message=m1",
+        "/admin/messages?dm=admin",
+        "/parent/messages?message=m1",
     ]
+
+
+async def test_message_urls_are_escaped_tenant_ids_never_raw_input() -> None:
+    from backend.v2.contexts.communications.application.use_cases.notify_message_by_push import (
+        message_url,
+    )
+
+    odd = _msg("dm", recipient_id="p1").model_copy(
+        update={"message_id": "m/1?x=//evil", "sender_id": "a&b"}
+    )
+    assert message_url("/parent/messages", odd) == "/parent/messages?message=m%2F1%3Fx%3D%2F%2Fevil"
+    assert message_url("/admin/messages", odd) == "/admin/messages?dm=a%26b"
+
+
+async def test_broadcast_and_class_announcement_pushes_open_the_message() -> None:
+    notifier, sender, _ = _notifier("academy_broadcast,class_announcement")
+    with tenant_scope("acad"):
+        await notifier.academy_broadcast(_msg())
+        await notifier.class_announcement(_msg(), session_id="s1", session_title="Juniors")
+    assert set(sender.urls) == {"/parent/messages?message=m1"}
+    assert len(sender.urls) == 2  # p2 opted out
+
+
+async def test_dm_push_falls_back_to_the_parent_inbox_when_roles_fail() -> None:
+    notifier, sender, _ = _notifier("direct_message")
+
+    async def broken(academy_id: str, user_id: str) -> str:
+        raise RuntimeError("membership read failed")
+
+    notifier.inbox_path = broken
+    with tenant_scope("acad"):
+        await notifier.direct_message(_msg("dm", recipient_id="p1"))
+    assert sender.urls == ["/parent/messages?message=m1"]

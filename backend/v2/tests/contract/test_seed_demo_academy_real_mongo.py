@@ -143,6 +143,100 @@ async def test_second_apply_restores_the_seeded_state(real_db: Any) -> None:
     assert (alex["status"], alex["balance_due_cents"]) == ("paid", 0)
 
 
+async def _level_seq(db: Any, level_id: str) -> int:
+    return (await db["skill_levels"].find_one({"level_id": level_id}))["sequence"]
+
+
+async def test_bootstraps_the_pathway_and_places_both_children(real_db: Any) -> None:
+    await _apply(real_db)
+
+    programs = [d async for d in real_db["skill_programs"].find({"is_active": True})]
+    assert [(p["name"], p["sport"]) for p in programs] == [("Badminton Skill Pathway", "badminton")]
+    assert await real_db["skill_levels"].count_documents({}) >= 2
+    assert await real_db["lesson_cards"].count_documents({}) > 0
+
+    active = {
+        d["student_id"]: await _level_seq(real_db, d["level_id"])
+        async for d in real_db["student_level_progress"].find({"status": "active"})
+    }
+    assert active == {"demo_student_sam": 2, "demo_student_alex": 1}
+    for child, passed in (("demo_student_sam", 7), ("demo_student_alex", 2)):
+        rows = [d async for d in real_db["student_skill_progress"].find({"student_id": child})]
+        assert sum(r["status"] == "PASSED" for r in rows) == passed
+        # Every update carries its own date, so the history reads as a timeline.
+        assert len({r["last_updated_at"] for r in rows}) == len(rows)
+
+    notes = [d async for d in real_db["progress_notes"].find({"visibility": "shared"})]
+    assert [n["student_id"] for n in notes] == ["demo_student_sam"]
+
+    recaps = [d async for d in real_db["class_recaps"].find({})]
+    assert len(recaps) == 1
+    recap = recaps[0]
+    occurrence = await real_db["session_occurrences"].find_one(
+        {"occurrence_id": recap["occurrence_id"]}
+    )
+    assert occurrence["status"] == "completed"
+    assert recap["taught_skill_ids"] and recap["practice"]
+    for row in recap["practice"]:
+        mark = await real_db["attendance"].find_one(
+            {"occurrence_id": recap["occurrence_id"], "student_id": row["student_id"]}
+        )
+        assert mark["status"] in {"present", "late"}
+        assert set(row["skill_ids"]) <= set(recap["taught_skill_ids"])
+
+
+async def test_reuses_the_pathway_already_seeded_in_the_app(real_db: Any) -> None:
+    await _apply(real_db)
+    program = await real_db["skill_programs"].find_one({})
+    # The owner renames a skill and edits a lesson card in the app.
+    level1 = await real_db["skill_levels"].find_one({"sequence": 1})
+    first = await real_db["skills"].find_one({"level_id": level1["level_id"], "sequence": 1})
+    await real_db["skills"].update_one(
+        {"skill_id": first["skill_id"]}, {"$set": {"name": "Grip (owner edit)"}}
+    )
+    await real_db["lesson_cards"].update_one({}, {"$set": {"title": "Card (owner edit)"}})
+
+    await _apply(real_db)
+
+    assert await real_db["skill_programs"].count_documents({}) == 1
+    assert (await real_db["skill_programs"].find_one({}))["program_id"] == program["program_id"]
+    renamed = await real_db["skills"].find_one({"skill_id": first["skill_id"]})
+    assert renamed["name"] == "Grip (owner edit)"
+    assert await real_db["lesson_cards"].count_documents({"title": "Card (owner edit)"}) == 1
+
+
+async def test_rerun_keeps_app_progress_and_adds_no_duplicates(real_db: Any) -> None:
+    await _apply(real_db)
+    progress = (
+        "skill_programs",
+        "skill_levels",
+        "skills",
+        "skill_criteria",
+        "lesson_cards",
+        "student_level_progress",
+        "student_skill_progress",
+        "progress_notes",
+        "class_recaps",
+    )
+    first = {name: await real_db[name].count_documents({}) for name in progress}
+    # The coach moves Alex's in-progress skill on and edits the shared note.
+    row = await real_db["student_skill_progress"].find_one(
+        {"student_id": "demo_student_alex", "status": "LEARNING"}
+    )
+    await real_db["student_skill_progress"].update_one(
+        {"_id": row["_id"]}, {"$set": {"status": "PASSED"}}
+    )
+    await real_db["progress_notes"].update_one({}, {"$set": {"body": "Edited in the app"}})
+
+    await _apply(real_db)
+
+    assert {name: await real_db[name].count_documents({}) for name in progress} == first
+    assert await real_db["skill_programs"].count_documents({"is_active": True}) == 1
+    kept = await real_db["student_skill_progress"].find_one({"_id": row["_id"]})
+    assert kept["status"] == "PASSED"
+    assert (await real_db["progress_notes"].find_one({}))["body"] == "Edited in the app"
+
+
 async def test_writes_only_the_demo_academy(real_db: Any) -> None:
     await real_db["academies"].insert_one(
         {"academy_id": BLNO, "slug": "blno-academy", "display_name": "BLNO"}

@@ -390,3 +390,9 @@ export function formatWinDate(value: string, now: Date = new Date()): string {
   }
   return at.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
+
+/** The selected child's coach notes, matched on the stable student id (never
+ * the display name, which siblings can share). */
+export function notesForChild<T extends { student_id: string }>(notes: T[], studentId: string): T[] {
+  return notes.filter((note) => note.student_id === studentId);
+}

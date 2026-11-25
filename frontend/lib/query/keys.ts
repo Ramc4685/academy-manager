@@ -150,6 +150,7 @@ export const queryKeys = {
     attention: () => ["admin", "dashboard", "attention"] as const,
     setupChecklist: () => ["admin", "dashboard", "setup-checklist"] as const,
     inboxCounts: () => ["admin", "inbox", "counts"] as const,
+    inboxAttendance: () => ["admin", "inbox", "attendance"] as const,
     campaignPreview: (audience: unknown) => ["admin", "campaigns", "preview", audience] as const,
     academy: () => ["admin", "academy"] as const,
     fees: () => ["admin", "academy", "fees"] as const,
@@ -246,6 +247,7 @@ export const queryKeys = {
     // Same arrays the Requests page and shell already use inline.
     academy: () => ["parent", "academy"] as const,
     children: () => ["parent", "children"] as const,
+    childProgressNotes: (studentId: string) => ["parent", "progress", studentId] as const,
     progressJourney: (studentId: string) =>
       ["parent", "progress-journey", studentId] as const,
     classRecaps: (studentId: string) => ["parent", "class-recaps", studentId] as const,
