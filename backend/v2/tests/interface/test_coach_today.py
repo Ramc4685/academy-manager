@@ -306,3 +306,32 @@ def test_coach_today_trial_row_carries_request_id_and_outcome(seed):
     assert by_id["st-trial"]["trial_outcome"] == "came"
     assert by_id["st1"]["trial_request_id"] is None
     assert by_id["st1"]["trial_outcome"] is None
+
+
+def test_coach_today_flags_sessions_whose_recap_is_saved(seed):
+    use_cases = _build_use_cases(seed)
+    asked: list[list[str]] = []
+
+    async def recapped(occurrence_ids):
+        asked.append(list(occurrence_ids))
+        return {"occ-today-1"}
+
+    use_cases.recapped_occurrence_ids = recapped
+    with TestClient(_make_app(_coach_claims(), use_cases)) as client:
+        body = client.get("/api/v2/coach/today?date=2026-05-16").json()
+    saved = {s["occurrence_id"]: s["recap_saved"] for s in body["sessions"]}
+    assert saved == {"occ-today-1": True, "occ-today-2": False}
+    assert asked == [["occ-today-1", "occ-today-2"]]
+
+
+def test_coach_today_survives_a_failed_recap_lookup(seed):
+    use_cases = _build_use_cases(seed)
+
+    async def broken(occurrence_ids):
+        raise RuntimeError("mongo down")
+
+    use_cases.recapped_occurrence_ids = broken
+    with TestClient(_make_app(_coach_claims(), use_cases)) as client:
+        r = client.get("/api/v2/coach/today?date=2026-05-16")
+    assert r.status_code == 200, r.text
+    assert all(s["recap_saved"] is False for s in r.json()["sessions"])

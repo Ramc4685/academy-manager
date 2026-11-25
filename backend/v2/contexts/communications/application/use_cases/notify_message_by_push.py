@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from urllib.parse import quote
 
 from backend.v2.contexts.communications.application.ports import (
     AudienceResolver,
@@ -31,6 +32,16 @@ log = logging.getLogger(__name__)
 
 _PREVIEW = 140
 _PARENT_INBOX = "/parent/messages"
+_ADMIN_INBOX = "/admin/messages"
+
+
+def message_url(inbox: str, message: Message) -> str:
+    """The exact message a push opens. Parent and coach inboxes highlight
+    ``?message=<id>``; the admin inbox opens the thread with ``?dm=<the
+    other person>``, which for a DM the admin received is its sender."""
+    if inbox == _ADMIN_INBOX:
+        return f"{inbox}?dm={quote(message.sender_id, safe='')}"
+    return f"{inbox}?message={quote(message.message_id, safe='')}"
 
 
 def _preview(body: str) -> str:
@@ -56,7 +67,11 @@ class NotifyMessageByPush:
             log.warning("message push inbox lookup failed", exc_info=True)
             url = _PARENT_INBOX
         await self._send(
-            [message.recipient_id], PushEvent.DIRECT_MESSAGE, "New message", message.body, url
+            [message.recipient_id],
+            PushEvent.DIRECT_MESSAGE,
+            "New message",
+            message.body,
+            message_url(url, message),
         )
 
     async def academy_broadcast(self, message: Message) -> None:
@@ -66,7 +81,7 @@ class NotifyMessageByPush:
             lambda: self.audiences.resolve_academy_audience(AcademyAudience(role="parent")),
             PushEvent.ACADEMY_BROADCAST,
             "Announcement",
-            message.body,
+            message,
         )
 
     async def class_announcement(
@@ -78,7 +93,7 @@ class NotifyMessageByPush:
             lambda: self.audiences.resolve_session_audience(SessionAudience(session_id=session_id)),
             PushEvent.CLASS_ANNOUNCEMENT,
             session_title or "Class announcement",
-            message.body,
+            message,
         )
 
     async def _fan_out(
@@ -86,7 +101,7 @@ class NotifyMessageByPush:
         resolve: Callable[[], Awaitable[list[ResolvedRecipient]]],
         event: PushEvent,
         title: str,
-        body: str,
+        message: Message,
     ) -> None:
         try:
             recipients = await resolve()
@@ -100,7 +115,13 @@ class NotifyMessageByPush:
             return
         # shortcut: sends inline in the request, one device lookup per person;
         # move to the background queue if academies grow past a few hundred.
-        await self._send(list(dict.fromkeys(user_ids)), event, title, body, _PARENT_INBOX)
+        await self._send(
+            list(dict.fromkeys(user_ids)),
+            event,
+            title,
+            message.body,
+            message_url(_PARENT_INBOX, message),
+        )
 
     async def _send(
         self, user_ids: list[str], event: PushEvent, title: str, body: str, url: str

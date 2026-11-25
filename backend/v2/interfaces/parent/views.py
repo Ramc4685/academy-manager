@@ -17,6 +17,8 @@ from backend.v2.contexts.enrollment.application.use_cases.person_lifecycle impor
 from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
     ESIGN_CONSENT_TEXT,
 )
+from backend.v2.interfaces.dropoff_views import DropoffCheckinView
+from backend.v2.interfaces.parent.absence_makeup import AbsenceMakeupView
 
 # --- Onboarding ---
 
@@ -269,6 +271,8 @@ class ParentInvoiceView(BaseModel):
     # Why a "void" invoice was voided (issue #651), e.g. "enrollment_cancelled";
     # None for every other status.
     void_reason: str | None = None
+    #: e.g. ``DEMO-202611-0001``; None for invoices made before numbering.
+    invoice_number: str | None = None
 
 
 class ParentInvoicesResponse(BaseModel):
@@ -340,10 +344,19 @@ class ParentEnrollmentView(BaseModel):
     autopay_payment_method_label: str | None = None
     autopay_payment_method_last4: str | None = None
     autopay_setup_status: str | None = None
+    #: Whether "Set up autopay" can work here: ``free_class`` ($0 fee),
+    #: ``manual_payments`` (the academy takes no online payments),
+    #: ``unavailable`` (its Stripe account can't charge right now) and
+    #: ``not_active`` are the refusals autopay start would return.
+    autopay_offer: Literal[
+        "available", "free_class", "manual_payments", "not_active", "unavailable"
+    ] = "available"
 
 
 class ParentEnrollmentsResponse(BaseModel):
     enrollments: list[ParentEnrollmentView]
+    #: The Stripe billing portal can open (the parent has a Stripe customer).
+    billing_portal_available: bool = False
 
 
 class PauseRequestView(BaseModel):
@@ -499,6 +512,14 @@ class ParentScheduleEntryView(BaseModel):
     # approved attendance (issue #1038).
     source: Literal["regular", "makeup", "trial"] = "regular"
     cancellation_reason: str | None = None
+    # The child already has an absence notice for this date.
+    absence_reported: bool = False
+    # Drop-off check-in state; None when the academy has the feature off.
+    checkin: DropoffCheckinView | None = None
+    # Server-computed: show "I've arrived" now.
+    can_report_arrival: bool = False
+    # That absence's makeup state; only set when absence_reported.
+    absence_makeup: AbsenceMakeupView | None = None
 
 
 class ParentScheduleResponse(BaseModel):
@@ -575,6 +596,8 @@ class ParentSelfServiceSwitchesView(BaseModel):
     can_request_cancel: bool = True
     can_claim_waitlist_offer: bool = True
     can_request_trial: bool = True
+    #: Drop-off check-in is opt-in per academy, so it defaults to False.
+    dropoff_checkin_enabled: bool = False
 
 
 class ParentAcademyView(BaseModel):

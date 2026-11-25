@@ -81,9 +81,10 @@ class _FakeParentUseCases:
         *,
         limit: int = 50,
         offset: int = 0,
+        student_id: str | None = None,
     ) -> tuple[list[dict], int]:
-        total = len(self._progress)
-        return self._progress[offset : offset + limit], total
+        rows = [r for r in self._progress if student_id is None or r["student_id"] == student_id]
+        return rows[offset : offset + limit], len(rows)
 
     async def list_enrollments_for_parent(self, parent_id: str) -> list[dict]:
         return list(self._enrollments)
@@ -336,3 +337,14 @@ def test_progress_anonymous_returns_401() -> None:
     with _anon_client() as client:
         response = client.get("/api/v2/parent/progress")
     assert response.status_code == 401
+
+
+def test_progress_student_id_narrows_to_one_child() -> None:
+    rows = [_progress_row(idx=1), {**_progress_row(idx=2), "student_id": "student-2"}]
+    with _make_client(progress=rows) as client:
+        response = client.get("/api/v2/parent/progress?student_id=student-2")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [n["note_id"] for n in body["notes"]] == ["note-2"]
+    assert body["total"] == 1

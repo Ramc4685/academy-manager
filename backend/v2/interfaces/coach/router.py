@@ -17,6 +17,7 @@ from .announcement_routes import router as announcement_router
 from .attendance_routes import router as attendance_router
 from .class_recap_routes import router as class_recap_router
 from .dashboard_routes import router as dashboard_router
+from .dropoff_routes import router as dropoff_router
 from .feedback_routes import router as feedback_router
 from .messages_routes import router as messages_router
 from .notes_routes import router as notes_router
@@ -36,6 +37,7 @@ router.include_router(sessions_router)
 router.include_router(profile_router)
 router.include_router(dashboard_router)
 router.include_router(attendance_router)
+router.include_router(dropoff_router)
 router.include_router(notes_router)
 router.include_router(roster_router)
 router.include_router(feedback_router)

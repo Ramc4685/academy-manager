@@ -20,6 +20,7 @@ from backend.v2.contexts.coaching.application.use_cases.generate_daily_teaching_
     UnplacedStudent,
 )
 from backend.v2.contexts.coaching.application.use_cases.session_notes import NoteVisibility
+from backend.v2.interfaces.dropoff_views import StaffDropoffCheckinView
 from backend.v2.shared.comms import MAX_ANNOUNCEMENT_BODY
 
 # Client-generated ULID (Crockford base32, 26 chars). Constrained because it is
@@ -90,6 +91,9 @@ class CoachRosterEntry(BaseModel):
     # and deliberately nothing else: the billing drawer and the coach billing
     # routes were deleted in the same change.
     payment_due_cents: int | None = None
+    # Parent drop-off check-in for this date; None when no parent reported.
+    # "pending" shows "Arrived · Awaiting confirmation" + Confirm drop-off.
+    checkin: StaffDropoffCheckinView | None = None
 
 
 class CoachTrialGuest(BaseModel):
@@ -122,6 +126,13 @@ class CoachSession(BaseModel):
     status: Literal["scheduled", "cancelled", "completed"] = "scheduled"
     cancellation_reason: str | None = None
     trial_guests: list[CoachTrialGuest] = []
+    # True once the class recap names at least one taught skill, so Today can
+    # point the coach at the latest class whose recap is still empty.
+    recap_saved: bool = False
+    # Drop-off check-in window for this class date; None when the academy
+    # has it off. The roster refreshes itself while it is open.
+    dropoff_window_opens_at: datetime | None = None
+    dropoff_window_closes_at: datetime | None = None
 
 
 class CoachTodayResponse(BaseModel):

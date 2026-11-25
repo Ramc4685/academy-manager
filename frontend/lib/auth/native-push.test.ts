@@ -109,6 +109,26 @@ describe("safeAppPath", () => {
   });
 });
 
+/** Every `data.url` shape the backend push builders emit (see the push PR table). */
+const PUSH_DESTINATIONS = [
+  "/parent/messages?message=01JMSGPARENT0000000000000",
+  "/coach/messages?message=01JMSGCOACH00000000000000",
+  "/admin/messages?dm=01JUSERADMIN0000000000000",
+  "/parent/calendar?occurrence=01JOCCURRENCE000000000000",
+  "/parent/calendar",
+  "/parent/requests?offer=01JWAITLIST00000000000000",
+  "/parent/requests",
+  "/parent/payments",
+  // Ids are percent-encoded server-side, so a hostile id stays inside the query.
+  "/parent/messages?message=m%2F1%3Fx%3D%2F%2Fevil",
+];
+
+describe("safeAppPath accepts every push destination unchanged", () => {
+  it.each(PUSH_DESTINATIONS)("%s", async (url) => {
+    expect((await load()).safeAppPath(url)).toBe(url);
+  });
+});
+
 describe("startPushNotifications", () => {
   it("does nothing in a browser", async () => {
     (globalThis as { window?: unknown }).window = {};
@@ -173,6 +193,16 @@ describe("startPushNotifications", () => {
 
     expect(assign).toHaveBeenCalledTimes(1);
     expect(assign).toHaveBeenCalledWith("/parent/messages");
+  });
+
+  it("opens the exact destination a push names, query included", async () => {
+    const assign = installShell("android");
+    await (await load()).startPushNotifications();
+    const tap = listeners.get("notificationActionPerformed")!;
+
+    for (const url of PUSH_DESTINATIONS) tap({ notification: { data: { url } } });
+
+    expect(assign.mock.calls.map(([path]) => path)).toEqual(PUSH_DESTINATIONS);
   });
 });
 

@@ -31,6 +31,9 @@ export function noClassReason(entry: Pick<ParentScheduleEntry, "cancellation_rea
   return !reason || reason === "session_cancelled" ? "Class cancelled" : reason;
 }
 
+/** A date that already carries an absence notice: shown, never offered again. */
+export const ALREADY_REPORTED_LABEL = "Already reported";
+
 /**
  * Whether the academy has published `month` ("YYYY-MM") as final. An academy
  * that never publishes (`publishedThrough` null) shows every month as final,

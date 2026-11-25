@@ -6,7 +6,14 @@ import type { ApiError } from "@/lib/api/client";
 import type { ClassRecapView } from "@/lib/api/class-recap";
 import { nextReportAttempt } from "@/lib/coach/class-recap";
 
-import { afterReportError, ClassRecapEditor, ClassReportForm } from "./ClassRecapPanel";
+import { queryKeys } from "@/lib/query/keys";
+
+import {
+  afterReportError,
+  ClassRecapEditor,
+  ClassReportForm,
+  refreshTodayRecapFlags,
+} from "./ClassRecapPanel";
 
 const VIEW: ClassRecapView = {
   occurrence_id: "occ-1",
@@ -34,16 +41,24 @@ const VIEW: ClassRecapView = {
   reports: [],
 };
 
-function render(overrides: Partial<ClassRecapView> = {}, skillsHref?: string): string {
+function render(
+  overrides: Partial<ClassRecapView> = {},
+  skillsHref?: string,
+): string {
   return renderToStaticMarkup(
     <QueryClientProvider client={new QueryClient()}>
-      <ClassRecapEditor view={{ ...VIEW, ...overrides }} skillsHref={skillsHref} />
+      <ClassRecapEditor
+        view={{ ...VIEW, ...overrides }}
+        skillsHref={skillsHref}
+      />
     </QueryClientProvider>,
   );
 }
 
 function pressed(html: string, testId: string): string | null {
-  const tag = new RegExp(`<button[^>]*data-testid="${testId}"[^>]*>`).exec(html)?.[0];
+  const tag = new RegExp(`<button[^>]*data-testid="${testId}"[^>]*>`).exec(
+    html,
+  )?.[0];
   return tag ? (/aria-pressed="(\w+)"/.exec(tag)?.[1] ?? null) : null;
 }
 
@@ -60,7 +75,9 @@ describe("ClassRecapPanel", () => {
     const html = render();
     expect(html).toContain("Skill to credit to everyone present");
     expect(html).toContain("All taught skills");
-    expect(html).toMatch(/data-testid="recap-credit-everyone"[^>]*>Credit everyone present \(2\)/);
+    expect(html).toMatch(
+      /data-testid="recap-credit-everyone"[^>]*>Credit everyone present \(2\)/,
+    );
     expect(render({ can_edit: false })).not.toContain("recap-credit-everyone");
   });
 
@@ -83,8 +100,20 @@ describe("ClassRecapPanel", () => {
     expect(html).toMatch(/names swapped for codes/);
     expect(html).toMatch(/Passes are never recorded from a report/);
     expect(html).toMatch(/goes to the owner/);
-    const box = /<input[^>]*data-testid="recap-report-use-ai"[^>]*>/.exec(html)?.[0] ?? "";
+    const box =
+      /<input[^>]*data-testid="recap-report-use-ai"[^>]*>/.exec(html)?.[0] ??
+      "";
     expect(box).not.toContain("checked");
+  });
+
+  it("keeps the AI option folded away so the standard report stays the main path", () => {
+    const html = render();
+    const details =
+      /<details[^>]*data-testid="recap-ai-options"[^>]*>/.exec(html)?.[0] ?? "";
+    expect(details).not.toBe("");
+    expect(details).not.toContain("open");
+    expect(html).toContain("More options: AI reading");
+    expect(html).toContain("recap-report-submit");
   });
 
   it("blocks a report while the recap has unsaved edits, so it cannot overwrite them", () => {
@@ -94,9 +123,9 @@ describe("ClassRecapPanel", () => {
       </QueryClientProvider>,
     );
     expect(html).toContain("recap-report-blocked");
-    expect(/<button[^>]*data-testid="recap-report-submit"[^>]*>/.exec(html)?.[0]).toContain(
-      "disabled",
-    );
+    expect(
+      /<button[^>]*data-testid="recap-report-submit"[^>]*>/.exec(html)?.[0],
+    ).toContain("disabled");
     expect(render()).not.toContain("recap-report-blocked");
   });
 
@@ -117,23 +146,26 @@ describe("ClassRecapPanel", () => {
   });
 
   it("shows a report's pass claim as a follow-up, never as a pass", () => {
-    const html = render({
-      can_resolve: true,
-      reports: [
-        {
-          report_id: "r-1",
-          is_mine: false,
-          text: "Maya passed her grip",
-          submitted_at: "2026-11-18T21:00:00Z",
-          outcome: "sent_to_owner",
-          ai_used: false,
-          questions: [],
-          pass_claims: [{ student_id: "maya", skill_id: "sk-x" }],
-          applied_revision: null,
-          resolved_at: null,
-        },
-      ],
-    }, "/coach/sessions/occ-1/skills?date=2026-11-18");
+    const html = render(
+      {
+        can_resolve: true,
+        reports: [
+          {
+            report_id: "r-1",
+            is_mine: false,
+            text: "Maya passed her grip",
+            submitted_at: "2026-11-18T21:00:00Z",
+            outcome: "sent_to_owner",
+            ai_used: false,
+            questions: [],
+            pass_claims: [{ student_id: "maya", skill_id: "sk-x" }],
+            applied_revision: null,
+            resolved_at: null,
+          },
+        ],
+      },
+      "/coach/sessions/occ-1/skills?date=2026-11-18",
+    );
     expect(html).toContain("Maya Lopez passed Forehand grip");
     expect(html).toContain("not recorded as a pass");
     expect(html).toContain("Mark handled");
@@ -154,7 +186,12 @@ describe("report send failures", () => {
     for (let i = 0; i < 3; i++) {
       const next = afterReportError(conflict({ processing: true }), attempt);
       expect(next.message).toContain("still being read");
-      attempt = nextReportAttempt(next.attempt, "Maya drilled clears", true, newId);
+      attempt = nextReportAttempt(
+        next.attempt,
+        "Maya drilled clears",
+        true,
+        newId,
+      );
       expect(attempt.reportId).toBe("id-1");
     }
   });
@@ -165,6 +202,29 @@ describe("report send failures", () => {
     const first = nextReportAttempt(null, "Maya drilled clears", true, newId);
     const next = afterReportError(conflict({ report_id: "id-1" }), first);
     expect(next.attempt).toBeNull();
-    expect(nextReportAttempt(next.attempt, "Maya drilled clears", true, newId).reportId).toBe("id-2");
+    expect(
+      nextReportAttempt(next.attempt, "Maya drilled clears", true, newId)
+        .reportId,
+    ).toBe("id-2");
+  });
+});
+
+describe("refreshTodayRecapFlags", () => {
+  it("marks every cached Today list stale so a saved recap drops its shortcut", () => {
+    const client = new QueryClient();
+    client.setQueryData(queryKeys.coach.today("2026-11-21"), { sessions: [] });
+    client.setQueryData(queryKeys.coach.today("2026-11-22"), { sessions: [] });
+    client.setQueryData(queryKeys.coach.todayPlan("2026-11-22"), {});
+    refreshTodayRecapFlags(client);
+    expect(
+      client.getQueryState(queryKeys.coach.today("2026-11-21"))?.isInvalidated,
+    ).toBe(true);
+    expect(
+      client.getQueryState(queryKeys.coach.today("2026-11-22"))?.isInvalidated,
+    ).toBe(true);
+    expect(
+      client.getQueryState(queryKeys.coach.todayPlan("2026-11-22"))
+        ?.isInvalidated,
+    ).toBe(false);
   });
 });

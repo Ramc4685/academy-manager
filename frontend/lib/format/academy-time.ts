@@ -91,6 +91,17 @@ export function formatAcademyDateTime(
   return `${formatDayDate(instant, timeZone)} · ${formatTime(instant, timeZone)} ${label}`;
 }
 
+/** "6:00 PM CDT" — a clock time in the academy timezone with a tz label. */
+export function formatAcademyClock(
+  iso: string,
+  academyTimezone: string | null | undefined,
+): string {
+  const instant = parseAcademyInstant(iso);
+  if (Number.isNaN(instant.getTime())) return "";
+  const { timeZone } = resolveAcademyTimeZone(academyTimezone);
+  return `${formatTime(instant, timeZone)} ${academyTimeZoneLabel(instant, timeZone)}`;
+}
+
 /**
  * "Thu, Jul 2 · 6:00 PM – 6:45 PM CDT" — an occurrence range in the academy
  * timezone with an explicit tz label.

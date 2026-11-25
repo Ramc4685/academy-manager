@@ -10,7 +10,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -109,6 +109,9 @@ function cancelErrorMessage(err: unknown): string {
 export default function AdminSessionDetailPage() {
   const params = useParams();
   const sessionId = params.id as string;
+  // Inbox deep link: `?tab=dates&occurrence=<id>` opens that date's Attendance.
+  const searchParams = useSearchParams();
+  const linkedOccurrenceId = searchParams.get("occurrence");
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
   // #827: the departed row an admin chose to put back, pre-filling Add to
@@ -133,9 +136,11 @@ export default function AdminSessionDetailPage() {
   );
   const [recapTarget, setRecapTarget] = useState<AdminSessionOccurrenceView | null>(null);
   const [assistantsOpen, setAssistantsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<DetailTab>("roster");
+  const [activeTab, setActiveTab] = useState<DetailTab>(() =>
+    DETAIL_TABS.find((t) => t.id === searchParams.get("tab"))?.id ?? "roster",
+  );
   // The Welcome email tab keeps unsaved edits, so once opened it stays mounted (hidden) on other tabs.
-  const [welcomeOpened, setWelcomeOpened] = useState(false);
+  const [welcomeOpened, setWelcomeOpened] = useState(() => searchParams.get("tab") === "welcome");
   const [rosterView, setRosterView] = useState<RosterView>("active");
   const [showAllDates, setShowAllDates] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
@@ -242,6 +247,20 @@ export default function AdminSessionDetailPage() {
     [enrollmentsQuery.data?.enrollments],
   );
   const occurrences = occurrencesQuery.data?.occurrences ?? [];
+  // Open the linked date's Attendance once, after the dates load; showing all
+  // dates keeps an older linked date visible behind the dialog.
+  const openedLinkRef = useRef(false);
+  useEffect(() => {
+    if (openedLinkRef.current || !linkedOccurrenceId || !occurrencesQuery.data) return;
+    openedLinkRef.current = true;
+    const linked = occurrencesQuery.data.occurrences.find(
+      (occurrence) => occurrence.occurrence_id === linkedOccurrenceId,
+    );
+    if (!linked) return;
+    setActiveTab("dates");
+    setShowAllDates(true);
+    setAttendanceTarget(linked);
+  }, [linkedOccurrenceId, occurrencesQuery.data]);
   const canWindowDates = occurrences.length > CLASS_DATES_WINDOW * 2;
   const visibleOccurrences =
     canWindowDates && !showAllDates ? windowedOccurrences(occurrences, new Date()) : occurrences;

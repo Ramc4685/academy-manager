@@ -639,3 +639,5 @@ def test_compose_coach_providers_resolve_request_tenant(db) -> None:
         # Default test settings run multi_academy: no context must fail closed.
         with pytest.raises(TenantContextUnset):
             provider()
+    # Today's recap shortcut reads saved recaps through the real composition.
+    assert callable(coach.recapped_occurrence_ids)

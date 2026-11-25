@@ -10,13 +10,14 @@
  * exists once rather than drifting between two near-identical files.
  */
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { InboxMessage, InboxMessagesResponse } from "@/lib/api/v2/messages";
 import { Card } from "@/components/ds/card";
 import { Skeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
+import { useLinkedParam } from "@/lib/navigation/use-linked-param";
 
 /** No push infra — polling is v1. Kept >= 30s per the UIM13 plan. */
 const REFETCH_INTERVAL_MS = 30_000;
@@ -46,6 +47,12 @@ export function PersonaInbox({
   });
 
   const messages = data?.messages ?? [];
+  // A push tap lands with ?message=<id>: that row is scrolled to and outlined.
+  // The list only ever holds this person's own messages, so an id from
+  // anywhere else (deleted, another family's) simply matches nothing.
+  const linkedId = useLinkedParam("message");
+  const linkedMissing =
+    Boolean(linkedId) && !isLoading && !isError && !messages.some((m) => m.message_id === linkedId);
   const groups = useMemo(() => groupByDay(data?.messages ?? []), [data]);
 
   const setRead = (messageId: string, read: boolean) => {
@@ -104,6 +111,14 @@ export function PersonaInbox({
         </Card>
       )}
 
+      {linkedMissing && (
+        <Card p={12}>
+          <p data-testid={`${testId}-message-missing`} role="status" className="text-sm text-rally-muted">
+            That message is no longer available. Your other messages are below.
+          </p>
+        </Card>
+      )}
+
       {isLoading ? (
         <Card p={16}>
           <Skeleton variant="line" lines={4} />
@@ -121,7 +136,11 @@ export function PersonaInbox({
               </h2>
               <ul className="space-y-2">
                 {dayMessages.map((m) => (
-                  <MessageRow key={m.message_id} message={m} />
+                  <MessageRow
+                    key={m.message_id}
+                    message={m}
+                    highlighted={m.message_id === linkedId}
+                  />
                 ))}
               </ul>
             </div>
@@ -132,14 +151,22 @@ export function PersonaInbox({
   );
 }
 
-function MessageRow({ message }: { message: InboxMessage }) {
+function MessageRow({ message, highlighted }: { message: InboxMessage; highlighted: boolean }) {
+  const rowRef = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (highlighted) rowRef.current?.scrollIntoView({ block: "center" });
+  }, [highlighted]);
   const isAnnouncement = message.kind === "announcement";
   const isUrgent = message.urgency === "urgent";
   // Red for urgent, amber for a routine announcement, blue for a DM.
   const accent = isUrgent ? "#dc2626" : isAnnouncement ? "#f59e0b" : "#2563eb";
   return (
-    <li data-testid="message-row">
-      <Card p={12} accent={accent} className="flex items-start gap-2">
+    <li ref={rowRef} data-testid="message-row" data-highlighted={highlighted || undefined}>
+      <Card
+        p={12}
+        accent={accent}
+        className={`flex items-start gap-2${highlighted ? " ring-2 ring-rally-cobalt-600" : ""}`}
+      >
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wide text-rally-subtle">
