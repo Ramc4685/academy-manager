@@ -2345,7 +2345,14 @@ export interface paths {
         /** Update Level */
         put: operations["update_level_api_v2_admin_levels__level_id__put"];
         post?: never;
-        delete?: never;
+        /**
+         * Delete Level
+         * @description Delete an unused level with its skills and criteria.
+         *
+         *     ``Curriculum.LevelInUse`` (409) when anything references the level or its
+         *     skills; the shared domain-error handler carries ``in_use`` counts.
+         */
+        delete: operations["delete_level_api_v2_admin_levels__level_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3305,6 +3312,26 @@ export interface paths {
         put?: never;
         /** Seed Program Lesson Cards Route */
         post: operations["seed_program_lesson_cards_route_api_v2_admin_programs__program_id__lesson_cards_seed_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/programs/{program_id}/level-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Level Usage
+         * @description Per level: ``{deletable, in_use}`` so the editor only offers delete when it works.
+         */
+        get: operations["get_level_usage_api_v2_admin_programs__program_id__level_usage_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -26322,6 +26349,37 @@ export interface operations {
             };
         };
     };
+    delete_level_api_v2_admin_levels__level_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                level_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_skill_api_v2_admin_levels__level_id__skills_post: {
         parameters: {
             query?: never;
@@ -28001,6 +28059,37 @@ export interface operations {
         };
     };
     seed_program_lesson_cards_route_api_v2_admin_programs__program_id__lesson_cards_seed_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                program_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_level_usage_api_v2_admin_programs__program_id__level_usage_get: {
         parameters: {
             query?: never;
             header?: never;

@@ -29,9 +29,17 @@ const INPUT = "rounded-md border border-neutral-300 px-2 py-1.5 text-sm focus:bo
  * "Draft a skill ladder with AI" (AI strategy Phase 2 B1). Shown only when
  * GET /admin/ai/status says the academy has a model port. The draft is
  * editable rows in local state; nothing reaches the program until the owner
- * chooses "Save to program", which walks the existing create calls.
+ * chooses "Save to program", which walks the existing create calls. Saving
+ * APPENDS levels after the program's last one (it never replaces); the copy
+ * says so, and an unwanted save is undone with Delete level in the editor.
  */
-export function SkillLadderDraftCard({ programId }: { programId: string }) {
+export function SkillLadderDraftCard({
+  programId,
+  lastLevelSequence,
+}: {
+  programId: string;
+  lastLevelSequence: number;
+}) {
   const queryClient = useQueryClient();
   const status = useQuery({ queryKey: queryKeys.admin.aiStatus(), queryFn: getAiStatus });
 
@@ -74,6 +82,12 @@ export function SkillLadderDraftCard({ programId }: { programId: string }) {
             Drafts levels, skills and observable criteria for {" "}
             <span className="font-medium">this program&apos;s sport</span>. Nothing is saved
             until you choose Save to program.
+          </p>
+          <p data-testid="skill-ladder-appends-note" className="mt-1 text-xs text-neutral-500">
+            Saving <span className="font-medium">adds</span> the drafted levels after{" "}
+            {lastLevelSequence > 0 ? `level ${lastLevelSequence}` : "the start"}; it never replaces
+            the levels already in this program. Added a ladder by mistake? Use Delete level on the
+            added levels below, starting from the last one.
           </p>
         </div>
 
@@ -147,7 +161,10 @@ export function SkillLadderDraftCard({ programId }: { programId: string }) {
               </p>
             )}
             <div className="flex items-center justify-end gap-2">
-              <span className="text-xs text-neutral-500">Nothing is saved until you choose Save to program.</span>
+              <span className="text-xs text-neutral-500">
+                Saving adds {levels.length} new level{levels.length === 1 ? "" : "s"} after{" "}
+                {lastLevelSequence > 0 ? `level ${lastLevelSequence}` : "the start"}.
+              </span>
               <Button variant="secondary" size="sm" onClick={() => setLevels(null)}>
                 Discard
               </Button>

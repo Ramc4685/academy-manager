@@ -32,6 +32,22 @@ class LevelRepository(Protocol):
     async def resequence(self, ordered_ids: list[str]) -> None: ...
 
 
+class LevelDeletionStore(Protocol):
+    """Reference checks, the cascading delete and its audit row for a level."""
+
+    async def usage_by_level(self, level_ids: list[str]) -> dict[str, dict[str, int]]:
+        """Per level, a count of every row that still points at it or its skills."""
+        ...
+
+    async def delete_level(self, level_id: str) -> dict[str, int]:
+        """Delete the level, its skills and their criteria; return deleted counts."""
+        ...
+
+    async def record_deleted(
+        self, *, level: Level, deleted: dict[str, int], actor_id: str
+    ) -> None: ...
+
+
 class SkillRepository(Protocol):
     async def save(self, skill: Skill) -> None: ...
     async def update(self, skill: Skill) -> None: ...
