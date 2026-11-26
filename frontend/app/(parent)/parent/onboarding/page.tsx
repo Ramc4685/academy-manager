@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { WaiverSignBlock } from "@/components/parent/waiver-sign-block";
 import { WaiverText } from "@/components/waivers/waiver-text";
@@ -43,6 +43,12 @@ import {
   NO_MEDICAL_CONDITIONS_SENTINEL,
   reEnrollChildId,
 } from "@/lib/parent/re-enroll";
+import {
+  onboardingOrder,
+  onboardingSearch,
+  resumeStep,
+  type OnboardingStep,
+} from "@/lib/parent/onboarding-steps";
 
 /**
  * Parent onboarding stepper.
@@ -53,14 +59,7 @@ import {
  * the parent can resume after a tab close.
  */
 
-type Step = "parent" | "child" | "waiver" | "session" | "review";
-const ORDER: Step[] = ["parent", "child", "waiver", "session", "review"];
-/**
- * When the academy assigns a waiver to a program, the right set of waivers is
- * only known once the family has chosen a class, so the class comes first.
- * With one waiver for everyone (the usual case) the order above is unchanged.
- */
-const CLASS_FIRST_ORDER: Step[] = ["parent", "child", "session", "waiver", "review"];
+type Step = OnboardingStep;
 
 /**
  * Server-side completeness guard (issue #380): checkout refuses an
@@ -82,6 +81,7 @@ export default function OnboardingStepperPage() {
   const [step, setStep] = useState<Step>("parent");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const queryClient = useQueryClient();
   const sessionsQuery = useQuery({
     queryKey: ["parent", "sessions", "available"],
     queryFn: listAvailableParentSessions,
@@ -129,14 +129,23 @@ export default function OnboardingStepperPage() {
     void (async () => {
       try {
         // S02: "Finish registration" links here with the application to resume.
-        const resumeId = new URLSearchParams(window.location.search).get("application");
-        const fresh = await startOnboarding(resumeId);
+        const params = new URLSearchParams(window.location.search);
+        const fresh = await startOnboarding(params.get("application"));
         setApp(fresh);
+        // S21: a reload stays on its step; a new or second child skips what is already done.
+        setStep(resumeStep(fresh, params.get("step")));
       } catch (e) {
         setError((e as Error).message);
       }
     })();
   }, []);
+
+  const applicationId = app?.application_id;
+  useEffect(() => {
+    if (!applicationId) return;
+    const search = onboardingSearch(window.location.search, applicationId, step);
+    if (search !== window.location.search) window.history.replaceState(null, "", search);
+  }, [applicationId, step]);
 
   if (error && !app) {
     return (
@@ -182,7 +191,7 @@ export default function OnboardingStepperPage() {
     }
   }
 
-  const order = app.waiver_class_first ? CLASS_FIRST_ORDER : ORDER;
+  const order = onboardingOrder(app);
 
   function advance() {
     const i = order.indexOf(step);
@@ -263,6 +272,8 @@ export default function OnboardingStepperPage() {
               if (await save({ parent_profile: profile })) {
                 // Saved on the registration now (L9 C2); stop carrying it.
                 clearReferralCode();
+                // S21: the backend copied name and phone onto a blank profile.
+                void queryClient.invalidateQueries({ queryKey: queryKeys.parent.profile() });
                 advance();
               }
             }}
@@ -286,6 +297,12 @@ export default function OnboardingStepperPage() {
             // class; otherwise the request is exactly what it always was.
             sessionId={app.waiver_class_first ? app.selected_session_id : null}
             birthDate={app.child_profile?.date_of_birth ?? null}
+            // S21: a family adding another child gets their signer name back.
+            defaultSignerName={
+              existingChildren.length > 0
+                ? `${app.parent_profile.first_name} ${app.parent_profile.last_name}`.trim()
+                : ""
+            }
             saving={saving}
             onAccept={async (signerName, initials) => {
               if (
@@ -697,10 +714,12 @@ function WaiverStep({
   onAccept,
   onContinue,
   saving,
+  defaultSignerName,
 }: {
   accepted: boolean;
   sessionId: string | null;
   birthDate: string | null;
+  defaultSignerName: string;
   onAccept: (signerName: string, initials: Record<string, Record<string, string>>) => void;
   onContinue: () => void;
   saving: boolean;
@@ -821,6 +840,7 @@ function WaiverStep({
                 : "Initial each marked section above to sign."
           }
           label={() => (several ? "Sign waivers and continue" : "Sign and continue")}
+          defaultSignerName={defaultSignerName}
           onSign={({ signerName }) => onAccept(signerName, initials)}
         />
       )}

@@ -454,6 +454,9 @@ class ParentComposition:
     list_makeup_candidates: ListMakeupCandidates | None = None
     # Makeup state of each reported absence (Reported / eligible / booked ...).
     describe_absence_makeups: DescribeAbsenceMakeups | None = None
+    # S21: the sign-up wizard's parent step fills a blank name/phone on the
+    # account; callable(parent_id, display_name, phone) -> None.
+    fill_parent_profile_blanks: object = None
 
 
 class _MongoTransactionRunner:
@@ -1533,6 +1536,32 @@ def compose_parent(
         if result is None:
             return None
         return await get_parent_profile(parent_id)
+
+    async def fill_parent_profile_blanks(
+        parent_id: str, display_name: str | None, phone: str | None
+    ) -> None:
+        """Copy the wizard's parent name and phone onto the account where the
+        account has none. Never overwrites: a name that is only the signup
+        fallback (the email address) counts as blank."""
+        user = await users_query.get_by_id(parent_id)
+        if user is None:
+            return
+        current_name = (user.display_name or "").strip()
+        name_blank = not current_name or current_name.lower() == str(user.email).lower()
+        new_name = (display_name or "").strip()[:120] if name_blank else ""
+        new_phone = (phone or "").strip()[:40] if not (user.phone or "").strip() else ""
+        if not new_name and not new_phone:
+            return
+        await users_query.update_admin_user(
+            parent_id,
+            UpdateAdminUserCommand(
+                display_name=new_name or None,
+                phone=new_phone or None,
+                actor_id=parent_id,
+                reason="parent sign-up details",
+            ),
+            academy_id=current_academy_id(),
+        )
 
     async def confirm_parent_email(parent_id: str) -> dict[str, Any] | None:
         user = await users_query.confirm_email(parent_id)
@@ -3202,6 +3231,7 @@ def compose_parent(
         update_parent_profile=update_parent_profile,
         confirm_parent_email=confirm_parent_email,
         update_parent_child=update_parent_child,
+        fill_parent_profile_blanks=fill_parent_profile_blanks,
     )
 
 

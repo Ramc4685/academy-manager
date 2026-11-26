@@ -145,6 +145,8 @@ class ParentUseCases:
     # Phone-calendar subscription (composition/calendar_feed.py): the parent's
     # link and the public .ics it serves. Defaulted for old fixtures.
     calendar_feed: Any | None = None
+    # S21: callable(parent_id, display_name, phone); fills blanks only.
+    fill_parent_profile_blanks: Any | None = None
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

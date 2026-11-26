@@ -26,6 +26,22 @@ describe("WaiverSignBlock", () => {
     expect(html).not.toMatch(/type="checkbox"[^>]*checked/);
   });
 
+  it("prefills a signer name but still waits for consent (S21)", () => {
+    const html = renderToStaticMarkup(
+      createElement(WaiverSignBlock, {
+        childrenToSign: [],
+        consentText: "I agree.",
+        busy: false,
+        error: null,
+        label: () => "Sign",
+        onSign: () => {},
+        defaultSignerName: "Rosa Alvarez",
+      }),
+    );
+    expect(html).toContain('value="Rosa Alvarez"');
+    expect(html).toMatch(/<button[^>]*disabled/);
+  });
+
   it("asks for a full legal name", () => {
     expect(render([])).toContain("Full legal name");
   });

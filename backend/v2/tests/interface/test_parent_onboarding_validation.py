@@ -89,3 +89,31 @@ def test_parent_onboarding_accepts_iso_child_date_of_birth() -> None:
         "emergency_contact_phone": "",
         "medical_notes": "",
     }
+
+
+def test_parent_step_copies_name_and_phone_to_the_profile_fill() -> None:
+    """S21: the parent step hands its name and phone to the fill-blanks use case."""
+    calls: list[tuple[str, str | None, str | None]] = []
+
+    async def fill(parent_id: str, name: str | None, phone: str | None) -> None:
+        calls.append((parent_id, name, phone))
+
+    with _client() as (client, use_cases):
+        use_cases.fill_parent_profile_blanks = fill  # type: ignore[attr-defined]
+        response = client.patch(
+            "/api/v2/parent/onboarding/app-1",
+            json={
+                "parent_profile": {
+                    "first_name": " Rosa ",
+                    "last_name": "Alvarez",
+                    "phone": "555-0142",
+                }
+            },
+        )
+        child_only = client.patch(
+            "/api/v2/parent/onboarding/app-1", json={"child_profile": {"first_name": "Ava"}}
+        )
+
+    assert response.status_code == 200
+    assert child_only.status_code == 200
+    assert calls == [("parent-1", "Rosa Alvarez", "555-0142")]

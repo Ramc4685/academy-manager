@@ -1422,6 +1422,40 @@ async def test_update_parent_profile_closes_the_phone_gap() -> None:
     assert "phone" not in profile["gaps"]["parent"]
 
 
+async def test_fill_parent_profile_blanks_writes_only_blank_fields() -> None:
+    """S21: the wizard's parent step fills a blank phone and an email-fallback
+    name, and never overwrites a value the parent already has."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-profile"]
+    await _seed_profile_fixture(db, phone=None)
+    await db["users"].update_one(
+        {"user_id": "parent-1"}, {"$set": {"display_name": "parent@example.com"}}
+    )
+    parent = await _compose_profile_parent(db)
+
+    with tenant_scope("acad"):
+        await parent.fill_parent_profile_blanks("parent-1", "Meera Raghavan", "555-0142")
+        await parent.fill_parent_profile_blanks("parent-1", "Someone Else", "555-0999")
+        profile = await parent.get_parent_profile("parent-1")
+
+    assert profile["display_name"] == "Meera Raghavan"
+    assert profile["phone"] == "555-0142"
+
+
+async def test_fill_parent_profile_blanks_leaves_a_complete_profile_alone() -> None:
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-profile"]
+    await _seed_profile_fixture(db)
+    parent = await _compose_profile_parent(db)
+
+    with tenant_scope("acad"):
+        await parent.fill_parent_profile_blanks("parent-1", "Other Name", "555-0999")
+        profile = await parent.get_parent_profile("parent-1")
+
+    assert profile["display_name"] == "Meera Raghavan"
+    assert profile["phone"] == "+1 555 0100"
+
+
 async def test_confirm_parent_email_closes_the_email_gap() -> None:
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["parent-profile"]

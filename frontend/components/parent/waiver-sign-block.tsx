@@ -27,6 +27,7 @@ export function WaiverSignBlock({
   label,
   onSign,
   blocked = null,
+  defaultSignerName = "",
 }: {
   childrenToSign: ReadonlyArray<WaiverSignChild>;
   consentText: string;
@@ -37,9 +38,11 @@ export function WaiverSignBlock({
   onSign: (input: WaiverSignInput) => void;
   /** Why signing must wait (e.g. initials still to fill); disables Sign. */
   blocked?: string | null;
+  /** Prefills the typed name (S21: a second child); the parent still ticks consent. */
+  defaultSignerName?: string;
 }) {
   const ids = useId();
-  const [signerName, setSignerName] = useState("");
+  const [signerName, setSignerName] = useState(defaultSignerName);
   const [consent, setConsent] = useState(false);
   const [unchosen, setUnchosen] = useState<ReadonlySet<string>>(new Set());
 

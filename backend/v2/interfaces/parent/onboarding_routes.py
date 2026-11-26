@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Query, Request, status
@@ -26,6 +27,7 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import request_ip, require_persona
 
 router = APIRouter(tags=["parent.onboarding"])
+logger = logging.getLogger(__name__)
 
 
 async def _class_first(use_cases: ParentUseCases) -> bool:
@@ -133,6 +135,15 @@ async def patch(
             user_agent=request.headers.get("user-agent") if body.accept_waiver else None,
         )
     )
+    fill_blanks = getattr(use_cases, "fill_parent_profile_blanks", None)
+    if body.parent_profile and fill_blanks:
+        parent = body.parent_profile
+        name = f"{parent.first_name.strip()} {parent.last_name.strip()}".strip()
+        try:
+            await fill_blanks(claims.user_id, name or None, parent.phone or None)
+        except Exception:
+            # The application already saved; a profile copy must not fail the step.
+            logger.warning("onboarding: could not copy parent details to profile", exc_info=True)
     return _view(app, class_first=await _class_first(use_cases))
 
 
