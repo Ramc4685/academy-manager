@@ -217,7 +217,7 @@ test.describe("admin roster row overflow menu (#713)", () => {
     await expect(page.getByRole("menuitem", { name: "Pause" })).toHaveCount(0);
     const hold = page.getByRole("menuitem", { name: "Hold" });
     await expect(hold).toContainText(/keeps the seat/i);
-    await expect(hold).toContainText(/billing/i);
+    await expect(hold).toContainText(/no next bill/i);
     await expect(hold).toContainText(/family is emailed/i);
 
     // Drop reaches the family; Delete does not. The difference is the whole
@@ -328,6 +328,8 @@ test.describe("bulk roster transfer (A0-8)", () => {
     await expect(dialog).toContainText("Transfer 2 students");
     await dialog.getByRole("button", { name: "Target class" }).click();
     await dialog.getByRole("option", { name: /Thursday 5:00 PM Intermediate/ }).click();
+    // S27: the target has no price yet, so the move needs the price tick.
+    await dialog.getByTestId("transfer-price-ack").getByRole("checkbox").check();
     await dialog.getByRole("button", { name: "Transfer", exact: true }).click();
 
     await expect(dialog.getByTestId("bulk-transfer-failures")).toContainText(
