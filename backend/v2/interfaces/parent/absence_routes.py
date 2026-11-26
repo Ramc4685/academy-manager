@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
     SubmitAbsenceNoticeCommand,
@@ -28,8 +28,6 @@ router = APIRouter(tags=["parent.absence_notices"])
 class CreateAbsenceNoticeRequest(BaseModel):
     student_id: str
     occurrence_id: str
-    #: S17: optional note for the coach.
-    reason: str | None = Field(default=None, max_length=200)
 
 
 class AbsenceNoticeView(BaseModel):
@@ -66,10 +64,9 @@ async def create_absence_notice(
             parent_id=claims.user_id,
             student_id=body.student_id,
             occurrence_id=body.occurrence_id,
-            reason=body.reason,
         )
     )
-    return AbsenceNoticeView(**notice.model_dump(exclude={"academy_id", "reason"}))
+    return AbsenceNoticeView(**notice.model_dump(exclude={"academy_id"}))
 
 
 @router.get("/absences", response_model=AbsenceNoticesResponse)

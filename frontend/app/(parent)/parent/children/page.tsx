@@ -361,7 +361,6 @@ function SessionRow({
   const queryClient = useQueryClient();
   const [submitted, setSubmitted] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [reason, setReason] = useState("");
   const whenStr = formatAcademyTimeRange(entry.start_at, entry.end_at, academyTimezone);
   // #671: a cancelled date is still returned by the child-schedule feed.
   // Showing it as a normal upcoming class contradicts the cancellation email
@@ -480,14 +479,11 @@ function SessionRow({
         childName={childName}
         sessionTitle={entry.session_title}
         when={whenStr}
-        reason={reason}
-        onReasonChange={setReason}
         pending={absenceMutation.isPending}
         onConfirm={() =>
           absenceMutation.mutate({
             student_id: studentId,
             occurrence_id: entry.occurrence_id,
-            reason: reason.trim() || null,
           })
         }
       />

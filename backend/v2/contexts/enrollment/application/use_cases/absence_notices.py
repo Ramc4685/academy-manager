@@ -49,8 +49,6 @@ class AbsenceNotice(BaseModel):
     # True when an admin recorded the notice on the parent's behalf (#616);
     # parent submissions leave the default.
     recorded_by_admin: bool = False
-    #: S17: the family's optional note for the coach. Not echoed to the parent view.
-    reason: str | None = None
 
 
 class SubmitAbsenceNoticeCommand(BaseModel):
@@ -59,7 +57,6 @@ class SubmitAbsenceNoticeCommand(BaseModel):
     parent_id: str
     student_id: str
     occurrence_id: str
-    reason: str | None = None
 
 
 class RecordAbsenceNoticeForStudentCommand(BaseModel):
@@ -213,7 +210,6 @@ class SubmitAbsenceNotice:
             submitted_by=cmd.parent_id,
             submitted_at=now,
             notice_window_met=notice_window_met,
-            reason=(cmd.reason or "").strip() or None,
         )
         await self._notices.add(notice)
         await _notify_submitted(

@@ -9,8 +9,6 @@ export function AbsenceConfirmDialog({
   childName,
   sessionTitle,
   when,
-  reason,
-  onReasonChange,
   pending,
   onConfirm,
 }: {
@@ -19,8 +17,6 @@ export function AbsenceConfirmDialog({
   childName: string;
   sessionTitle: string;
   when: string;
-  reason: string;
-  onReasonChange: (value: string) => void;
   pending: boolean;
   onConfirm: () => void;
 }) {
@@ -36,12 +32,6 @@ export function AbsenceConfirmDialog({
       cancelLabel="Keep the class"
       confirmVariant="primary"
       pending={pending}
-      reason={{
-        label: "Reason (optional)",
-        value: reason,
-        onChange: onReasonChange,
-        placeholder: "For example: family trip",
-      }}
       onConfirm={onConfirm}
     />
   );

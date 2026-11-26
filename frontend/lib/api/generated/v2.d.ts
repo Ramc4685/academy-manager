@@ -14112,8 +14112,6 @@ export interface components {
         CreateAbsenceNoticeRequest: {
             /** Occurrence Id */
             occurrence_id: string;
-            /** Reason */
-            reason?: string | null;
             /** Student Id */
             student_id: string;
         };
