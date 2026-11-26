@@ -19746,6 +19746,8 @@ export interface components {
             trial_dates: components["schemas"]["PublicTrialDateDto"][];
             /** Venue Address */
             venue_address?: string | null;
+            /** What To Bring */
+            what_to_bring?: string | null;
         };
         /**
          * PublicCoachDto

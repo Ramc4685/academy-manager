@@ -31575,6 +31575,17 @@
               }
             ],
             "title": "Venue Address"
+          },
+          "what_to_bring": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "What To Bring"
           }
         },
         "required": [
