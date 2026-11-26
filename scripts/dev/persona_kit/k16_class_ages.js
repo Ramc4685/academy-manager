@@ -1,4 +1,4 @@
-// K15 (S15): an age range on both demo classes, so the coach class header and
+// K16 (S15): an age range on both demo classes, so the coach class header and
 // Sessions rows show "Ages 7–13". Children's ages come from the dates of birth
 // k00 and the base seed already hold (born 2013 to 2019: U9, U11 and U13), and
 // the base seed's future dates are classes whose attendance has not opened.
@@ -9,4 +9,4 @@ Object.entries(bands).forEach(([sid, band]) => {
   n += db.sessions.updateOne({academy_id: A, session_id: sid}, {$set: {age_band: band, updated_at: now}}).matchedCount;
 });
 const kids = db.students.countDocuments({academy_id: A, date_of_birth: {$gt: ""}, is_deleted: {$ne: true}});
-print(`k15: age range on ${n} classes; ${kids} children with a date of birth`);
+print(`k16: age range on ${n} classes; ${kids} children with a date of birth`);
