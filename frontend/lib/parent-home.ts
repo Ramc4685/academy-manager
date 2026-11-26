@@ -473,9 +473,9 @@ export function balanceBannerCopy(
 
 export function attendanceCopy(attendance: ParentHomeAttendance | null | undefined): string {
   if (!attendance || attendance.total <= 0) {
-    return "No sessions marked yet this month";
+    return "No class dates marked yet this month";
   }
-  return `${attendance.present} of ${attendance.total} sessions this month`;
+  return `Present at ${attendance.present} of ${attendance.total} class dates this month`;
 }
 
 export interface NextSessionCopy {

@@ -346,8 +346,8 @@ function ChildCard({
       <dl className="mt-3 space-y-2.5">
         <CardRow
           icon={<CalendarDays size={15} />}
-          label="Next session"
-          value={next ? next.when : "No upcoming sessions"}
+          label="Next class"
+          value={next ? next.when : "No upcoming classes"}
           meta={
             next
               ? [
@@ -366,7 +366,11 @@ function ChildCard({
           icon={<Trophy size={15} />}
           label="Attendance this month"
           value={attendanceCopy(child.attendance_this_month)}
-          meta={null}
+          meta={
+            (child.attendance_this_month?.total ?? 0) > 0
+              ? "Out of the class dates the coach has marked so far"
+              : null
+          }
         />
         <CardRow
           icon={<Sparkles size={15} />}
@@ -627,7 +631,7 @@ function RequestsCard() {
       <div className="min-w-0 flex-1">
         <p className="text-sm font-bold text-rally-ink">Requests</p>
         <p className="mt-0.5 line-clamp-2 text-xs text-rally-muted">
-          Report an absence, request a makeup, or ask for a trial class
+          Report an absence, request a make-up, or ask for a trial class
         </p>
       </div>
       <ChevronRight className="shrink-0 text-rally-muted" size={18} />

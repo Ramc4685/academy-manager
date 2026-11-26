@@ -25,6 +25,7 @@ const PERSONAS: { name: string; roots: string[]; minFiles: number }[] = [
     minFiles: 200,
   },
   { name: "coach (S70)", roots: ["app/(coach)", "components/coach"], minFiles: 20 },
+  { name: "parent (S71)", roots: ["app/(parent)", "components/parent"], minFiles: 20 },
 ];
 
 const WORD = String.raw`(?:[Ss]essions?|[Oo]ccurrences?)`;

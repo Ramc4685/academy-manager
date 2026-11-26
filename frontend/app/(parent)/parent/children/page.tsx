@@ -267,7 +267,7 @@ function ChildCard({
       {/* Sessions */}
       <div className="px-4 py-3 border-b border-rally-line">
         <p className="text-[10px] font-bold uppercase tracking-widest mb-2.5 text-rally-cobalt-600">
-          Upcoming sessions
+          Upcoming class dates
         </p>
         {scheduleQuery.isPending ? (
           <p role="status" className="text-xs py-1 text-rally-muted">Loading class schedule…</p>
@@ -279,7 +279,7 @@ function ChildCard({
             </Button>
           </div>
         ) : sessions.length === 0 ? (
-          <p className="text-xs py-1 text-rally-subtle">{holdNote ?? "No upcoming sessions."}</p>
+          <p className="text-xs py-1 text-rally-subtle">{holdNote ?? "No upcoming class dates."}</p>
         ) : (
           <ul className="space-y-2">
             {sessions.map((s) => (

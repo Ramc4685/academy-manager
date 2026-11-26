@@ -116,7 +116,7 @@ test("the child schedule shows loading before its first class", async ({ page })
   await page.goto("/parent/children");
   try {
     await expect(page.getByText("Loading class schedule…")).toBeVisible();
-    await expect(page.getByText("No upcoming sessions.")).toHaveCount(0);
+    await expect(page.getByText("No upcoming class dates.")).toHaveCount(0);
   } finally {
     releaseSchedule();
   }

@@ -243,7 +243,7 @@ test.describe("QA defect regressions", () => {
     await page.getByLabel("I agree to sign electronically.").check();
     await page.getByRole("button", { name: "Sign and continue" }).click();
 
-    await expect(page.getByRole("heading", { name: "Pick a session" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Pick a class" })).toBeVisible();
     await expect(page.getByRole("button", { name: /Thursday Beginner/ })).toBeVisible();
     expect(acceptedWaiver).toBe(true);
   });

@@ -408,7 +408,7 @@ function Progress({
               >
                 {done ? "✓" : idx + 1}
               </span>
-              <span className={`capitalize ${active ? "font-semibold" : "font-medium"}`}>{s}</span>
+              <span className={`capitalize ${active ? "font-semibold" : "font-medium"}`}>{s === "session" ? "class" : s}</span>
             </button>
           </li>
         );
@@ -916,10 +916,10 @@ function SessionStep({
   const levelNote = (session: ParentAvailableSession) => classLevelNote(session.title, childLevel);
   return (
     <div className="space-y-3">
-      <StepHeading>Pick a session</StepHeading>
+      <StepHeading>Pick a class</StepHeading>
 
       {loading && (
-        <div className="space-y-2" aria-label="Loading sessions">
+        <div className="space-y-2" aria-label="Loading classes">
           {[0, 1, 2].map((i) => (
             <div key={i} className="h-24 rounded-2xl shimmer" />
           ))}
@@ -931,7 +931,7 @@ function SessionStep({
           role="alert"
           className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800"
         >
-          <p>Could not load sessions.</p>
+          <p>Could not load classes.</p>
           <button type="button" onClick={onRetry} className="secondary mt-3">
             Retry
           </button>
@@ -943,12 +943,12 @@ function SessionStep({
           className="rounded-2xl border p-4 text-sm"
           style={{ borderColor: "var(--rally-line)", color: "var(--rally-muted)" }}
         >
-          No sessions are available right now.
+          No classes are available right now.
         </p>
       )}
 
       {!loading && !error && sessions.length > 0 && (
-        <ul className="space-y-2 stagger-children" aria-label="Available sessions">
+        <ul className="space-y-2 stagger-children" aria-label="Available classes">
           {sessions.map((session) => {
             const isSelected = selected === session.session_id;
             const hasSeats = session.available_seats > 0;

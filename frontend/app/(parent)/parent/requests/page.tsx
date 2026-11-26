@@ -28,6 +28,7 @@ import {
   requestStatusChipVariant,
 } from "@/lib/parent-requests";
 import { ALREADY_REPORTED_LABEL } from "@/lib/parent/schedule-events";
+import { ABSENCE_HELP, MAKEUP_HELP } from "@/components/parent/absence-confirm-dialog";
 import {
   formatAcademyDate,
   formatAcademyDateTime,
@@ -218,7 +219,8 @@ function AbsencesPanel() {
   return (
     <div className="space-y-4">
       <Card p={16}>
-        <h2 className="text-sm font-bold mb-3 text-rally-ink">Report an absence</h2>
+        <h2 className="text-sm font-bold mb-1 text-rally-ink">Report an absence</h2>
+        <p className="mb-3 text-xs text-rally-muted">{ABSENCE_HELP}</p>
 
         {submitMutation.isError ? (
           <p role="alert" className="mb-3 rounded-md bg-status-red-50 p-3 text-sm text-status-red-800">
@@ -445,7 +447,8 @@ function MakeupsPanel({ initialKey = "" }: { initialKey?: string }) {
   return (
     <div className="space-y-4">
       <Card p={16}>
-        <h2 className="text-sm font-bold mb-3 text-rally-ink">Request a makeup</h2>
+        <h2 className="text-sm font-bold mb-1 text-rally-ink">Request a makeup</h2>
+        <p className="mb-3 text-xs text-rally-muted">{MAKEUP_HELP}</p>
 
         {submitMutation.isError ? (
           <p role="alert" className="mb-3 rounded-md bg-status-red-50 p-3 text-sm text-status-red-800">
@@ -767,7 +770,7 @@ function TrialsPanel() {
               disabled={sessionsQuery.isLoading}
             >
               <option value="">
-                {sessionsQuery.isLoading ? "Loading sessions…" : "Select a session"}
+                {sessionsQuery.isLoading ? "Loading classes…" : "Select a class"}
               </option>
               {sessions.map((s) => (
                 <option key={s.session_id} value={s.session_id}>

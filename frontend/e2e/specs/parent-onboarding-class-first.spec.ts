@@ -187,9 +187,9 @@ test.describe("class-first onboarding order", () => {
 
     await throughParentAndChild(page);
 
-    await expect(stepLabels(page)).toHaveText(["parent", "child", "session", "waiver", "review"]);
+    await expect(stepLabels(page)).toHaveText(["parent", "child", "class", "waiver", "review"]);
     // Third step is the class; no waiver is fetched before one is chosen.
-    await expect(page.getByRole("heading", { name: "Pick a session" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Pick a class" })).toBeVisible();
     expect(waiverRequests).toHaveLength(0);
 
     await page.getByRole("button", { name: /Juniors Saturday/ }).click();
@@ -205,7 +205,7 @@ test.describe("class-first onboarding order", () => {
 
     await throughParentAndChild(page);
 
-    await expect(stepLabels(page)).toHaveText(["parent", "child", "waiver", "session", "review"]);
+    await expect(stepLabels(page)).toHaveText(["parent", "child", "waiver", "class", "review"]);
     await expect(page.getByRole("heading", { name: "Waiver", exact: true })).toBeVisible();
     // Asked without a class, exactly as it always was. The step heading can
     // render before the waiver request goes out, so wait for the request.
@@ -216,7 +216,7 @@ test.describe("class-first onboarding order", () => {
     await page.getByLabel("Full legal name").fill("Priya Rao");
     await page.getByLabel("I agree to sign electronically.").check();
     await page.getByRole("button", { name: "Sign and continue" }).click();
-    await expect(page.getByRole("heading", { name: "Pick a session" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Pick a class" })).toBeVisible();
   });
 });
 
