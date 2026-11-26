@@ -3,6 +3,14 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import {
+  clearRegisterDraft,
+  loadRegisterDraft,
+  PASSWORD_RULE,
+  passwordRuleError,
+  saveRegisterDraft,
+  sessionDraftStorage,
+} from "@/lib/auth/register-form";
 
 import { captureReferralCode } from "@/lib/referral-capture";
 
@@ -52,9 +60,24 @@ export default function RegisterPage({ academyName, logoUrl, brandColor }: Acade
   const [pendingVerificationUser, setPendingVerificationUser] =
     useState<User | null>(null);
   const [verificationLoading, setVerificationLoading] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+
+  function changeEmail(value: string) {
+    setEmail(value);
+    saveRegisterDraft(sessionDraftStorage(), value);
+  }
+
+  function changePassword(value: string) {
+    setPassword(value);
+    // Clear a shown error as soon as the rule is met; never nag while typing.
+    if (passwordError && !passwordRuleError(value)) setPasswordError(null);
+  }
 
   useEffect(() => {
     setHydrated(true);
+    // S23: the email survives a reload; the password never is stored.
+    const draftEmail = loadRegisterDraft(sessionDraftStorage());
+    if (draftEmail) setEmail((current) => current || draftEmail);
     captureReferralCode(window.location.search);
     let cancelled = false;
 
@@ -131,6 +154,9 @@ export default function RegisterPage({ academyName, logoUrl, brandColor }: Acade
 
   async function handleEmailSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const ruleError = passwordRuleError(password);
+    setPasswordError(ruleError);
+    if (ruleError) return;
     setLoading(true);
     setError(null);
     setNotice(null);
@@ -139,6 +165,7 @@ export default function RegisterPage({ academyName, logoUrl, brandColor }: Acade
     try {
       const user = await registerWithEmail(trimmedEmail, password);
       rememberPendingParentRegistration(trimmedEmail);
+      clearRegisterDraft(sessionDraftStorage());
       setPassword("");
       await sendVerificationAndSignOut(user);
     } catch (err) {
@@ -280,7 +307,7 @@ export default function RegisterPage({ academyName, logoUrl, brandColor }: Acade
                 autoComplete="email"
                 placeholder="you@example.com"
                 value={email}
-                onChange={setEmail}
+                onChange={changeEmail}
               />
               <Field
                 id="password"
@@ -289,8 +316,10 @@ export default function RegisterPage({ academyName, logoUrl, brandColor }: Acade
                 autoComplete="new-password"
                 placeholder="••••••••"
                 value={password}
-                onChange={setPassword}
-                minLength={8}
+                onChange={changePassword}
+                onBlur={() => password && setPasswordError(passwordRuleError(password))}
+                hint={PASSWORD_RULE}
+                error={passwordError}
               />
 
               {notice ? (
@@ -358,7 +387,9 @@ function Field({
   placeholder,
   value,
   onChange,
-  minLength,
+  onBlur,
+  hint,
+  error,
 }: {
   id: string;
   label: string;
@@ -367,8 +398,12 @@ function Field({
   placeholder: string;
   value: string;
   onChange: (value: string) => void;
-  minLength?: number;
+  onBlur?: () => void;
+  /** Shown under the field before typing (S23: the password rule). */
+  hint?: string;
+  error?: string | null;
 }) {
+  const describedBy = error ? `${id}-error` : hint ? `${id}-hint` : undefined;
   return (
     <div>
       <label htmlFor={id} className="block text-sm font-medium text-slate-700">
@@ -380,13 +415,24 @@ function Field({
         type={type}
         autoComplete={autoComplete}
         required
-        minLength={minLength}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={describedBy}
         placeholder={placeholder}
         data-testid={`register-${id}`}
         className="mt-1.5 min-h-touch w-full rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 shadow-sm transition placeholder:text-slate-400 hover:border-slate-300 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-100"
       />
+      {error ? (
+        <p id={`${id}-error`} role="alert" className="mt-1.5 text-sm text-red-700" data-testid={`register-${id}-error`}>
+          {error}
+        </p>
+      ) : hint ? (
+        <p id={`${id}-hint`} className="mt-1.5 text-sm text-slate-600" data-testid={`register-${id}-hint`}>
+          {hint}
+        </p>
+      ) : null}
     </div>
   );
 }

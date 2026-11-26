@@ -43,3 +43,4 @@ Rules for a new kit:
 | k09 | The busy parent owes this month's $80.00 for Alex (the base seed's paid invoice reopened, its cash payment dropped). |
 | k10 | Alex Demo: next Saturday class (48h+ out) with no absence reported, and a late mark on the latest past class this month. |
 | k11 | Alex Demo working on Split step (PRACTICING) with one shared and one private coach note. Partial: record the pass in the coach app during the re-test. |
+| k19 | Rosa Alvarez (sign her up first) has no phone, for the named profile gap. Partial: the broadcast-audience half is S69's. |
