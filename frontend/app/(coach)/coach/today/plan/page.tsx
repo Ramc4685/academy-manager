@@ -20,6 +20,7 @@ import { AssignmentSummary } from "@/components/teaching/assignment-summary";
 import { LessonCardView } from "@/components/teaching/lesson-card";
 import { StudentFocusRow } from "@/components/teaching/student-focus-row";
 import { RetryButton } from "@/components/coach/RetryButton";
+import { ClassHealthStrip } from "@/components/coach/health-alert";
 
 
 export default function CoachTeachingPlanPage() {
@@ -134,6 +135,10 @@ function SessionPlan({
           </p>
         )}
       </header>
+
+      <div className="mb-2">
+        <ClassHealthStrip occurrenceId={session.occurrence_id} testId={`health-strip-${session.session_id}`} />
+      </div>
 
       {session.groups.length === 0 && session.unplaced.length === 0 && (
         <p className="text-sm text-neutral-500">No students on this roster.</p>

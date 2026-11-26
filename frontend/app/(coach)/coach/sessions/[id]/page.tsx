@@ -56,6 +56,8 @@ import { onSync, syncNow } from "@/lib/offline/sync";
 import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 import { queryKeys } from "@/lib/query/keys";
 import { useOnline } from "@/lib/pwa/online";
+import { HealthMarker, HealthStrip, useCoachRosterHealth } from "@/components/coach/health-alert";
+import type { CoachChildHealth } from "@/lib/api/coach";
 import { formatAcademyClock, formatAcademyTimeRange, formatInAcademyZone, parseAcademyInstant } from "@/lib/format/academy-time";
 
 import { formatBulkAttendanceError } from "./bulk-attendance-error";
@@ -183,6 +185,8 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   const roster: CoachRosterEntry[] = session?.roster ?? [];
   const sessionId = session?.session_id ?? decodedId;
   const occurrenceId = session?.occurrence_id ?? decodedId;
+  // S50: health notes ride on their own never-cached read, not on the roster.
+  const health = useCoachRosterHealth(session?.occurrence_id);
 
   // Write saved marks into the cached Today so a trip back to Today (or a
   // reopen of this class) shows them at once, instead of the 5-minute-fresh
@@ -1022,6 +1026,9 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             )}
           </div>
         </div>
+        <div className="mb-2">
+          <HealthStrip state={health} />
+        </div>
         {summary && (
           <p data-testid="marks-summary" className="mb-2 text-sm" style={{ color: "var(--rally-muted)" }}>
             {summary}
@@ -1046,6 +1053,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               <RosterRow
                 key={student.student_id}
                 student={student}
+                health={health.kind === "ready" ? health.byId.get(student.student_id) : undefined}
                 sessionId={session.session_id}
                 local={localMarks[student.student_id]}
                 queued={queuedMarks[student.student_id]}
@@ -1318,6 +1326,7 @@ function lifecycleChip(
 
 function RosterRow({
   student,
+  health,
   sessionId,
   local,
   queued,
@@ -1345,6 +1354,8 @@ function RosterRow({
   dropoffError,
 }: {
   student: CoachRosterEntry;
+  /** S50: this child's health note, from the never-cached read. */
+  health?: CoachChildHealth;
   sessionId: string;
   local?: OptimisticEntry;
   queued?: QueuedMark;
@@ -1428,6 +1439,7 @@ function RosterRow({
           <p className="text-sm font-medium" style={{ color: "var(--rally-ink)" }}>
             {student.full_name}
           </p>
+          <HealthMarker child={health} />
           {rosterRowMeta(student) && (
             <span
               data-testid={`roster-meta-${student.student_id}`}

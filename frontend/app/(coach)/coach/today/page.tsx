@@ -31,6 +31,7 @@ import { LaterThisWeek, MyWeek } from "@/components/coach/my-week";
 import { WelcomeCard } from "@/components/coach/welcome-card";
 import { useQueuedMarkCount } from "@/lib/offline/use-needs-review-count";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
+import { ClassHealthStrip } from "@/components/coach/health-alert";
 
 
 export default function CoachTodayPage() {
@@ -271,6 +272,7 @@ export default function CoachTodayPage() {
                 </p>
               ) : (
                 <p className="mt-2 flex flex-wrap items-center gap-2 text-sm text-neutral-500">
+                  <ClassHealthStrip occurrenceId={s.occurrence_id} testId={`health-strip-${s.occurrence_id}`} retry={false} />
                   <span data-testid={`session-marked-${s.occurrence_id}`}>
                     {progress.label}
                   </span>
