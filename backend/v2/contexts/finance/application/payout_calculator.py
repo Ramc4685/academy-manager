@@ -13,7 +13,10 @@ from datetime import datetime
 from typing import Any, Protocol, cast
 
 from backend.v2.contexts.finance.application.ports import PayoutCalculation
-from backend.v2.contexts.finance.domain.payout_period import PersistedPayoutLine
+from backend.v2.contexts.finance.domain.payout_period import (
+    PersistedPayoutLine,
+    PersistedUnpaidOccurrence,
+)
 
 
 class CoachPayoutComputer(Protocol):
@@ -54,7 +57,19 @@ def _to_calculation(statement: Any) -> PayoutCalculation:
                     expected_revenue_minor=line.expected_revenue_minor,
                 )
                 for line in statement.lines
-            ]
+            ],
+            # Coaching's PayoutUnpaidOccurrence is a different model class, which
+            # PayoutPeriod rejects; map it like the lines (the P1 Generate 500).
+            "unpaid_occurrences": [
+                PersistedUnpaidOccurrence(
+                    occurrence_id=item.occurrence_id,
+                    reason=item.reason,
+                    detail=item.detail,
+                    unresolved=item.unresolved,
+                    attributed_coach_id=item.attributed_coach_id,
+                )
+                for item in statement.unpaid_occurrences
+            ],
         }
     )
     return cast(PayoutCalculation, updated)

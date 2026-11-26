@@ -196,6 +196,20 @@ function PayoutsContent() {
               </button>
             </div>
 
+            {generateOne.isError || bulkGenerate.isError || bulkRecompute.isError ? (
+              <p
+                role="alert"
+                data-testid="admin-payroll-generate-error"
+                className="rounded-lg border border-status-red-200 bg-status-red-50 px-4 py-3 text-sm text-status-red-800"
+              >
+                Payroll could not be generated. Nothing was saved; try again, and if it keeps
+                failing, contact support.
+              </p>
+            ) : null}
+            <p className="text-sm text-muted-foreground">
+              Coaches appear here once they have taught a class this month.
+            </p>
+
             {isError ? (
               <div role="alert">
                 <EmptyState

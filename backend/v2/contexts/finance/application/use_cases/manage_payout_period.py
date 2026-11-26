@@ -141,6 +141,7 @@ class RecomputePayoutPeriod(_Audited):
             lines.append(line)
 
         total = sum(line.amount_minor for line in lines)
+        # model_copy skips validation; re-validate so a wrong nested type fails here.
         updated = period.model_copy(
             update={
                 "currency": calc.currency,
@@ -158,6 +159,7 @@ class RecomputePayoutPeriod(_Audited):
                 "generated_at": self._clock(),
             }
         )
+        updated = PayoutPeriod.model_validate(updated.model_dump())
         stored = await self._repo.replace_with_lines(updated)
         await self._record(
             stored,
