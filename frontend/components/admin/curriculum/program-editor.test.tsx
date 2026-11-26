@@ -98,6 +98,14 @@ describe("ProgramEditor retire and reorder", () => {
   });
 });
 
+describe("ProgramEditor required toggle (S56)", () => {
+  it("lets the owner untick Required on an existing skill", () => {
+    const out = render({ l1: 0, l2: 0 });
+    expect(out).toContain('data-testid="skill-required-s1"');
+    expect(out).toContain("a child can move up a level without this skill");
+  });
+});
+
 describe("swapped", () => {
   it("moves one id a place up or down", () => {
     expect(swapped(["a", "b", "c"], 1, -1)).toEqual(["b", "a", "c"]);

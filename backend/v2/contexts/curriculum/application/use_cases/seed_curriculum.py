@@ -39,7 +39,7 @@ _LEVELS: list[dict] = [
     {
         "sequence": 1,
         "name": "Grip and Control",
-        "description": "Foundation level — racket grip, shuttle control, and basic rallying.",
+        "description": "Foundation level — grips, ready position, split step, shuttle control, and basic rallying.",
         "skills": [
             {
                 "sequence": 1,
@@ -83,6 +83,16 @@ _LEVELS: list[dict] = [
             },
             {
                 "sequence": 5,
+                "name": "Split step",
+                "description": "Use a split step to react quickly to incoming shuttle.",
+                "criteria": [
+                    "Small hop before opponent contact",
+                    "Lands in ready position",
+                    "Feet approximately shoulder-width apart",
+                ],
+            },
+            {
+                "sequence": 6,
                 "name": "Shuttle control",
                 "description": "Keep shuttle in the air using controlled taps.",
                 "criteria": [
@@ -91,7 +101,7 @@ _LEVELS: list[dict] = [
                 ],
             },
             {
-                "sequence": 6,
+                "sequence": 7,
                 "name": "Basic rally control",
                 "description": "Complete a short cooperative rally with a partner.",
                 "criteria": [
@@ -111,7 +121,7 @@ _LEVELS: list[dict] = [
     {
         "sequence": 2,
         "name": "Net and Movement",
-        "description": "Front court play, lunging, split step, and net shot technique.",
+        "description": "Front court play, lunging, chassé and six-corner footwork, and net shots.",
         "skills": [
             {
                 "sequence": 1,
@@ -126,12 +136,12 @@ _LEVELS: list[dict] = [
             },
             {
                 "sequence": 2,
-                "name": "Split step",
-                "description": "Use a split step to react quickly to incoming shuttle.",
+                "name": "Chassé step",
+                "description": "Move sideways with a chassé step and stay balanced.",
                 "criteria": [
-                    "Small hop before opponent contact",
-                    "Lands in ready position",
-                    "Feet approximately shoulder-width apart",
+                    "Trailing foot closes toward the lead foot but never crosses",
+                    "Stays low with the racket up while moving",
+                    "Covers the width of the court and stops in control",
                 ],
             },
             {
@@ -146,6 +156,16 @@ _LEVELS: list[dict] = [
             },
             {
                 "sequence": 4,
+                "name": "Six-corner footwork",
+                "description": "Move from base to all six corners of the court and back.",
+                "criteria": [
+                    "Reaches each of the six corners on the coach's call",
+                    "Split steps before each move",
+                    "Returns to base after every corner",
+                ],
+            },
+            {
+                "sequence": 5,
                 "name": "Backhand net shot",
                 "description": "Push shuttle gently over the net using backhand.",
                 "criteria": [
@@ -155,7 +175,7 @@ _LEVELS: list[dict] = [
                 ],
             },
             {
-                "sequence": 5,
+                "sequence": 6,
                 "name": "Forehand net shot",
                 "description": "Push shuttle gently over the net using forehand.",
                 "criteria": [
@@ -165,7 +185,7 @@ _LEVELS: list[dict] = [
                 ],
             },
             {
-                "sequence": 6,
+                "sequence": 7,
                 "name": "Net rally",
                 "description": "Sustain a cooperative net rally with a partner.",
                 "criteria": [
@@ -185,12 +205,12 @@ _LEVELS: list[dict] = [
     {
         "sequence": 3,
         "name": "Serve and Lift",
-        "description": "Starting a rally legally — backhand serve, high serve, and frontcourt lifts.",
+        "description": "Starting a rally legally — low and high serves, serve return, lifts, and rally scoring.",
         "skills": [
             {
                 "sequence": 1,
-                "name": "Backhand serve",
-                "description": "Serve legally using a backhand push below waist height.",
+                "name": "Backhand low serve",
+                "description": "Serve low and short using a backhand push below waist height.",
                 "criteria": [
                     "Shuttle hit from hand",
                     "Contact below waist",
@@ -209,6 +229,26 @@ _LEVELS: list[dict] = [
             },
             {
                 "sequence": 3,
+                "name": "Low or high serve choice",
+                "description": "Choose a low or a high serve for the situation.",
+                "criteria": [
+                    "Explains when a low serve or a high serve is the better choice",
+                    "Mixes low and high serves on the coach's call",
+                    "Uses the same starting stance for both",
+                ],
+            },
+            {
+                "sequence": 4,
+                "name": "Serve return",
+                "description": "Return a low or a high serve with a sensible reply.",
+                "criteria": [
+                    "Waits in a ready stance in the correct service court",
+                    "Answers a low serve with a net shot or push",
+                    "Answers a high serve with a clear or a lift",
+                ],
+            },
+            {
+                "sequence": 5,
                 "name": "Backhand lift",
                 "description": "Hit a backhand lift from the frontcourt to the rearcourt.",
                 "criteria": [
@@ -218,7 +258,7 @@ _LEVELS: list[dict] = [
                 ],
             },
             {
-                "sequence": 4,
+                "sequence": 6,
                 "name": "Forehand lift",
                 "description": "Hit a forehand lift from the frontcourt to the rearcourt.",
                 "criteria": [
@@ -228,13 +268,23 @@ _LEVELS: list[dict] = [
                 ],
             },
             {
-                "sequence": 5,
+                "sequence": 7,
                 "name": "Serve and rally start",
                 "description": "Start a rally legally from a serve and continue it.",
                 "criteria": [
                     "Serve is legal (contact below waist)",
                     "Rally continues for at least 4 shots after serve",
                     "Player recovers to ready position after serve",
+                ],
+            },
+            {
+                "sequence": 8,
+                "name": "Rally scoring and faults",
+                "description": "Keep score in rally points and spot common faults.",
+                "criteria": [
+                    "Knows a point is won on every rally",
+                    "Serves from the right court on an even score and the left on an odd score",
+                    "Names common faults: serve hit too high, foot lifted on the serve, touching the net",
                 ],
             },
         ],
@@ -248,7 +298,7 @@ _LEVELS: list[dict] = [
     {
         "sequence": 4,
         "name": "Midcourt Speed",
-        "description": "Faster flat rallying, forehand and backhand drives, and block defense.",
+        "description": "Faster flat rallying, drives, a compact swing, block defense, net kills, and rearcourt footwork.",
         "skills": [
             {
                 "sequence": 1,
@@ -282,8 +332,8 @@ _LEVELS: list[dict] = [
             },
             {
                 "sequence": 4,
-                "name": "Racket speed",
-                "description": "Show fast racket preparation and short swing.",
+                "name": "Compact drive swing",
+                "description": "Drive with fast racket preparation and a short swing.",
                 "criteria": [
                     "Racket held in front of body between shots",
                     "Grip tightens only at contact",
@@ -300,6 +350,26 @@ _LEVELS: list[dict] = [
                     "6 of 10 blocks land in the forecourt",
                 ],
             },
+            {
+                "sequence": 6,
+                "name": "Net kill",
+                "description": "Put away a loose shuttle at the net.",
+                "criteria": [
+                    "Racket is up early at the net",
+                    "Short, sharp tap downward with no big swing",
+                    "Does not touch the net; 6 of 10 kills land in",
+                ],
+            },
+            {
+                "sequence": 7,
+                "name": "Rearcourt footwork",
+                "description": "Move back to the rearcourt and recover to base.",
+                "criteria": [
+                    "Turns side-on with the first step back",
+                    "Uses chassé or crossover steps to reach the rearcourt",
+                    "Recovers to base after the shot",
+                ],
+            },
         ],
         "ext_ref": {
             "module_name": "Swing and Throw",
@@ -311,7 +381,7 @@ _LEVELS: list[dict] = [
     {
         "sequence": 5,
         "name": "Rearcourt Shots",
-        "description": "Overhead technique — clear, drop, smash, and the scissor jump.",
+        "description": "Overhead technique — clear, drop, smash, defending a smash, and optional advanced shots.",
         "skills": [
             {
                 "sequence": 1,
@@ -355,6 +425,16 @@ _LEVELS: list[dict] = [
             },
             {
                 "sequence": 5,
+                "name": "Defensive lift from a smash",
+                "description": "Lift a smash high and deep to reset the rally.",
+                "criteria": [
+                    "Racket low and in front before the smash arrives",
+                    "Lifts the shuttle high and deep, not flat",
+                    "6 of 10 lifts reach the rearcourt",
+                ],
+            },
+            {
+                "sequence": 6,
                 "name": "Scissor jump",
                 "description": "Show the correct scissor jump footwork for rearcourt shots.",
                 "criteria": [
@@ -362,6 +442,51 @@ _LEVELS: list[dict] = [
                     "Lands on non-racket foot",
                     "Forward movement after landing",
                 ],
+                "required": False,
+            },
+            {
+                "sequence": 7,
+                "name": "Backhand clear",
+                "description": "Hit a backhand clear from the rearcourt.",
+                "criteria": [
+                    "Back to the net with the thumb grip",
+                    "High contact with a quick forearm turn",
+                    "6 of 10 clears pass the midcourt",
+                ],
+                "required": False,
+            },
+            {
+                "sequence": 8,
+                "name": "Backhand drop",
+                "description": "Hit a backhand drop from the rearcourt to the forecourt.",
+                "criteria": [
+                    "Same preparation as the backhand clear",
+                    "Soft contact sends the shuttle downward",
+                    "6 of 10 drops land in the forecourt",
+                ],
+                "required": False,
+            },
+            {
+                "sequence": 9,
+                "name": "Round-the-head shot",
+                "description": "Take a shuttle above the non-racket shoulder with a forehand.",
+                "criteria": [
+                    "Contact above the non-racket shoulder",
+                    "Bends sideways at the waist, not just the arm",
+                    "Shuttle reaches the target area",
+                ],
+                "required": False,
+            },
+            {
+                "sequence": 10,
+                "name": "Jump smash",
+                "description": "Smash at the top of a jump.",
+                "criteria": [
+                    "Takes off from both feet with the racket ready",
+                    "Contact at the top of the jump, in front of the body",
+                    "Lands balanced and ready for the reply",
+                ],
+                "required": False,
             },
         ],
         "ext_ref": {
@@ -418,6 +543,16 @@ _LEVELS: list[dict] = [
             },
             {
                 "sequence": 5,
+                "name": "Doubles rotation",
+                "description": "Rotate with a partner between attack and defense.",
+                "criteria": [
+                    "Front-back when attacking, side-by-side when defending",
+                    "Calls to the partner when changing position",
+                    "Keeps the rotation going for a full rally",
+                ],
+            },
+            {
+                "sequence": 6,
                 "name": "Attack-neutral-defense awareness",
                 "description": "Recognize and respond to attacking, neutral, and defensive situations.",
                 "criteria": [
@@ -427,7 +562,7 @@ _LEVELS: list[dict] = [
                 ],
             },
             {
-                "sequence": 6,
+                "sequence": 7,
                 "name": "Full match play",
                 "description": "Play a full singles or doubles game independently.",
                 "criteria": [
@@ -519,7 +654,9 @@ async def seed_badminton_pathway(
                 sequence=skill_data["sequence"],
                 name=skill_data["name"],
                 description=skill_data["description"],
-                is_required=True,
+                # Optional skills (advanced or still shaky for most kids) do
+                # not hold back a level-up recommendation.
+                is_required=skill_data.get("required", True),
                 scoring_type="ATTEMPT_BASED",
                 pass_threshold_pct=70.0,
                 coach_override_allowed=False,

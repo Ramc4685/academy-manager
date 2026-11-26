@@ -95,14 +95,16 @@ async def seed_lesson_cards(
             "No active badminton program found. Seed the pathway before lesson cards."
         )
 
-    # Cards reference curriculum by sequence; ids are per-academy ULIDs, so
-    # resolve sequence -> id once up front.
+    # Cards name their level by sequence and their skills by name, across the
+    # whole pathway: owners reorder skills and the template moves them between
+    # levels, so a position would link a card to the wrong skill. A name the
+    # academy's pathway lacks (renamed or retired) is skipped, never guessed.
     level_by_seq: dict[int, str] = {}
-    skill_by: dict[tuple[int, int], str] = {}
+    skill_by: dict[str, tuple[str, str]] = {}
     for level in await levels.list_for_program(program.program_id):
         level_by_seq[level.sequence] = level.level_id
         for skill in await skills.list_for_level(level.level_id):
-            skill_by[(level.sequence, skill.sequence)] = skill.skill_id
+            skill_by.setdefault(skill.name.casefold(), (skill.skill_id, level.level_id))
 
     now = datetime.now(UTC)
     result = LessonCardSeedResult(program_id=program.program_id)
@@ -115,15 +117,11 @@ async def seed_lesson_cards(
             raise LessonCardSeedError(
                 f"Card {entry['slug']}: level_sequence {level_seq} does not resolve."
             )
-        skill_ids: list[str] = []
-        for skill_seq in entry.get("skill_sequences", []):
-            skill_id = skill_by.get((level_seq, int(skill_seq)))
-            if skill_id is None:
-                raise LessonCardSeedError(
-                    f"Card {entry['slug']}: skill_sequence "
-                    f"{level_seq}.{skill_seq} does not resolve."
-                )
-            skill_ids.append(skill_id)
+        skill_ids = [
+            skill_by[name.casefold()][0]
+            for name in entry.get("skill_names", [])
+            if name.casefold() in skill_by
+        ]
 
         content_hash = _hash(entry)
         existing = await cards.get_by_slug(program.program_id, entry["slug"])
@@ -185,7 +183,7 @@ async def _seed_video_refs(
     academy_id: str,
     program_id: str,
     level_by_seq: dict[int, str],
-    skill_by: dict[tuple[int, int], str],
+    skill_by: dict[str, tuple[str, str]],
     video_refs: CurriculumVideoRefRepository,
     created_by: str,
     now: datetime,
@@ -199,13 +197,9 @@ async def _seed_video_refs(
             raise LessonCardSeedError(f"level_video: level_sequence {level_seq} does not resolve.")
         items.append(("LEVEL", level_id, None, entry))
     for entry in content.get("skill_videos", []):
-        level_seq = int(entry["level_sequence"])
-        skill_seq = int(entry["skill_sequence"])
-        level_id = level_by_seq.get(level_seq)
-        skill_id = skill_by.get((level_seq, skill_seq))
-        if level_id is None or skill_id is None:
-            raise LessonCardSeedError(f"skill_video: {level_seq}.{skill_seq} does not resolve.")
-        items.append(("SKILL", level_id, skill_id, entry))
+        found = skill_by.get(entry["skill_name"].casefold())
+        if found is not None:
+            items.append(("SKILL", found[1], found[0], entry))
 
     for scope, level_id, skill_id, entry in items:
         url = entry["url"]

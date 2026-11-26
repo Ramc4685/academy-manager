@@ -230,6 +230,51 @@ async def test_seed_creates_program_levels_skills_and_refs() -> None:
     assert all(ref.skill_id in seeded_skill_ids for ref in refs)
 
 
+async def test_template_revision_d19() -> None:
+    """S56 / D-19: split step in Level 1, renamed and added skills, optional
+    advanced skills, contiguous numbering and unique names."""
+    repos = _fresh_repos()
+    await _run_seed(repos)
+    levels = {lv.level_id: lv.sequence for lv in repos["levels"].saved}  # type: ignore[attr-defined]
+    skills = repos["skills"].saved  # type: ignore[attr-defined]
+    level_of = {s.name: levels[s.level_id] for s in skills}
+
+    assert level_of["Split step"] == 1
+    assert {"Backhand serve", "Racket speed"}.isdisjoint(level_of)
+    assert level_of["Backhand low serve"] == 3
+    assert level_of["Compact drive swing"] == 4
+    assert level_of["Rally scoring and faults"] == 3
+    for added in (
+        "Six-corner footwork",
+        "Chassé step",
+        "Rearcourt footwork",
+        "Backhand clear",
+        "Backhand drop",
+        "Round-the-head shot",
+        "Low or high serve choice",
+        "Serve return",
+        "Net kill",
+        "Doubles rotation",
+        "Jump smash",
+        "Defensive lift from a smash",
+    ):
+        assert added in level_of, added
+    assert level_of["Jump smash"] > level_of["Backhand low serve"]
+
+    optional = {s.name for s in skills if not s.is_required}
+    assert optional == {
+        "Scissor jump",
+        "Backhand clear",
+        "Backhand drop",
+        "Round-the-head shot",
+        "Jump smash",
+    }
+    assert len(level_of) == len(skills)  # names are unique: cards resolve by name
+    for level_id in levels:
+        seqs = sorted(s.sequence for s in skills if s.level_id == level_id)
+        assert seqs == list(range(1, len(seqs) + 1))
+
+
 async def test_seed_is_idempotent_same_program() -> None:
     repos = _fresh_repos()
     first = await _run_seed(repos)

@@ -384,6 +384,14 @@ export function updateSkillPassRule(
   });
 }
 
+/** Make a skill required for level-up, or optional. */
+export function updateSkillRequired(skillId: string, isRequired: boolean): Promise<Skill> {
+  return apiFetch<Skill>(`/admin/skills/${encodeURIComponent(skillId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ is_required: isRequired }),
+  });
+}
+
 export function createSkill(
   levelId: string,
   body: CreateSkillBody,

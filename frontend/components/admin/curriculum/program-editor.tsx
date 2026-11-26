@@ -20,6 +20,7 @@ import {
   SKILL_PASS_RULES,
   SKILL_SCORING_TYPES,
   updateSkillPassRule,
+  updateSkillRequired,
   type ExternalLessonReference,
   type ExternalSource,
   type PathwayLevel,
@@ -686,6 +687,10 @@ function SkillRow({
       updateSkillPassRule(skill.skill_id, body),
     onSuccess: () => onRefAdded(),
   });
+  const required = useMutation({
+    mutationFn: (next: boolean) => updateSkillRequired(skill.skill_id, next),
+    onSuccess: () => onRefAdded(),
+  });
   const rule = skill.pass_rule ?? "ONE_TAP";
   const tries = skill.pass_tries ?? 3;
 
@@ -706,11 +711,21 @@ function SkillRow({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {skill.is_required && (
-            <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-600">
-              Required
-            </span>
-          )}
+          <label
+            className="flex min-h-touch items-center gap-1.5 text-xs font-medium text-neutral-600"
+            title="Unticked: a child can move up a level without this skill."
+          >
+            <input
+              type="checkbox"
+              data-testid={`skill-required-${skill.skill_id}`}
+              checked={skill.is_required}
+              disabled={required.isPending}
+              onChange={(e) => required.mutate(e.target.checked)}
+              className="h-4 w-4 rounded border-neutral-300"
+            />
+            Required
+          </label>
+          {required.isError && <span className="text-xs text-red-600">Not saved</span>}
           <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-500 dark:bg-neutral-800">
             {skill.scoring_type}
           </span>
