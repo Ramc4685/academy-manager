@@ -44,16 +44,24 @@ def as_utc(value: object) -> datetime | None:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
-def month_window(period: str, timezone_name: str | None = None) -> tuple[datetime, datetime]:
-    """UTC bounds of ``YYYY-MM`` as the academy's clock sees it (#608).
+def report_zone(timezone_name: str | None) -> ZoneInfo:
+    """The academy's reporting zone, falling back to UTC on an unknown name.
 
-    An unset or unknown zone reads as UTC, so a report still renders.
+    Reads must render something: a nonsense ``academies.timezone`` degrades to
+    the pre-#608 UTC behaviour rather than 500-ing a report.
     """
-    year, month = (int(part) for part in period.split("-", 1))
+    if not timezone_name:
+        return ZoneInfo("UTC")
     try:
-        zone = ZoneInfo(timezone_name) if timezone_name else ZoneInfo("UTC")
+        return ZoneInfo(timezone_name)
     except (KeyError, ValueError):
-        zone = ZoneInfo("UTC")
+        return ZoneInfo("UTC")
+
+
+def month_window(period: str, timezone_name: str | None = None) -> tuple[datetime, datetime]:
+    """UTC bounds of ``YYYY-MM`` as the academy's clock sees it (#608)."""
+    year, month = (int(part) for part in period.split("-", 1))
+    zone = report_zone(timezone_name)
     start = datetime(year, month, 1, tzinfo=zone)
     end = (
         datetime(year + 1, 1, 1, tzinfo=zone)
@@ -74,18 +82,10 @@ def class_state(occurrence: Mapping[str, Any], *, now: datetime) -> ClassState:
     return "held" if end_at is not None and end_at < now else "upcoming"
 
 
-def is_held(occurrence: Mapping[str, Any], *, now: datetime) -> bool:
-    return class_state(occurrence, now=now) == "held"
-
-
 @dataclass(frozen=True)
 class Headcount:
     enrolled: int
     paying: int
-
-    @property
-    def not_billed(self) -> int:
-        return self.enrolled - self.paying
 
 
 def headcount(active_enrollments: Iterable[Mapping[str, Any]]) -> Headcount:

@@ -10,26 +10,12 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, time
 from typing import Any
-from zoneinfo import ZoneInfo
 
 # Re-exported: the rounding rule is shared with the coaching payout read
 # models, and contexts may not import one another, so it lives in `shared`.
 from backend.v2.shared.money import round_money_minor as round_money_minor
 from backend.v2.shared.reporting_definitions import month_window
-
-
-def report_zone(timezone_name: str | None) -> ZoneInfo:
-    """The academy's reporting zone, falling back to UTC on an unknown name.
-
-    Reads must render something: a nonsense ``academies.timezone`` degrades to
-    the pre-#608 UTC behaviour rather than 500-ing a report.
-    """
-    if not timezone_name:
-        return ZoneInfo("UTC")
-    try:
-        return ZoneInfo(timezone_name)
-    except (KeyError, ValueError):
-        return ZoneInfo("UTC")
+from backend.v2.shared.reporting_definitions import report_zone as report_zone
 
 
 def month_bounds(period: str, timezone_name: str | None = None) -> tuple[datetime, datetime]:

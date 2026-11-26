@@ -1826,8 +1826,7 @@ def make_session_economics_report(
                 continue
             occurrence_by_id[occurrence_id] = session_id
             occurrences_by_session[session_id] = occurrences_by_session.get(session_id, 0) + 1
-            ended_at = _as_utc_or_none(occurrence.get("end_at"))
-            if occurrence.get("status") != "completed" and (ended_at is None or ended_at >= now):
+            if class_state(occurrence, now=now) != "held":
                 sessions_with_unheld.add(session_id)
 
         session_ids = sorted(occurrences_by_session)

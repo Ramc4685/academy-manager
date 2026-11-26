@@ -9,7 +9,6 @@ from backend.v2.shared.reporting_definitions import (
     attendance_for_classes_filter,
     class_state,
     headcount,
-    is_held,
     is_present,
 )
 
@@ -30,7 +29,6 @@ def test_a_class_is_held_by_status_or_by_the_clock() -> None:
 def test_a_cancelled_class_is_never_held_even_after_it_ends() -> None:
     occurrence = {"status": "cancelled", "end_at": datetime(2026, 11, 1, tzinfo=UTC)}
     assert class_state(occurrence, now=NOW) == "cancelled"
-    assert not is_held(occurrence, now=NOW)
 
 
 def test_headcount_separates_enrolled_from_paying() -> None:
@@ -38,9 +36,7 @@ def test_headcount_separates_enrolled_from_paying() -> None:
         {"billing_type": "NoCharge"},
         {"billing_type": "waived"},
     ]
-    count = headcount(enrollments)
-    assert count == Headcount(enrolled=11, paying=9)
-    assert count.not_billed == 2
+    assert headcount(enrollments) == Headcount(enrolled=11, paying=9)
 
 
 def test_attendance_is_matched_by_class_not_by_when_it_was_marked() -> None:
