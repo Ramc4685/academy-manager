@@ -96,6 +96,18 @@ class TodayTomorrow(BaseModel):
     first_start_at: datetime | None = None
 
 
+_ATTENDANCE: dict[str, RosterAttendance] = {
+    "present": "present",
+    "late": "late",
+    "absent": "absent",
+}
+
+
+def _attendance(mark: str | None) -> RosterAttendance | None:
+    """Excused and voided marks read as not marked on the Today roster."""
+    return _ATTENDANCE.get(mark or "")
+
+
 class PhoneMatch(BaseModel):
     parent_id: str
     name: str | None = None
@@ -230,7 +242,7 @@ class AdminTodayReader:
                         student_id=r.student_id,
                         full_name=r.full_name,
                         kind=_KIND.get(r.entry_source, "enrolled"),
-                        attendance=mark if mark in ("present", "late", "absent") else None,
+                        attendance=_attendance(mark),
                         expected_absent=r.expected_absence,
                         parent_id=parent_id,
                         parent_name=parent.get("name"),

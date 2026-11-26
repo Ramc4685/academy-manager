@@ -174,7 +174,11 @@ def db() -> Any:
             [
                 {"user_id": "par-demo", "display_name": "Demo Parent", "phone": "(309) 555-0120"},
                 {"user_id": "par-patel", "display_name": "Asha Patel"},
-                {"user_id": "par-other", "display_name": "Other Parent", "phone": "+1 309 555 0120"},
+                {
+                    "user_id": "par-other",
+                    "display_name": "Other Parent",
+                    "phone": "+1 309 555 0120",
+                },
                 {"user_id": "coach-demo", "display_name": "Coach Demo"},
                 {"user_id": "coach-casey", "display_name": "Coach Casey"},
                 {"user_id": "coach-cover", "display_name": "Coach Cover"},
@@ -330,4 +334,6 @@ def test_phone_search_needs_four_digits(db: Any, phone: str) -> None:
 
 def test_phone_search_is_admin_only(db: Any) -> None:
     with _client(db, roles=("coach",)) as client:
-        assert client.get("/api/v2/admin/phone-search", params={"phone": "5550120"}).status_code == 404
+        assert (
+            client.get("/api/v2/admin/phone-search", params={"phone": "5550120"}).status_code == 404
+        )
