@@ -21,6 +21,7 @@ import { useIsPhone } from "@/lib/use-is-phone";
 import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
 
 import { isWithdrawn, reviewErrorMessage, WITHDRAWN_APPROVE_HINT } from "./level-up-review";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 const LEVEL_UP_HEADERS = ["Student", "Program", "From Level", "Recommended By", "Date", "Status"];
 
@@ -382,7 +383,7 @@ function QueueRow({
             </div>
             <div>
               {recommendedByName} ·{" "}
-              {new Date(rec.recommended_at).toLocaleDateString(undefined, {
+              {formatInAcademyZone(rec.recommended_at, undefined, {
                 month: "short",
                 day: "numeric",
                 year: "numeric",
@@ -415,7 +416,7 @@ function QueueRow({
       <td className="px-4 py-3 text-rally-subtle">{rec.from_level_name || rec.from_level_id}</td>
       <td className="px-4 py-3 text-rally-subtle">{recommendedByName}</td>
       <td className="px-4 py-3 text-rally-subtle">
-        {new Date(rec.recommended_at).toLocaleDateString(undefined, {
+        {formatInAcademyZone(rec.recommended_at, undefined, {
           month: "short",
           day: "numeric",
           year: "numeric",

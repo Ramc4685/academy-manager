@@ -17,13 +17,14 @@ import { LaneHeader } from "@/components/ds/lane";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
 import { SEATLESS_OFFER_NOTE, offerExpiryLabel } from "@/lib/admin/waitlist-offer";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 function formatDate(isoString: string): string {
-  return new Date(isoString).toLocaleDateString([], { month: "short", day: "numeric" });
+  return formatInAcademyZone(isoString, undefined, { month: "short", day: "numeric" });
 }
 
 function formatTime(isoString: string): string {
-  return new Date(isoString).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return formatInAcademyZone(isoString, undefined, { hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 }
 
 /**

@@ -29,7 +29,7 @@ import {
 } from "./format";
 import { Field } from "./StudentEditForm";
 import { useAcademyTimezone } from "@/components/admin/use-academy-today";
-import { academyDateISO } from "@/lib/format/academy-time";
+import { academyDateISO, formatInAcademyZone } from "@/lib/format/academy-time";
 
 type EnrollmentDialog = "move" | "override" | null;
 
@@ -337,11 +337,7 @@ function MoveEnrollmentDialog({
             {formatDateUtc(moveDate)} switches the enrollment and records a prorated
             adjustment against the{" "}
             {period
-              ? new Date(period.periodStart).toLocaleDateString(undefined, {
-                  month: "long",
-                  year: "numeric",
-                  timeZone: "UTC",
-                })
+              ? formatInAcademyZone(period.periodStart, "UTC", { month: "long", year: "numeric" })
               : "selected"}{" "}
             billing period. The adjustment is recorded now; it is applied on the parent&apos;s
             next invoice rather than charged immediately.

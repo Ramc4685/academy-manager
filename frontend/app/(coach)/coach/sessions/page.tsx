@@ -10,6 +10,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { formatSessionTimeRange, sessionDateKey } from "@/lib/time/session-time";
 import { RetryButton } from "@/components/coach/RetryButton";
 import { CoachEmptyState } from "@/components/coach/CoachEmptyState";
+import { formatPlainDate } from "@/lib/format/plain-date";
 
 export default function CoachSessionsPage() {
   const { data, isLoading, isError, refetch } = useQuery({
@@ -107,12 +108,7 @@ export default function CoachSessionsPage() {
 }
 
 function formatDateLabel(key: string): string {
-  const [year, month, day] = key.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
-    weekday: "long",
-    month: "short",
-    day: "numeric",
-  });
+  return formatPlainDate(key, { weekday: "long", month: "short", day: "numeric" });
 }
 
 function groupByDate(

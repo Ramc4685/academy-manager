@@ -39,7 +39,7 @@ import {
   type ParentHomeChild,
 } from "@/lib/api/parent-home";
 import { getParentProgressSummary } from "@/lib/api/curriculum";
-import { resolveAcademyTimeZone } from "@/lib/format/academy-time";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 import { nameGradient, nameInitial } from "@/lib/avatar-gradient";
 import {
   attendanceCopy,
@@ -635,8 +635,5 @@ function IssueStrip({ issues }: { issues: string[] }) {
 }
 
 function formatShortDate(value: string, academyTimezone: string | null): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const { timeZone } = resolveAcademyTimeZone(academyTimezone);
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone });
+  return formatInAcademyZone(value, academyTimezone, { month: "short", day: "numeric" });
 }

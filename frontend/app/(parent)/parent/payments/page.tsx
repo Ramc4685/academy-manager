@@ -33,6 +33,8 @@ import {
 } from "@/lib/parent-autopay-optin";
 import { autopayConfigurable, emptyInvoicesCopy } from "@/lib/parent/payments-page";
 import { queryKeys } from "@/lib/query/keys";
+import { formatAcademyStamp, formatInAcademyZone } from "@/lib/format/academy-time";
+import { formatPlainDate } from "@/lib/format/plain-date";
 
 const AUTOPAY_START_FAILED =
   "Something went wrong starting autopay. Please try again or contact the academy.";
@@ -77,8 +79,7 @@ const CHECKOUT_POLL_MAX_ATTEMPTS = 40; // 40 × 3s ≈ 2 minutes
 function formatPeriodLabel(period: string): string {
   const match = /^(\d{4})-(\d{2})$/.exec(period);
   if (!match) return period;
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, 1);
-  return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+  return formatPlainDate(`${period}-01`, { month: "short", year: "numeric" });
 }
 
 function money(cents: number, currency = "USD"): string {
@@ -238,6 +239,7 @@ export default function ParentPaymentsPage() {
     queryKey: queryKeys.parent.academy(),
     queryFn: getParentAcademy,
   });
+  const academyTimezone = academyQuery.data?.timezone ?? null;
   const invoiceDetailQuery = useQuery({
     queryKey: ["parent", "invoice-detail", selectedInvoiceId],
     queryFn: () => getParentInvoice(selectedInvoiceId ?? ""),
@@ -549,7 +551,7 @@ export default function ParentPaymentsPage() {
               {credits.map((credit) => (
                 <li key={credit.credit_id}>
                   {credit.reason}: {money(credit.remaining_amount_cents, credit.currency.toUpperCase())}
-                  {credit.expires_at ? ` · expires ${new Date(credit.expires_at).toLocaleDateString()}` : ""}
+                  {credit.expires_at ? ` · expires ${formatInAcademyZone(credit.expires_at, academyTimezone)}` : ""}
                 </li>
               ))}
             </ul>
@@ -941,8 +943,8 @@ export default function ParentPaymentsPage() {
                 </div>
                 <p className="mt-1 text-xs text-rally-subtle">
                   {payment.invoice_period
-                    ? `Tuition · ${formatPeriodLabel(payment.invoice_period)} · ${new Date(payment.created_at).toLocaleDateString()}`
-                    : new Date(payment.created_at).toLocaleString()}
+                    ? `Tuition · ${formatPeriodLabel(payment.invoice_period)} · ${formatInAcademyZone(payment.created_at, academyTimezone)}`
+                    : formatAcademyStamp(payment.created_at, academyTimezone)}
                 </p>
                 {payment.refunded_cents > 0 && (
                   <p className="text-xs text-status-amber-800">
@@ -1014,11 +1016,7 @@ function CollapsibleSection({
 
 function formatDate(value: string | null): string {
   if (!value) return "date pending";
-  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  return formatPlainDate(value, { month: "short", day: "numeric", year: "numeric" });
 }
 
 // Palette collapsed onto token class bundles — mirrors the dashboard's

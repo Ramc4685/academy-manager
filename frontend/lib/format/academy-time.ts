@@ -28,14 +28,26 @@ export function isValidTimeZone(tz: string): boolean {
   }
 }
 
+// S05: the zone of the academy whose shell is on screen, set in the browser by
+// AcademyZoneProvider. Formatters given no zone use it before the browser's,
+// so a helper deep in a format module still renders academy time.
+// shortcut: one academy per browser tab, upgrade to explicit threading if a
+// screen ever shows two academies at once.
+let ambientAcademyZone: string | null = null;
+
+export function setAmbientAcademyZone(timezone: string | null): void {
+  ambientAcademyZone = timezone;
+}
+
 /**
  * Resolve the timezone to format in. Uses the academy timezone when present
- * and valid; otherwise falls back to the viewer's browser timezone.
+ * and valid, then the shell's academy zone; otherwise falls back to the
+ * viewer's browser timezone.
  */
 export function resolveAcademyTimeZone(
   academyTimezone: string | null | undefined,
 ): ResolvedZone {
-  const tz = academyTimezone?.trim();
+  const tz = academyTimezone?.trim() || ambientAcademyZone?.trim();
   if (tz && isValidTimeZone(tz)) {
     return { timeZone: tz, usedFallback: false };
   }
@@ -145,13 +157,14 @@ export function formatAcademyDate(
 export function formatAcademyDay(
   iso: string,
   academyTimezone: string | null | undefined,
+  options?: Intl.DateTimeFormatOptions,
 ): string {
   const instant = parseAcademyInstant(iso);
   if (Number.isNaN(instant.getTime())) return "";
   if (instant.getTime() % 86_400_000 === 0) {
-    return formatDayDate(instant, "UTC");
+    return options ? formatInAcademyZone(instant, "UTC", options) : formatDayDate(instant, "UTC");
   }
-  return formatAcademyDate(iso, academyTimezone);
+  return options ? formatInAcademyZone(iso, academyTimezone, options) : formatAcademyDate(iso, academyTimezone);
 }
 
 /**
@@ -191,5 +204,45 @@ export function monthLabel(month: string): string {
     month: "long",
     year: "numeric",
     timeZone: "UTC",
+  });
+}
+
+const DEFAULT_DATE_OPTIONS: Intl.DateTimeFormatOptions = {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+};
+
+/**
+ * S05: the one way to show an instant. Formats `value` with the caller's Intl
+ * options, always in the academy zone (browser zone only when the academy has
+ * none). Pass `timeZoneName: "short"` whenever the output carries a clock time.
+ * "" for a missing or unparseable value.
+ */
+export function formatInAcademyZone(
+  value: string | number | Date | null | undefined,
+  academyTimezone?: string | null,
+  options: Intl.DateTimeFormatOptions = DEFAULT_DATE_OPTIONS,
+): string {
+  if (value === null || value === undefined || value === "") return "";
+  const instant =
+    typeof value === "string" ? parseAcademyInstant(value) : new Date(value);
+  if (Number.isNaN(instant.getTime())) return "";
+  const { timeZone } = resolveAcademyTimeZone(academyTimezone);
+  return new Intl.DateTimeFormat("en-US", { ...options, timeZone }).format(instant);
+}
+
+/** "Nov 3, 2026, 4:05 PM CST": a logged moment (audit row, post, history line). */
+export function formatAcademyStamp(
+  value: string | number | Date | null | undefined,
+  academyTimezone?: string | null,
+): string {
+  return formatInAcademyZone(value, academyTimezone, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
   });
 }

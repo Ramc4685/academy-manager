@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { setAmbientAcademyZone } from "@/lib/format/academy-time";
+
 import { formatDate, formatDateUtc, formatInvoiceDate } from "./format";
 
 // Issue #215: invoice dates stored at UTC midnight rendered a day early in US
@@ -39,9 +41,12 @@ describe("formatDateUtc", () => {
 });
 
 describe("formatDate", () => {
-  it("still renders real instants in the viewer's local timezone", () => {
-    const value = "2026-06-01T18:30:00.000Z";
-    expect(formatDate(value)).toBe(new Date(value).toLocaleDateString());
+  it("renders real instants on the academy's day, not the viewer's (S05)", () => {
+    setAmbientAcademyZone("America/Chicago");
+    expect(formatDate("2026-06-02T03:30:00.000Z")).toBe("6/1/2026");
+    setAmbientAcademyZone("Asia/Kolkata");
+    expect(formatDate("2026-06-01T18:30:00.000Z")).toBe("6/2/2026");
+    setAmbientAcademyZone(null);
   });
 
   it("returns a dash for empty values", () => {
@@ -57,12 +62,13 @@ describe("formatInvoiceDate", () => {
     );
   });
 
-  it("keeps an invoice with a real time-of-day on the viewer's local day", () => {
+  it("keeps an invoice with a real time-of-day on the academy's day", () => {
     // A payment recorded at 20:00 America/Chicago lands at 01:00Z the next day;
     // rendering that in UTC would move it forward a day for the admin who
     // recorded it.
-    const value = "2026-06-16T01:00:00.000Z";
-    expect(formatInvoiceDate(value)).toBe(new Date(value).toLocaleDateString());
+    setAmbientAcademyZone("America/Chicago");
+    expect(formatInvoiceDate("2026-06-16T01:00:00.000Z")).toBe("6/15/2026");
+    setAmbientAcademyZone(null);
   });
 
   it("returns a dash for empty and unparseable values", () => {

@@ -11,18 +11,16 @@
 const PLAIN_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 /** "Wed, Jul 15" — a `YYYY-MM-DD` date. Anything else is returned unchanged. */
-export function formatPlainDate(value: string | null | undefined): string {
+export function formatPlainDate(
+  value: string | null | undefined,
+  options: Intl.DateTimeFormatOptions = { weekday: "short", month: "short", day: "numeric" },
+): string {
   const raw = (value ?? "").trim();
   const match = PLAIN_DATE.exec(raw);
   if (!match) return raw;
   const instant = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
   if (Number.isNaN(instant.getTime())) return raw;
-  return instant.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
+  return instant.toLocaleDateString("en-US", { ...options, timeZone: "UTC" });
 }
 
 /**

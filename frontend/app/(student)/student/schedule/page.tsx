@@ -6,8 +6,11 @@ import { Skeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
 import { getMySchedule } from "@/lib/api/student";
 import { queryKeys } from "@/lib/query/keys";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
+import { useAcademyZone } from "@/lib/format/academy-zone";
 
 export default function StudentSchedulePage() {
+  const academyTimezone = useAcademyZone();
   const { data, isLoading, isError } = useQuery({
     queryKey: queryKeys.student.schedule(),
     queryFn: getMySchedule,
@@ -45,12 +48,13 @@ export default function StudentSchedulePage() {
                 <div className="min-w-0">
                   <p className="text-sm font-bold truncate text-rally-ink">{entry.session_title}</p>
                   <p className="text-xs mt-0.5 text-rally-muted">
-                    {new Date(entry.start_at).toLocaleString(undefined, {
+                    {formatInAcademyZone(entry.start_at, academyTimezone, {
                       weekday: "short",
                       month: "short",
                       day: "numeric",
                       hour: "numeric",
                       minute: "2-digit",
+                      timeZoneName: "short",
                     })}
                   </p>
                   {entry.location && (

@@ -12,6 +12,7 @@
  * backend's; this module only reads the file and shapes copy.
  */
 import { apiFetch, type ApiError } from "./client";
+import { formatCount } from "@/lib/format/count";
 
 /** The backend's caps (contexts/crm/domain/family_import.py). */
 export const MAX_IMPORT_BYTES = 1_000_000;
@@ -110,7 +111,7 @@ export function checkImportFile(file: { name: string; size: number }): FileCheck
   if (file.size > MAX_IMPORT_BYTES) {
     return {
       ok: false,
-      message: `This file is larger than 1 MB. Split it into smaller files of at most ${MAX_IMPORT_ROWS.toLocaleString("en-US")} rows.`,
+      message: `This file is larger than 1 MB. Split it into smaller files of at most ${formatCount(MAX_IMPORT_ROWS)} rows.`,
     };
   }
   if (!/\.csv$/i.test(file.name)) {
@@ -176,7 +177,7 @@ export function rowStatusLabel(row: ImportRow): string {
 }
 
 function plural(count: number, one: string, many: string): string {
-  return `${count.toLocaleString("en-US")} ${count === 1 ? one : many}`;
+  return `${formatCount(count)} ${count === 1 ? one : many}`;
 }
 
 /** The preview's one-line outcome. */

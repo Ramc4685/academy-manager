@@ -50,6 +50,7 @@ import { Button } from "@/components/ds/button";
 import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/components/ds/dialog-chrome";
 
 import { formatCents, formatShortDateTime, inputClass, todayDateInput } from "./format";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 export function AddToRosterDialog({
   open,
@@ -429,7 +430,7 @@ export function RallySessionPicker({
   const [open, setOpen] = useState(false);
   const selected = sessions.find((s) => s.session_id === value);
   const formatTime = (s: AdminSessionView) =>
-    new Date(s.start_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    formatInAcademyZone(s.start_at, s.timezone, { hour: "numeric", minute: "2-digit", timeZoneName: "short" });
   return (
     <div className="relative">
       <button
@@ -473,7 +474,7 @@ export function RallySessionPicker({
                 >
                   <span className="block">{s.title}</span>
                   <span className="block font-mono text-[11px] text-rally-muted">
-                    next class: {new Date(s.start_at).toLocaleDateString()} · {formatTime(s)}
+                    next class: {formatInAcademyZone(s.start_at, s.timezone)} · {formatTime(s)}
                   </span>
                 </button>
               </li>

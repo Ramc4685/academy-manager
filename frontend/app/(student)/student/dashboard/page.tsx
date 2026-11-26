@@ -6,8 +6,11 @@ import { Skeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
 import { getMyProfile, getMySchedule } from "@/lib/api/student";
 import { queryKeys } from "@/lib/query/keys";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
+import { useAcademyZone } from "@/lib/format/academy-zone";
 
 export default function StudentDashboardPage() {
+  const academyTimezone = useAcademyZone();
   const profileQuery = useQuery({
     queryKey: queryKeys.student.me(),
     queryFn: getMyProfile,
@@ -68,12 +71,13 @@ export default function StudentDashboardPage() {
               >
                 <p className="text-sm font-bold text-rally-ink">{entry.session_title}</p>
                 <p className="text-xs mt-0.5 text-rally-muted">
-                  {new Date(entry.start_at).toLocaleString(undefined, {
+                  {formatInAcademyZone(entry.start_at, academyTimezone, {
                     weekday: "short",
                     month: "short",
                     day: "numeric",
                     hour: "numeric",
                     minute: "2-digit",
+                    timeZoneName: "short",
                   })}
                   {entry.location ? ` · ${entry.location}` : ""}
                 </p>

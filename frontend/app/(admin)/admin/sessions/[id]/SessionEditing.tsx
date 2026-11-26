@@ -47,11 +47,7 @@ import {
   toDateInputValue,
   todayDateInput,
 } from "./format";
-import {
-  formatAcademyDateTime,
-  parseAcademyInstant,
-  resolveAcademyTimeZone,
-} from "@/lib/format/academy-time";
+import { formatAcademyDateTime, formatInAcademyZone, parseAcademyInstant, resolveAcademyTimeZone } from "@/lib/format/academy-time";
 import { checkinActorLine, confirmFailureMessage } from "@/lib/dropoff/checkin";
 
 const CORRECTABLE_STATUSES: CorrectableAttendanceStatus[] = ["present", "absent", "late"];
@@ -127,22 +123,20 @@ export function ReplacementCoachTable({
     coachId ? (userNameById.get(coachId) ?? fallback) : "-";
 
   const dateLabel = (occurrence: AdminSessionOccurrenceView) =>
-    parseAcademyInstant(occurrence.start_at).toLocaleDateString("en-US", {
+    formatInAcademyZone(occurrence.start_at, timeZone, {
       weekday: "short",
       month: "short",
       day: "numeric",
       year: "numeric",
-      timeZone,
     });
   const timeLabel = (occurrence: AdminSessionOccurrenceView) =>
-    `${parseAcademyInstant(occurrence.start_at).toLocaleTimeString("en-US", {
+    `${formatInAcademyZone(occurrence.start_at, timeZone, {
       hour: "numeric",
       minute: "2-digit",
-      timeZone,
-    })} - ${parseAcademyInstant(occurrence.end_at).toLocaleTimeString("en-US", {
+    })} - ${formatInAcademyZone(occurrence.end_at, timeZone, {
       hour: "numeric",
       minute: "2-digit",
-      timeZone,
+      timeZoneName: "short",
     })}`;
 
   function statusNode(occurrence: AdminSessionOccurrenceView) {
@@ -385,13 +379,13 @@ export function CancelOccurrenceDialog({
   });
 
   const when = occurrence
-    ? parseAcademyInstant(occurrence.start_at).toLocaleString("en-US", {
+    ? formatInAcademyZone(occurrence.start_at, timeZone, {
         weekday: "long",
         month: "short",
         day: "numeric",
         hour: "numeric",
         minute: "2-digit",
-        timeZone,
+        timeZoneName: "short",
       })
     : "";
 

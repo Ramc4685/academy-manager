@@ -28,11 +28,7 @@ import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { CreateClassDialog, EditClassDialog } from "@/components/admin/sessions/class-form";
 import { queryKeys } from "@/lib/query/keys";
 import { filterSessions, type SessionPhaseFilter } from "@/lib/admin/session-list-filter";
-import {
-  formatAcademyTimeRange,
-  parseAcademyInstant,
-  resolveAcademyTimeZone,
-} from "@/lib/format/academy-time";
+import { formatAcademyTimeRange, formatInAcademyZone } from "@/lib/format/academy-time";
 import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
 import { useIsPhone } from "@/lib/use-is-phone";
 
@@ -88,11 +84,7 @@ function formatCurrencyCents(cents: number | null | undefined): string {
 function sessionDayLabel(session: AdminSessionView): string {
   const days = session.days_of_week ?? [];
   if (days.length > 0) return days.join(", ");
-  const { timeZone } = resolveAcademyTimeZone(session.timezone);
-  return parseAcademyInstant(session.start_at).toLocaleDateString(undefined, {
-    weekday: "short",
-    timeZone,
-  });
+  return formatInAcademyZone(session.start_at, session.timezone, { weekday: "short" });
 }
 
 function fillChip(enrolled: number, capacity: number): { variant: ChipVariant; label: string } {

@@ -10,6 +10,7 @@ import {
   type PlatformTenant,
   type PurgeDryRun,
 } from "@/lib/api/platform";
+import { formatCount } from "@/lib/format/count";
 
 /**
  * Tenant data export and purge dry-run (roadmap L9d). Platform admin only.
@@ -69,7 +70,7 @@ function PurgePreview({ result }: { result: PurgeDryRun }) {
     <div className="mt-4 space-y-3" data-testid="purge-dry-run-result">
       <p className="rounded-lg bg-status-amber-50 px-3 py-2 text-sm text-status-amber-800">
         Preview only. Nothing was deleted. A purge of{" "}
-        <strong>{result.total_to_delete.toLocaleString()}</strong> records needs the owner&apos;s
+        <strong>{formatCount(result.total_to_delete)}</strong> records needs the owner&apos;s
         confirmation and this token: <code className="break-all">{result.confirm_token}</code>
       </p>
       <CountTable caption="Would be deleted" rows={result.would_delete} />
@@ -108,7 +109,7 @@ function CountTable({
             <tr key={row.collection} className="border-t border-rally-line">
               <td className="py-1 font-mono text-rally-ink">{row.collection}</td>
               <td className="py-1 text-right tabular-nums text-rally-ink">
-                {row.count.toLocaleString()}
+                {formatCount(row.count)}
               </td>
             </tr>
           ))

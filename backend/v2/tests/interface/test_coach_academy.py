@@ -46,7 +46,19 @@ def test_coach_academy_happy_path(seed):
         "brand_color": "#2563eb",
         "contact_email": None,
         "contact_phone": None,
+        "timezone": None,
     }
+
+
+def test_coach_academy_carries_the_academy_timezone(seed):
+    # S05: coach screens render every instant in the academy's zone.
+    client = _client_with_academy_info(
+        seed,
+        {"test-academy": {"name": "Riverside Shuttle Club", "timezone": "America/Chicago"}},
+    )
+    r = client.get("/api/v2/coach/academy")
+    assert r.status_code == 200, r.text
+    assert r.json()["timezone"] == "America/Chicago"
 
 
 def test_coach_academy_carries_the_contact_a_new_coach_calls(seed):

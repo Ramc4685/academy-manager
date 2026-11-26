@@ -21,15 +21,17 @@ import {
 import { queryKeys } from "@/lib/query/keys";
 import { Modal } from "@/components/ds/modal";
 import { canChangeNoteVisibility, useCoachSurface } from "./coach-surface-context";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 const BODY_MAX_LENGTH = 1000;
 
 function formatTimestamp(value: string): string {
-  return new Date(value).toLocaleString(undefined, {
+  return formatInAcademyZone(value, undefined, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZoneName: "short",
   });
 }
 

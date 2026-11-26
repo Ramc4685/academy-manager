@@ -16,6 +16,8 @@ import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
 import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
+import { formatPlainDate } from "@/lib/format/plain-date";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 /** #838: approving or declining a pause is one click away from the family's bill. */
 type PauseDecision = { request: AdminPauseRequestView; decision: "approve" | "decline" };
@@ -301,15 +303,11 @@ function billingImpactLabel(request: AdminPauseRequestView): string {
 }
 
 function formatDate(value: string): string {
-  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  return formatPlainDate(value, { month: "short", day: "numeric", year: "numeric" });
 }
 
 function formatDateTime(value: string): string {
-  return new Date(value).toLocaleDateString(undefined, {
+  return formatInAcademyZone(value, undefined, {
     month: "short",
     day: "numeric",
     year: "numeric",

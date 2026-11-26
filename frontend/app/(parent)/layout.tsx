@@ -14,6 +14,7 @@ import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 import { ShellBackButton } from "@/components/persona/back-button";
 import { ToastProvider } from "@/components/ds/toast";
+import { AcademyZoneProvider } from "@/lib/format/academy-zone";
 import { listParentMessages } from "@/lib/api/v2/messages";
 import { queryKeys } from "@/lib/query/keys";
 import { getParentAcademy, getParentProfile } from "@/lib/api/parent";
@@ -81,6 +82,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
   }
 
   return (
+    <AcademyZoneProvider timezone={academyData?.timezone}>
     <ToastProvider>
     <div className="min-h-screen flex flex-col pb-20" style={{ background: "var(--rally-paper)" }}>
       {/* Header */}
@@ -199,6 +201,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
       </nav>
     </div>
     </ToastProvider>
+    </AcademyZoneProvider>
   );
 }
 

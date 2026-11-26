@@ -29,7 +29,7 @@ import { paymentMethodLabel, statusChip } from "@/app/(admin)/admin/payments/for
 import { normalizeCollections } from "@/app/(admin)/admin/payments/buckets/bucket-view";
 
 import { statHint, statText } from "@/lib/ui/load-state";
-import { academyDateISO, academyMonthKey } from "@/lib/format/academy-time";
+import { academyDateISO, academyMonthKey, formatInAcademyZone } from "@/lib/format/academy-time";
 
 import { MyFollowUpsCard } from "@/components/admin/my-follow-ups-card";
 import { ClassReportHandoffsCard } from "@/components/admin/ClassReportHandoffsCard";
@@ -319,7 +319,7 @@ export default function AdminDashboardPage() {
                       {method && (
                         <Chip variant={method === "STRIPE" ? "autopayOn" : "manual"} label={method} />
                       )}
-                      <span>{new Date(p.paid_at).toLocaleDateString()}</span>
+                      <span>{formatInAcademyZone(p.paid_at, timezone)}</span>
                       {p.refunded_cents > 0 && <span>{formatCents(p.refunded_cents)} refunded</span>}
                     </span>
                   }
@@ -380,7 +380,7 @@ export default function AdminDashboardPage() {
                         )}
                       </td>
                       <td className="py-2.5 text-rally-muted">
-                        {new Date(p.paid_at).toLocaleDateString()}
+                        {formatInAcademyZone(p.paid_at, timezone)}
                       </td>
                     </tr>
                   );

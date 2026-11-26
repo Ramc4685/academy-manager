@@ -8,7 +8,7 @@ import { Button } from "@/components/ds/button";
 import { RallyModal } from "@/components/ds/dialog-chrome";
 import { useAcademyTimezone } from "@/components/admin/use-academy-today";
 import { listClassReportHandoffs, type ClassReportHandoff } from "@/lib/api/class-recap";
-import { parseAcademyInstant, resolveAcademyTimeZone } from "@/lib/format/academy-time";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 import { queryKeys } from "@/lib/query/keys";
 
 /** Any class date's recap, opened from the admin side (session page or this card). */
@@ -37,13 +37,13 @@ export function ClassRecapDialog({
 }
 
 function classWhen(iso: string, timeZone: string | null): string {
-  return parseAcademyInstant(iso).toLocaleString("en-US", {
+  return formatInAcademyZone(iso, timeZone, {
     weekday: "short",
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-    timeZone: resolveAcademyTimeZone(timeZone).timeZone,
+    timeZoneName: "short",
   });
 }
 

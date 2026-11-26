@@ -15,6 +15,7 @@ import type {
   ParentHomeMilestone,
   ParentHomeNextSession,
 } from "./api/parent-home";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 export type ParentHomeActionKind =
   | "register"
@@ -497,16 +498,14 @@ export function nextSessionCopy(
   const label = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "short" })
     .formatToParts(instant)
     .find((part) => part.type === "timeZoneName")?.value ?? zone;
-  const day = instant.toLocaleDateString("en-US", {
+  const day = formatInAcademyZone(instant, zone, {
     weekday: "short",
     month: "short",
     day: "numeric",
-    timeZone: zone,
   });
-  const time = instant.toLocaleTimeString("en-US", {
+  const time = formatInAcademyZone(instant, zone, {
     hour: "numeric",
     minute: "2-digit",
-    timeZone: zone,
   });
   return {
     when: `${day} · ${time} ${label}`,
@@ -565,10 +564,9 @@ function formatDueDate(value: string | null | undefined): string {
     ? new Date(Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]), 12))
     : new Date(value);
   if (Number.isNaN(instant.getTime())) return "";
-  return instant.toLocaleDateString("en-US", {
+  return formatInAcademyZone(instant, "UTC", {
     month: "short",
     day: "numeric",
-    timeZone: "UTC",
   });
 }
 
@@ -585,10 +583,9 @@ function relativeDayLabel(
   if (days === 0) return "Today";
   if (days === 1) return "Yesterday";
   if (days > 1 && days < 7) return `${days} days ago`;
-  return instant.toLocaleDateString("en-US", {
+  return formatInAcademyZone(instant, timeZone, {
     month: "short",
     day: "numeric",
-    timeZone,
   });
 }
 

@@ -462,3 +462,5 @@ class CoachAcademyView(BaseModel):
     # Who a coach calls: the academy's public contact pair, as parents see it.
     contact_email: str | None = None
     contact_phone: str | None = None
+    # S05: coach screens render instants in the academy's zone.
+    timezone: str | None = None

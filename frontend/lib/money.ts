@@ -1,3 +1,5 @@
+import { formatInAcademyZone } from "@/lib/format/academy-time";
+
 /**
  * The one money formatter. Every page that shows a dollar amount should call
  * `formatCents` instead of keeping a local Intl.NumberFormat copy (payments
@@ -48,7 +50,7 @@ export function formatInstantDay(value: string | null | undefined): string {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return formatInAcademyZone(date, undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
 /**

@@ -30,6 +30,7 @@ import { queryKeys } from "@/lib/query/keys";
 
 import { Button } from "@/components/ds/button";
 import { ConfirmActionDialog, useConfirmTarget } from "@/components/ds/confirm-action-dialog";
+import { formatAcademyStamp } from "@/lib/format/academy-time";
 
 const MAX_BODY = 2000;
 
@@ -248,7 +249,7 @@ function AnnouncementRow({
               {announcement.author_display_name ?? "Staff"}
             </span>
             <span className="text-[11px] text-rally-subtle">
-              {new Date(announcement.created_at).toLocaleString()}
+              {formatAcademyStamp(announcement.created_at)}
             </span>
             {announcement.urgency === "urgent" && (
               <span

@@ -39,7 +39,7 @@ import {
   type ScheduledClassFee,
 } from "@/lib/api/v2/pricing";
 import { queryKeys } from "@/lib/query/keys";
-import { parseAcademyInstant, resolveAcademyTimeZone } from "@/lib/format/academy-time";
+import { formatInAcademyZone, resolveAcademyTimeZone } from "@/lib/format/academy-time";
 
 import { Button } from "@/components/ds/button";
 import {
@@ -620,11 +620,10 @@ export function EditClassDialog({
 
   const oneOffDateLabel =
     session && !(session.days_of_week?.length && session.start_time && session.end_time)
-      ? parseAcademyInstant(session.start_at).toLocaleDateString("en-US", {
+      ? formatInAcademyZone(session.start_at, session.timezone, {
           month: "short",
           day: "numeric",
           year: "numeric",
-          timeZone: resolveAcademyTimeZone(session.timezone).timeZone,
         })
       : null;
 

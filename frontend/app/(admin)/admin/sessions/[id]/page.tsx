@@ -33,7 +33,7 @@ import {
   type AdminWaitlistEntry,
 } from "@/lib/api/admin";
 import { getFullPathway, placeStudentInLevel } from "@/lib/api/curriculum";
-import { parseAcademyInstant, resolveAcademyTimeZone } from "@/lib/format/academy-time";
+import { formatInAcademyZone, parseAcademyInstant } from "@/lib/format/academy-time";
 import { PathwayPlacementUndoWindow } from "@/lib/admin/pathway-placement-undo";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -914,11 +914,10 @@ export default function AdminSessionDetailPage() {
         occurrenceId={recapTarget?.occurrence_id ?? null}
         when={
           recapTarget
-            ? parseAcademyInstant(recapTarget.start_at).toLocaleString("en-US", {
+            ? formatInAcademyZone(recapTarget.start_at, session?.timezone ?? null, {
                 weekday: "long",
                 month: "short",
                 day: "numeric",
-                timeZone: resolveAcademyTimeZone(session?.timezone ?? null).timeZone,
               })
             : ""
         }

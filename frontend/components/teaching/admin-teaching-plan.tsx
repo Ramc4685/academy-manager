@@ -15,6 +15,7 @@ import { formatSessionTimeRange, sessionTimezone } from "@/lib/time/session-time
 import type { LevelTeachingGroup } from "@/components/teaching/types";
 import { LessonCardView } from "@/components/teaching/lesson-card";
 import { StudentFocusReadOnlyRow } from "@/components/teaching/student-focus-row";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 export function AdminTeachingPlan({
   sessionId,
@@ -198,10 +199,9 @@ function LevelSection({ group }: { group: LevelTeachingGroup }) {
 }
 
 function occurrenceLabel(occurrence: AdminSessionOccurrenceView, timeZone: string): string {
-  const date = new Date(occurrence.start_at).toLocaleDateString(undefined, {
+  const date = formatInAcademyZone(occurrence.start_at, timeZone, {
     month: "short",
     day: "numeric",
-    timeZone,
   });
   return `${date} · ${formatSessionTimeRange(occurrence.start_at, occurrence.end_at, timeZone)}`;
 }

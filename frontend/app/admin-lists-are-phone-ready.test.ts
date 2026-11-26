@@ -251,7 +251,7 @@ describe("the desktop fixes that ship with the phone rows (#847)", () => {
     expect(src).toContain("function sessionDayLabel");
     // Read in the session's own timezone, or the class moves a day for an
     // admin in another zone.
-    expect(src).toContain("resolveAcademyTimeZone(session.timezone)");
+    expect(src).toContain("formatInAcademyZone(session.start_at, session.timezone");
   });
 
   it("All invoices: the actions column is sticky, so it survives 1280", () => {

@@ -21,7 +21,8 @@ import { Chip } from "@/components/ds/chip";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
 import { useAcademyTimezone } from "@/components/admin/use-academy-today";
-import { academyDateISO } from "@/lib/format/academy-time";
+import { academyDateISO, formatAcademyDay } from "@/lib/format/academy-time";
+import { useAcademyZone } from "@/lib/format/academy-zone";
 
 const CATEGORIES: CreateExpenseRequest["category"][] = [
   "rent",
@@ -117,6 +118,7 @@ function ExpensesTable({
   onEdit: (expense: AdminExpenseView) => void;
   onDelete: (expense: AdminExpenseView) => void;
 }) {
+  const academyTimezone = useAcademyZone();
   const isPhone = useIsPhone();
   if (isPhone) {
     /* #857: five columns over a 720px minimum put the amount and Edit/Delete
@@ -151,7 +153,7 @@ function ExpensesTable({
                 <>
                   <div className="break-words">{expense.note || "No note"}</div>
                   <div className="font-mono text-[11px]">
-                    {new Date(expense.incurred_on).toLocaleDateString()}
+                    {formatAcademyDay(expense.incurred_on, academyTimezone, { month: "short", day: "numeric", year: "numeric" })}
                   </div>
                 </>
               }
@@ -198,7 +200,7 @@ function ExpensesTable({
               </td>
               <td className="px-2 py-3 text-rally-muted">{expense.note || "-"}</td>
               <td className="px-2 py-3 font-mono text-xs text-rally-muted">
-                {new Date(expense.incurred_on).toLocaleDateString()}
+                {formatAcademyDay(expense.incurred_on, academyTimezone, { month: "short", day: "numeric", year: "numeric" })}
               </td>
               <td className="px-2 py-3">
                 <div className="flex justify-end gap-2">

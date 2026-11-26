@@ -3,15 +3,13 @@ import type { ChipVariant } from "@/components/ds/chip";
 import { INVOICE_STATUS_FILTER_OPTIONS, invoiceStatusChip } from "@/lib/billing-status";
 
 import { formatCents } from "@/lib/money";
+import { monthLabel } from "@/lib/format/academy-time";
+import { formatPlainDate } from "@/lib/format/plain-date";
 
 export { formatCents };
 
 export function formatDate(value: string): string {
-  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  return formatPlainDate(value, { month: "short", day: "numeric", year: "numeric" });
 }
 
 /**
@@ -27,11 +25,7 @@ export function formatPeriodLabel(value: string | null | undefined): string | nu
   const year = Number(match[1]);
   const month = Number(match[2]);
   if (month < 1 || month > 12) return value;
-  return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString(undefined, {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
+  return monthLabel(`${match[1]}-${match[2]}`);
 }
 
 /**

@@ -10,6 +10,7 @@ import {
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 const INPUT =
   "rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900";
@@ -18,13 +19,13 @@ type ClosureDate = NonNullable<CloseAcademyDatesResponse["dates"]>[number];
 
 /** Class time as the academy reads it, not in the viewer's browser zone. */
 function when(iso: string, timeZone: string): string {
-  return new Date(iso).toLocaleString(undefined, {
+  return formatInAcademyZone(iso, timeZone, {
     weekday: "short",
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-    timeZone,
+    timeZoneName: "short",
   });
 }
 

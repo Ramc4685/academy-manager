@@ -29,7 +29,7 @@ import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { BigNum } from "@/components/ds/typography";
 import { SKILL_STATUS_LABELS } from "@/components/skills/SkillStatusChip";
 import { useAcademyTimezone } from "@/components/admin/use-academy-today";
-import { formatAcademyDate } from "@/lib/format/academy-time";
+import { formatAcademyDate, formatInAcademyZone } from "@/lib/format/academy-time";
 
 const ADMIN_SETTABLE_STATUSES: SkillStatus[] = [
   "INTRODUCED",
@@ -664,11 +664,7 @@ function StatTile({
 }
 
 function formatDate(value: string): string {
-  return new Date(value).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  return formatInAcademyZone(value);
 }
 
 function Skeleton() {

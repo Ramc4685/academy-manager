@@ -18,6 +18,7 @@ import { Card } from "@/components/ds/card";
 import { Skeleton } from "@/components/ds/skeleton";
 import { EmptyState } from "@/components/ds/empty-state";
 import { useLinkedParam } from "@/lib/navigation/use-linked-param";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 /** No push infra — polling is v1. Kept >= 30s per the UIM13 plan. */
 const REFETCH_INTERVAL_MS = 30_000;
@@ -208,9 +209,10 @@ function MessageRow({ message, highlighted }: { message: InboxMessage; highlight
             {message.author_display_name
               ? `${message.author_display_name} · `
               : ""}
-            {new Date(message.created_at).toLocaleTimeString([], {
+            {formatInAcademyZone(message.created_at, undefined, {
               hour: "numeric",
               minute: "2-digit",
+              timeZoneName: "short",
             })}
           </p>
         </div>
@@ -225,7 +227,7 @@ function groupByDay(messages: InboxMessage[]): [string, InboxMessage[]][] {
   );
   const groups = new Map<string, InboxMessage[]>();
   for (const m of sorted) {
-    const day = new Date(m.created_at).toLocaleDateString(undefined, {
+    const day = formatInAcademyZone(m.created_at, undefined, {
       weekday: "long",
       month: "short",
       day: "numeric",

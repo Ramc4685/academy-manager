@@ -1,4 +1,5 @@
 "use client";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 /**
  * Settings panels used to flash "Saved." and clear it after 2s, so an admin
@@ -6,9 +7,10 @@
  * keep the timestamp until the panel unmounts.
  */
 export function savedAtNow(): string {
-  return new Date().toLocaleTimeString(undefined, {
+  return formatInAcademyZone(new Date(), undefined, {
     hour: "numeric",
     minute: "2-digit",
+    timeZoneName: "short",
   });
 }
 

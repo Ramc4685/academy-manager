@@ -55,6 +55,7 @@ import {
   PossibleDuplicateNotice,
   usePossibleDuplicateCheck,
 } from "@/components/admin/possible-duplicate-notice";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 const MOVE_REFUSALS: Record<string, string> = {
   stage_skip: "A card moves forward one column at a time.",
@@ -298,7 +299,7 @@ function PipelineCardView({
       {card.override_column && (
         <p className="mt-1 text-xs text-rally-subtle" data-testid="admin-pipeline-card-moved">
           Moved by staff
-          {card.override_set_at ? ` on ${new Date(card.override_set_at).toLocaleDateString()}` : ""}
+          {card.override_set_at ? ` on ${formatInAcademyZone(card.override_set_at)}` : ""}
         </p>
       )}
       {card.move_targets.length > 0 && card.contact_id && (

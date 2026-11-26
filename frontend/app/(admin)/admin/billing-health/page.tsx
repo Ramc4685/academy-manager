@@ -54,20 +54,22 @@ import { BigNum, Overline } from "@/components/ds/typography";
 import { useIsPhone } from "@/lib/use-is-phone";
 
 import { ReconciliationLookupPanel } from "./ReconciliationLookupPanel";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 /** How many quarantined events the list route returns; the tile shows the true count. */
 const WEBHOOK_LIST_LIMIT = 50;
 
 function formatTimestamp(iso: string | null): string {
   if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return (
+    formatInAcademyZone(iso, undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }) || "—"
+  );
 }
 
 function relativeFromNow(iso: string | null): string {

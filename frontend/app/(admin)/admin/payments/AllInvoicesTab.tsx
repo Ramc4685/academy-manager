@@ -62,11 +62,14 @@ import {
   SyncStripeDialog,
   VoidPaymentDialog,
 } from "./dialogs";
+import { useAcademyZone } from "@/lib/format/academy-zone";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 /** Server cap on one list request; used when the status filter runs client-side. */
 const STATUS_FILTER_WINDOW = 200;
 
 export function AllInvoicesTab() {
+  const academyTimezone = useAcademyZone();
   const isOwner = useIsOwner();
   const isPhone = useIsPhone();
   const [refundTarget, setRefundTarget] = useState<AdminPaymentView | null>(null);
@@ -414,7 +417,7 @@ export function AllInvoicesTab() {
                       {p.status === "voided" && (
                         <div data-testid={`payment-void-note-${p.payment_id}`}>
                           {p.void_reason || "Voided"}
-                          {p.voided_at ? ` · ${new Date(p.voided_at).toLocaleDateString()}` : ""}
+                          {p.voided_at ? ` · ${formatInAcademyZone(p.voided_at, academyTimezone)}` : ""}
                         </div>
                       )}
                       <DisputeNote payment={p} />
@@ -485,7 +488,7 @@ export function AllInvoicesTab() {
                           {paymentRowTitle(p)}
                         </div>
                         <div className="mt-0.5 text-xs text-rally-subtle">
-                          Created {new Date(p.created_at).toLocaleDateString()}
+                          Created {formatInAcademyZone(p.created_at, academyTimezone)}
                         </div>
                         {(stripeSummary || reconciliation) && (
                           <div className="mt-1 max-w-[280px] space-y-0.5 text-xs text-rally-subtle">
@@ -527,7 +530,7 @@ export function AllInvoicesTab() {
                           >
                             {p.void_reason || "Voided"}
                             {p.voided_at
-                              ? ` · ${new Date(p.voided_at).toLocaleDateString()}`
+                              ? ` · ${formatInAcademyZone(p.voided_at, academyTimezone)}`
                               : ""}
                           </div>
                         )}
@@ -537,7 +540,7 @@ export function AllInvoicesTab() {
                         {method ? <Chip variant={method.variant} label={method.label} /> : <span className="text-rally-subtle">—</span>}
                       </td>
                       <td className="px-4 py-3 text-rally-muted">
-                        {p.paid_at ? new Date(p.paid_at).toLocaleDateString() : "—"}
+                        {p.paid_at ? formatInAcademyZone(p.paid_at, academyTimezone) : "—"}
                       </td>
                       <td className={`${actionCellClass} w-[232px] bg-white`}>
                         <PaymentActions

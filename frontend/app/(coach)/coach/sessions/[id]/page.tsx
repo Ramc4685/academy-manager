@@ -56,11 +56,7 @@ import { onSync, syncNow } from "@/lib/offline/sync";
 import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 import { queryKeys } from "@/lib/query/keys";
 import { useOnline } from "@/lib/pwa/online";
-import {
-  formatAcademyClock,
-  formatAcademyTimeRange,
-  parseAcademyInstant,
-} from "@/lib/format/academy-time";
+import { formatAcademyClock, formatAcademyTimeRange, formatInAcademyZone, parseAcademyInstant } from "@/lib/format/academy-time";
 
 import { formatBulkAttendanceError } from "./bulk-attendance-error";
 
@@ -1308,7 +1304,7 @@ function lifecycleChip(
     const day = new Date(student.pending_cancellation_at);
     const label = Number.isNaN(day.getTime())
       ? "ENDING"
-      : `ENDS ${day.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+      : `ENDS ${formatInAcademyZone(day, undefined, { month: "short", day: "numeric" })}`;
     return { variant: "closing", label };
   }
   if (student.enrollment_status === "held" || student.enrollment_status === "reclaim_pending") {

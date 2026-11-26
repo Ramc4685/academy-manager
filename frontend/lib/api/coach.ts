@@ -838,6 +838,8 @@ export interface CoachAcademy {
   /** Who a new coach calls with a question. Either may be unset. */
   contact_email?: string | null;
   contact_phone?: string | null;
+  /** The academy's IANA zone: every coach-facing time renders in it (S05). */
+  timezone?: string | null;
 }
 
 export function getCoachAcademy(): Promise<CoachAcademy> {

@@ -15,6 +15,7 @@ import { CoachInstallCard } from "@/components/coach/install-card";
 import { showInstallCardOn } from "@/lib/pwa/install-prompt";
 import { CoachSurfaceProvider } from "@/components/coach/coach-surface-context";
 import { ToastProvider } from "@/components/ds/toast";
+import { AcademyZoneProvider } from "@/lib/format/academy-zone";
 import { UnsavedChangesProvider } from "@/components/admin/unsaved-changes-guard";
 import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
@@ -85,6 +86,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
   }
 
   return (
+    <AcademyZoneProvider timezone={academyData?.timezone}>
     <ToastProvider>
     <UnsavedChangesProvider>
     <CoachSurfaceProvider
@@ -226,6 +228,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
     </CoachSurfaceProvider>
     </UnsavedChangesProvider>
     </ToastProvider>
+    </AcademyZoneProvider>
   );
 }
 

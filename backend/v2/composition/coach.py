@@ -383,6 +383,7 @@ def _coach_academy_info(db: Any) -> Any:
             "brand_color": doc.get("brand_color"),
             "contact_email": doc.get("contact_email") or None,
             "contact_phone": doc.get("contact_phone") or None,
+            "timezone": doc.get("timezone") or None,
         }
 
     return resolve

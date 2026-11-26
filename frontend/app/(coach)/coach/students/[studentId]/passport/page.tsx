@@ -18,6 +18,7 @@ import { recommendErrorMessage } from "@/components/admin/admissions/level-up-re
 import { SKILL_STATUS_LABELS, SkillStatusChip } from "@/components/skills/SkillStatusChip";
 import { RetryButton } from "@/components/coach/RetryButton";
 import { passportLevelLine } from "@/lib/coach/passport";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 // Statuses a coach may set directly. PASSED is earned only through "Record
 // test" (the backend's CoachSettableStatus rejects it — offering it here
@@ -207,7 +208,7 @@ function SkillCard({
           {entry.test_attempt_count} test attempt{entry.test_attempt_count !== 1 ? "s" : ""}
           {entry.last_tested_at && (
             <> · last{" "}
-              {new Date(entry.last_tested_at).toLocaleDateString(undefined, {
+              {formatInAcademyZone(entry.last_tested_at, undefined, {
                 month: "short",
                 day: "numeric",
               })}

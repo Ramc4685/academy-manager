@@ -1,9 +1,6 @@
 import { type AdminSessionView } from "@/lib/api/admin";
-import {
-  formatAcademyTimeRange,
-  parseAcademyInstant,
-  resolveAcademyTimeZone,
-} from "@/lib/format/academy-time";
+import { formatAcademyTimeRange, formatInAcademyZone } from "@/lib/format/academy-time";
+import { formatPlainDate } from "@/lib/format/plain-date";
 
 // Shared sticky-action-column classes used by ReplacementCoachTable, RosterTable,
 // and WaitlistTable. Not a "pure format helper" in the strictest sense, but kept
@@ -70,13 +67,7 @@ export function hasRecurringSchedule(session: AdminSessionView): boolean {
 }
 
 export function sessionDateLabel(session: AdminSessionView): string {
-  const { timeZone } = resolveAcademyTimeZone(session.timezone);
-  return parseAcademyInstant(session.start_at).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone,
-  });
+  return formatInAcademyZone(session.start_at, session.timezone);
 }
 
 // --- Communication pack (#613) ---------------------------------------------
@@ -162,21 +153,18 @@ export function formatCents(cents: number): string {
 }
 
 export function formatShortDateTime(value: string): string {
-  return new Date(value).toLocaleString(undefined, {
+  return formatInAcademyZone(value, undefined, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZoneName: "short",
   });
 }
 
 export function formatDateOnly(value: string): string {
   if (!value) return "date pending";
-  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  return formatPlainDate(value, { month: "short", day: "numeric", year: "numeric" });
 }
 
 export function formatEnrollmentDate(value: string | null | undefined): string {
@@ -184,7 +172,7 @@ export function formatEnrollmentDate(value: string | null | undefined): string {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime())
     ? "Not recorded"
-    : parsed.toLocaleDateString();
+    : formatInAcademyZone(parsed);
 }
 
 export function formatLifecycleType(value: string): string {

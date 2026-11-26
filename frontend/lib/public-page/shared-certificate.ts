@@ -15,6 +15,7 @@ import { resolveBffApiOrigin } from "@/lib/api/proxy-origin";
 import { isPlatformProductHost } from "./host";
 import { buildPublicAcademyRequestHeaders } from "./server-fetch";
 import type { PublicBrand } from "./types";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 const FETCH_TIMEOUT_MS = 5_000;
 const TOKEN_RE = /^[A-Za-z0-9_-]{16,64}$/;
@@ -102,10 +103,9 @@ export const loadSharedCertificate = cache(load);
 export function formatIssuedOn(isoDate: string): string {
   const [y, m, d] = isoDate.split("-").map(Number);
   if (!y || !m || !d) return isoDate;
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", {
+  return formatInAcademyZone(Date.UTC(y, m - 1, d), "UTC", {
     month: "long",
     day: "numeric",
     year: "numeric",
-    timeZone: "UTC",
   });
 }

@@ -16,6 +16,7 @@ import type {
 } from "@/lib/api/admin";
 import { formatCents, formatDateOnly, formatInstantDay } from "@/lib/money";
 import { paymentMethodLabel } from "../format";
+import { monthLabel } from "@/lib/format/academy-time";
 
 export const BUCKET_ORDER: CollectionsBucketKey[] = [
   "failed_autopay",
@@ -398,8 +399,7 @@ export function periodOptions(now: Date = new Date()): { value: string; label: s
 export function periodLabel(period: string): string {
   const match = /^(\d{4})-(\d{2})$/.exec(period);
   if (!match) return period;
-  const d = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1));
-  return d.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+  return monthLabel(period);
 }
 
 /** Case-insensitive match of a search term against parent and student names. */

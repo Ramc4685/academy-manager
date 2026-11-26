@@ -20,6 +20,7 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from "recharts";
+import { formatPlainDate } from "@/lib/format/plain-date";
 
 export interface RevenueDataPoint {
   month: string; // e.g. "2025-01"
@@ -42,10 +43,7 @@ export default function RevenueChart({ data }: { data: RevenueDataPoint[] }) {
           dataKey="month"
           tick={{ fontSize: 11 }}
           tickFormatter={(v: string) => {
-            const [, m] = v.split("-");
-            return new Date(2000, parseInt(m, 10) - 1).toLocaleString("default", {
-              month: "short",
-            });
+            return formatPlainDate(`${v}-01`, { month: "short" });
           }}
         />
         <YAxis

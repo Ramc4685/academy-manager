@@ -41,6 +41,8 @@ import { Chip } from "@/components/ds/chip";
 import { ContactLinks } from "@/components/ds/contact-links";
 import { Overline } from "@/components/ds/typography";
 import { userLoginChip } from "@/lib/people-status";
+import { useAcademyZone } from "@/lib/format/academy-zone";
+import { formatAcademyDay, formatInAcademyZone } from "@/lib/format/academy-time";
 
 const editableStatuses = ["active", "inactive", "disabled"] as const;
 
@@ -152,6 +154,7 @@ export default function AdminUserDetailPage() {
 }
 
 function CoachPayRatePanel({ coachId, isOwner }: { coachId: string; isOwner: boolean }) {
+  const academyTimezone = useAcademyZone();
   const queryClient = useQueryClient();
   const ratesQuery = useQuery({
     queryKey: ["admin", "coaches", coachId, "pay-rates"],
@@ -424,9 +427,9 @@ function CoachPayRatePanel({ coachId, isOwner }: { coachId: string; isOwner: boo
               {rates.map((rate) => (
                 <li key={rate.rate_id}>
                   {describeRate(rate)} · from{" "}
-                  {new Date(rate.effective_from).toLocaleDateString()}
+                  {formatAcademyDay(rate.effective_from, academyTimezone, { month: "short", day: "numeric", year: "numeric" })}
                   {rate.effective_until
-                    ? ` until ${new Date(rate.effective_until).toLocaleDateString()}`
+                    ? ` until ${formatAcademyDay(rate.effective_until, academyTimezone, { month: "short", day: "numeric", year: "numeric" })}`
                     : ""}{" "}
                   · {rate.status}
                 </li>
@@ -448,10 +451,10 @@ function describeRate(rate: {
   if (rate.billing_unit === "percent_of_revenue") {
     return `${rate.percent ?? 0}% of expected session revenue`;
   }
-  const amount = (rate.amount_cents / 100).toLocaleString("en-US", {
+  const amount = new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: rate.currency || "USD",
-  });
+  }).format(rate.amount_cents / 100);
   return rate.billing_unit === "per_session" ? `${amount} per session` : `${amount} per hour`;
 }
 
@@ -1012,6 +1015,7 @@ function LoginInvitePanel({
   user: AdminUserDetail;
   onSaved: () => void;
 }) {
+  const academyTimezone = useAcademyZone();
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitOk, setSubmitOk] = useState(false);
 
@@ -1037,7 +1041,7 @@ function LoginInvitePanel({
       </p>
       <p className="text-sm text-slate-600" data-testid="invite-sent-at">
         {user.login_invite_sent_at
-          ? `Invite sent ${new Date(user.login_invite_sent_at).toLocaleDateString()}`
+          ? `Invite sent ${formatInAcademyZone(user.login_invite_sent_at, academyTimezone)}`
           : "No invite sent yet"}
       </p>
       <MutationMessages error={submitError} ok={submitOk} />
@@ -1066,6 +1070,7 @@ function CoachSessionsPanel({
   user: AdminUserDetail;
   onAssigned: () => void;
 }) {
+  const academyTimezone = useAcademyZone();
   const queryClient = useQueryClient();
   const [assignSessionId, setAssignSessionId] = useState("");
   const [assignReason, setAssignReason] = useState("Admin coach assignment");
@@ -1120,12 +1125,13 @@ function CoachSessionsPanel({
   );
 
   const fmt = (iso: string) =>
-    new Date(iso).toLocaleString(undefined, {
+    formatInAcademyZone(iso, academyTimezone, {
       weekday: "short",
       month: "short",
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      timeZoneName: "short",
     });
 
   return (

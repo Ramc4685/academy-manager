@@ -35,6 +35,8 @@ import {
   lifecycleVariant,
   type PersonLifecycle,
 } from "@/lib/format/lifecycle-copy";
+import { useAcademyZone } from "@/lib/format/academy-zone";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 const PAGE_LIMIT = 25;
 
@@ -396,6 +398,7 @@ function SessionsSummaryText({
 }
 
 function StudentsTable({ students }: { students: AdminStudentView[] }) {
+  const academyTimezone = useAcademyZone();
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[760px] text-sm">
@@ -473,7 +476,7 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
                 <DuesChip status={student.dues_status} />
               </td>
               <td className="px-5 py-4 font-mono text-[11px] text-rally-subtle">
-                {student.last_seen_at ? new Date(student.last_seen_at).toLocaleDateString() : "—"}
+                {student.last_seen_at ? formatInAcademyZone(student.last_seen_at, academyTimezone) : "—"}
               </td>
             </tr>
           ))}

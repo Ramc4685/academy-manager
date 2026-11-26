@@ -26,6 +26,8 @@ import {
   SkillChecklist,
   notesForChild,
 } from "./journey";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
+import { useAcademyZone } from "@/lib/format/academy-zone";
 
 // Per-note left-border accents are derived from the note id hash — genuinely
 // dynamic, so these stay as literal color stops (no single token pair
@@ -129,6 +131,7 @@ function EmptyNotes({ firstName }: { firstName: string }) {
 }
 
 function NotesList({ notes }: { notes: ParentProgressNote[] }) {
+  const academyTimezone = useAcademyZone();
   return (
     <ul className="space-y-3 stagger-children">
       {notes.map((note) => {
@@ -153,7 +156,7 @@ function NotesList({ notes }: { notes: ParentProgressNote[] }) {
                       {note.student_name}
                     </p>
                     <time className="text-[11px] shrink-0 text-rally-subtle">
-                      {new Date(note.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                      {formatInAcademyZone(note.created_at, academyTimezone, { month: "short", day: "numeric" })}
                     </time>
                   </div>
                   {note.coach_name && (

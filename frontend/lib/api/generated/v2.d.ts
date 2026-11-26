@@ -13411,6 +13411,8 @@ export interface components {
             logo_url?: string | null;
             /** Name */
             name: string;
+            /** Timezone */
+            timezone?: string | null;
         };
         /**
          * CoachAgeBand
