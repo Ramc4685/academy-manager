@@ -21,7 +21,6 @@ export default function CoachProfilePage() {
   const { data: profile, isLoading } = useQuery({
     queryKey: queryKeys.coach.profile(),
     queryFn: getCoachProfile,
-    staleTime: 5 * 60 * 1000,
   });
 
   const [editing, setEditing] = useState(false);

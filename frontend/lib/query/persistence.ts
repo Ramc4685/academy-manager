@@ -58,6 +58,20 @@ export function shouldPersistQuery(queryKey: unknown, status: string): boolean {
   return status === "success";
 }
 
+/** Bumped when the coach cache policy changes, so stale persisted copies are dropped. */
+export const PERSISTER_BUSTER = "coach-revalidate-v2";
+
+/**
+ * Coach reads paint from the persisted copy but always revalidate on mount:
+ * a roster can change (new assignment, transfer) while the coach still holds
+ * a cached copy, and a 5-minute staleTime hid that for minutes. Offline, the
+ * refetch pauses and the persisted copy keeps painting. Per-query staleTime
+ * would override this, so coach queries must not set one (a test scans).
+ */
+export function applyCoachQueryDefaults(client: QueryClient): void {
+  client.setQueryDefaults(["coach"], { staleTime: 0 });
+}
+
 export async function attachPersistence(client: QueryClient): Promise<void> {
   if (typeof window === "undefined") return;
   try {
@@ -76,7 +90,7 @@ export async function attachPersistence(client: QueryClient): Promise<void> {
       persister: createSyncStoragePersister({ storage: window.localStorage }) as unknown as Parameters<
         typeof persistQueryClient
       >[0]["persister"],
-      buster: "coach-success-only-v1",
+      buster: PERSISTER_BUSTER,
       maxAge: 24 * 60 * 60 * 1000,
       dehydrateOptions: {
         shouldDehydrateQuery: (q) => shouldPersistQuery(q.queryKey, q.state.status),

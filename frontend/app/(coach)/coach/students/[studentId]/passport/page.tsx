@@ -53,7 +53,6 @@ export default function CoachStudentPassportPage() {
     queryKey: ["coach", "session-progress", fromSession, programId || "default"],
     queryFn: () => getCoachSessionStudentsProgress(fromSession, programId || undefined),
     enabled: Boolean(fromSession) && !studentNameParam,
-    staleTime: 2 * 60 * 1000,
   });
 
   const levelUpMutation = useMutation({

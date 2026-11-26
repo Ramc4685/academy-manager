@@ -37,7 +37,6 @@ export default function CoachTeachingPlanPage() {
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: queryKeys.coach.todayPlan(date),
     queryFn: () => getCoachTodayPlan(date),
-    staleTime: 5 * 60 * 1000,
   });
   const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
 

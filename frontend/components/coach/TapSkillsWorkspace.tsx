@@ -91,7 +91,6 @@ export function TapSkillsWorkspace({
     queryKey: AI_STATUS_KEY,
     queryFn: getCoachAiStatus,
     retry: false,
-    staleTime: 5 * 60 * 1000,
   });
   const aiEnabled = aiStatus.data?.enabled === true;
   const [picked, setPicked] = useState<Selection | null>(null);

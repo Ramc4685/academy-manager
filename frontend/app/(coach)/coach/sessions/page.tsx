@@ -13,7 +13,6 @@ export default function CoachSessionsPage() {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.coach.schedule(),
     queryFn: getCoachSchedule,
-    staleTime: 5 * 60 * 1000,
   });
 
   const sessions = Array.isArray(data?.sessions) ? data.sessions : [];

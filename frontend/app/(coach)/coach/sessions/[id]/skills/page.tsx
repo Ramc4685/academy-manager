@@ -57,7 +57,6 @@ export default function CoachSessionSkillsPage({ params, searchParams }: PagePro
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey,
     queryFn: () => getCoachSessionSkills(occurrenceId, { date, programId }),
-    staleTime: 2 * 60 * 1000,
   });
 
   return (

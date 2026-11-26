@@ -165,7 +165,6 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   const { data: today, isLoading, isError, dataUpdatedAt } = useQuery({
     queryKey: queryKeys.coach.today(date),
     queryFn: () => getCoachToday(date),
-    staleTime: 5 * 60 * 1000,
     // While this class's drop-off window is open, pick up new parent reports.
     // shortcut: the service worker answers coach/today stale-while-revalidate
     // (kept for the offline roster), so a report shows on the second poll
@@ -311,9 +310,8 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     queryKey: progressNotesKey,
     queryFn: () => listProgressNotes(sessionId),
     // Existing notes only render inside an open note box, so don't spend a
-    // request on every session-detail load. The staleTime keeps re-opens free.
+    // request on every session-detail load.
     enabled: online && Boolean(session) && noteOpen !== null,
-    staleTime: 60 * 1000,
   });
   const notesByStudent = useMemo(() => {
     const out: Record<string, ProgressNote[]> = {};

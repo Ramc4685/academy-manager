@@ -43,7 +43,6 @@ export default function CoachTodayPage() {
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: queryKeys.coach.today(date),
     queryFn: () => getCoachToday(date),
-    staleTime: 5 * 60 * 1000,
   });
   const sessions = useMemo(
     () => (Array.isArray(data?.sessions) ? data.sessions : []),
@@ -62,7 +61,6 @@ export default function CoachTodayPage() {
     queries: lookbackDates.map((d) => ({
       queryKey: queryKeys.coach.today(d),
       queryFn: () => getCoachToday(d),
-      staleTime: 5 * 60 * 1000,
     })),
   });
   const lookbackSessions = lookbackQueries.flatMap((q) => q.data?.sessions ?? []);
@@ -76,7 +74,6 @@ export default function CoachTodayPage() {
     queryKey: queryKeys.coach.schedule(),
     queryFn: getCoachSchedule,
     enabled: emptyToday,
-    staleTime: 5 * 60 * 1000,
   });
   const nextClass = emptyToday ? nextUpcomingClass(schedule.data?.sessions ?? []) : null;
   // Assistants read recaps but cannot write them, so no shortcut for them.
@@ -89,7 +86,6 @@ export default function CoachTodayPage() {
     queryKey: AI_STATUS_KEY,
     queryFn: getCoachAiStatus,
     retry: false,
-    staleTime: 5 * 60 * 1000,
   });
   const pendingNotes = useQuery({
     // Same key as the tap workspace's note, so its invalidation reaches this count.
