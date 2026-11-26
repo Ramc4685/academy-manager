@@ -79,6 +79,7 @@ from backend.v2.composition.push import _build_push_sender, compose_message_push
 from backend.v2.composition.referrals import compose_referrals
 from backend.v2.composition.report_exports import compose_report_exports
 from backend.v2.composition.student import compose_student
+from backend.v2.composition.unbilled_students import compose_unbilled_students
 from backend.v2.composition.waitlist_offers import (
     compose_decline_waitlist_offer,
     compose_sweep_expired_waitlist_offers,
@@ -1128,6 +1129,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Payments bucket view (composition/admin.py is at its line budget).
     app.state.admin_collections = compose_admin_collections(db)
     app.state.admin_overdue_families = compose_overdue_families(db)
+    app.state.admin_unbilled_students = compose_unbilled_students(db)
     app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)
     app.state.admin_family_offers = compose_admin_family_offers(db)
     app.state.admin_enrollment_billing = compose_admin_enrollment_billing(db, app.state.admin)

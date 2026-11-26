@@ -448,3 +448,46 @@ def test_unpriced_classes_sharing_a_title_say_which_is_which(admin_client):
     detail = next(i for i in r.json()["items"] if i["kind"] == "unpriced_classes")["detail"]
     assert "Tuesday Intermediate, Tue 09:00 (2 students)" in detail
     assert "Tuesday Intermediate, Tue 17:30 (2 students)" in detail
+
+
+class _Unbilled:
+    def __init__(self, count: int) -> None:
+        self._count = count
+        self.periods: list[str] = []
+
+    async def count(self, period: str) -> int:
+        self.periods.append(period)
+        return self._count
+
+
+def test_unbilled_students_item_links_to_generate_monthly(admin_client):
+    reader = _Unbilled(3)
+    admin_client.app.state.admin_unbilled_students = reader
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    item = next(i for i in r.json()["items"] if i["kind"] == "unbilled_students")
+    assert item["count"] == 3
+    assert item["href"] == "/admin/payments?tab=invoices"
+    assert "3 students have no invoice for" in item["detail"]
+    # The academy's current month, as YYYY-MM.
+    assert len(reader.periods) == 1 and len(reader.periods[0]) == 7
+
+
+def test_everyone_invoiced_means_no_unbilled_item(admin_client):
+    admin_client.app.state.admin_unbilled_students = _Unbilled(0)
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert all(i["kind"] != "unbilled_students" for i in r.json()["items"])
+
+
+def test_unreadable_unbilled_count_is_unavailable_not_zero(admin_client):
+    admin_client.app.state.admin_unbilled_students = _BrokenOverdue()
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert {"source": "unbilled_students", "label": "students with no invoice"} in r.json()[
+        "unavailable"
+    ]

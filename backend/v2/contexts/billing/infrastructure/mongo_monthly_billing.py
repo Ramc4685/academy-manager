@@ -1156,6 +1156,38 @@ class MongoMonthlyBillingGenerator:
                 enrollment, period=period, now=now, academy_timezone=academy_timezone
             )
 
+    async def count_unbilled_enrollments(self, period: str) -> int:
+        """Read-only: enrollments the monthly run would invoice for ``period``
+        that hold no invoice for it yet (the dashboard's "no invoice" item).
+
+        The classifier's ``candidate`` rows, minus the generator's own pricing
+        skips that can be read without writing: no family, a $0 class fee, or
+        a tuition invoice already on the ledger.
+        """
+        academy_id = current_academy_id()
+        academy_timezone = await self._load_academy_timezone() or "UTC"
+        count = 0
+        async for classified in self.classify_monthly_enrollments(
+            period, now=self._clock(), academy_timezone=academy_timezone
+        ):
+            if classified.kind != "candidate":
+                continue
+            if not resolved_parent_id(classified.enrollment, classified.student_doc):
+                continue
+            session_doc = await self._db["sessions"].find_one(
+                {"academy_id": academy_id, "session_id": classified.session_id}
+            )
+            # shortcut: the class fee, not the prorated charge (pricing stamps a
+            # snapshot), so a first month with no class dates left still counts.
+            if await class_fee_cents_for_period(self._db, session_doc or {}, period) <= 0:
+                continue
+            if await self._find_existing_invoice_for_enrollment_period(
+                enrollment_id=classified.enrollment_id, period=period
+            ):
+                continue
+            count += 1
+        return count
+
     async def generate_monthly_payments(self, period: str) -> GenerateMonthlyPaymentsResult:
         academy_id = current_academy_id()
         (

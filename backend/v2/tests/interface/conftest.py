@@ -2938,6 +2938,13 @@ def _claims(role: str) -> AuthClaims:
     )
 
 
+class _NoUnbilledStudents:
+    """Default "no invoice for the month" reader: everyone is billed."""
+
+    async def count(self, period: str) -> int:
+        return 0
+
+
 class _NoOverdueFamilies:
     """Default cross-period overdue reader: nobody owes (main.py wires the real one)."""
 
@@ -2954,6 +2961,7 @@ def _make_admin_app(claims: AuthClaims | None, use_cases: AdminUseCases) -> Fast
     app.dependency_overrides[get_auth_claims] = lambda: claims
     app.dependency_overrides[get_admin_use_cases] = lambda: use_cases
     app.state.admin_overdue_families = _NoOverdueFamilies()
+    app.state.admin_unbilled_students = _NoUnbilledStudents()
     return app
 
 

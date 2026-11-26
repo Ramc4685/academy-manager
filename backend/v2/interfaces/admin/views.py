@@ -2024,6 +2024,8 @@ AdminAttentionKind = Literal[
     # A past class date with students on the roster and no marks at all.
     "missing_attendance",
     "unpriced_classes",
+    # S34: enrollments the monthly run would invoice that have no invoice yet.
+    "unbilled_students",
 ]
 
 

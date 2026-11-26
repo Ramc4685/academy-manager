@@ -1103,7 +1103,8 @@
               "waivers",
               "session_pressure",
               "missing_attendance",
-              "unpriced_classes"
+              "unpriced_classes",
+              "unbilled_students"
             ],
             "title": "Kind",
             "type": "string"

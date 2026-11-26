@@ -206,3 +206,16 @@ async def test_classifier_is_read_only_and_matches_the_run(real_db, acad) -> Non
         "enr-invoiced": "candidate",
         "enr-legacy": "existing",
     }
+
+
+async def test_unbilled_count_is_what_generate_creates_and_clears_after(real_db, acad) -> None:
+    """S34: the dashboard's "no invoice for <month>" count is read-only, equals
+    the invoices the next run creates, and reads 0 once the run has happened."""
+    await _seed(real_db)
+    generator = MongoMonthlyBillingGenerator(_repo(real_db))
+
+    before = await generator.count_unbilled_enrollments(PERIOD)
+    result = await _repo(real_db).generate_monthly_payments(PERIOD)
+
+    assert before == result.created == 2
+    assert await generator.count_unbilled_enrollments(PERIOD) == 0

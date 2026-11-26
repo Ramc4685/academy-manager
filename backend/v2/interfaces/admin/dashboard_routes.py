@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from functools import partial
 from typing import Any
 
@@ -43,6 +43,7 @@ _SOURCE_LABELS: dict[str, str] = {
     "sessions": "today's classes",
     "missing_attendance": "missing attendance",
     "unpriced_classes": "unpriced classes",
+    "unbilled_students": "students with no invoice",
 }
 
 
@@ -444,6 +445,27 @@ async def dashboard_attention(
             )
         )
 
+    # S34: priced, enrolled and not invoiced for this month yet. Same read the
+    # monthly run makes, so it clears once Generate monthly has run.
+    unbilled = await read("unbilled_students", _unbilled_student_count, 0, request, today)
+    if unbilled:
+        month = today.strftime("%B")
+        items.append(
+            AdminAttentionItemView(
+                attention_id="unbilled-students",
+                kind="unbilled_students",
+                title=f"No invoice for {month}",
+                detail=(
+                    f"{unbilled} student{'s' if unbilled != 1 else ''} "
+                    f"{'have' if unbilled != 1 else 'has'} no invoice for {month}. "
+                    "Generate monthly invoices to bill them."
+                ),
+                severity="high",
+                href="/admin/payments?tab=invoices",
+                count=unbilled,
+            )
+        )
+
     pressured = [p for p in (_session_pressure(s) for s in sessions) if p is not None]
     if pressured:
         items.append(
@@ -499,6 +521,11 @@ async def _past_due_family_count(request: Request) -> int:
     """
     counts = await request.app.state.admin_overdue_families.counts()
     return int(counts["past_due"])
+
+
+async def _unbilled_student_count(request: Request, today: date) -> int:
+    """Enrollments with no invoice for the academy's current month."""
+    return int(await request.app.state.admin_unbilled_students.count(today.strftime("%Y-%m")))
 
 
 async def _read_attention_source(

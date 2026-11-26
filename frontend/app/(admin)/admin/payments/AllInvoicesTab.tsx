@@ -635,7 +635,11 @@ export function AllInvoicesTab() {
       <GenerateDialog
         open={generateOpen}
         onOpenChange={setGenerateOpen}
-        onGenerated={() => void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() })}
+        onGenerated={() => {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() });
+          // S34: the dashboard's "no invoice for <month>" item clears after a run.
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.attention() });
+        }}
       />
       <DiscountDialog
         payment={discountTarget}
