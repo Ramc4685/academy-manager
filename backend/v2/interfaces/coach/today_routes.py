@@ -19,6 +19,10 @@ from fastapi import APIRouter, Depends, Query
 
 from backend.v2.composition.dropoff_checkins import DropoffCheckinComposition
 from backend.v2.contexts.coaching.application.use_cases.dropoff_checkin import OccurrenceRef
+from backend.v2.contexts.curriculum.application.errors import (
+    MultipleActivePrograms,
+    NoActiveProgram,
+)
 from backend.v2.interfaces.coach.deps import (
     CoachUseCases,
     academy_zone_for_sessions,
@@ -99,6 +103,9 @@ async def read_level_names(use_cases: CoachUseCases, student_ids: Sequence[str])
             student_ids, program_id
         )
         return names
+    except (NoActiveProgram, MultipleActivePrograms):
+        # Ordinary academy states, not faults: no single program means no levels to show.
+        return {}
     except Exception:
         log.warning("coach roster level lookup failed; hiding levels", exc_info=True)
         return {}
