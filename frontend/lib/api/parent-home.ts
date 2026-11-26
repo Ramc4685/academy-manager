@@ -38,7 +38,8 @@ export interface ParentHomeAttendance {
 }
 
 export interface ParentHomeMilestone {
-  kind: "note" | "skill";
+  /** S18: "skill" is a passed skill (a milestone); "working_on" is still in progress. */
+  kind: "note" | "skill" | "working_on";
   label: string;
   /** ISO-8601 UTC instant. */
   at: string;

@@ -46,15 +46,10 @@ export function ClassRecapItems({
             </p>
           )}
           <p className="mt-1 text-rally-ink">{`Class lesson: ${names(r.taught_skills)}`}</p>
-          <p className="text-rally-ink">
-            {r.practiced_skills.length > 0 ? (
-              `${firstName} practised: ${names(r.practiced_skills)}`
-            ) : (
-              <span className="text-rally-muted">
-                {`The coach did not record which skills ${firstName} practised.`}
-              </span>
-            )}
-          </p>
+          {/* S18: no negative line; an empty list just says nothing. */}
+          {r.practiced_skills.length > 0 && (
+            <p className="text-rally-ink">{`${firstName} practised: ${names(r.practiced_skills)}`}</p>
+          )}
         </li>
       ))}
     </ol>

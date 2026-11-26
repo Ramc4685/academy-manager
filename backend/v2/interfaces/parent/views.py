@@ -786,7 +786,8 @@ class ParentHomeAttendanceView(BaseModel):
 
 
 class ParentHomeMilestoneView(BaseModel):
-    kind: Literal["note", "skill"]
+    #: ``skill`` is a PASSED skill (a milestone); ``working_on`` is in progress (S18).
+    kind: Literal["note", "skill", "working_on"]
     label: str
     at: datetime
 

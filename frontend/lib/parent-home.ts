@@ -544,8 +544,15 @@ export function milestoneCopy(
   now: Date = new Date(),
 ): string | null {
   if (!milestone) return null;
+  // S18: only a passed skill reads as a milestone.
+  const label =
+    milestone.kind === "working_on"
+      ? `Working on: ${milestone.label}`
+      : milestone.kind === "note"
+        ? `Coach note: ${milestone.label}`
+        : milestone.label;
   const when = relativeDayLabel(milestone.at, timezone, now);
-  return when ? `${milestone.label} · ${when}` : milestone.label;
+  return when ? `${label} · ${when}` : label;
 }
 
 /** "Sep 12" for a `YYYY-MM-DD` (or ISO instant) due date; "" when unusable. */

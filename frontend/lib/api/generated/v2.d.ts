@@ -17470,7 +17470,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "note" | "skill";
+            kind: "note" | "skill" | "working_on";
             /** Label */
             label: string;
         };

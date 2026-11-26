@@ -541,7 +541,7 @@ test("milestone copy labels notes and skills with a relative date", () => {
   );
   assert.equal(
     milestoneCopy({ kind: "note", label: "Footwork is sharper", at: "2026-09-05T14:00:00Z" }, "America/Chicago", now),
-    "Footwork is sharper · Yesterday",
+    "Coach note: Footwork is sharper · Yesterday",
   );
   assert.equal(
     milestoneCopy({ kind: "skill", label: "Overhead clear", at: "2026-09-03T14:00:00Z" }, "America/Chicago", now),
@@ -549,7 +549,11 @@ test("milestone copy labels notes and skills with a relative date", () => {
   );
   assert.equal(
     milestoneCopy({ kind: "note", label: "Great serve", at: "2026-08-20T14:00:00Z" }, "America/Chicago", now),
-    "Great serve · Aug 20",
+    "Coach note: Great serve · Aug 20",
+  );
+  assert.equal(
+    milestoneCopy({ kind: "working_on", label: "Split step", at: "2026-09-06T14:00:00Z" }, "America/Chicago", now),
+    "Working on: Split step · Today",
   );
   assert.equal(milestoneCopy(null, "America/Chicago", now), null);
 });

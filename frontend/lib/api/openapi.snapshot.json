@@ -25895,7 +25895,8 @@
           "kind": {
             "enum": [
               "note",
-              "skill"
+              "skill",
+              "working_on"
             ],
             "title": "Kind",
             "type": "string"

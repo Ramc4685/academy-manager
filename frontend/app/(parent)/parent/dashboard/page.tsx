@@ -368,7 +368,7 @@ function ChildCard({
         />
         <CardRow
           icon={<Sparkles size={15} />}
-          label="Latest milestone"
+          label={child.latest_milestone?.kind === "skill" ? "Latest milestone" : "Progress"}
           value={milestone ?? "No milestones yet"}
           meta={null}
         />

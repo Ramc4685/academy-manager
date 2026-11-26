@@ -39,7 +39,7 @@ import {
 import { nameGradient } from "@/lib/avatar-gradient";
 import {
   cancellationResultTitle,
-  cancellationTimingCopy,
+  cancellationSummaryCopy,
   pendingCancellationLabel,
 } from "@/lib/format/cancellation-copy";
 import {
@@ -57,7 +57,9 @@ import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 import { reEnrollHref } from "@/lib/parent/re-enroll";
 import {
   ALREADY_REPORTED_LABEL,
+  PRESENT_INCLUDING_LATE,
   noClassReason,
+  presentIncludingLate,
   scheduleSourceLabel,
 } from "@/lib/parent/schedule-events";
 import { OneTimeClassChip } from "@/components/parent/one-time-class";
@@ -205,7 +207,7 @@ function ChildCard({
     (session) => session.status !== "cancelled" && parseAcademyInstant(session.start_at).getTime() >= now,
   )?.occurrence_id;
   const gradient = nameGradient(child.full_name);
-  const presentCount = attendance.filter((r) => r.status === "present" || r.status === "late").length;
+  const presentCount = presentIncludingLate(attendance);
   const absentCount = attendance.filter((r) => r.status === "absent").length;
   // #740: a held enrollment keeps its seat but produces no sessions. Dropping
   // it here is what made the class vanish from this card with no explanation.
@@ -242,7 +244,7 @@ function ChildCard({
         <div className="flex gap-3 shrink-0 text-center">
           <div>
             <p className="font-bold text-white text-base leading-none">{presentCount}</p>
-            <p className="text-white/60 text-[10px] mt-0.5">Present</p>
+            <p className="text-white/60 text-[10px] mt-0.5 max-w-[4.5rem] leading-tight">{PRESENT_INCLUDING_LATE}</p>
           </div>
           <div className="w-px self-stretch bg-white/20" />
           <div>
@@ -662,12 +664,8 @@ function CancelEnrollmentDialog({
       ) : preview ? (
         <div className="space-y-3">
           <div className="text-sm text-rally-ink">
-            <p className="font-semibold">Cancellation fee: {money(preview.fee_cents)}</p>
-            <p className="mt-1 text-xs text-rally-muted" data-testid="cancellation-timing-copy">
-              {cancellationTimingCopy(preview, academyTimezone)}
-            </p>
-            <p className="mt-1 text-xs text-rally-muted">
-              {preview.notice_met ? "Notice period met" : "Notice period not met"}
+            <p className="font-semibold" data-testid="cancellation-timing-copy">
+              {cancellationSummaryCopy(preview, academyTimezone)}
             </p>
             {!preview.allowed && preview.blocked_reason && (
               <p role="alert" className="mt-2 text-xs font-semibold text-status-red-800">

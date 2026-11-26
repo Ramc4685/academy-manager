@@ -34,6 +34,16 @@ export function noClassReason(entry: Pick<ParentScheduleEntry, "cancellation_rea
 /** A date that already carries an absence notice: shown, never offered again. */
 export const ALREADY_REPORTED_LABEL = "Already reported";
 
+/**
+ * S18: late marks count as present by design (the BFF counts present + late),
+ * so the label says so rather than the count changing.
+ */
+export const PRESENT_INCLUDING_LATE = "Present (including late)";
+
+export function presentIncludingLate(records: ReadonlyArray<{ status: string }>): number {
+  return records.filter((r) => r.status === "present" || r.status === "late").length;
+}
+
 /** S17: the chip a reported absence wears on Home and Calendar. */
 export const ABSENT_REPORTED_CHIP = "Absent (reported)";
 

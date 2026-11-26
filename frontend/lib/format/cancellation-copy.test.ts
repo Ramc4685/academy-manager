@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   cancellationResultTitle,
+  cancellationSummaryCopy,
   cancellationTimingCopy,
   pendingCancellationLabel,
 } from "./cancellation-copy";
@@ -58,5 +59,27 @@ describe("cancellationResultTitle", () => {
   it("distinguishes a scheduled cancel from an immediate one", () => {
     expect(cancellationResultTitle("pending_cancellation")).toBe("Cancellation scheduled");
     expect(cancellationResultTitle("cancelled")).toBe("Enrollment cancelled");
+  });
+});
+
+describe("cancellationSummaryCopy (S18)", () => {
+  it("says there is no fee in the same sentence as the timing", () => {
+    expect(
+      cancellationSummaryCopy(
+        { effective_timing: "immediate", fee_cents: 0, notice_met: false },
+        "America/Chicago",
+      ),
+    ).toBe("No cancellation fee: your child's enrollment ends today.");
+  });
+
+  it("names the fee and why, once", () => {
+    const out = cancellationSummaryCopy(
+      { effective_timing: "immediate", fee_cents: 2500, notice_met: false },
+      "America/Chicago",
+    );
+    expect(out).toBe(
+      "You will be charged a $25.00 cancellation fee because the notice period is not met: your child's enrollment ends today.",
+    );
+    expect(out).not.toMatch(/\$0\.00/);
   });
 });

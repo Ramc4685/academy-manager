@@ -51,7 +51,8 @@ describe("parent class timeline", () => {
 
   it("a group-only lesson never implies the child practised", () => {
     const html = render([row({ taught_skills: [skill("sv", "Serve")] })]);
-    expect(html).toContain("did not record which skills Maya practised");
+    // S18: no negative "the coach did not record" line either.
+    expect(html).not.toContain("did not record");
     expect(html).not.toContain("Maya practised:");
   });
 });

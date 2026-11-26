@@ -59,3 +59,22 @@ export function pendingCancellationLabel(
 export function cancellationResultTitle(status: string): string {
   return status === "pending_cancellation" ? "Cancellation scheduled" : "Enrollment cancelled";
 }
+
+/**
+ * S18: the whole cancel outcome as one sentence, built only from preview
+ * values, so "$0.00 fee" never sits beside "Notice period not met".
+ */
+export function cancellationSummaryCopy(
+  input: CancellationCopyInput & { fee_cents: number; notice_met: boolean },
+  academyTimezone: string | null | undefined,
+  currency = "USD",
+): string {
+  const timing = cancellationTimingCopy(input, academyTimezone);
+  const rest = timing.charAt(0).toLowerCase() + timing.slice(1);
+  if (input.fee_cents <= 0) return `No cancellation fee: ${rest}`;
+  const fee = new Intl.NumberFormat("en-US", { style: "currency", currency }).format(
+    input.fee_cents / 100,
+  );
+  const why = input.notice_met ? "" : " because the notice period is not met";
+  return `You will be charged a ${fee} cancellation fee${why}: ${rest}`;
+}

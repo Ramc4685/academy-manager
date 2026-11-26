@@ -41,3 +41,4 @@ Rules for a new kit:
 | k16 | Age ranges and levels on the Saturday (7–13, Mixed levels) and Wednesday (8–12, Beginner) classes. Ages on roster rows come from existing dates of birth (k00 and the base seed). |
 | k02 | Free Wednesday clinic; for Rosa Alvarez (sign her up first) a PENDING_APPROVAL Lucia in it and a CHECKOUT_PENDING Mateo in Junior Beginners. |
 | k10 | Alex Demo: next Saturday class (48h+ out) with no absence reported, and a late mark on the latest past class this month. |
+| k11 | Alex Demo working on Split step (PRACTICING) with one shared and one private coach note. Partial: record the pass in the coach app during the re-test. |

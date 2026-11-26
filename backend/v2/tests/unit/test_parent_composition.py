@@ -3248,13 +3248,19 @@ async def test_parent_home_milestone_prefers_the_later_of_note_and_skill() -> No
 
 @pytest.mark.asyncio
 async def test_parent_home_milestone_falls_back_to_the_shared_note() -> None:
+    """S18: an in-progress skill is not a milestone; a newer shared note wins."""
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["parent-home-note-wins"]
     await _seed_home_db(db)
-    # Make the skill update OLDER than the shared note.
+    # Make the skill update OLDER than the shared note, and still in progress.
     await db["student_skill_progress"].update_one(
         {"skill_progress_id": "sp-1"},
-        {"$set": {"last_updated_at": datetime(2026, 9, 1, 15, 0, tzinfo=UTC)}},
+        {
+            "$set": {
+                "status": "PRACTICING",
+                "last_updated_at": datetime(2026, 9, 1, 15, 0, tzinfo=UTC),
+            }
+        },
     )
     parent = _compose_home_parent(db)
 
@@ -3265,6 +3271,46 @@ async def test_parent_home_milestone_falls_back_to_the_shared_note() -> None:
         "kind": "note",
         "label": "Great footwork today",
         "at": datetime(2026, 9, 5, 15, 0, tzinfo=UTC),
+    }
+
+
+@pytest.mark.asyncio
+async def test_parent_home_passed_skill_beats_a_newer_note() -> None:
+    """S18: only a PASSED skill is a milestone, and it outranks practice notes."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-pass-wins"]
+    await _seed_home_db(db)
+    await db["student_skill_progress"].update_one(
+        {"skill_progress_id": "sp-1"},
+        {"$set": {"last_updated_at": datetime(2026, 9, 1, 15, 0, tzinfo=UTC)}},
+    )
+    parent = _compose_home_parent(db)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    assert home["children"][0]["latest_milestone"]["kind"] == "skill"
+    assert home["children"][0]["latest_milestone"]["label"] == "Backhand Lift"
+
+
+@pytest.mark.asyncio
+async def test_parent_home_in_progress_skill_reads_as_working_on() -> None:
+    """S18: a skill still being practised is 'working_on', never a milestone."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-working-on"]
+    await _seed_home_db(db)
+    await db["student_skill_progress"].update_one(
+        {"skill_progress_id": "sp-1"}, {"$set": {"status": "LEARNING"}}
+    )
+    parent = _compose_home_parent(db)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    assert home["children"][0]["latest_milestone"] == {
+        "kind": "working_on",
+        "label": "Backhand Lift",
+        "at": datetime(2026, 9, 9, 15, 0, tzinfo=UTC),
     }
 
 

@@ -1021,7 +1021,17 @@ class ListChildClassRecaps:
                     occurrence_id=r.occurrence_id,
                     class_starts_at=r.class_starts_at,
                     taught_skills=skills(r.taught_skill_ids),
-                    practiced_skills=skills(r.practiced_by(student_id)),
+                    # S18: a skill earned at this class was practised here too.
+                    practiced_skills=skills(
+                        list(
+                            dict.fromkeys(
+                                (
+                                    *r.practiced_by(student_id),
+                                    *sorted(earned.get(r.occurrence_id, ())),
+                                )
+                            )
+                        )
+                    ),
                     earned_skills=skills(sorted(earned.get(r.occurrence_id, ()))),
                 )
                 for r in recaps

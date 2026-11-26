@@ -166,7 +166,7 @@ test.describe("parent class timeline", () => {
     await timeline.getByTestId("parent-class-recaps-more").click();
     await expect(items).toHaveCount(3);
     await expect(items.nth(2)).toContainText("Class lesson: Short serve");
-    await expect(items.nth(2)).toContainText("did not record which skills Maya practised");
+    await expect(items.nth(2)).not.toContainText("did not record");
     await expect(timeline.getByTestId("parent-class-recaps-more")).toHaveCount(0);
     expect(asked).toContain(
       "/api/v2/parent/students/st-maya/class-recaps?cursor=2026-11-17T23%3A00%3A00%2B00%3A00%7Cocc-tue",

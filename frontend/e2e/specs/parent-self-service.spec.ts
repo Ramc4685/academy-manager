@@ -739,7 +739,9 @@ test.describe("parent self-service — self-cancel enrollment", () => {
     await expect(dialog).toBeVisible();
 
     // Fee and timing must be visible before the parent confirms.
-    await expect(dialog.getByText("Cancellation fee: $25.00")).toBeVisible();
+    await expect(dialog.getByTestId("cancellation-timing-copy")).toContainText(
+      "charged a $25.00 cancellation fee",
+    );
     // Issue #675: human copy, never the raw policy token.
     const timing = dialog.getByTestId("cancellation-timing-copy");
     await expect(timing).toContainText("keeps their place through");
