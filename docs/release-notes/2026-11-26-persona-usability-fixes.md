@@ -1,6 +1,6 @@
 # Persona usability study: fixes for owners, front desk, coaches and parents
 
-PR: TBD
+PR: #1251
 
 ## What changed
 Six personas (owner, front desk, veteran coach, new coach, busy parent, new family) used a local copy of the demo academy. Their findings became a 71-step plan, built on one branch with a commit per step.
