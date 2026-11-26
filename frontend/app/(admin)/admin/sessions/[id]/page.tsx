@@ -943,6 +943,7 @@ export default function AdminSessionDetailPage() {
         enrollments={transferTargets}
         currentSessionId={sessionId}
         currentSessionTitle={session?.title ?? ""}
+        currentSession={session ?? null}
         onClose={() => setTransferTargets([])}
         onMoved={(close) => {
           if (close) setTransferTargets([]);

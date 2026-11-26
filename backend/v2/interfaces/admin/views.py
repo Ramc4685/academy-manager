@@ -138,6 +138,10 @@ class AdminStudentSessionSummaryView(BaseModel):
     location: str | None = None
     start_at: datetime | None = None
     end_at: datetime | None = None
+    #: S27: the weekly pattern; ``start_at`` alone is the class's first date.
+    days_of_week: list[str] = Field(default_factory=list)
+    start_time: str | None = None
+    end_time: str | None = None
     status: str
     pending_cancellation_at: datetime | None = None
     payment_mode: str | None = None

@@ -40,6 +40,12 @@ import { useIsOwner } from "@/components/admin/owner-context";
 import { StudentSearchPicker } from "@/components/admin/student-search-picker";
 import { UnpricedEnrollAcknowledgement } from "@/components/admin/sessions/unpriced-class";
 import { DEPARTURE_ACTION_DESCRIPTION } from "@/components/admin/enrollment/departure-actions";
+import {
+  TransferConsequences,
+  sessionTransferSide,
+  transferNeedsAcknowledgement,
+  type TransferSide,
+} from "@/components/admin/enrollment/transfer-consequences";
 import { Button } from "@/components/ds/button";
 import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/components/ds/dialog-chrome";
 
@@ -187,12 +193,15 @@ export function TransferEnrollmentDialog({
   enrollments,
   currentSessionId,
   currentSessionTitle,
+  currentSession = null,
   onClose,
   onMoved,
 }: {
   enrollments: AdminEnrollmentView[];
   currentSessionId: string;
   currentSessionTitle: string;
+  /** S27: the class being left, for the from/to price and seats block. */
+  currentSession?: AdminSessionView | null;
   onClose: () => void;
   /** `close` is false when some rows of a bulk move were refused: the roster
    * refreshes but the dialog stays open to say which ones and why. */
@@ -204,6 +213,7 @@ export function TransferEnrollmentDialog({
   const [targetSessionId, setTargetSessionId] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(todayDateInput());
   const [reason, setReason] = useState("");
+  const [priceAck, setPriceAck] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Fetch all upcoming sessions (next 30 days) so the dropdown isn't
   // limited to today's two slots — moving a student to a different weekly
@@ -237,6 +247,12 @@ export function TransferEnrollmentDialog({
       a.title.localeCompare(b.title),
     );
   })();
+  const fromSide: TransferSide = currentSession
+    ? sessionTransferSide(currentSession)
+    : { title: currentSessionTitle, schedule: "" };
+  const targetSession = candidateSessions.find((s) => s.session_id === targetSessionId);
+  const toSide = targetSession ? sessionTransferSide(targetSession) : null;
+  const needsPriceAck = toSide != null && transferNeedsAcknowledgement(fromSide, toSide);
   const mutation = useMutation({
     mutationFn: async (): Promise<string[]> => {
       const payload = {
@@ -264,6 +280,7 @@ export function TransferEnrollmentDialog({
       setTargetSessionId("");
       setEffectiveDate(todayDateInput());
       setReason("");
+      setPriceAck(false);
       onMoved(true);
     },
     onError: (err: Error) => setError(err.message ?? "Failed to move enrollment."),
@@ -329,7 +346,10 @@ export function TransferEnrollmentDialog({
           <RallySessionPicker
             sessions={candidateSessions}
             value={targetSessionId}
-            onChange={setTargetSessionId}
+            onChange={(id) => {
+              setTargetSessionId(id);
+              setPriceAck(false);
+            }}
             loading={sessionsQuery.isLoading}
           />
         </Field>
@@ -350,11 +370,12 @@ export function TransferEnrollmentDialog({
             placeholder="Optional"
           />
         </Field>
-        <p className="text-xs text-rally-subtle">
-          Transferring reserves a seat in the target class first, then releases this seat.
-          Billing follows the new class&apos;s price from the effective date — the current
-          period&apos;s invoice is adjusted, it is not charged again.
-        </p>
+        <TransferConsequences
+          from={fromSide}
+          to={toSide}
+          acknowledged={priceAck}
+          onAcknowledge={setPriceAck}
+        />
         <p className="text-xs text-rally-subtle">{DEPARTURE_ACTION_DESCRIPTION.transfer}</p>
         <DialogActions>
           <Button
@@ -376,7 +397,8 @@ export function TransferEnrollmentDialog({
               mutation.isPending ||
               candidateSessions.length === 0 ||
               !targetSessionId ||
-              !effectiveDate
+              !effectiveDate ||
+              (needsPriceAck && !priceAck)
             }
           >
             {mutation.isPending ? "Transferring…" : "Transfer"}

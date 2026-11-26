@@ -8388,6 +8388,13 @@
             ],
             "title": "Cancelled By"
           },
+          "days_of_week": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Days Of Week",
+            "type": "array"
+          },
           "discount": {
             "anyOf": [
               {
@@ -8409,6 +8416,17 @@
               }
             ],
             "title": "End At"
+          },
+          "end_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Time"
           },
           "ended_at": {
             "anyOf": [
@@ -8517,6 +8535,17 @@
               }
             ],
             "title": "Start At"
+          },
+          "start_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Time"
           },
           "status": {
             "title": "Status",

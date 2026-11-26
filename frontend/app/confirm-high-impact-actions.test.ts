@@ -87,6 +87,26 @@ describe("high-impact admin actions confirm first (#838)", () => {
   });
 });
 
+/**
+ * S27: a transfer changes the class and maybe the price. Both move dialogs
+ * state from/to, price, seats and who is emailed, and hold the submit behind a
+ * tick when the price changes, through one shared block.
+ */
+const TRANSFER_SURFACES: Array<{ name: string; file: string }> = [
+  { name: "roster transfer", file: "app/(admin)/admin/sessions/[id]/dialogs.tsx" },
+  { name: "student move", file: "app/(admin)/admin/students/[studentId]/SessionsPanel.tsx" },
+];
+
+describe("transfers state their consequences first (S27)", () => {
+  it.each(TRANSFER_SURFACES)("$name shows TransferConsequences and gates on the tick", ({ file }) => {
+    const src = source(file);
+    expect(src).toContain("@/components/admin/enrollment/transfer-consequences");
+    expect(src).toContain("<TransferConsequences");
+    expect(src).toContain("transferNeedsAcknowledgement");
+    expect(src).toContain("RallyModal");
+  });
+});
+
 describe("registration reject requires a typed reason (#838)", () => {
   const src = source("app/(admin)/admin/registrations/[applicationId]/page.tsx");
 

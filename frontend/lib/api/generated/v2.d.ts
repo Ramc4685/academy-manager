@@ -11242,9 +11242,13 @@ export interface components {
             cancelled_at?: string | null;
             /** Cancelled By */
             cancelled_by?: string | null;
+            /** Days Of Week */
+            days_of_week?: string[];
             discount?: components["schemas"]["AdminStudentSessionDiscountView"] | null;
             /** End At */
             end_at?: string | null;
+            /** End Time */
+            end_time?: string | null;
             /** Ended At */
             ended_at?: string | null;
             /** Enrollment Id */
@@ -11272,6 +11276,8 @@ export interface components {
             session_title: string;
             /** Start At */
             start_at?: string | null;
+            /** Start Time */
+            start_time?: string | null;
             /** Status */
             status: string;
             /** Subscription Status */

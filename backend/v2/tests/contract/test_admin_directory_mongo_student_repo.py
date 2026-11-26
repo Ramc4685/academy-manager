@@ -468,6 +468,9 @@ async def test_get_admin_student_enriches_sessions_payments_and_current_invoice(
                 "capacity": 8,
                 "status": "scheduled",
                 "amount_cents": 15_000,
+                "days_of_week": ["Sat"],
+                "start_time": "09:00",
+                "end_time": "10:00",
             },
             {
                 "academy_id": "other-academy",
@@ -649,6 +652,11 @@ async def test_get_admin_student_enriches_sessions_payments_and_current_invoice(
     assert detail.enrolled_sessions[0].payment_mode == "monthly"
     assert detail.enrolled_sessions[0].subscription_status == "active"
     assert detail.enrolled_sessions[0].amount_cents == 15_000
+    # S27: the weekly pattern rides along so the Sessions tab need not show
+    # the class's first (past) date as if it were a one-off.
+    assert detail.enrolled_sessions[0].days_of_week == ["Sat"]
+    assert detail.enrolled_sessions[0].start_time == "09:00"
+    assert detail.enrolled_sessions[0].end_time == "10:00"
     assert [row.payment_id for row in detail.payment_history] == [
         "pay-stripe-subscription",
         "pay-open",

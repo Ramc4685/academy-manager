@@ -198,6 +198,16 @@ export function formatLifecycleType(value: string): string {
     cancelled: "Cancelled",
     waitlisted: "Waitlisted",
     promoted: "Promoted",
+    // S27: these fell through to "Updated", so a cancelled future class date
+    // read as a row edited in the future ("Updated · Dec 15").
+    occurrence_cancelled: "Class date cancelled",
+    cancellation_scheduled: "Cancellation scheduled",
+    held: "On hold",
+    returned: "Returned from hold",
+    hold_reclaimed: "Hold seat released",
+    hold_expired: "Hold expired",
+    dropped: "Withdrawn",
+    deleted: "Deleted",
   };
   return labels[value] ?? "Updated";
 }
