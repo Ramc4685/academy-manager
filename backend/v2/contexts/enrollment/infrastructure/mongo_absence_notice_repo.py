@@ -64,6 +64,9 @@ class MongoAbsenceNoticeRepository(TenantScopedRepository):
         doc = await self._find_one({"occurrence_id": occurrence_id, "student_id": student_id})
         return self._to_domain(doc) if doc else None
 
+    async def delete(self, notice: AbsenceNotice) -> None:
+        await self._delete_one({"notice_id": notice.notice_id})
+
     async def list_for_parent(self, parent_id: str) -> list[AbsenceNotice]:
         cursor = self._find_many({"submitted_by": parent_id}, sort=[("submitted_at", -1)])
         return [self._to_domain(doc) async for doc in cursor]

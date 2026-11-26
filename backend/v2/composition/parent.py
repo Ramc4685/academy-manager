@@ -171,6 +171,7 @@ from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
     ListParentAbsences,
     SubmitAbsenceNotice,
+    WithdrawAbsenceNotice,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     UpdateAdminStudentCommand,
@@ -974,6 +975,9 @@ def compose_parent(
         notifier=compose_absence_notifier(db, settings),
     )
     list_parent_absences = ListParentAbsences(notices=absence_notices_repo)
+    withdraw_absence_notice = WithdrawAbsenceNotice(
+        students=students_query, occurrences=occurrences_query, notices=absence_notices_repo
+    )
 
     student_presence = StudentPresenceAdapter(MongoAttendanceRepository(db))
     submit_makeup_request = SubmitMakeupRequest(
@@ -3192,6 +3196,7 @@ def compose_parent(
         list_parent_pause_requests=list_parent_pause_requests,
         submit_absence_notice=submit_absence_notice,
         list_parent_absences=list_parent_absences,
+        withdraw_absence_notice=withdraw_absence_notice,
         submit_makeup_request=submit_makeup_request,
         list_parent_makeups=list_parent_makeups,
         list_eligible_makeup_targets=list_eligible_makeup_targets,

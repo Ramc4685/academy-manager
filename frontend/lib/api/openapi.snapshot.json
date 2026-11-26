@@ -57059,6 +57059,51 @@
         ]
       }
     },
+    "/api/v2/parent/absences/{student_id}/{occurrence_id}": {
+      "delete": {
+        "description": "S43 / D-12: undo a reported absence until the class starts.",
+        "operationId": "withdraw_absence_notice_api_v2_parent_absences__student_id___occurrence_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Withdraw Absence Notice",
+        "tags": [
+          "parent.absence_notices"
+        ]
+      }
+    },
     "/api/v2/parent/academy": {
       "get": {
         "operationId": "get_academy_info_api_v2_parent_academy_get",

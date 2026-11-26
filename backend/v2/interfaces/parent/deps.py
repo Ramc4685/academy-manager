@@ -16,6 +16,7 @@ from backend.v2.contexts.billing.application.use_cases.start_checkout import Sta
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
     ListParentAbsences,
     SubmitAbsenceNotice,
+    WithdrawAbsenceNotice,
 )
 from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
     ListParentAvailableSessions,
@@ -147,6 +148,8 @@ class ParentUseCases:
     calendar_feed: Any | None = None
     # S21: callable(parent_id, display_name, phone); fills blanks only.
     fill_parent_profile_blanks: Any | None = None
+    # S43: undo a reported absence before class starts. Defaulted for old fixtures.
+    withdraw_absence_notice: WithdrawAbsenceNotice | None = None
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

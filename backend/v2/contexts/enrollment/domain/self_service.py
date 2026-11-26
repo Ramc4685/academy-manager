@@ -32,6 +32,14 @@ class DuplicateAbsenceNotice(DomainError):
     status_code = 409
 
 
+class AbsenceNoticeNotFound(DomainError):
+    """Raised when a parent withdraws a notice that does not exist for their
+    child (or belongs to another family): 404, never a hint it exists."""
+
+    code = "Enrollment.AbsenceNoticeNotFound"
+    status_code = 404
+
+
 class StudentNotEnrolledInSession(DomainError):
     """Raised when a parent submits an absence notice or makeup request for
     an occurrence whose session the student has no active or paused

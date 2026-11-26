@@ -12,6 +12,12 @@ import { FormField, fieldDescribedBy } from "@/components/ds/form-field";
 import { Chip } from "@/components/ds/chip";
 import { EmptyState } from "@/components/ds/empty-state";
 import { AbsenceConfirmDialog } from "@/components/parent/absence-confirm-dialog";
+import {
+  absenceReportedToast,
+  canUndoAbsence,
+  invalidateAbsenceReaders,
+  useWithdrawAbsence,
+} from "@/components/parent/absence-undo";
 import { useToast } from "@/components/ds/toast";
 import { PauseEnrollmentForm } from "@/components/parent/pause-enrollment-form";
 import { EnrollmentActions } from "@/components/parent/enrollment-actions";
@@ -380,17 +386,18 @@ function SessionRow({
   const arrival = parentArrivalView(entry);
   const arrived = arrival === "pending" || arrival === "confirmed";
 
+  const { toast } = useToast();
+  const absenceKey = { student_id: studentId, occurrence_id: entry.occurrence_id };
+  const withdrawMutation = useWithdrawAbsence(() => setSubmitted(false));
   const absenceMutation = useMutation({
     mutationFn: submitAbsenceNotice,
-    meta: { success: { title: "Absence reported", description: "The coach will see it." } },
     onSuccess: () => {
       setSubmitted(true);
       setConfirming(false);
+      // S43: the success toast carries Undo (D-12).
+      toast(absenceReportedToast(() => withdrawMutation.mutate(absenceKey)));
       // S17: Home and Calendar show the chip too, so refresh every reader.
-      void queryClient.invalidateQueries({ queryKey: queryKeys.parent.absences() });
-      void queryClient.invalidateQueries({ queryKey: ["parent", "child-schedule"] });
-      void queryClient.invalidateQueries({ queryKey: ["parent", "home"] });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.parent.calendar() });
+      invalidateAbsenceReaders(queryClient);
     },
   });
 
@@ -458,6 +465,23 @@ function SessionRow({
           >
             {submitted ? "Absence reported" : ALREADY_REPORTED_LABEL}
           </p>
+          {canUndoAbsence(entry.start_at) && (
+            <button
+              type="button"
+              className="min-h-touch text-xs font-semibold text-rally-cobalt-700 underline"
+              disabled={withdrawMutation.isPending}
+              onClick={() => withdrawMutation.mutate(absenceKey)}
+            >
+              {withdrawMutation.isPending ? "Undoing…" : "Undo"}
+            </button>
+          )}
+          {withdrawMutation.isError && (
+            <p role="alert" className="text-xs text-status-red-800">
+              {withdrawMutation.error instanceof Error
+                ? withdrawMutation.error.message
+                : "Could not undo the absence."}
+            </p>
+          )}
           {/* A reported date also shows where it stands with makeups; a plain
               "reported" adds nothing to "Already reported". */}
           {!submitted &&

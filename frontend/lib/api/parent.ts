@@ -832,6 +832,17 @@ export function submitAbsenceNotice(payload: {
   });
 }
 
+/** S43: undo a reported absence; the server refuses once the class has started. */
+export function withdrawAbsenceNotice(payload: {
+  student_id: string;
+  occurrence_id: string;
+}): Promise<void> {
+  return apiFetch(
+    `/parent/absences/${encodeURIComponent(payload.student_id)}/${encodeURIComponent(payload.occurrence_id)}`,
+    { method: "DELETE" },
+  );
+}
+
 export interface MakeupRequestView {
   request_id: string;
   student_id: string;

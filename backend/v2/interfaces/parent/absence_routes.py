@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
     SubmitAbsenceNoticeCommand,
+    WithdrawAbsenceNoticeCommand,
 )
 from backend.v2.interfaces.parent.absence_makeup import (
     AbsenceMakeupView,
@@ -93,3 +94,24 @@ async def list_absences(
             for r in rows
         ]
     )
+
+
+@router.delete(
+    "/absences/{student_id}/{occurrence_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def withdraw_absence_notice(
+    student_id: str,
+    occurrence_id: str,
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> Response:
+    """S43 / D-12: undo a reported absence until the class starts."""
+    if use_cases.withdraw_absence_notice is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    await use_cases.withdraw_absence_notice.execute(
+        WithdrawAbsenceNoticeCommand(
+            parent_id=claims.user_id, student_id=student_id, occurrence_id=occurrence_id
+        )
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

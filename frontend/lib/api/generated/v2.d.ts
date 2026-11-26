@@ -6251,6 +6251,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/parent/absences/{student_id}/{occurrence_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Withdraw Absence Notice
+         * @description S43 / D-12: undo a reported absence until the class starts.
+         */
+        delete: operations["withdraw_absence_notice_api_v2_parent_absences__student_id___occurrence_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/parent/academy": {
         parameters: {
             query?: never;
@@ -34214,6 +34234,36 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AbsenceNoticeView"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    withdraw_absence_notice_api_v2_parent_absences__student_id___occurrence_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                student_id: string;
+                occurrence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

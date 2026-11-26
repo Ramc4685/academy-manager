@@ -11,6 +11,13 @@ import { EmptyState } from "@/components/ds/empty-state";
 import { WaitlistOffers } from "@/components/parent/waitlist-offers";
 import { AssignedClassDetails } from "@/components/parent/one-time-class";
 import { AbsenceMakeupStatus } from "@/components/parent/absence-makeup-status";
+import {
+  absenceReportedToast,
+  canUndoAbsence,
+  invalidateAbsenceReaders,
+  useWithdrawAbsence,
+} from "@/components/parent/absence-undo";
+import { useToast } from "@/components/ds/toast";
 import { queryKeys } from "@/lib/query/keys";
 import { TRIAL_SUCCESS, trialMissingField } from "@/lib/parent/trial-form";
 import { formatPlainDateRange } from "@/lib/format/plain-date";
@@ -157,6 +164,7 @@ function WaitlistOffersFromLink() {
 
 function AbsencesPanel() {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [studentId, setStudentId] = useState<string>("");
   const [occurrenceId, setOccurrenceId] = useState<string>("");
   const [lastWarning, setLastWarning] = useState<boolean | null>(null);
@@ -179,13 +187,21 @@ function AbsencesPanel() {
     enabled: Boolean(studentId),
   });
 
+  const withdrawMutation = useWithdrawAbsence(() => setLastWarning(null));
   const submitMutation = useMutation({
     mutationFn: submitAbsenceNotice,
     onSuccess: (notice) => {
       setLastWarning(notice.notice_window_met === false);
       setOccurrenceId("");
-      void queryClient.invalidateQueries({ queryKey: queryKeys.parent.absences() });
-      void queryClient.invalidateQueries({ queryKey: ["parent", "child-schedule", studentId] });
+      toast(
+        absenceReportedToast(() =>
+          withdrawMutation.mutate({
+            student_id: notice.student_id,
+            occurrence_id: notice.occurrence_id,
+          }),
+        ),
+      );
+      invalidateAbsenceReaders(queryClient);
     },
   });
 
@@ -339,6 +355,21 @@ function AbsencesPanel() {
                     </div>
                     <Chip variant={n.notice_window_met ? "approved" : "pending"} label={n.notice_window_met ? "ON TIME" : "LATE"} />
                   </div>
+                  {canUndoAbsence(n.missed_class?.start_at) && (
+                    <button
+                      type="button"
+                      className="mt-1 min-h-touch text-xs font-semibold text-rally-cobalt-700 underline"
+                      disabled={withdrawMutation.isPending}
+                      onClick={() =>
+                        withdrawMutation.mutate({
+                          student_id: n.student_id,
+                          occurrence_id: n.occurrence_id,
+                        })
+                      }
+                    >
+                      Undo this absence
+                    </button>
+                  )}
                 </Card>
               </li>
             ))}
