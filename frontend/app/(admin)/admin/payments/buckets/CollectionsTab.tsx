@@ -91,7 +91,6 @@ type SendTarget = {
   invoiceId: string;
   invoiceLabel: string;
   familyLabel: string;
-  balanceCents: number;
 } | null;
 
 function invoiceOption(
@@ -162,7 +161,9 @@ export function CollectionsTab() {
         parentId,
         invoiceDelivered(result)
           ? { tone: "ok", text: "Invoice sent" }
-          : { tone: "warn", text: "Invoice not sent. Check the family's email." },
+          : result.checkout_failure_code
+            ? { tone: "warn", text: "Not sent: online payments are not ready for this academy" }
+            : { tone: "warn", text: "Invoice was not emailed" },
       );
       invalidate();
     },
@@ -236,7 +237,6 @@ export function CollectionsTab() {
           invoiceId: invoice.invoice_id,
           invoiceLabel: invoice.invoice_number ?? invoice.invoice_id,
           familyLabel: familyName(family),
-          balanceCents: invoice.balance_due_cents,
         });
         return;
       }
@@ -412,8 +412,9 @@ export function CollectionsTab() {
           subject={`${sendTarget.invoiceLabel} · ${sendTarget.familyLabel}`}
           consequence={
             <p>
-              Emails the invoice for {formatCents(sendTarget.balanceCents)} with a link to pay.
-              The family has not received it yet, so this is the invoice itself, not a reminder.
+              Emails this invoice to the family. If the student has other unpaid invoices, the
+              email asks for the full balance. The family has not received it yet, so this is the
+              invoice itself, not a reminder.
             </p>
           }
           confirmLabel="Send invoice"

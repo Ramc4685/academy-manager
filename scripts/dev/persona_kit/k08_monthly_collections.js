@@ -6,7 +6,10 @@
 //   overdue                open invoice, emailed, due 5 days ago
 //   unsent                 open invoice, never emailed, due in 7 days  (S30: Send invoice)
 //   emailed                open invoice, emailed, due in 7 days        (S30: Send reminder)
-// Used by S30, S33, S34, S41. Emails are not suppressed, so a send reaches the local mail log.
+// Used by S30, S33, S34, S41. The default local stack runs with email delivery off, so
+// Send invoice on `unsent` emails nothing: the row reads "Invoice was not emailed", the
+// invoice stays not_sent, and the proof is the backend.log line "send_invoice: email port
+// not configured" (not a dues-reminder line). Real sends need staging/prod email config.
 const A = "acad_demo_academy", SESSION = "demo_session_sat", TZ = "America/Chicago", now = new Date();
 const DAY = 864e5;
 const local = Object.fromEntries(new Intl.DateTimeFormat("en-US", {timeZone: TZ, year: "numeric", month: "numeric"})

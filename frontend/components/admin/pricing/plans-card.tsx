@@ -352,7 +352,7 @@ export function PlansTable({
             <Th>Plan</Th>
             <Th>Price</Th>
             <Th>Type</Th>
-            <Th align="right">Used by</Th>
+            <Th align="right">Classes</Th>
             <Th align="right">Actions</Th>
           </tr>
         </thead>
