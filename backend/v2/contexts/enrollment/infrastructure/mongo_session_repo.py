@@ -320,6 +320,7 @@ class MongoSessionRepository(TenantScopedRepository):
             coach_contact_policy=_optional_str(doc.get("coach_contact_policy")),
             absence_policy=_optional_str(doc.get("absence_policy")),
             age_band=age_band_from_doc(doc.get("age_band")),
+            level=(_optional_str(doc.get("level")) or "")[:40] or None,
         )
 
     async def for_coach_on_date(self, coach_id: str, on_date: date) -> list[Session]:

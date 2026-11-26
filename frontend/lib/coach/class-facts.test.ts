@@ -29,10 +29,13 @@ describe("class facts", () => {
     expect(coachPlanHref("2026-12-01")).toBe("/coach/today/plan?date=2026-12-01");
   });
 
-  it("summarises a Sessions row with headcount and ages", () => {
+  it("summarises a Sessions row with headcount, ages and level", () => {
     expect(classFacts({ enrolled_count: 8, age_band: { min_age: 8, max_age: 12 } })).toBe(
       "8 children · Ages 8–12",
     );
+    expect(
+      classFacts({ enrolled_count: 3, age_band: null, level: "Beginner" }),
+    ).toBe("3 children · Beginner");
     expect(classFacts({ enrolled_count: null, age_band: null })).toBe("");
   });
 });

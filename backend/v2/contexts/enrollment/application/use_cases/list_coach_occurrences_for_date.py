@@ -38,6 +38,7 @@ class CoachOccurrenceForDate(BaseModel):
     status: SessionOccurrenceStatus = "scheduled"
     cancellation_reason: str | None = None
     age_band: AgeBand | None = None
+    level: str | None = None
     venue_address: str | None = None
     parking_notes: str | None = None
     arrival_minutes_before: int | None = None
@@ -165,6 +166,7 @@ async def _hydrate_occurrences(
                 status=occurrence.status,
                 cancellation_reason=occurrence.cancellation_reason,
                 age_band=getattr(session, "age_band", None),
+                level=getattr(session, "level", None),
                 venue_address=getattr(session, "venue_address", None),
                 parking_notes=getattr(session, "parking_notes", None),
                 arrival_minutes_before=getattr(session, "arrival_minutes_before", None),

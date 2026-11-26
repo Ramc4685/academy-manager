@@ -13621,6 +13621,8 @@ export interface components {
             end_at: string;
             /** Enrolled Count */
             enrolled_count?: number | null;
+            /** Level */
+            level?: string | null;
             /** Location */
             location: string;
             /** Occurrence Id */

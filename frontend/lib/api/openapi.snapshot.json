@@ -15114,6 +15114,17 @@
             ],
             "title": "Enrolled Count"
           },
+          "level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
           "location": {
             "title": "Location",
             "type": "string"

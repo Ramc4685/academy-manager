@@ -505,6 +505,7 @@ def seed():
             capacity=8,
             status="scheduled",
             timezone="America/Chicago",
+            level="Beginner",
         ),
         Session(
             session_id="s-today-2",

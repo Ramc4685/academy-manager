@@ -314,6 +314,8 @@ export interface CoachScheduleEntry {
   /** Children on the class's roster now. */
   enrolled_count?: number | null;
   age_band?: CoachAgeBand | null;
+  /** The class's level text, e.g. "Beginner"; null when the owner set none. */
+  level?: string | null;
 }
 
 export interface CoachScheduleResponse {

@@ -358,9 +358,10 @@ class CoachScheduleEntry(BaseModel):
     end_at: datetime
     coach_id: str | None = None
     coach_name: str | None = None
-    # Children on the class's roster today, and the class's age span.
+    # Children on the class's roster today, the class's age span and level.
     enrolled_count: int | None = None
     age_band: CoachAgeBand | None = None
+    level: str | None = None
 
 
 class CoachScheduleResponse(BaseModel):

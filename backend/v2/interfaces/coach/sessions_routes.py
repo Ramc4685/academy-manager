@@ -67,6 +67,7 @@ async def get_sessions(
                 coach_name=coach_names.get(getattr(s, "coach_id", None) or ""),
                 enrolled_count=None if counts is None else counts.get(s.session_id, 0),
                 age_band=age_band_view(getattr(s, "age_band", None)),
+                level=getattr(s, "level", None),
             )
             for s in sessions
         ]

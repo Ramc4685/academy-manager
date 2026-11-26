@@ -26,11 +26,14 @@ export function coachPlanHref(date: string): string {
   return `/coach/today/plan?date=${encodeURIComponent(date)}`;
 }
 
-/** "8 children · Ages 8–12" for a Sessions row; empty when neither is known. */
-export function classFacts(session: Pick<CoachScheduleEntry, "enrolled_count" | "age_band">): string {
+/** "8 children · Ages 8–12 · Beginner" for a Sessions row; empty when none is known. */
+export function classFacts(
+  session: Pick<CoachScheduleEntry, "enrolled_count" | "age_band" | "level">,
+): string {
   return [
     typeof session.enrolled_count === "number" ? headcountLabel(session.enrolled_count) : "",
     ageBandLabel(session.age_band) ?? "",
+    session.level?.trim() ?? "",
   ]
     .filter(Boolean)
     .join(" · ");

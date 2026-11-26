@@ -41,3 +41,9 @@ def test_coach_sessions_headcount_failure_still_lists_the_classes(coach_client):
     r = coach_client.get("/api/v2/coach/sessions")
     assert r.status_code == 200, r.text
     assert {s["enrolled_count"] for s in r.json()["sessions"]} == {None}
+
+
+def test_coach_sessions_rows_carry_the_class_level(coach_client):
+    body = coach_client.get("/api/v2/coach/sessions").json()
+    levels = {s["session_id"]: s["level"] for s in body["sessions"]}
+    assert levels == {"s-today-1": "Beginner", "s-today-2": None}

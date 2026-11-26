@@ -246,6 +246,8 @@ class Session(BaseModel):
     absence_policy: str | None = Field(default=None, max_length=1000)
     # The class's own age span (set on the class's public profile); None when unset.
     age_band: AgeBand | None = None
+    # The class's level text from its public profile ("Beginner"); None when unset.
+    level: str | None = Field(default=None, max_length=40)
 
     @field_validator("whatsapp_group_link")
     @classmethod
