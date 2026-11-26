@@ -986,19 +986,22 @@ export default function AdminSessionDetailPage() {
         enrollment={withdrawalTarget}
         onClose={() => setWithdrawalTarget(null)}
         onApproved={() => {
-          setWithdrawalTarget(null);
-          void queryClient.invalidateQueries({
-            queryKey: queryKeys.admin.enrollments(sessionId),
+          refreshAfterEnrollmentChange(queryClient, {
+            studentId: withdrawalTarget?.student_id,
+            parentId: withdrawalTarget?.parent_id,
           });
+          setWithdrawalTarget(null);
         }}
       />
       <RemoveEnrollmentDialog
         enrollment={removeTarget}
         onClose={() => setRemoveTarget(null)}
         onRemoved={() => {
+          refreshAfterEnrollmentChange(queryClient, {
+            studentId: removeTarget?.student_id,
+            parentId: removeTarget?.parent_id,
+          });
           setRemoveTarget(null);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
     </section>

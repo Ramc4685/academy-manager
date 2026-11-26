@@ -38,6 +38,7 @@ import {
 import {
   fetchFamilyIndex,
   fetchFamilyIndexSummary,
+  markFamilyWrite,
   type FamilyIndexChild,
   type FamilyIndexRow,
   type FamilyIndexSort,
@@ -260,6 +261,7 @@ function FamiliesView() {
 
   const onSort = (column: FamilyIndexSort) => setState(nextSort(state, column, moneyVisible));
   const refreshAll = () => {
+    markFamilyWrite();
     void queryClient.invalidateQueries({ queryKey: queryKeys.admin.families() });
   };
 

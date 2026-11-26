@@ -48,6 +48,11 @@ describe("refreshAfterEnrollmentChange (S26)", () => {
     }
   });
 
+  it("opens the fresh window after a Families-page import, quick add or bulk invite", () => {
+    const src = readFileSync(path.join(__dirname, "../../app/(admin)/admin/families/page.tsx"), "utf8");
+    expect(src).toMatch(/const refreshAll = \(\) => \{\s+markFamilyWrite\(\);/);
+  });
+
   it("sends fresh=true only inside the window", () => {
     const src = readFileSync(path.join(__dirname, "../api/admin-families.ts"), "utf8");
     expect(src).toContain('withFresh("/admin/families", familyIndexQueryString(params))');
