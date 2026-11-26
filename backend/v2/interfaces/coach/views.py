@@ -504,3 +504,43 @@ class CoachPayResponse(BaseModel):
     classes: list[CoachPayClassView]
     payslip: CoachPayslipView | None = None
     academy_contact: CoachAcademyContactView
+
+
+class CoachPathwaySkillView(BaseModel):
+    skill_id: str
+    name: str
+
+
+class CoachPathwayLessonView(BaseModel):
+    """A lesson card's teaching content only: citation fields stay admin-side."""
+
+    card_id: str
+    lesson_number: int
+    title: str
+    goal_summary: str = ""
+    teaching_points: list[str] = []
+    equipment: list[str] = []
+    safety_notes: list[str] = []
+    activity_summary: str = ""
+    video_url: str | None = None
+
+
+class CoachPathwayLevelView(BaseModel):
+    level_id: str
+    sequence: int
+    name: str
+    description: str = ""
+    skills: list[CoachPathwaySkillView] = []
+    lessons: list[CoachPathwayLessonView] = []
+
+
+class CoachPathwayProgramView(BaseModel):
+    program_id: str
+    name: str
+    levels: list[CoachPathwayLevelView] = []
+
+
+class CoachPathwayResponse(BaseModel):
+    """S68: what the academy teaches, as reference reading for a coach."""
+
+    programs: list[CoachPathwayProgramView] = []

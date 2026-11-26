@@ -928,3 +928,10 @@ export function getCoachPay(month?: string): Promise<CoachPay> {
   const query = month ? `?month=${encodeURIComponent(month)}` : "";
   return apiFetch<CoachPay>(`/coach/profile/pay${query}`, { method: "GET" });
 }
+
+/** S68: the academy's levels, skills and lesson plans ("What we teach"). Not private. */
+export type CoachPathway = components["schemas"]["CoachPathwayResponse"];
+
+export function getCoachPathway(): Promise<CoachPathway> {
+  return apiFetch<CoachPathway>("/coach/pathway", { method: "GET" });
+}

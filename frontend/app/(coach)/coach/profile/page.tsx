@@ -117,6 +117,17 @@ export default function CoachProfilePage() {
             </span>
             <span aria-hidden="true">→</span>
           </Link>
+          <Link
+            href="/coach/pathway"
+            data-testid="coach-profile-pathway"
+            className="flex min-h-touch w-full items-center justify-between rounded-lg border border-neutral-200 bg-white px-4 py-2 dark:border-neutral-800 dark:bg-neutral-900"
+          >
+            <span>
+              <span className="block font-medium">What we teach</span>
+              <span className="block text-sm text-neutral-500">Levels, skills and lesson plans</span>
+            </span>
+            <span aria-hidden="true">→</span>
+          </Link>
         </div>
       )}
 

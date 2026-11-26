@@ -14866,6 +14866,178 @@
         "title": "CoachMessagesResponse",
         "type": "object"
       },
+      "CoachPathwayLessonView": {
+        "description": "A lesson card's teaching content only: citation fields stay admin-side.",
+        "properties": {
+          "activity_summary": {
+            "default": "",
+            "title": "Activity Summary",
+            "type": "string"
+          },
+          "card_id": {
+            "title": "Card Id",
+            "type": "string"
+          },
+          "equipment": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Equipment",
+            "type": "array"
+          },
+          "goal_summary": {
+            "default": "",
+            "title": "Goal Summary",
+            "type": "string"
+          },
+          "lesson_number": {
+            "title": "Lesson Number",
+            "type": "integer"
+          },
+          "safety_notes": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Safety Notes",
+            "type": "array"
+          },
+          "teaching_points": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Teaching Points",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "video_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Video Url"
+          }
+        },
+        "required": [
+          "card_id",
+          "lesson_number",
+          "title"
+        ],
+        "title": "CoachPathwayLessonView",
+        "type": "object"
+      },
+      "CoachPathwayLevelView": {
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "lessons": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CoachPathwayLessonView"
+            },
+            "title": "Lessons",
+            "type": "array"
+          },
+          "level_id": {
+            "title": "Level Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "skills": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CoachPathwaySkillView"
+            },
+            "title": "Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "level_id",
+          "sequence",
+          "name"
+        ],
+        "title": "CoachPathwayLevelView",
+        "type": "object"
+      },
+      "CoachPathwayProgramView": {
+        "properties": {
+          "levels": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CoachPathwayLevelView"
+            },
+            "title": "Levels",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "program_id": {
+            "title": "Program Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "program_id",
+          "name"
+        ],
+        "title": "CoachPathwayProgramView",
+        "type": "object"
+      },
+      "CoachPathwayResponse": {
+        "description": "S68: what the academy teaches, as reference reading for a coach.",
+        "properties": {
+          "programs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CoachPathwayProgramView"
+            },
+            "title": "Programs",
+            "type": "array"
+          }
+        },
+        "title": "CoachPathwayResponse",
+        "type": "object"
+      },
+      "CoachPathwaySkillView": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_id",
+          "name"
+        ],
+        "title": "CoachPathwaySkillView",
+        "type": "object"
+      },
       "CoachPayClassView": {
         "properties": {
           "class_name": {
@@ -55680,6 +55852,28 @@
         "summary": "Resolve Class Report",
         "tags": [
           "coach.class-recap"
+        ]
+      }
+    },
+    "/api/v2/coach/pathway": {
+      "get": {
+        "description": "S68 \"What we teach\". Academy reference content for the request\nacademy; no student or progress data. Retired levels, skills and cards are\nleft out, and so are a card's citation fields.",
+        "operationId": "get_pathway_api_v2_coach_pathway_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoachPathwayResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "The academy's levels, skills and lesson plans (reference only)",
+        "tags": [
+          "coach.academy"
         ]
       }
     },

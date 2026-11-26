@@ -5597,6 +5597,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/coach/pathway": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The academy's levels, skills and lesson plans (reference only)
+         * @description S68 "What we teach". Academy reference content for the request
+         *     academy; no student or progress data. Retired levels, skills and cards are
+         *     left out, and so are a card's citation fields.
+         */
+        get: operations["get_pathway_api_v2_coach_pathway_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/coach/profile": {
         parameters: {
             query?: never;
@@ -13735,6 +13757,99 @@ export interface components {
         CoachMessagesResponse: {
             /** Messages */
             messages: components["schemas"]["CoachMessageView"][];
+        };
+        /**
+         * CoachPathwayLessonView
+         * @description A lesson card's teaching content only: citation fields stay admin-side.
+         */
+        CoachPathwayLessonView: {
+            /**
+             * Activity Summary
+             * @default
+             */
+            activity_summary: string;
+            /** Card Id */
+            card_id: string;
+            /**
+             * Equipment
+             * @default []
+             */
+            equipment: string[];
+            /**
+             * Goal Summary
+             * @default
+             */
+            goal_summary: string;
+            /** Lesson Number */
+            lesson_number: number;
+            /**
+             * Safety Notes
+             * @default []
+             */
+            safety_notes: string[];
+            /**
+             * Teaching Points
+             * @default []
+             */
+            teaching_points: string[];
+            /** Title */
+            title: string;
+            /** Video Url */
+            video_url?: string | null;
+        };
+        /** CoachPathwayLevelView */
+        CoachPathwayLevelView: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Lessons
+             * @default []
+             */
+            lessons: components["schemas"]["CoachPathwayLessonView"][];
+            /** Level Id */
+            level_id: string;
+            /** Name */
+            name: string;
+            /** Sequence */
+            sequence: number;
+            /**
+             * Skills
+             * @default []
+             */
+            skills: components["schemas"]["CoachPathwaySkillView"][];
+        };
+        /** CoachPathwayProgramView */
+        CoachPathwayProgramView: {
+            /**
+             * Levels
+             * @default []
+             */
+            levels: components["schemas"]["CoachPathwayLevelView"][];
+            /** Name */
+            name: string;
+            /** Program Id */
+            program_id: string;
+        };
+        /**
+         * CoachPathwayResponse
+         * @description S68: what the academy teaches, as reference reading for a coach.
+         */
+        CoachPathwayResponse: {
+            /**
+             * Programs
+             * @default []
+             */
+            programs: components["schemas"]["CoachPathwayProgramView"][];
+        };
+        /** CoachPathwaySkillView */
+        CoachPathwaySkillView: {
+            /** Name */
+            name: string;
+            /** Skill Id */
+            skill_id: string;
         };
         /** CoachPayClassView */
         CoachPayClassView: {
@@ -33234,6 +33349,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_pathway_api_v2_coach_pathway_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoachPathwayResponse"];
                 };
             };
         };

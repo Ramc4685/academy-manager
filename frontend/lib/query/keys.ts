@@ -23,6 +23,7 @@ export const queryKeys = {
     profile: () => ["coach", "profile"] as const,
     academy: () => ["coach", "academy"] as const,
     pay: (month: string) => ["coach", "pay", month] as const,
+    pathway: () => ["coach", "pathway"] as const,
     session: (sessionId: string) => ["coach", "session", sessionId] as const,
     sessionAnnouncements: (sessionId: string) =>
       ["coach", "session", sessionId, "announcements"] as const,

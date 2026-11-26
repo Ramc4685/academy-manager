@@ -53,6 +53,7 @@ A request returning **404** means "the route does not exist for you," regardless
 | View lesson plan | Yes | Conditional: assigned sessions | No |
 | Create progress note for student | Yes | Conditional: assigned students | No |
 | View progress notes | Yes | Conditional: assigned students | Conditional: own child |
+| Read the academy's levels and lesson plans (`GET /coach/pathway`, S68) | Yes | Yes | No (404) |
 | **Payments** | | | |
 | View payment history (academy-wide) | Yes | No | No |
 | View own payment history | N/A | N/A | Yes |
@@ -103,6 +104,7 @@ This section is updated per wave as routes ship.
 | View attendance for session (coach: assigned) | ✅ implemented | ☐ | `backend/v2/tests/interface/test_coach_today.py` |
 
 | View own classes taught and released payslips (`GET /coach/profile/pay`) | ✅ implemented (coach id is always the signed-in user) | ✅ | `backend/v2/tests/interface/test_coach_pay_route.py`, `backend/v2/tests/contract/test_coach_pay_summary.py` |
+| Read the academy's levels and lesson plans (`GET /coach/pathway`) | ✅ implemented (reference content only, no student data) | ✅ | `backend/v2/tests/interface/test_coach_pathway_route.py` |
 
 (Filled in as W1A-09 lands.)
 

@@ -79,11 +79,11 @@ test.describe("Coach Today empty state", () => {
     await page.goto("/coach/today");
     await expect(page.getByTestId("empty-state")).toBeVisible();
 
+    // S68: the next class is the first My week card, with an "Open class" link.
     const next = page.getByTestId("next-class");
-    await expect(next).toContainText("Your next class");
     await expect(next).toContainText("Junior C");
     await expect(next).toContainText("Court 3");
-    await expect(next).toHaveAttribute(
+    await expect(page.getByTestId("next-class-open")).toHaveAttribute(
       "href",
       /\/coach\/sessions\/occ-next\?date=\d{4}-\d{2}-\d{2}$/,
     );

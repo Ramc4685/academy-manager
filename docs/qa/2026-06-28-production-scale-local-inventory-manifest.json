@@ -2628,6 +2628,37 @@
       ]
     },
     {
+      "route": "/coach/pathway",
+      "role": "coach",
+      "source": "frontend/app/(coach)/coach/pathway/page.tsx",
+      "workflows": [
+        "Read levels, skills and lesson plans"
+      ],
+      "controls": {
+        "buttons": [
+          "Back",
+          "Try again"
+        ],
+        "inputs": [
+          "Program"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error"
+      ],
+      "risk_edges": [
+        "Retired levels or citation-only fields shown to a coach"
+      ],
+      "acceptance": [
+        "Level 1 opens with its description, skills and lesson cards; retired levels never appear",
+        "Workflow evidence: \"Read levels, skills and lesson plans\" completes for the coach route /coach/pathway with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Retired levels or citation-only fields shown to a coach\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/coach/sessions",
       "role": "coach",
       "source": "frontend/app/(coach)/coach/sessions/page.tsx",
