@@ -426,7 +426,9 @@ class AdminEffectiveRevenueQuery:
             "created_at": 1,
         }
         months: dict[str, int] = {}
-        async for payment in self._db["ledger_payments"].find(match, projection):
+        async for payment in self._db["ledger_payments"].find(
+            self._tenant_scoped(match), projection
+        ):
             month = ledger_payment_effective_month(payment, timezone_name)
             if month:
                 months[month] = months.get(month, 0) + payment_revenue_net_cents(payment)
