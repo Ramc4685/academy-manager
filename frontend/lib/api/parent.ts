@@ -294,6 +294,8 @@ export interface ParentScheduleEntry {
   cancellation_reason?: string | null;
   /** The child already has an absence notice for this date. Absent on older responses. */
   absence_reported?: boolean;
+  /** S43: this parent filed the notice, so Undo is offered until class starts. */
+  absence_undoable?: boolean;
   /** Drop-off check-in for this date; null when the academy has the feature off. */
   checkin?: DropoffCheckinView | null;
   /** Server-computed: the "I've arrived" button may be shown right now. */

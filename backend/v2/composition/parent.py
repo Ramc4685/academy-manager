@@ -284,6 +284,7 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     UpdateAdminUserCommand,
 )
 from backend.v2.contexts.identity.domain.public_page import PUBLIC_PAGE_FIELD, PublicPageSettings
+from backend.v2.contexts.identity.infrastructure.mongo_audit_trail import MongoAuditTrail
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     GetApplicationStatus,
@@ -399,6 +400,7 @@ class ParentComposition:
     list_parent_pause_requests: ListParentPauseRequests
     submit_absence_notice: SubmitAbsenceNotice
     list_parent_absences: ListParentAbsences
+    withdraw_absence_notice: WithdrawAbsenceNotice
     submit_makeup_request: SubmitMakeupRequest
     list_parent_makeups: ListParentMakeups
     list_eligible_makeup_targets: ListEligibleMakeupTargets
@@ -976,7 +978,11 @@ def compose_parent(
     )
     list_parent_absences = ListParentAbsences(notices=absence_notices_repo)
     withdraw_absence_notice = WithdrawAbsenceNotice(
-        students=students_query, occurrences=occurrences_query, notices=absence_notices_repo
+        students=students_query,
+        occurrences=occurrences_query,
+        notices=absence_notices_repo,
+        policies=self_service_policies_repo,
+        audit=MongoAuditTrail(db),
     )
 
     student_presence = StudentPresenceAdapter(MongoAttendanceRepository(db))

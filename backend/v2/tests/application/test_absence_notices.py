@@ -735,8 +735,12 @@ class _StoreNotices:
         return [n for n in self.rows.values() if n.submitted_by == parent_id]  # type: ignore[attr-defined]
 
 
-def _submit_and_withdraw(notices: _StoreNotices, clock=_now):
-    occurrences = _FakeOccurrences([_occurrence(start_at=datetime(2026, 7, 10, 10, 0, tzinfo=UTC))])
+def _submit_and_withdraw(
+    notices: _StoreNotices, clock=_now, *, policies=None, audit=None, status: str = "scheduled"
+):
+    occurrences = _FakeOccurrences(
+        [_occurrence(start_at=datetime(2026, 7, 10, 10, 0, tzinfo=UTC), status=status)]
+    )
     submit = SubmitAbsenceNotice(
         students=_FakeStudents(),
         occurrences=occurrences,
@@ -746,7 +750,12 @@ def _submit_and_withdraw(notices: _StoreNotices, clock=_now):
         clock=_now,
     )
     withdraw = WithdrawAbsenceNotice(
-        students=_FakeStudents(), occurrences=occurrences, notices=notices, clock=clock
+        students=_FakeStudents(),
+        occurrences=occurrences,
+        notices=notices,
+        policies=policies or _FakePolicies(),
+        audit=audit,
+        clock=clock,
     )
     return submit, withdraw
 
@@ -829,3 +838,90 @@ async def test_withdraw_with_no_notice_is_not_found() -> None:
     _submit, withdraw = _submit_and_withdraw(_StoreNotices())
     with pytest.raises(AbsenceNoticeNotFound):
         await withdraw.execute(_WITHDRAW)
+
+
+class _Audit:
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    async def append(self, **row) -> None:
+        self.rows.append(row)
+
+
+@pytest.mark.asyncio
+async def test_withdraw_writes_an_audit_row() -> None:
+    audit = _Audit()
+    notices = _StoreNotices()
+    submit, withdraw = _submit_and_withdraw(notices, audit=audit)
+    notice = await submit.execute(_CMD)
+
+    await withdraw.execute(_WITHDRAW)
+
+    [row] = audit.rows
+    assert row["action"] == "absence_notice.withdrawn"
+    assert row["actor_id"] == "parent-1"
+    assert row["entity_id"] == notice.notice_id
+
+
+@pytest.mark.asyncio
+async def test_withdraw_refuses_an_admin_recorded_or_co_parent_notice() -> None:
+    from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
+        AbsenceNotice,
+    )
+
+    for update in ({"recorded_by_admin": True, "submitted_by": "admin-1"}, {"submitted_by": "parent-2"}):
+        notices = _StoreNotices()
+        _submit, withdraw = _submit_and_withdraw(notices)
+        await notices.add(
+            AbsenceNotice(
+                notice_id="n-1",
+                academy_id="acad",
+                student_id="student-1",
+                occurrence_id="occ-1",
+                session_id="session-1",
+                submitted_by="parent-1",
+                submitted_at=_now(),
+                notice_window_met=True,
+            ).model_copy(update=update)
+        )
+        with pytest.raises(AbsenceNoticeNotFound):
+            await withdraw.execute(_WITHDRAW)
+        assert len(notices.rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_withdraw_is_refused_when_the_academy_turned_absences_off() -> None:
+    notices = _StoreNotices()
+    submit, _ = _submit_and_withdraw(notices)
+    await submit.execute(_CMD)
+    off = ParentSelfServicePolicy.default("acad").model_copy(update={"can_report_absence": False})
+    _s, withdraw = _submit_and_withdraw(notices, policies=_FakePolicies(off))
+
+    with pytest.raises(ParentActionDisabled):
+        await withdraw.execute(_WITHDRAW)
+    assert len(notices.rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_withdraw_on_a_cancelled_class_is_refused() -> None:
+    from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
+        AbsenceNotice,
+    )
+
+    notices = _StoreNotices()
+    _s, withdraw = _submit_and_withdraw(notices, status="cancelled")
+    await notices.add(
+        AbsenceNotice(
+            notice_id="n-1",
+            academy_id="acad",
+            student_id="student-1",
+            occurrence_id="occ-1",
+            session_id="session-1",
+            submitted_by="parent-1",
+            submitted_at=_now(),
+            notice_window_met=True,
+        )
+    )
+    with pytest.raises(AbsenceWindowClosed):
+        await withdraw.execute(_WITHDRAW)
+    assert len(notices.rows) == 1

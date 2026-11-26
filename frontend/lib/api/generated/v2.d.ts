@@ -17872,6 +17872,11 @@ export interface components {
              */
             absence_reported: boolean;
             /**
+             * Absence Undoable
+             * @default false
+             */
+            absence_undoable: boolean;
+            /**
              * Can Report Arrival
              * @default false
              */

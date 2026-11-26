@@ -26882,6 +26882,11 @@
             "title": "Absence Reported",
             "type": "boolean"
           },
+          "absence_undoable": {
+            "default": false,
+            "title": "Absence Undoable",
+            "type": "boolean"
+          },
           "can_report_arrival": {
             "default": false,
             "title": "Can Report Arrival",

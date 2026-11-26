@@ -543,6 +543,8 @@ class ParentScheduleEntryView(BaseModel):
     cancellation_reason: str | None = None
     # The child already has an absence notice for this date.
     absence_reported: bool = False
+    # S43: this parent filed it, so Undo is offered (until class starts).
+    absence_undoable: bool = False
     # Drop-off check-in state; None when the academy has the feature off.
     checkin: DropoffCheckinView | None = None
     # Server-computed: show "I've arrived" now.

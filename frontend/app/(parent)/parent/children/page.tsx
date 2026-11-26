@@ -465,7 +465,7 @@ function SessionRow({
           >
             {submitted ? "Absence reported" : ALREADY_REPORTED_LABEL}
           </p>
-          {canUndoAbsence(entry.start_at) && (
+          {(submitted || entry.absence_undoable) && canUndoAbsence(entry.start_at) && (
             <button
               type="button"
               className="min-h-touch text-xs font-semibold text-rally-cobalt-700 underline"

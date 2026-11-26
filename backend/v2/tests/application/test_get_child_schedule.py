@@ -695,3 +695,32 @@ async def test_dates_with_an_absence_notice_are_flagged_for_that_child_only() ->
         ("occ-1", True),
         ("occ-2", False),
     ]
+
+
+@pytest.mark.asyncio
+async def test_only_the_parents_own_notice_is_undoable() -> None:
+    """S43: Undo is offered for a notice this parent filed, not an admin's or a co-parent's."""
+    alex = _student("st-alex")
+    occs = [
+        _occurrence("occ-mine", "sess-1", _IN_2_DAYS),
+        _occurrence("occ-admin", "sess-1", _IN_10_DAYS),
+    ]
+    mine = _FakeNotice("st-alex", "occ-mine")
+    mine.submitted_by, mine.recorded_by_admin = "parent-1", False  # type: ignore[attr-defined]
+    admin = _FakeNotice("st-alex", "occ-admin")
+    admin.submitted_by, admin.recorded_by_admin = "admin-1", True  # type: ignore[attr-defined]
+    uc = GetChildSchedule(
+        enrollments=FakeEnrollmentQuery([_enrollment("e1", "st-alex", "sess-1")]),
+        occurrences=FakeOccurrenceQuery(occs),
+        sessions=FakeSessionQuery([_session("sess-1")]),
+        students=FakeStudentQuery([alex]),
+        absence_notices=FakeAbsenceNoticeQuery([mine, admin]),
+        clock=lambda: _NOW,
+    )
+
+    entries, _ = await uc.execute("parent-1", "st-alex", frm=None, to=None, limit=50, offset=0)
+
+    assert [(e.occurrence_id, e.absence_reported, e.absence_undoable) for e in entries] == [
+        ("occ-mine", True, True),
+        ("occ-admin", True, False),
+    ]

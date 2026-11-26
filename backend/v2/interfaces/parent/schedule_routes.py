@@ -96,6 +96,7 @@ async def get_child_schedule(
                 source=e.source,
                 cancellation_reason=e.cancellation_reason,
                 absence_reported=e.absence_reported,
+                absence_undoable=e.absence_undoable,
                 absence_makeup=makeups.get((student_id, e.occurrence_id)),
             )
             for e in entries
