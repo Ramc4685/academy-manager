@@ -227,6 +227,34 @@ async def test_cards_for_a_renamed_or_moved_skill_skip_instead_of_mislinking(tmp
     assert result.video_refs_created == 0 and videos.saved == []
 
 
+async def test_cards_keep_their_link_on_a_pathway_seeded_before_the_renames(tmp_path) -> None:
+    programs, levels, skills = await _seed_pathway()
+    old = next(s for s in skills.saved if s.name == "Backhand low serve")
+    skills.saved = [
+        s.model_copy(update={"name": "Backhand serve"}) if s is old else s for s in skills.saved
+    ]
+    content = {
+        "source": "BWF_SHUTTLE_TIME",
+        "cards": [
+            {
+                "slug": "c1",
+                "lesson_number": 1,
+                "level_sequence": 3,
+                "skill_names": ["Backhand low serve"],
+                "title": "Card",
+                "resource_links": [],
+            }
+        ],
+        "level_videos": [],
+        "skill_videos": [],
+    }
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps(content), encoding="utf-8")
+    _result, cards, _videos = await _seed_cards(programs, levels, skills, content_path=path)
+    (card,) = cards.saved.values()
+    assert card.skill_ids == [old.skill_id]
+
+
 async def test_seed_creates_all_cards_and_level_videos() -> None:
     programs, levels, skills = await _seed_pathway()
     result, cards, videos = await _seed_cards(programs, levels, skills)

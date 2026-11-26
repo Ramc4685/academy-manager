@@ -35,6 +35,19 @@ from backend.v2.shared.ids import new_ulid
 _CONTENT_PATH = Path(__file__).resolve().parents[2] / "content" / "badminton_lesson_cards.json"
 
 
+#: Template skills renamed by D-19 (S56): pathways seeded before then still
+#: carry the old name, and their cards should keep the link.
+_FORMER_SKILL_NAMES = {
+    "backhand low serve": "backhand serve",
+    "compact drive swing": "racket speed",
+}
+
+
+def _find_skill(skill_by: dict[str, tuple[str, str]], name: str) -> tuple[str, str] | None:
+    key = name.casefold()
+    return skill_by.get(key) or skill_by.get(_FORMER_SKILL_NAMES.get(key, ""))
+
+
 class PathwayNotSeededError(Exception):
     """Raised when no active badminton program exists to attach cards to."""
 
@@ -117,11 +130,8 @@ async def seed_lesson_cards(
             raise LessonCardSeedError(
                 f"Card {entry['slug']}: level_sequence {level_seq} does not resolve."
             )
-        skill_ids = [
-            skill_by[name.casefold()][0]
-            for name in entry.get("skill_names", [])
-            if name.casefold() in skill_by
-        ]
+        found = [_find_skill(skill_by, name) for name in entry.get("skill_names", [])]
+        skill_ids = [f[0] for f in found if f is not None]
 
         content_hash = _hash(entry)
         existing = await cards.get_by_slug(program.program_id, entry["slug"])
@@ -197,7 +207,7 @@ async def _seed_video_refs(
             raise LessonCardSeedError(f"level_video: level_sequence {level_seq} does not resolve.")
         items.append(("LEVEL", level_id, None, entry))
     for entry in content.get("skill_videos", []):
-        found = skill_by.get(entry["skill_name"].casefold())
+        found = _find_skill(skill_by, entry["skill_name"])
         if found is not None:
             items.append(("SKILL", found[1], found[0], entry))
 
