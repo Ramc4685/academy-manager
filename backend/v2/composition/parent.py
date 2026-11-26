@@ -300,7 +300,7 @@ from backend.v2.contexts.onboarding.domain.errors import (
     IncompleteApplication,
     MissingSelectedSession,
 )
-from backend.v2.contexts.onboarding.domain.models import Waiver
+from backend.v2.contexts.onboarding.domain.models import ParentProfile, Waiver
 from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import (
     MongoApplicationRepository,
 )
@@ -1221,11 +1221,27 @@ def compose_parent(
         unretired=MongoUnretiredCheckoutSessionRepository(db),
         stripe_account=_checkout_stripe_account,
     )
+
+    async def _account_parent_profile(parent_id: str) -> ParentProfile | None:
+        """S21 persona follow-up: the account's name and phone for a new
+        application. A name that is only the signup fallback (the email) is blank."""
+        user = await users_query.get_by_id(parent_id)
+        if user is None:
+            return None
+        name = (user.display_name or "").strip()
+        if name.lower() == str(user.email).lower():
+            name = ""
+        first, _, last = name.partition(" ")
+        return ParentProfile(
+            first_name=first, last_name=last.strip(), phone=(user.phone or "").strip()
+        )
+
     start_app = StartApplication(
         apps=apps_repo,
         academy_id=request_academy_id,
         clock=clock,
         checkout_retirement=checkout_retirement,
+        account_profile=_account_parent_profile,
     )
     patch_app = PatchApplication(
         apps=apps_repo,
@@ -2975,7 +2991,11 @@ def compose_parent(
                     continue
                 # Only a pass is a milestone; anything newer reads "Working on".
                 kind = "skill" if update.status == "PASSED" else "working_on"
-                return {"kind": kind, "label": _milestone_label(str(update.skill_name or "")), "at": at}
+                return {
+                    "kind": kind,
+                    "label": _milestone_label(str(update.skill_name or "")),
+                    "at": at,
+                }
             return None
 
         skill_results = await asyncio.gather(

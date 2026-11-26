@@ -14,7 +14,11 @@ from backend.v2.contexts.onboarding.application.use_cases.manage_application imp
     TransitionApplication,
 )
 from backend.v2.contexts.onboarding.domain.errors import ApplicationNotEditable
-from backend.v2.contexts.onboarding.domain.models import Application, ChildProfile
+from backend.v2.contexts.onboarding.domain.models import (
+    Application,
+    ChildProfile,
+    ParentProfile,
+)
 
 NOW = datetime(2026, 11, 26, 12, tzinfo=UTC)
 
@@ -322,8 +326,77 @@ async def test_another_parents_application_id_is_ignored():
     repo = ManyAppRepo(_app("theirs", "CHECKOUT_EXPIRED", parent="parent-2"))
     fresh = await _start(repo).execute(
         StartApplicationCommand(
-            parent_user_id="parent-1", parent_email="new.parent@example.com", application_id="theirs"
+            parent_user_id="parent-1",
+            parent_email="new.parent@example.com",
+            application_id="theirs",
         )
     )
     assert fresh.application_id != "theirs"
     assert fresh.child_profile.first_name == ""
+
+
+def _start(repo, account=None):
+    async def account_profile(parent_user_id):
+        return account
+
+    return StartApplication(
+        apps=repo,
+        academy_id=lambda: "acad",
+        clock=lambda: NOW,
+        account_profile=account_profile if account is not None else None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_add_a_child_does_not_reopen_a_draft_checkout_refused_as_a_duplicate():
+    """S02 persona follow-up: Lucia is already waiting for the free class; her
+    second (refused) draft for the same class must not come back on Add a child."""
+    repo = ManyAppRepo(
+        _app("a-wait", "PENDING_APPROVAL", age=3),
+        _app("a-dup", "DRAFT", age=1),
+    )
+    app = await _start(repo).execute(
+        StartApplicationCommand(parent_user_id="parent-1", parent_email="new.parent@example.com")
+    )
+    assert app.application_id not in {"a-wait", "a-dup"}
+    assert app.child_profile.first_name == ""
+    assert repo.apps["a-dup"].status == "ABANDONED"
+
+
+@pytest.mark.asyncio
+async def test_a_draft_for_a_different_class_is_still_resumed():
+    repo = ManyAppRepo(
+        _app("a-wait", "PENDING_APPROVAL", age=3),
+        _app("a-other", "DRAFT", session="sess-paid", age=1),
+    )
+    app = await _start(repo).execute(
+        StartApplicationCommand(parent_user_id="parent-1", parent_email="new.parent@example.com")
+    )
+    assert app.application_id == "a-other"
+
+
+@pytest.mark.asyncio
+async def test_a_first_application_takes_the_parent_name_and_phone_from_the_account():
+    """S21 persona follow-up: a seeded parent with no earlier application starts
+    at the child step, not a blank parent step."""
+    repo = ManyAppRepo()
+    account = ParentProfile(first_name="Demo", last_name="Parent", phone="555-0103")
+    app = await _start(repo, account).execute(
+        StartApplicationCommand(parent_user_id="parent-1", parent_email="new.parent@example.com")
+    )
+    assert (app.parent_profile.first_name, app.parent_profile.last_name) == ("Demo", "Parent")
+    assert app.parent_profile.phone == "555-0103"
+
+
+@pytest.mark.asyncio
+async def test_typed_parent_details_are_never_overwritten_by_the_account():
+    previous = _app("a-old", "APPROVED", age=5).model_copy(
+        update={"parent_profile": ParentProfile(first_name="Pat", last_name="Typed", phone="")}
+    )
+    repo = ManyAppRepo(previous)
+    account = ParentProfile(first_name="Account", last_name="Name", phone="555-0103")
+    app = await _start(repo, account).execute(
+        StartApplicationCommand(parent_user_id="parent-1", parent_email="new.parent@example.com")
+    )
+    assert (app.parent_profile.first_name, app.parent_profile.last_name) == ("Pat", "Typed")
+    assert app.parent_profile.phone == "555-0103"

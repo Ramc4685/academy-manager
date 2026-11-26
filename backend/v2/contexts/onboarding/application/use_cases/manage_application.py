@@ -99,6 +99,28 @@ def same_child(a: Application, b: Application) -> bool:
     return bool(key) and key == _child_key(b)
 
 
+async def _open_duplicate(
+    apps: ApplicationRepository, app: Application, now: datetime
+) -> Application | None:
+    """S02: another open registration for the same child and class, if any.
+
+    A second class for the same child, or a twin in the same class, is a
+    different child-and-class pair and is not a duplicate.
+    """
+    if not app.selected_session_id:
+        return None
+    for other in await apps.list_open_for_parent(app.parent_user_id, _SUBMITTED):
+        if (
+            other.application_id != app.application_id
+            and other.selected_session_id == app.selected_session_id
+            and same_child(other, app)
+            # An unpaid checkout whose expiry webhook never came must not block forever.
+            and not other.is_expired(now)
+        ):
+            return other
+    return None
+
+
 class SupersededCheckoutRetirement(Protocol):
     """Cross-context port (Billing): kill a checkout attempt this application
     no longer owns.
@@ -131,11 +153,15 @@ class StartApplication:
         academy_id: Callable[[], str],
         clock=lambda: datetime.now(UTC),
         checkout_retirement: SupersededCheckoutRetirement | None = None,
+        account_profile: Callable[[str], Awaitable[ParentProfile | None]] | None = None,
     ) -> None:
         self._apps = apps
         self._academy_id = academy_id
         self._now = clock
         self._checkout_retirement = checkout_retirement
+        # S21 persona follow-up: the account's own name and phone, so a parent
+        # with no earlier application does not retype them on the parent step.
+        self._account_profile = account_profile
 
     async def execute(self, cmd: StartApplicationCommand) -> Application:
         requested = await self._requested(cmd)
@@ -149,8 +175,20 @@ class StartApplication:
                 existing.model_copy(update={"status": "ABANDONED", "updated_at": self._now()})
             )
             existing = None
+        refused: Application | None = None
         if existing and existing.status in _EDITABLE:
-            return existing
+            if (
+                requested is not None
+                or await _open_duplicate(self._apps, existing, self._now()) is None
+            ):
+                return existing
+            # S02 persona follow-up: checkout already refused this draft as a
+            # duplicate of an open registration, so "Add a child" handing it back
+            # is a dead end. Retire it; the family's details carry over below.
+            await self._apps.save(
+                existing.model_copy(update={"status": "ABANDONED", "updated_at": self._now()})
+            )
+            refused, existing = existing, None
         if existing is not None and _RESUME_TO in _TRANSITIONS.get(existing.status, set()):
             # The parent hit Cancel on Stripe and landed back on the wizard,
             # which calls this on mount. Minting a SECOND application here
@@ -178,12 +216,13 @@ class StartApplication:
             created_at=now,
             updated_at=now,
         )
-        previous = existing or requested
+        previous = existing or requested or refused
         if previous is not None:
             # Returning parent adding another child: carry their own details
             # over from the previous application so they never retype them.
             # The child profile intentionally starts blank.
             app = app.model_copy(update={"parent_profile": previous.parent_profile})
+        app = await self._fill_from_account(app)
         if requested is not None and existing is not None:
             # Re-read after a missed resume: paid in another tab means no copy.
             requested = existing if existing.application_id == requested.application_id else None
@@ -199,6 +238,24 @@ class StartApplication:
             )
         await self._apps.save(app)
         return app
+
+    async def _fill_from_account(self, app: Application) -> Application:
+        """Blank parent name and phone come from the account; typed values win."""
+        profile = app.parent_profile
+        fields = ("first_name", "last_name", "phone")
+        if self._account_profile is None or all(getattr(profile, f).strip() for f in fields):
+            return app
+        account = await self._account_profile(app.parent_user_id)
+        if account is None:
+            return app
+        blanks = {
+            f: getattr(account, f).strip()
+            for f in fields
+            if not getattr(profile, f).strip() and getattr(account, f).strip()
+        }
+        if not blanks:
+            return app
+        return app.model_copy(update={"parent_profile": profile.model_copy(update=blanks)})
 
     async def _requested(self, cmd: StartApplicationCommand) -> Application | None:
         if not cmd.application_id:
@@ -795,27 +852,19 @@ class TransitionApplication:
         A second class for the same child, or a twin in the same class, is a
         different child-and-class pair and goes through.
         """
-        if not app.selected_session_id:
+        other = await _open_duplicate(self._apps, app, self._now())
+        if other is None:
             return
-        now = self._now()
-        for other in await self._apps.list_open_for_parent(app.parent_user_id, _SUBMITTED):
-            if (
-                other.application_id != app.application_id
-                and other.selected_session_id == app.selected_session_id
-                and same_child(other, app)
-                # An unpaid checkout whose expiry webhook never came must not block forever.
-                and not other.is_expired(now)
-            ):
-                name = app.child_profile.first_name.strip() or "This child"
-                if other.status == "CHECKOUT_PENDING":
-                    raise ApplicationNotEditable(
-                        f"{name} has an unfinished registration for this class. "
-                        "Use Finish registration on your Home page."
-                    )
-                raise ApplicationNotEditable(
-                    f"{name} is already registered for this class. "
-                    "You can see it on your Home page; we will email you when the academy confirms."
-                )
+        name = app.child_profile.first_name.strip() or "This child"
+        if other.status == "CHECKOUT_PENDING":
+            raise ApplicationNotEditable(
+                f"{name} has an unfinished registration for this class. "
+                "Use Finish registration on your Home page."
+            )
+        raise ApplicationNotEditable(
+            f"{name} is already registered for this class. "
+            "You can see it on your Home page; we will email you when the academy confirms."
+        )
 
     async def _assert_child_not_enrolled(self, app: Application) -> None:
         if self._student_registrations is None:
