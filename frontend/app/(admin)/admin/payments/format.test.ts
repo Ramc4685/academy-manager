@@ -89,11 +89,11 @@ describe("reconciliationLabel (UI-5)", () => {
     expect(reconciliationLabel(row({ status: "partially_paid" }))).toBe(pending);
   });
 
-  it("points the rows that need a person at Billing Health", () => {
+  it("points the rows that need a person at Payment system status", () => {
     expect(reconciliationStatusLabel("missing_allocation")).toBe(
-      "Payment received but not matched to this invoice. Check Billing Health.",
+      "Payment received but not matched to this invoice. Check Payment system status.",
     );
-    expect(reconciliationStatusLabel("orphan_charge")).toContain("Check Billing Health");
+    expect(reconciliationStatusLabel("orphan_charge")).toContain("Check Payment system status");
   });
 
   it("reads failed attempts and decline codes as sentences", () => {

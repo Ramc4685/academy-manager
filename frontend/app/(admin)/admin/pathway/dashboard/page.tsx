@@ -225,12 +225,12 @@ function LevelUpRuleCard({ data }: { data: PathwayDashboard }) {
     {
       value: "automatic",
       title: "Automatic",
-      body: "Last skill ticked = moved up in the evening. I get a note and can undo.",
+      body: "When a student's last skill is ticked, they move up that evening. Staff get a note and can undo it.",
     },
     {
       value: "approve_first",
-      title: "I approve first",
-      body: "Level-ups wait for one tap from my Today screen.",
+      title: "Staff approve first",
+      body: "Level-ups wait in the Inbox until a staff member approves them.",
     },
   ] as const;
   return (

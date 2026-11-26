@@ -112,7 +112,7 @@ export function PlanCard() {
                   Growth · {growthPrice} a month
                 </p>
                 <ul className="mt-1 list-disc pl-5 text-sm text-rally-muted">
-                  <li>0 bps processing markup on card and bank payments</li>
+                  <li>No CourtMastr processing fee on card and bank payments</li>
                   <li>AI features as they ship</li>
                 </ul>
               </div>

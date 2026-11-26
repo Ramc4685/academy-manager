@@ -101,7 +101,6 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
       // Settings overhaul PR 11b: the price list moved out of Settings.
       { id: "pricing", href: "/admin/pricing", label: "Pricing", icon: "list", match: startsWith("/admin/pricing"), ownerOnly: true },
       { id: "month-close", href: "/admin/reports", label: "Month close", icon: "chart", match: startsWith("/admin/reports"), ownerOnly: true },
-      { id: "billing-health", href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health"), ownerOnly: true },
       { id: "expenses", href: "/admin/expenses", label: "Expenses", icon: "card", match: startsWith("/admin/expenses") },
       { id: "coach-payouts", href: "/admin/payouts", label: "Coach payouts", icon: "whistle", match: startsWith("/admin/payouts"), ownerOnly: true },
     ],
@@ -112,7 +111,9 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
       // Waivers moved into Settings -> Family policies (Settings overhaul
       // Phase 3 PR 10): the standalone nav item is gone, /admin/waivers
       // redirects there, and its sub-routes still work from the embed.
-      { id: "settings", href: "/admin/settings", label: "Settings", icon: "cog", match: startsWith("/admin/settings") },
+      // S29: Billing Health is Settings > Integrations > Payment system status now,
+      // so its page lights Settings rather than a Money item of its own.
+      { id: "settings", href: "/admin/settings", label: "Settings", icon: "cog", match: (p) => p.startsWith("/admin/settings") || p.startsWith("/admin/billing-health") },
       { id: "audit-logs", href: "/admin/audit-logs", label: "Audit logs", icon: "filter", match: startsWith("/admin/audit-logs"), ownerOnly: true },
     ],
   },
@@ -213,7 +214,7 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/registrations/[applicationId]": { title: "Registration", subtitle: "Review and decide", breadcrumbs: ["Admin", "Inbox", "Registration"] },
   "/admin/payments": { title: "Payments", subtitle: "Who owes, who is charged, who paid", breadcrumbs: ["Admin", "Money", "Payments"] },
   "/admin/pricing": { title: "Pricing", subtitle: "Plans and where each class's price comes from", breadcrumbs: ["Admin", "Money", "Pricing"] },
-  "/admin/billing-health": { title: "Billing Health", subtitle: "Connect readiness, webhooks, reconciliation", breadcrumbs: ["Admin", "Money", "Billing Health"] },
+  "/admin/billing-health": { title: "Payment system status", subtitle: "Whether parents can pay, and payment updates that got stuck", breadcrumbs: ["Admin", "Settings", "Integrations", "Payment system status"] },
   "/admin/families": { title: "Families", subtitle: "Each family: children, balance, card, autopay", breadcrumbs: ["Admin", "People", "Families"] },
   "/admin/families/[parentId]": { title: "Family", subtitle: "Balance, autopay, invoices and what the system did", breadcrumbs: ["Admin", "People", "Families", "Family"] },
   "/admin/expenses": { title: "Expenses", subtitle: "Categorised academy spend", breadcrumbs: ["Admin", "Money", "Expenses"] },

@@ -148,7 +148,7 @@ test.describe("admin pathway dashboard", () => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.screenshot({ path: "test-results/pathway-dashboard-desktop.png", fullPage: true });
 
-    const approveFirst = page.getByRole("radio", { name: /I approve first/ });
+    const approveFirst = page.getByRole("radio", { name: /Staff approve first/ });
     await expect(page.getByRole("radio", { name: /Automatic/ })).toBeChecked();
     // click(), not check(): the controlled radio only shows checked once the
     // save re-renders, which check()'s immediate state read races under load.

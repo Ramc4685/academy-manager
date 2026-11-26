@@ -145,7 +145,7 @@ export default function BillingHealthPage() {
   if (readinessQuery.isError) {
     return (
       <div className="space-y-4 p-4 sm:p-6" data-testid="billing-health-page">
-        {/* UI-5: the admin topbar already prints "Billing Health" as the
+        {/* UI-5: the admin topbar already prints "Payment system status" as the
             page's h1; a second one here read as the title printed twice. */}
         <Card p={20}>
           <div data-testid="billing-health-fatal" className="space-y-3">
@@ -180,7 +180,7 @@ export default function BillingHealthPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          {/* UI-5: no page h1 — the admin topbar owns the "Billing Health"
+          {/* UI-5: no page h1 — the admin topbar owns the "Payment system status"
               title, and repeating it made the page say its name twice. */}
           <p className="text-sm text-rally-muted">
             Last reconciliation run: {relativeFromNow(latestRun?.finished_at ?? null)}
@@ -228,7 +228,7 @@ export default function BillingHealthPage() {
       {/* Three tiles, all fed by the readiness response (§4.3) */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Metric
-          label="Connect state"
+          label="Payment account"
           value={readiness?.connected_account.ready_for_charges ? "Ready" : "Not ready"}
           hint={
             readiness?.funds_route_to_academy
@@ -240,7 +240,7 @@ export default function BillingHealthPage() {
           accent={readiness?.connected_account.ready_for_charges ? undefined : "#dc2626"}
         />
         <Metric
-          label="Quarantined events"
+          label="Payment updates held back"
           value={String(readiness?.webhook_events?.quarantined ?? 0)}
           hint={`${readiness?.webhook_events?.failed ?? 0} failed`}
           accent="#d97706"
@@ -261,8 +261,8 @@ export default function BillingHealthPage() {
 
       {/* Webhooks */}
       <Section
-        title="Webhooks"
-        hint="Quarantined events Stripe sent that we never applied"
+        title="Payment updates from Stripe"
+        hint="Updates Stripe sent that were held back and never applied"
         badge={quarantined.length > 0 ? `${quarantined.length} pending` : undefined}
       >
         <Card p={0}>
@@ -270,10 +270,10 @@ export default function BillingHealthPage() {
             <TableSkeleton />
           ) : quarantinedQuery.isError ? (
             <Alert tone="red">
-              {(quarantinedQuery.error as Error)?.message ?? "Could not load quarantined events."}
+              {(quarantinedQuery.error as Error)?.message ?? "Could not load held-back payment updates."}
             </Alert>
           ) : quarantined.length === 0 ? (
-            <Alert tone="green">No quarantined webhook events.</Alert>
+            <Alert tone="green">No payment updates are held back.</Alert>
           ) : (
             <>
               {/* #857: the testid lives on the wrapper, not the <table>, so
@@ -812,11 +812,11 @@ function PaymentReadinessCard({ query }: { query: UseQueryResult<ConnectReadines
     ? data.payments_blocked_reason
       ? data.payments_blocked_reason
       : account.configured
-      ? "The academy's Stripe account is connected but not ready to take charges, and the platform fallback is off."
-      : "No Stripe account is connected, and the platform fallback is off."
+      ? "The academy's Stripe account is connected but cannot take payments yet, and the backup account is off."
+      : "No Stripe account is connected, and the backup account is off."
     : data.funds_route_to_academy
-      ? "Charges route to the academy's own Stripe account."
-      : "The platform charge fallback is on, so charges succeed on the platform account instead of the academy's. Finish Connect onboarding to route funds to the academy.";
+      ? "Payments go to the academy's own Stripe account."
+      : "Payments are going to the backup (platform) account instead of the academy's. Finish setting up the academy's Stripe account so money goes there.";
 
   const toneClasses = {
     green: "bg-green-50 text-green-800",
@@ -833,28 +833,28 @@ function PaymentReadinessCard({ query }: { query: UseQueryResult<ConnectReadines
         </div>
         <dl className="grid gap-2 text-sm sm:grid-cols-2">
           <Row
-            label="Connected account"
+            label="Stripe account"
             value={account.account_id_masked ?? "Not connected"}
             mono={Boolean(account.account_id_masked)}
           />
           <Row label="Account status" value={account.status ?? "—"} />
-          <Row label="Charges enabled" value={account.charges_enabled ? "Yes" : "No"} />
-          <Row label="Payouts enabled" value={account.payouts_enabled ? "Yes" : "No"} />
+          <Row label="Can take payments" value={account.charges_enabled ? "Yes" : "No"} />
+          <Row label="Can pay out to the bank" value={account.payouts_enabled ? "Yes" : "No"} />
           {account.configured && account.direct_charges_supported !== undefined && (
             <Row
-              label="Stripe carries fees and losses"
+              label="Stripe fees and disputes on the academy's account"
               value={account.direct_charges_supported ? "Yes" : "No — reconnect Stripe"}
             />
           )}
           <Row
-            label="Charges settle on"
-            value={data.allow_platform_charge_fallback ? "Platform account (house academy)" : "Connected account"}
+            label="Payments land on"
+            value={data.allow_platform_charge_fallback ? "Backup (platform) account" : "The academy's Stripe account"}
           />
           <Row
-            label="Stuck webhook events"
+            label="Stuck payment updates"
             value={
               webhookEvents
-                ? `${webhookEvents.quarantined} quarantined · ${webhookEvents.failed} failed`
+                ? `${webhookEvents.quarantined} held back · ${webhookEvents.failed} failed`
                 : "Unavailable"
             }
           />

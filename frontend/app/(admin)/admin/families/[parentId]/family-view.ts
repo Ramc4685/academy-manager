@@ -351,7 +351,7 @@ const CHARGE_NOT_ATTEMPTED: Readonly<Record<string, string>> = {
   checkout_session_open:
     "The family has a checkout open for this invoice. Wait for it to finish or expire.",
   existing_charge_needs_review:
-    "Stripe already has a charge for this invoice that needs a look. Check Billing Health before charging again.",
+    "Stripe already has a charge for this invoice that needs a look. Check Payment system status before charging again.",
 };
 
 /**

@@ -599,6 +599,11 @@ function dispatchRosterAction(
   }
 }
 
+/**
+ * S29: the level picker sits behind a disclosure. Placement is a coach and
+ * owner job; a front-desk admin working the roster sees the level as text
+ * and only meets the dropdown when they ask to change it.
+ */
 export function LevelSelect({
   value,
   levels,
@@ -610,23 +615,32 @@ export function LevelSelect({
   disabled: boolean;
   onChange: (levelId: string) => void;
 }) {
+  const current = levels.find((level) => level.level_id === value);
   return (
-    <select
-      value={value}
-      disabled={disabled}
-      onChange={(event) => {
-        if (event.target.value) onChange(event.target.value);
-      }}
-      className="min-h-9 rounded-md border border-rally-line bg-white px-2 py-1 font-mono text-xs font-semibold text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30 disabled:opacity-60"
-      aria-label="Student pathway level"
-    >
-      <option value="">Place</option>
-      {levels.map((level) => (
-        <option key={level.level_id} value={level.level_id}>
-          L{level.sequence} · {level.name}
-        </option>
-      ))}
-    </select>
+    <details className="group" data-testid="roster-level-disclosure">
+      <summary className="cursor-pointer list-none font-mono text-xs font-semibold text-rally-ink">
+        {current ? `L${current.sequence} · ${current.name}` : "Not placed"}
+        <span className="ml-2 font-sans font-normal text-rally-cobalt underline group-open:hidden">
+          Change level
+        </span>
+      </summary>
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(event) => {
+          if (event.target.value) onChange(event.target.value);
+        }}
+        className="mt-1 min-h-9 rounded-md border border-rally-line bg-white px-2 py-1 font-mono text-xs font-semibold text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30 disabled:opacity-60"
+        aria-label="Student pathway level"
+      >
+        <option value="">Place</option>
+        {levels.map((level) => (
+          <option key={level.level_id} value={level.level_id}>
+            L{level.sequence} · {level.name}
+          </option>
+        ))}
+      </select>
+    </details>
   );
 }
 

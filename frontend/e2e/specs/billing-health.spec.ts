@@ -107,10 +107,10 @@ test.describe("admin billing health", () => {
 
     await expect(page.getByTestId("billing-health-page")).toBeVisible();
     // UI-5: the admin topbar owns the title; the page must not print it twice.
-    await expect(page.getByRole("heading", { level: 1, name: "Billing Health" })).toHaveCount(1);
-    // Tiles: Connect state, quarantined count, last reconciliation.
-    await expect(page.getByText("Connect state", { exact: true })).toBeVisible();
-    await expect(page.getByText("Quarantined events", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Payment system status" })).toHaveCount(1);
+    // Tiles: payment account, held-back count, last reconciliation (S29 plain words).
+    await expect(page.getByText("Payment account", { exact: true })).toBeVisible();
+    await expect(page.getByText("Payment updates held back", { exact: true })).toBeVisible();
     await expect(page.getByText("Last reconciliation", { exact: true })).toBeVisible();
     await expect(page.getByTestId("reconciliation-runs-table")).toBeVisible();
     await expect(page.getByTestId("quarantined-events-table")).toBeVisible();
