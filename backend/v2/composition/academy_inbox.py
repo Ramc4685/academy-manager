@@ -14,6 +14,9 @@ from typing import Any
 
 from backend.v2.composition.push import compose_roles_of
 
+#: Roles a recipient may hold for a staff DM to join the shared family thread.
+FAMILY_ROLES = frozenset({"parent", "student"})
+
 
 @dataclass
 class AcademyInbox:
@@ -22,9 +25,15 @@ class AcademyInbox:
 
     async def thread_for(self, academy_id: str, recipient_id: str) -> str | None:
         """The academy-inbox thread a staff DM to ``recipient_id`` belongs to:
-        the parent's own id, or ``None`` for a coach or staff DM (stays private)."""
-        roles = await self.roles_of(academy_id, recipient_id)
-        return recipient_id if "parent" in roles else None
+        the parent's own id, or ``None`` (the DM stays private to its two ends).
+
+        Parent-only on purpose: a parent who is also a coach or staff member
+        could be getting a private staff DM, and joining it to the shared
+        thread would show it to every admin. Their own messages to the academy
+        still land in the thread; staff replies to them stay private.
+        """
+        roles = set(await self.roles_of(academy_id, recipient_id))
+        return recipient_id if "parent" in roles and roles <= FAMILY_ROLES else None
 
     async def staff_name(self, user_id: str) -> str | None:
         user = await self.users.get_by_id(user_id)
