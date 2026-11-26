@@ -149,3 +149,26 @@ describe("the shared confirm dialog (#838)", () => {
     expect(src).toMatch(/disabled=\{/);
   });
 });
+
+/**
+ * S66: "Coach is sick" reaches families (emails, credits), so its own review
+ * step is the confirmation: every consequence is listed, and Confirm stays
+ * off until each cancelled date is priced and has a reason.
+ */
+describe("the Coach is sick flow reviews before it changes anything (S66)", () => {
+  const src = source("components/admin/sessions/cover-flow.tsx");
+
+  it("lists who is emailed and each family's credit before Confirm", () => {
+    expect(src).toContain("coverReviewLines(");
+    expect(src).toContain("creditRows(");
+    expect(src).toContain("Check before you confirm");
+  });
+
+  it("gates Confirm on the review being complete", () => {
+    expect(src).toMatch(/!readyToConfirm\(/);
+  });
+
+  it("only the Confirm button writes", () => {
+    expect(src.match(/void applyAll\(/g)).toHaveLength(2); // Confirm, and Retry for a failed date
+  });
+});

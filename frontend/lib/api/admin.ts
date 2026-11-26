@@ -4893,3 +4893,44 @@ export function searchParentsByPhone(digits: string): Promise<{ matches: AdminPh
     { method: "GET" },
   );
 }
+
+// --- S66: "Coach is sick" cover flow ---------------------------------------
+
+export type CoverOptionsResponse = components["schemas"]["CoverOptionsResponse"];
+export type CoverOptions = components["schemas"]["CoverOptionsView"];
+export type CoverDate = components["schemas"]["CoverDateView"];
+export type AssignCoverResponse = components["schemas"]["AssignCoverResponse"];
+
+/** A coach's class dates in the next two weeks. */
+export function getCoachCoverDates(coachId: string): Promise<CoverOptionsResponse> {
+  return apiFetch<CoverOptionsResponse>(
+    `/admin/coach-cover/options?coach_id=${encodeURIComponent(coachId)}`,
+    { method: "GET" },
+  );
+}
+
+/** Who is free or busy for each class date, and the families on it. */
+export function getCoverOptions(occurrenceIds: string[]): Promise<CoverOptionsResponse> {
+  return apiFetch<CoverOptionsResponse>(
+    `/admin/coach-cover/options?occurrence_ids=${encodeURIComponent(occurrenceIds.join(","))}`,
+    { method: "GET" },
+  );
+}
+
+/** Each family's credit if the date were cancelled; the server writes nothing. */
+export function getCancelPreview(occurrenceId: string): Promise<CreditMissedClassResponse> {
+  return apiFetch<CreditMissedClassResponse>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/cancel-preview`,
+    { method: "GET" },
+  );
+}
+
+export function assignCover(
+  occurrenceId: string,
+  payload: { replacement_coach_id: string; notify_families: boolean; reason?: string },
+): Promise<AssignCoverResponse> {
+  return apiFetch<AssignCoverResponse>(
+    `/admin/coach-cover/${encodeURIComponent(occurrenceId)}/assign`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}

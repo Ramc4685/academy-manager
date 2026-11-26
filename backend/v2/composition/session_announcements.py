@@ -189,7 +189,10 @@ class SessionAnnouncementService:
         author_persona: Literal["admin", "coach"],
         body: str,
         urgent: bool = False,
+        email: bool | None = None,
     ) -> AnnouncementPostResult:
+        """``email`` None keeps the rule "email only when urgent"; the cover
+        flow (S66) emails a routine notice when the admin leaves the box ticked."""
         session = await self._sessions.get(session_id)
         if session is None:
             raise SessionNotFound(session_id)
@@ -211,7 +214,7 @@ class SessionAnnouncementService:
             body=body,
             urgency="urgent" if urgent else "routine",
         )
-        if not urgent:
+        if not (urgent if email is None else email):
             if self._message_push is not None:
                 # L11: routine posts send no email; an opt-in push nudges the class.
                 await self._message_push.class_announcement(

@@ -11223,6 +11223,65 @@
         "title": "AssignClassProgramRequest",
         "type": "object"
       },
+      "AssignCoverRequest": {
+        "properties": {
+          "notify_families": {
+            "default": false,
+            "title": "Notify Families",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "replacement_coach_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Replacement Coach Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "replacement_coach_id"
+        ],
+        "title": "AssignCoverRequest",
+        "type": "object"
+      },
+      "AssignCoverResponse": {
+        "properties": {
+          "announcement_posted": {
+            "default": false,
+            "title": "Announcement Posted",
+            "type": "boolean"
+          },
+          "email_failed": {
+            "default": 0,
+            "title": "Email Failed",
+            "type": "integer"
+          },
+          "families_notified": {
+            "default": 0,
+            "title": "Families Notified",
+            "type": "integer"
+          },
+          "occurrence": {
+            "$ref": "#/components/schemas/AdminSessionOccurrenceView"
+          }
+        },
+        "required": [
+          "occurrence"
+        ],
+        "title": "AssignCoverResponse",
+        "type": "object"
+      },
       "AssignedClassView": {
         "description": "The class an approved make-up / trial puts the child in (issue #1038).\n\nResolved facts, not raw ids: what, when (UTC instant + the academy's IANA\ntimezone so the client renders academy-local time) and where. ``status``\nis the occurrence's own status, so a called-off class reads \"cancelled\".",
         "properties": {
@@ -17104,6 +17163,215 @@
           "reason"
         ],
         "title": "CorrectStudentAttendanceRequest",
+        "type": "object"
+      },
+      "CoverBusyView": {
+        "properties": {
+          "class_title": {
+            "title": "Class Title",
+            "type": "string"
+          },
+          "coach_id": {
+            "title": "Coach Id",
+            "type": "string"
+          },
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coach_id",
+          "name",
+          "class_title",
+          "start_at",
+          "end_at"
+        ],
+        "title": "CoverBusyView",
+        "type": "object"
+      },
+      "CoverCoachView": {
+        "properties": {
+          "coach_id": {
+            "title": "Coach Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coach_id",
+          "name"
+        ],
+        "title": "CoverCoachView",
+        "type": "object"
+      },
+      "CoverDateView": {
+        "properties": {
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
+            "type": "string"
+          },
+          "enrolled_count": {
+            "title": "Enrolled Count",
+            "type": "integer"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "session_id",
+          "title",
+          "start_at",
+          "end_at",
+          "enrolled_count"
+        ],
+        "title": "CoverDateView",
+        "type": "object"
+      },
+      "CoverFamilyView": {
+        "properties": {
+          "family_name": {
+            "title": "Family Name",
+            "type": "string"
+          },
+          "has_email": {
+            "title": "Has Email",
+            "type": "boolean"
+          },
+          "parent_id": {
+            "title": "Parent Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent_id",
+          "family_name",
+          "has_email"
+        ],
+        "title": "CoverFamilyView",
+        "type": "object"
+      },
+      "CoverOptionsResponse": {
+        "properties": {
+          "dates": {
+            "items": {
+              "$ref": "#/components/schemas/CoverDateView"
+            },
+            "title": "Dates",
+            "type": "array"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/CoverOptionsView"
+            },
+            "title": "Options",
+            "type": "array"
+          }
+        },
+        "title": "CoverOptionsResponse",
+        "type": "object"
+      },
+      "CoverOptionsView": {
+        "properties": {
+          "busy": {
+            "items": {
+              "$ref": "#/components/schemas/CoverBusyView"
+            },
+            "title": "Busy",
+            "type": "array"
+          },
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
+            "type": "string"
+          },
+          "enrolled_count": {
+            "title": "Enrolled Count",
+            "type": "integer"
+          },
+          "families": {
+            "items": {
+              "$ref": "#/components/schemas/CoverFamilyView"
+            },
+            "title": "Families",
+            "type": "array"
+          },
+          "free": {
+            "items": {
+              "$ref": "#/components/schemas/CoverCoachView"
+            },
+            "title": "Free",
+            "type": "array"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "scheduled_coach": {
+            "$ref": "#/components/schemas/CoverCoachView"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "session_id",
+          "title",
+          "start_at",
+          "end_at",
+          "status",
+          "scheduled_coach",
+          "enrolled_count",
+          "families",
+          "free",
+          "busy"
+        ],
+        "title": "CoverOptionsView",
         "type": "object"
       },
       "CreateAbsenceNoticeRequest": {
@@ -43839,6 +44107,127 @@
         ]
       }
     },
+    "/api/v2/admin/coach-cover/options": {
+      "get": {
+        "operationId": "get_cover_options_api_v2_admin_coach_cover_options_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "coach_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Coach Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "occurrence_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1400,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Occurrence Ids"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverOptionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "A coach's class dates, or who is free to cover given class dates",
+        "tags": [
+          "admin.coach-cover"
+        ]
+      }
+    },
+    "/api/v2/admin/coach-cover/{occurrence_id}/assign": {
+      "post": {
+        "operationId": "assign_cover_api_v2_admin_coach_cover__occurrence_id__assign_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignCoverRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignCoverResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put a free coach on one class date and, if asked, tell the families",
+        "tags": [
+          "admin.coach-cover"
+        ]
+      }
+    },
     "/api/v2/admin/coaches/{coach_id}/pay-rates": {
       "get": {
         "operationId": "list_coach_pay_rates_api_v2_admin_coaches__coach_id__pay_rates_get",
@@ -52193,6 +52582,48 @@
         "summary": "Cancel one dated class, credit the families and stop coach pay (#671)",
         "tags": [
           "admin.sessions"
+        ]
+      }
+    },
+    "/api/v2/admin/session-occurrences/{occurrence_id}/cancel-preview": {
+      "get": {
+        "operationId": "get_cancel_preview_api_v2_admin_session_occurrences__occurrence_id__cancel_preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditMissedClassResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Each family's credit if this class date were cancelled (writes nothing)",
+        "tags": [
+          "admin.coach-cover"
         ]
       }
     },

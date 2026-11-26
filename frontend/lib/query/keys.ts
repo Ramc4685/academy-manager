@@ -54,6 +54,11 @@ export const queryKeys = {
     all: ["admin"] as const,
     sessions: (date?: string) => ["admin", "sessions", date ?? "all"] as const,
     today: (date?: string) => ["admin", "today", date ?? "current"] as const,
+    coverDates: (coachId: string) => ["admin", "coach-cover", "dates", coachId] as const,
+    coverOptions: (occurrenceIds: string[]) =>
+      ["admin", "coach-cover", "options", ...occurrenceIds] as const,
+    cancelPreview: (occurrenceId: string) =>
+      ["admin", "coach-cover", "cancel-preview", occurrenceId] as const,
     // Health notes (D-14): gcTime 0, never persisted; see roster-sheet.tsx.
     todayRosterHealth: (occurrenceId: string) =>
       ["admin", "today", "roster-health", occurrenceId] as const,

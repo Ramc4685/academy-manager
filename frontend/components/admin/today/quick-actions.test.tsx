@@ -55,7 +55,7 @@ describe("Today quick actions (S65)", () => {
 
   it("shows the four buttons, 64px tall on a phone", () => {
     const html = renderToStaticMarkup(
-      <QuickActionButtons isPhone onAbsent={noop} onLate={noop} onSick={noop} onWalkIn={noop} sickDisabled={false} />,
+      <QuickActionButtons isPhone onAbsent={noop} onLate={noop} onSick={noop} onWalkIn={noop} />,
     );
     for (const label of ["Absent", "Running late", "Coach is sick", "New walk-in"]) {
       expect(html).toContain(`>${label}<`);
@@ -66,7 +66,7 @@ describe("Today quick actions (S65)", () => {
 
   it("uses the 38px md buttons on desktop", () => {
     const html = renderToStaticMarkup(
-      <QuickActionButtons isPhone={false} onAbsent={noop} onLate={noop} onSick={noop} onWalkIn={noop} sickDisabled />,
+      <QuickActionButtons isPhone={false} onAbsent={noop} onLate={noop} onSick={noop} onWalkIn={noop} />,
     );
     expect(html).not.toContain("height:64px");
     expect(html).toContain("height:38px");

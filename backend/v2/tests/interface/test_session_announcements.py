@@ -9,11 +9,13 @@ assert against it and never touch a provider.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -511,3 +513,23 @@ def test_can_delete_is_computed_per_viewer():
     by_body = {a["body"]: a["can_delete"] for a in coach_view["announcements"]}
     assert by_body == {"Coach post": True, "Admin post": False}
     assert all(a["can_delete"] for a in admin_view["announcements"])
+
+
+def test_a_routine_notice_can_ask_for_email():
+    """S66 cover notice: routine urgency, emailed when the admin leaves it ticked."""
+    h = _harness()
+
+    async def post() -> Any:
+        with tenant_scope(ACADEMY):
+            return await h.service.post(
+                session_id=SESSION_ID,
+                author_id="adm-1",
+                author_persona="admin",
+                body="Coach Demo covers tonight.",
+                email=True,
+            )
+
+    result = asyncio.run(post())
+    assert (result.email_status, result.sent_count) == ("sent", 1)
+    assert result.message.urgency == "routine"
+    assert [s["email"] for s in h.sender.sent] == ["p1@example.com"]

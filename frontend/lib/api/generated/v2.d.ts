@@ -1190,6 +1190,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/coach-cover/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A coach's class dates, or who is free to cover given class dates */
+        get: operations["get_cover_options_api_v2_admin_coach_cover_options_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/coach-cover/{occurrence_id}/assign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Put a free coach on one class date and, if asked, tell the families */
+        post: operations["assign_cover_api_v2_admin_coach_cover__occurrence_id__assign_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/coaches/{coach_id}/pay-rates": {
         parameters: {
             query?: never;
@@ -4192,6 +4226,23 @@ export interface paths {
         put?: never;
         /** Cancel one dated class, credit the families and stop coach pay (#671) */
         post: operations["cancel_session_occurrence_api_v2_admin_session_occurrences__occurrence_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/session-occurrences/{occurrence_id}/cancel-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Each family's credit if this class date were cancelled (writes nothing) */
+        get: operations["get_cancel_preview_api_v2_admin_session_occurrences__occurrence_id__cancel_preview_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -12494,6 +12545,37 @@ export interface components {
             /** Program Id */
             program_id: string | null;
         };
+        /** AssignCoverRequest */
+        AssignCoverRequest: {
+            /**
+             * Notify Families
+             * @default false
+             */
+            notify_families: boolean;
+            /** Reason */
+            reason?: string | null;
+            /** Replacement Coach Id */
+            replacement_coach_id: string;
+        };
+        /** AssignCoverResponse */
+        AssignCoverResponse: {
+            /**
+             * Announcement Posted
+             * @default false
+             */
+            announcement_posted: boolean;
+            /**
+             * Email Failed
+             * @default 0
+             */
+            email_failed: number;
+            /**
+             * Families Notified
+             * @default 0
+             */
+            families_notified: number;
+            occurrence: components["schemas"]["AdminSessionOccurrenceView"];
+        };
         /**
          * AssignedClassView
          * @description The class an approved make-up / trial puts the child in (issue #1038).
@@ -14633,6 +14715,99 @@ export interface components {
              * @enum {string}
              */
             status: "present" | "absent" | "late";
+        };
+        /** CoverBusyView */
+        CoverBusyView: {
+            /** Class Title */
+            class_title: string;
+            /** Coach Id */
+            coach_id: string;
+            /**
+             * End At
+             * Format: date-time
+             */
+            end_at: string;
+            /** Name */
+            name: string;
+            /**
+             * Start At
+             * Format: date-time
+             */
+            start_at: string;
+        };
+        /** CoverCoachView */
+        CoverCoachView: {
+            /** Coach Id */
+            coach_id: string;
+            /** Name */
+            name: string;
+        };
+        /** CoverDateView */
+        CoverDateView: {
+            /**
+             * End At
+             * Format: date-time
+             */
+            end_at: string;
+            /** Enrolled Count */
+            enrolled_count: number;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Session Id */
+            session_id: string;
+            /**
+             * Start At
+             * Format: date-time
+             */
+            start_at: string;
+            /** Title */
+            title: string;
+        };
+        /** CoverFamilyView */
+        CoverFamilyView: {
+            /** Family Name */
+            family_name: string;
+            /** Has Email */
+            has_email: boolean;
+            /** Parent Id */
+            parent_id: string;
+        };
+        /** CoverOptionsResponse */
+        CoverOptionsResponse: {
+            /** Dates */
+            dates?: components["schemas"]["CoverDateView"][];
+            /** Options */
+            options?: components["schemas"]["CoverOptionsView"][];
+        };
+        /** CoverOptionsView */
+        CoverOptionsView: {
+            /** Busy */
+            busy: components["schemas"]["CoverBusyView"][];
+            /**
+             * End At
+             * Format: date-time
+             */
+            end_at: string;
+            /** Enrolled Count */
+            enrolled_count: number;
+            /** Families */
+            families: components["schemas"]["CoverFamilyView"][];
+            /** Free */
+            free: components["schemas"]["CoverCoachView"][];
+            /** Occurrence Id */
+            occurrence_id: string;
+            scheduled_coach: components["schemas"]["CoverCoachView"];
+            /** Session Id */
+            session_id: string;
+            /**
+             * Start At
+             * Format: date-time
+             */
+            start_at: string;
+            /** Status */
+            status: string;
+            /** Title */
+            title: string;
         };
         /** CreateAbsenceNoticeRequest */
         CreateAbsenceNoticeRequest: {
@@ -25010,6 +25185,73 @@ export interface operations {
             };
         };
     };
+    get_cover_options_api_v2_admin_coach_cover_options_get: {
+        parameters: {
+            query?: {
+                coach_id?: string | null;
+                occurrence_ids?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverOptionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    assign_cover_api_v2_admin_coach_cover__occurrence_id__assign_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                occurrence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignCoverRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignCoverResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_coach_pay_rates_api_v2_admin_coaches__coach_id__pay_rates_get: {
         parameters: {
             query?: never;
@@ -30748,6 +30990,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CancelSessionOccurrenceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_cancel_preview_api_v2_admin_session_occurrences__occurrence_id__cancel_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                occurrence_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditMissedClassResponse"];
                 };
             };
             /** @description Validation Error */

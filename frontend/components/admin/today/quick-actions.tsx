@@ -6,8 +6,6 @@
  */
 
 import { useState } from "react";
-import type { Route } from "next";
-import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { recordAdminAbsence, type AdminToday } from "@/lib/api/admin";
@@ -15,6 +13,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { useIsPhone } from "@/lib/use-is-phone";
 import { QuickAddFamily } from "@/app/(admin)/admin/families/QuickAddFamily";
 import { RecordAbsenceDialog } from "@/components/admin/requests/request-queues";
+import { CoverFlow } from "@/components/admin/sessions/cover-flow";
 import { Button } from "@/components/ds/button";
 import { Modal } from "@/components/ds/modal";
 import { useToast } from "@/components/ds/toast";
@@ -22,7 +21,7 @@ import { useToast } from "@/components/ds/toast";
 import { liveClass } from "./format";
 import { RunningLateDialog } from "./running-late-dialog";
 
-type Dialog = "absent" | "late" | "walkin" | null;
+type Dialog = "absent" | "late" | "sick" | "walkin" | null;
 
 const PHONE_BUTTON = { height: 64, minHeight: 64 } as const;
 
@@ -32,14 +31,12 @@ export function QuickActionButtons({
   onLate,
   onSick,
   onWalkIn,
-  sickDisabled,
 }: {
   isPhone: boolean;
   onAbsent: () => void;
   onLate: () => void;
   onSick: () => void;
   onWalkIn: () => void;
-  sickDisabled: boolean;
 }) {
   const style = isPhone ? PHONE_BUTTON : undefined;
   return (
@@ -57,7 +54,6 @@ export function QuickActionButtons({
         variant="secondary"
         style={style}
         onClick={onSick}
-        disabled={sickDisabled}
         data-testid="admin-today-action-sick"
       >
         Coach is sick
@@ -71,7 +67,6 @@ export function QuickActionButtons({
 
 export function QuickActions({ today }: { today: AdminToday | undefined }) {
   const isPhone = useIsPhone();
-  const router = useRouter();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -95,14 +90,7 @@ export function QuickActions({ today }: { today: AdminToday | undefined }) {
         isPhone={isPhone}
         onAbsent={() => setDialog("absent")}
         onLate={() => setDialog("late")}
-        // shortcut: the class page's replacement-coach picker until the S66 cover flow lands.
-        onSick={() =>
-          live &&
-          router.push(
-            `/admin/sessions/${encodeURIComponent(live.session_id)}?cover=${encodeURIComponent(live.occurrence_id)}` as Route,
-          )
-        }
-        sickDisabled={!live}
+        onSick={() => setDialog("sick")}
         onWalkIn={() => setDialog("walkin")}
       />
       {dialog === "absent" ? (
@@ -118,6 +106,7 @@ export function QuickActions({ today }: { today: AdminToday | undefined }) {
           onConfirm={(payload, name) => absence.mutate({ payload, name })}
         />
       ) : null}
+      {dialog === "sick" ? <CoverFlow timezone={today?.timezone} onClose={() => setDialog(null)} /> : null}
       {dialog === "late" ? <RunningLateDialog today={today} onClose={() => setDialog(null)} /> : null}
       {dialog === "walkin" ? (
         <Modal open onClose={() => setDialog(null)} title="New walk-in" size="lg">

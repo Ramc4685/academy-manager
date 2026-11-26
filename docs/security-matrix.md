@@ -32,6 +32,8 @@ A request returning **404** means "the route does not exist for you," regardless
 | Create session | Yes | No | No |
 | Edit session | Yes | No | No |
 | Cancel session | Yes | No | No |
+| Read cover options (who is free) and a class date's cancel preview | Yes | No | No |
+| Assign cover for a sick coach (Coach is sick flow) | Yes | No | No |
 | **Enrollment** | | | |
 | Edit roster (add/remove student) | Yes | No | No |
 | Confirm enrollment | Yes | No | Conditional: own child, via Stripe checkout |

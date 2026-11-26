@@ -3,7 +3,8 @@
 /**
  * S64: the Today block that leads the admin dashboard: the academy date,
  * the quick actions (S65), today's classes and the roster sheet. `/admin?class=<occurrence_id>` opens
- * a class's roster; closing it drops the param.
+ * a class's roster; closing it drops the param. `/admin?cover=<occurrence_id>` (a coach's
+ * cover request, S67) opens the Coach is sick flow at that date (S66).
  */
 
 import type { ReactNode } from "react";
@@ -15,6 +16,7 @@ import { getAdminToday } from "@/lib/api/admin";
 import { academyDateISO } from "@/lib/format/academy-time";
 import { queryKeys } from "@/lib/query/keys";
 import { useAcademyTimezone } from "@/components/admin/use-academy-today";
+import { CoverFlow } from "@/components/admin/sessions/cover-flow";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 
@@ -47,10 +49,12 @@ export function TodayBlock() {
   const openId = params.get("class");
   const openClass = data?.classes.find((cls) => cls.occurrence_id === openId) ?? null;
 
-  function setOpen(occurrenceId: string | null) {
+  const coverId = params.get("cover");
+
+  function setParam(key: "class" | "cover", occurrenceId: string | null) {
     const next = new URLSearchParams(params.toString());
-    if (occurrenceId) next.set("class", occurrenceId);
-    else next.delete("class");
+    if (occurrenceId) next.set(key, occurrenceId);
+    else next.delete(key);
     const qs = next.toString();
     router.replace((qs ? `${pathname}?${qs}` : pathname) as Route, { scroll: false });
   }
@@ -67,7 +71,7 @@ export function TodayBlock() {
         onRetry={() => void todayQuery.refetch()}
         healthEnabled={data?.health_enabled ?? false}
         onOpen={(id) => {
-          setOpen(id);
+          setParam("class", id);
           void todayQuery.refetch();
         }}
         renderHealth={(cls) => <LiveHealthCount occurrenceId={cls.occurrence_id} />}
@@ -78,7 +82,15 @@ export function TodayBlock() {
           date={data.date}
           timezone={data.timezone}
           healthEnabled={data.health_enabled}
-          onClose={() => setOpen(null)}
+          onClose={() => setParam("class", null)}
+        />
+      ) : null}
+      {coverId ? (
+        <CoverFlow
+          key={coverId}
+          initialOccurrenceId={coverId}
+          timezone={data?.timezone ?? academyTimezone}
+          onClose={() => setParam("cover", null)}
         />
       ) : null}
     </Card>
