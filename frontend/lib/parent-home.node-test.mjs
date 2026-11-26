@@ -495,9 +495,9 @@ test("a failed payment outranks an amount due in the banner copy", () => {
 });
 
 test("attendance copy counts marked sessions and never fakes a zero", () => {
-  assert.equal(attendanceCopy({ present: 6, total: 7 }), "6 of 7 sessions this month");
-  assert.equal(attendanceCopy({ present: 0, total: 0 }), "No sessions marked yet this month");
-  assert.equal(attendanceCopy(null), "No sessions marked yet this month");
+  assert.equal(attendanceCopy({ present: 6, total: 7 }), "Present at 6 of 7 class dates this month");
+  assert.equal(attendanceCopy({ present: 0, total: 0 }), "No class dates marked yet this month");
+  assert.equal(attendanceCopy(null), "No class dates marked yet this month");
 });
 
 test("next session renders in the academy timezone with a venue fallback", () => {

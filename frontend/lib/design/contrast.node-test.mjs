@@ -156,16 +156,9 @@ test("UI-4 — parent pay hero caption clears AA on the night card", () => {
   assert.ok(contrastRatio(NIGHT, MUTED) < AA_TEXT, "rally.subtle on night fails AA");
   assert.ok(contrastRatio(NIGHT, SUBTLE_INK) >= AA_TEXT, "subtle-ink on night clears AA");
 
+  // S57 replaced the night hero with a light summary card; rally.subtle must not return to a night surface.
   const source = read("app/(parent)/parent/payments/page.tsx");
-  const start = source.indexOf("{/* Balance hero */}");
-  assert.ok(start >= 0, "balance hero block is still marked");
-  assert.ok(source.slice(start).includes("bg-rally-night"), "hero is still the night card");
-  const caption = source
-    .slice(start)
-    .match(/<p className="([^"]*)" data-testid="pay-balance-reassurance">/);
-  assert.ok(caption, "hero caption keeps its test id and a static className");
-  assert.ok(/\btext-rally-subtle-ink\b/.test(caption[1]), "caption uses the night-surface token");
-  assert.ok(!/\btext-rally-(subtle|muted)(?!-)/.test(caption[1]), "…not rally.subtle/muted");
+  assert.ok(!source.includes("bg-rally-night"), "Payments has no night card for rally.subtle to sit on");
 });
 
 test("UI-7 — run-4 measured contrast failures clear AA", () => {

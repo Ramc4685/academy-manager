@@ -15,7 +15,7 @@ import type {
   ParentHomeMilestone,
   ParentHomeNextSession,
 } from "./api/parent-home";
-import { formatInAcademyZone } from "@/lib/format/academy-time";
+import { formatInAcademyZone } from "./format/academy-time.ts";
 
 export type ParentHomeActionKind =
   | "register"

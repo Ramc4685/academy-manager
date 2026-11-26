@@ -155,7 +155,7 @@ export default function CoachTodayPage() {
       )}
 
       {!isError && data && sessions.length === 0 && (
-        <p className="text-[15px] text-rally-base" data-testid="empty-state">
+        <p className="text-[15px] text-rally-ink" data-testid="empty-state">
           {viewingToday ? "No class today." : "No classes on this day."}
         </p>
       )}

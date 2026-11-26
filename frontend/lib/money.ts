@@ -1,4 +1,4 @@
-import { formatInAcademyZone } from "@/lib/format/academy-time";
+import { formatInAcademyZone } from "./format/academy-time.ts";
 
 /**
  * The one money formatter. Every page that shows a dollar amount should call
