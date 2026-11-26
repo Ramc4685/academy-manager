@@ -38,7 +38,7 @@ import { formatAcademyDate, formatAcademyDateTime } from "@/lib/format/academy-t
 import { campaignAudienceLabel, type CampaignAudienceState } from "@/lib/format/campaign-audience";
 
 import { CampaignRecipientReview } from "@/components/admin/campaign-recipient-review";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { DeliveryProblemsPanel } from "@/components/admin/delivery-problems-panel";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";

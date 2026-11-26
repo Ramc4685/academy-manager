@@ -19,6 +19,8 @@ import {
 export function BiometricLock() {
   const [covered, setCovered] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** Unsent marks sign-out would delete; non-null while the cover asks. */
+  const [unsentToConfirm, setUnsentToConfirm] = useState<number | null>(null);
   const needsUnlock = useRef(false);
   const busyRef = useRef(false);
   const hiddenAt = useRef<number | null>(null);
@@ -77,7 +79,7 @@ export function BiometricLock() {
 
   // Same clean-up as the profile's Log out button, minus the in-memory query
   // cache, which the full page load below drops anyway.
-  async function signOut() {
+  async function signOut(confirmed = false) {
     const [{ signOutCurrent }, { clearDeviceData, unsentMarkCount }, { clearPersistedQueryCache }] =
       await Promise.all([
         import("@/lib/auth/firebase"),
@@ -85,13 +87,9 @@ export function BiometricLock() {
         import("@/lib/query/persistence"),
       ]);
     const unsent = await unsentMarkCount();
-    if (
-      unsent > 0 &&
-      !window.confirm(
-        `${unsent} attendance ${unsent === 1 ? "mark hasn't" : "marks haven't"} been sent yet. ` +
-          "Signing out deletes them from this phone. Sign out anyway?",
-      )
-    ) {
+    // Asked on the cover itself: the shared modal sits below this z-[1000] layer.
+    if (unsent > 0 && !confirmed) {
+      setUnsentToConfirm(unsent);
       return;
     }
     try {
@@ -123,13 +121,30 @@ export function BiometricLock() {
       <Button variant="primary" size="lg" autoFocus onClick={() => void unlock()} disabled={busy}>
         {busy ? "Waiting…" : "Unlock"}
       </Button>
-      <button
-        type="button"
-        onClick={() => void signOut()}
-        className="min-h-touch px-4 text-sm font-medium text-rally-muted underline"
-      >
-        Sign out instead
-      </button>
+      {unsentToConfirm === null ? (
+        <button
+          type="button"
+          onClick={() => void signOut()}
+          className="min-h-touch px-4 text-sm font-medium text-rally-muted underline"
+        >
+          Sign out instead
+        </button>
+      ) : (
+        <div role="alertdialog" aria-labelledby="app-lock-signout" className="max-w-xs space-y-3">
+          <p id="app-lock-signout" className="text-sm text-rally-ink">
+            {unsentToConfirm} attendance {unsentToConfirm === 1 ? "mark hasn't" : "marks haven't"}{" "}
+            been sent yet. Signing out deletes them from this phone.
+          </p>
+          <div className="flex justify-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setUnsentToConfirm(null)}>
+              Stay signed in
+            </Button>
+            <Button variant="danger" size="sm" onClick={() => void signOut(true)}>
+              Sign out anyway
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

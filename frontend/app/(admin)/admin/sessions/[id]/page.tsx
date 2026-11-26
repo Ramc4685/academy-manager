@@ -46,7 +46,7 @@ import { AdminTeachingPlan } from "@/components/teaching/admin-teaching-plan";
 import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
 
 import { HoldEnrollmentDialog, ReturnFromHoldDialog } from "@/components/admin/enrollment/hold-dialogs";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { ClassRecapDialog } from "@/components/admin/ClassReportHandoffsCard";
 
 import { AddToRosterDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";

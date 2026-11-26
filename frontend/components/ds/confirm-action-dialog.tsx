@@ -9,10 +9,19 @@ import { Field, RallyModal } from "@/components/ds/dialog-chrome";
  * Issue #838: the one second-look dialog for high-impact admin actions.
  *
  * Built on `RallyModal` so every instance inherits the DS focus trap, the
- * Escape handler and focus restore — the three things the native `confirm()`
+ * Escape handler and focus restore — the three things the native browser confirm
  * calls this replaced could not offer. The shape is the void-invoice dialog's:
  * overline, the item restated, a consequence sentence, an optional required
  * reason, and a danger-outline confirm.
+ *
+ * Use this for every confirm; the native browser one is banned by a source scan.
+ *
+ *   const del = useConfirmTarget<string>();
+ *   <Button onClick={() => del.open(row.id)}>Delete</Button>
+ *   <ConfirmActionDialog open={del.target !== null} onOpenChange={del.onOpenChange}
+ *     overline="Announcement" title="Delete this announcement?" confirmLabel="Delete"
+ *     consequence="Families stop seeing it." pending={m.isPending}
+ *     onConfirm={() => m.mutate(del.target!, { onSuccess: del.close })} />
  */
 export function ConfirmActionDialog({
   open,

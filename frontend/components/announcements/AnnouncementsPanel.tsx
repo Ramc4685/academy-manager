@@ -29,14 +29,19 @@ import {
 import { queryKeys } from "@/lib/query/keys";
 
 import { Button } from "@/components/ds/button";
+import { ConfirmActionDialog, useConfirmTarget } from "@/components/ds/confirm-action-dialog";
 
 const MAX_BODY = 2000;
 
 const NO_EDIT_HELP =
   "Announcements can't be edited. Delete and repost instead — an email that has already gone out can't be recalled.";
 
-const DELETE_CONFIRM =
-  "Delete this announcement? It disappears from every family's inbox, but an email that has already gone out can't be recalled.";
+const DELETE_CONSEQUENCE =
+  "It disappears from every family's inbox, but an email that has already gone out can't be recalled.";
+
+function truncate(text: string, max = 140): string {
+  return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text;
+}
 
 function emailSummary(
   status: AnnouncementEmailStatus,
@@ -114,6 +119,7 @@ export function AnnouncementsPanel({
     onError: () => setError("Could not delete the announcement."),
   });
 
+  const confirmDelete = useConfirmTarget<SessionAnnouncement>();
   const announcements = announcementsQuery.data?.announcements ?? [];
   const trimmed = body.trim();
   const canPost = trimmed.length > 0 && !postMutation.isPending;
@@ -193,15 +199,28 @@ export function AnnouncementsPanel({
                 deleteMutation.isPending &&
                 deleteMutation.variables === a.message_id
               }
-              onDelete={() => {
-                if (confirm(DELETE_CONFIRM)) {
-                  deleteMutation.mutate(a.message_id);
-                }
-              }}
+              onDelete={() => confirmDelete.open(a)}
             />
           ))}
         </ul>
       )}
+
+      <ConfirmActionDialog
+        open={confirmDelete.target !== null}
+        onOpenChange={confirmDelete.onOpenChange}
+        overline="Announcement"
+        title="Delete this announcement?"
+        subject={confirmDelete.target && truncate(confirmDelete.target.body)}
+        consequence={DELETE_CONSEQUENCE}
+        confirmLabel="Delete"
+        pending={deleteMutation.isPending}
+        onConfirm={() => {
+          if (!confirmDelete.target) return;
+          deleteMutation.mutate(confirmDelete.target.message_id, {
+            onSettled: confirmDelete.close,
+          });
+        }}
+      />
     </div>
   );
 }

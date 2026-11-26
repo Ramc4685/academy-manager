@@ -34,7 +34,7 @@ import { SkillLadderDraftCard } from "@/components/admin/curriculum/skill-ladder
 import { levelSwatch } from "@/lib/level-color";
 import { Card } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { queryKeys } from "@/lib/query/keys";
 import { defaultExternalSourceForSport, sourceTitlePlaceholder } from "@/lib/pathway-sport";
 

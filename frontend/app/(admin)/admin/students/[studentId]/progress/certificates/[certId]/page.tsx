@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { Button } from "@/components/ds/button";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { Skeleton } from "@/components/ds/skeleton";

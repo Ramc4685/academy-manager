@@ -16,7 +16,7 @@ import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import type { MenuItem } from "@/components/ds/menu";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { useIsPhone } from "@/lib/use-is-phone";
 import { actionCellClass, actionHeaderClass } from "@/lib/sticky-action-column";
 

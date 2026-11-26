@@ -31,7 +31,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { statHint, statText } from "@/lib/ui/load-state";
 import { useIsPhone } from "@/lib/use-is-phone";
 import { useIsOwner } from "@/components/admin/owner-context";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";

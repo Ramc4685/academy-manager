@@ -18,7 +18,6 @@ import { describe, expect, it } from "vitest";
  */
 
 const FRONTEND = path.resolve(__dirname, "..");
-const ADMIN = path.join(FRONTEND, "app", "(admin)");
 
 function source(rel: string): string {
   return readFileSync(path.join(FRONTEND, rel), "utf8");
@@ -40,11 +39,14 @@ function sourceFiles(dir: string): string[] {
  */
 const NATIVE_CONFIRM = /(?<![A-Za-z0-9_$.])(?:window\.)?confirm\s*\(/;
 
-describe("no native confirm under app/(admin) (#838)", () => {
-  const files = sourceFiles(ADMIN);
+describe("no native confirm under app/ or components/ (#838, S04)", () => {
+  const files = [
+    ...sourceFiles(path.join(FRONTEND, "app")),
+    ...sourceFiles(path.join(FRONTEND, "components")),
+  ].filter((file) => !/\.test\.tsx?$/.test(file));
 
-  it("scans a non-trivial number of admin files", () => {
-    expect(files.length).toBeGreaterThan(20);
+  it("scans a non-trivial number of files", () => {
+    expect(files.length).toBeGreaterThan(200);
   });
 
   it.each(files.map((file) => ({ rel: path.relative(FRONTEND, file), file })))(
@@ -81,7 +83,7 @@ describe("high-impact admin actions confirm first (#838)", () => {
   it.each(SURFACES)("$name routes its action through ConfirmActionDialog", ({ file }) => {
     const src = source(file);
     expect(src).toContain("ConfirmActionDialog");
-    expect(src).toContain("@/components/admin/confirm-action-dialog");
+    expect(src).toContain("@/components/ds/confirm-action-dialog");
   });
 });
 
@@ -110,7 +112,7 @@ describe("mass sends state their audience before sending (#838)", () => {
 });
 
 describe("the shared confirm dialog (#838)", () => {
-  const src = source("components/admin/confirm-action-dialog.tsx");
+  const src = source("components/ds/confirm-action-dialog.tsx");
 
   it("is built on the Rally modal so focus trap and Escape come for free", () => {
     expect(src).toContain("RallyModal");

@@ -15,7 +15,7 @@ import { generatePayoutPeriod } from "@/lib/api/v2/payouts";
 import { rowHasUnresolvedWarnings } from "@/lib/payroll-warnings";
 import { payslipChipFor } from "@/lib/payslip-chip";
 import { money } from "@/lib/format-money";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { Chip } from "@/components/ds/chip";
 import { EmptyState } from "@/components/ds/empty-state";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";

@@ -32,7 +32,7 @@ import { rateTimelineIssueLabel } from "@/lib/payroll-warnings";
 import { queryKeys } from "@/lib/query/keys";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { OwnerOnlyHint } from "@/components/admin/owner-context";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { useReportUnsavedChanges } from "@/components/admin/unsaved-changes-guard";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";

@@ -23,7 +23,7 @@ import {
   type AdminSessionView,
 } from "@/lib/api/admin";
 import { notBilledSuffix } from "@/components/admin/not-billed";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 // One class form for Create, list Edit and class-page Edit (class-page PR A).
 import { CreateClassDialog, EditClassDialog } from "@/components/admin/sessions/class-form";
 import { queryKeys } from "@/lib/query/keys";

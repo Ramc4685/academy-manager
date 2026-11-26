@@ -17,7 +17,7 @@ import { PlatformFallbackCard } from "@/components/admin/settings/platform-fallb
 import { ProcessingFeeCard } from "@/components/admin/settings/processing-fee-card";
 import { PlanCard } from "@/components/admin/settings/plan-card";
 import { EmailSendingCard } from "@/components/admin/settings/email-sending-card";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 
 export function GatewayPanel() {
   const router = useRouter();

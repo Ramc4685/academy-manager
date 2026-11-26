@@ -12,7 +12,7 @@
 import { useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { useAcademyTimezone } from "@/components/admin/use-academy-today";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";

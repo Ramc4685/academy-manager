@@ -64,7 +64,7 @@ import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 import { Th } from "@/components/ds/dialog-chrome";
 import { ErrorNotice } from "@/components/ds/error-notice";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { useIsNativeApp } from "@/lib/use-native-app";
 
 interface ChosenFile {

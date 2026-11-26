@@ -14,7 +14,7 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { Card, Chip, LaneHeader, Overline } from "@/components/ds";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 
 /** The three decisions, and the second look each one now needs (#838). */
 type Decision = "approve" | "waitlist" | "reject";

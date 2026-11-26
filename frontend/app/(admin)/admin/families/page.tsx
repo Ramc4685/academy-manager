@@ -89,7 +89,7 @@ import {
   ToolbarSearch,
 } from "@/components/ds/list-toolbar";
 import { Th } from "@/components/ds/dialog-chrome";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { PipelineBoard } from "@/components/admin/people/pipeline-board";
 
 import { FamilyImportPanel } from "./FamilyImportPanel";
