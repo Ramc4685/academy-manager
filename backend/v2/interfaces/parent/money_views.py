@@ -1,4 +1,6 @@
-"""``GET /parent/money-summary`` (S57; spec docs/design/parent-money.md §7.1).
+"""``GET /parent/money-summary`` (S57) and the receipt views (S58).
+
+Spec: docs/design/parent-money.md §7.1 and §7.3.
 
 One figure, one date and per-child lines, all computed by the backend from the
 caller's own issued invoices. The family is always ``claims.user_id``.
@@ -67,3 +69,39 @@ async def get_money_summary(
     if money is None:
         raise HTTPException(status_code=503, detail="Money summary is not configured")
     return ParentMoneySummaryView.model_validate(await money.summary(claims.user_id))
+
+
+class ParentReceiptAcademyView(BaseModel):
+    name: str
+    address: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    logo_url: str | None = None
+
+
+class ParentReceiptLineView(BaseModel):
+    label: str
+    amount_cents: int
+
+
+class ParentReceiptPaymentView(BaseModel):
+    paid_on: date | None = None
+    method: str
+    amount_cents: int
+
+
+class ParentReceiptView(BaseModel):
+    """S58: a paid invoice as a printable receipt."""
+
+    academy: ParentReceiptAcademyView
+    invoice_id: str
+    invoice_number: str | None = None
+    period_label: str
+    payer_name: str | None = None
+    student_name: str | None = None
+    lines: list[ParentReceiptLineView]
+    total_cents: int
+    currency: str
+    payments: list[ParentReceiptPaymentView]
+    balance_cents: int
+    paid_in_full_on: date | None = None

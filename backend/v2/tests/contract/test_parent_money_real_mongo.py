@@ -102,6 +102,43 @@ async def _seed(db) -> None:
     )
 
 
+def _money(db, ledger):
+    async def children(_parent_id):
+        return [{"student_id": "sam", "full_name": "Sam Demo"},
+                {"student_id": "alex", "full_name": "Alex Demo"}]
+
+    async def enrollments(_parent_id):
+        return [{"enrollment_id": "e-sam", "session_title": "Junior Beginners",
+                 "autopay_offer": "available"}]
+
+    async def get_invoice(*, parent_id, invoice_id):
+        # The real GetParentInvoice rule: tenant-scoped read, then ownership.
+        invoice = await ledger.get_invoice(invoice_id)
+        if invoice is None or invoice.parent_id != parent_id:
+            return None
+        return {"invoice": invoice, "lines": await ledger.get_lines_for_invoice(invoice_id)}
+
+    async def academy_info(*, academy_id):
+        return {"display_name": "Demo Academy", "address": "12 Court Lane",
+                "contact_phone": "(309) 555-0142", "contact_email": "hello@example.com",
+                "logo_url": None}
+
+    async def payer(_parent_id):
+        return "Demo Parent"
+
+    return compose_parent_money(
+        db,
+        list_invoices=ledger.list_invoices_for_parent,
+        get_invoice=get_invoice,
+        get_lines=ledger.get_lines_for_invoice,
+        list_children=children,
+        list_enrollments=enrollments,
+        get_academy_info=academy_info,
+        payer_name=payer,
+        clock=lambda: datetime(2026, 11, 20, 18, tzinfo=UTC),
+    )
+
+
 @pytest.mark.asyncio
 async def test_payment_facts_keep_settled_payments_in_this_academy_only(db, acad) -> None:
     await _seed(db)
@@ -119,22 +156,7 @@ async def test_summary_is_the_callers_own_ledger_with_the_discount_as_its_own_li
     await _seed(db)
     ledger = MongoBillingLedgerRepository(db)
 
-    async def children(_parent_id):
-        return [{"student_id": "sam", "full_name": "Sam Demo"},
-                {"student_id": "alex", "full_name": "Alex Demo"}]
-
-    async def enrollments(_parent_id):
-        return [{"enrollment_id": "e-sam", "session_title": "Junior Beginners",
-                 "autopay_offer": "available"}]
-
-    money = compose_parent_money(
-        db,
-        list_invoices=ledger.list_invoices_for_parent,
-        get_lines=ledger.get_lines_for_invoice,
-        list_children=children,
-        list_enrollments=enrollments,
-        clock=lambda: datetime(2026, 11, 20, 18, tzinfo=UTC),
-    )
+    money = _money(db, ledger)
     out = await money.summary("p1")
 
     assert out["amount_due_cents"] == 14000  # never p2's 9900, never the other academy's 7700
@@ -165,3 +187,26 @@ def test_can_pay_online_is_false_only_when_every_live_class_is_desk_paid_or_free
     assert can_pay_online_from([desk, online]) is True
     assert can_pay_online_from([]) is True
     assert can_pay_online_from([desk | {"departed": True}, online]) is True
+
+
+@pytest.mark.asyncio
+async def test_receipt_only_for_the_callers_paid_invoice(db, acad) -> None:
+    await _seed(db)
+    money = _money(db, MongoBillingLedgerRepository(db))
+
+    receipt = await money.receipt("p1", "oct-sam")
+    assert receipt is not None
+    assert receipt["academy"]["name"] == "Demo Academy"
+    assert receipt["payer_name"] == "Demo Parent"
+    assert receipt["student_name"] == "Sam Demo"
+    assert receipt["period_label"] == "October 2026"
+    assert receipt["lines"] == [{"label": "Tuition", "amount_cents": 6000}]
+    assert receipt["payments"] == [
+        {"paid_on": date(2026, 10, 3), "method": "Cash", "amount_cents": 6000}
+    ]
+    assert receipt["balance_cents"] == 0
+    assert receipt["paid_in_full_on"] == date(2026, 10, 3)
+
+    assert await money.receipt("p1", "nov-sam") is None  # unpaid
+    assert await money.receipt("p2", "oct-sam") is None  # another family
+    assert await money.receipt("p1", "nov-elsewhere") is None  # another academy

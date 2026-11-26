@@ -2066,6 +2066,10 @@ def compose_parent(
     _list_parent_invoices = ListParentInvoices(identity=users_query, ledger=billing_ledger_repo)
     _get_parent_invoice = GetParentInvoice(identity=users_query, ledger=billing_ledger_repo)
 
+    async def _parent_display_name(parent_id: str) -> str | None:
+        user = await users_query.get_by_id(parent_id)
+        return ((user.display_name or "").strip() or None) if user else None
+
     async def list_invoices_for_parent(parent_id: str):
         return await _list_parent_invoices.execute(parent_id)
 
@@ -3279,9 +3283,12 @@ def compose_parent(
         parent_money=compose_parent_money(
             db,
             list_invoices=list_invoices_for_parent,
+            get_invoice=get_invoice_for_parent,
             get_lines=billing_ledger_repo.get_lines_for_invoice,
             list_children=list_children_for_parent,
             list_enrollments=list_enrollments_for_parent,
+            get_academy_info=get_academy_info,
+            payer_name=_parent_display_name,
             clock=clock,
         ),
         enroll_child=enroll_child_uc.execute,

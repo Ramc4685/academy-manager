@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.v2.interfaces.parent.deps import ParentUseCases, get_parent_use_cases
+from backend.v2.interfaces.parent.money_views import ParentReceiptView
 from backend.v2.interfaces.parent.views import (
     ParentInvoiceDetailView,
     ParentInvoiceLineView,
@@ -107,6 +108,24 @@ async def get_invoice(
             for line in lines
         ],
     )
+
+
+@router.get(
+    "/invoices/{invoice_id}/receipt",
+    response_model=ParentReceiptView,
+    summary="Printable receipt for one of the parent's own paid invoices",
+)
+async def get_invoice_receipt(
+    invoice_id: str,
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> ParentReceiptView:
+    money = getattr(use_cases, "parent_money", None)
+    receipt = await money.receipt(claims.user_id, invoice_id) if money else None
+    # Another family's, another academy's, or not paid yet: all the same 404.
+    if receipt is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return ParentReceiptView.model_validate(receipt)
 
 
 @router.post(

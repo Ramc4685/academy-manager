@@ -204,6 +204,22 @@ export interface ParentMoneySummary {
   last_payment: { amount_cents: number; paid_on: string | null; method_label: string } | null;
 }
 
+/** S58: GET /parent/invoices/{id}/receipt — only for the family's own paid invoice. */
+export interface ParentReceipt {
+  academy: { name: string; address?: string | null; phone?: string | null; email?: string | null; logo_url?: string | null };
+  invoice_id: string;
+  invoice_number?: string | null;
+  period_label: string;
+  payer_name?: string | null;
+  student_name?: string | null;
+  lines: { label: string; amount_cents: number }[];
+  total_cents: number;
+  currency: string;
+  payments: { paid_on: string | null; method: string; amount_cents: number }[];
+  balance_cents: number;
+  paid_in_full_on: string | null;
+}
+
 export interface ParentInvoiceLine {
   description: string;
   label?: string | null;
@@ -549,6 +565,10 @@ export function listParentInvoices(): Promise<{ invoices: ParentInvoice[] }> {
 
 export function getParentMoneySummary(): Promise<ParentMoneySummary> {
   return apiFetch("/parent/money-summary", { method: "GET" });
+}
+
+export function getParentReceipt(invoiceId: string): Promise<ParentReceipt> {
+  return apiFetch(`/parent/invoices/${encodeURIComponent(invoiceId)}/receipt`, { method: "GET" });
 }
 
 export function getParentInvoice(invoiceId: string): Promise<ParentInvoiceDetail> {

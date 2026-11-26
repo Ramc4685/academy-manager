@@ -3306,6 +3306,39 @@
       ]
     },
     {
+      "route": "/parent/payments/receipt/[invoiceId]",
+      "role": "parent",
+      "source": "frontend/app/(parent)/parent/payments/receipt/[invoiceId]/page.tsx",
+      "workflows": [
+        "Open receipt",
+        "Print receipt"
+      ],
+      "controls": {
+        "buttons": [
+          "Back to payments",
+          "Print or save as PDF"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "error",
+        "not found"
+      ],
+      "risk_edges": [
+        "Another family's invoice id",
+        "Unpaid invoice id"
+      ],
+      "acceptance": [
+        "A receipt opens only for the parent's own paid invoice; any other id shows the could-not-open message",
+        "Workflow evidence: \"Open receipt\" completes for the parent route /parent/payments/receipt/[invoiceId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Print receipt\" completes for the parent route /parent/payments/receipt/[invoiceId] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Another family's invoice id\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Unpaid invoice id\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/parent/progress",
       "role": "parent",
       "source": "frontend/app/(parent)/parent/progress/page.tsx",

@@ -765,16 +765,27 @@ export default function ParentPaymentsPage() {
                     </>
                   )}
                   {!payable && (
-                    <button
-                      type="button"
-                      data-testid={`invoice-detail-toggle-${invoice.invoice_id}`}
-                      onClick={() =>
-                        setSelectedInvoiceId(selectedInvoiceId === invoice.invoice_id ? null : invoice.invoice_id)
-                      }
-                      className="-ml-2 mt-1 inline-flex min-h-touch min-w-touch items-center justify-center rounded-lg px-2 text-sm font-medium text-rally-cobalt-700"
-                    >
-                      {selectedInvoiceId === invoice.invoice_id ? "Hide detail" : "View detail"}
-                    </button>
+                    <div className="mt-1 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        data-testid={`invoice-detail-toggle-${invoice.invoice_id}`}
+                        onClick={() =>
+                          setSelectedInvoiceId(selectedInvoiceId === invoice.invoice_id ? null : invoice.invoice_id)
+                        }
+                        className="-ml-2 inline-flex min-h-touch min-w-touch items-center justify-center rounded-lg px-2 text-sm font-medium text-rally-cobalt-700"
+                      >
+                        {selectedInvoiceId === invoice.invoice_id ? "Hide detail" : "View detail"}
+                      </button>
+                      {invoice.has_receipt && (
+                        <Link
+                          href={`/parent/payments/receipt/${encodeURIComponent(invoice.invoice_id)}`}
+                          data-testid={`invoice-receipt-${invoice.invoice_id}`}
+                          className="-mr-2 inline-flex min-h-touch min-w-touch items-center justify-center rounded-lg px-2 text-sm font-medium text-rally-cobalt-700"
+                        >
+                          Receipt →
+                        </Link>
+                      )}
+                    </div>
                   )}
                   {selectedInvoiceId === invoice.invoice_id && (
                     <div className="mt-3 border-t border-rally-line pt-3">

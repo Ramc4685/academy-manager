@@ -316,3 +316,47 @@ class GetParentMoneySummary:
             timezone_name=timezone_name,
             can_pay_online=await self._can_pay_online(parent_id),
         )
+
+def build_receipt(
+    *,
+    invoice: LedgerInvoice,
+    lines: Sequence[InvoiceLine],
+    facts: Iterable[PaymentFact],
+    academy: dict[str, Any],
+    payer_name: str | None,
+    student_name: str | None,
+    timezone_name: str | None,
+) -> dict[str, Any]:
+    zone = _zone(timezone_name)
+    payments = sorted(
+        (f for f in facts if f.invoice_id == invoice.invoice_id),
+        key=lambda f: (_when(f), f.payment_id),
+    )
+    paid_dates = [d for d in (_local_date(f.paid_at, zone) for f in payments) if d]
+    return {
+        "academy": {
+            "name": str(academy.get("display_name") or academy.get("name") or "Academy"),
+            "address": academy.get("address") or None,
+            "phone": academy.get("contact_phone") or None,
+            "email": academy.get("contact_email") or None,
+            "logo_url": academy.get("logo_url") or None,
+        },
+        "invoice_id": invoice.invoice_id,
+        "invoice_number": invoice.invoice_number,
+        "period_label": period_label(invoice.period),
+        "payer_name": payer_name,
+        "student_name": student_name,
+        "lines": [{"label": line.description, "amount_cents": line.amount_cents} for line in lines],
+        "total_cents": invoice.total_cents,
+        "currency": invoice.currency,
+        "payments": [
+            {
+                "paid_on": _local_date(f.paid_at, zone),
+                "method": method_word(f.method),
+                "amount_cents": f.amount_cents,
+            }
+            for f in payments
+        ],
+        "balance_cents": invoice.balance_due_cents,
+        "paid_in_full_on": max(paid_dates) if paid_dates else None,
+    }

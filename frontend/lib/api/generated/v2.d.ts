@@ -6697,6 +6697,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/parent/invoices/{invoice_id}/receipt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Printable receipt for one of the parent's own paid invoices */
+        get: operations["get_invoice_receipt_api_v2_parent_invoices__invoice_id__receipt_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/parent/makeups": {
         parameters: {
             query?: never;
@@ -17927,6 +17944,64 @@ export interface components {
             offset: number;
             /** Total */
             total: number;
+        };
+        /** ParentReceiptAcademyView */
+        ParentReceiptAcademyView: {
+            /** Address */
+            address?: string | null;
+            /** Email */
+            email?: string | null;
+            /** Logo Url */
+            logo_url?: string | null;
+            /** Name */
+            name: string;
+            /** Phone */
+            phone?: string | null;
+        };
+        /** ParentReceiptLineView */
+        ParentReceiptLineView: {
+            /** Amount Cents */
+            amount_cents: number;
+            /** Label */
+            label: string;
+        };
+        /** ParentReceiptPaymentView */
+        ParentReceiptPaymentView: {
+            /** Amount Cents */
+            amount_cents: number;
+            /** Method */
+            method: string;
+            /** Paid On */
+            paid_on?: string | null;
+        };
+        /**
+         * ParentReceiptView
+         * @description S58: a paid invoice as a printable receipt.
+         */
+        ParentReceiptView: {
+            academy: components["schemas"]["ParentReceiptAcademyView"];
+            /** Balance Cents */
+            balance_cents: number;
+            /** Currency */
+            currency: string;
+            /** Invoice Id */
+            invoice_id: string;
+            /** Invoice Number */
+            invoice_number?: string | null;
+            /** Lines */
+            lines: components["schemas"]["ParentReceiptLineView"][];
+            /** Paid In Full On */
+            paid_in_full_on?: string | null;
+            /** Payer Name */
+            payer_name?: string | null;
+            /** Payments */
+            payments: components["schemas"]["ParentReceiptPaymentView"][];
+            /** Period Label */
+            period_label: string;
+            /** Student Name */
+            student_name?: string | null;
+            /** Total Cents */
+            total_cents: number;
         };
         /** ParentReferralResponse */
         ParentReferralResponse: {
@@ -35127,6 +35202,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StartInvoicePaymentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_invoice_receipt_api_v2_parent_invoices__invoice_id__receipt_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                invoice_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParentReceiptView"];
                 };
             };
             /** @description Validation Error */

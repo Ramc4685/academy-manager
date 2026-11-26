@@ -1,8 +1,8 @@
-"""Wiring for the parent money summary and invoice/payment labels (S57).
+"""Wiring for the parent money summary, invoice/payment labels (S57) and receipt (S58).
 
 Its own module so ``composition/parent.py`` gains one field. Every read is
-family-scoped by ``list_invoices`` (``ListParentInvoices``: alias aware, tenant
-scoped) and request-tenant scoped by
+family-scoped by ``list_invoices`` / ``get_invoice`` (``ListParentInvoices`` /
+``GetParentInvoice``: alias aware, tenant scoped) and request-tenant scoped by
 the repositories; ids from the client are only ever looked up inside that set.
 """
 
@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from backend.v2.contexts.billing.application.parent_money import (
     GetParentMoneySummary,
+    build_receipt,
     latest_fact_by_invoice,
     method_label,
 )
@@ -45,15 +46,19 @@ class ParentMoney:
     summary: Callable[[str], Awaitable[dict[str, Any]]]
     invoice_extras: Callable[[str, Sequence[LedgerInvoice]], Awaitable[dict[str, dict[str, Any]]]]
     payment_extras: Callable[[str, Sequence[Any]], Awaitable[dict[str, dict[str, Any]]]]
+    receipt: Callable[[str, str], Awaitable[dict[str, Any] | None]]
 
 
 def compose_parent_money(
     db: Any,
     *,
     list_invoices: Callable[[str], Awaitable[list[LedgerInvoice]]],
+    get_invoice: Callable[..., Awaitable[dict[str, Any] | None]],
     get_lines: Callable[[str], Awaitable[list[InvoiceLine]]],
     list_children: Callable[[str], Awaitable[list[dict[str, Any]]]],
     list_enrollments: Callable[[str], Awaitable[list[dict[str, Any]]]],
+    get_academy_info: Callable[..., Awaitable[dict[str, Any]]],
+    payer_name: Callable[[str], Awaitable[str | None]],
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> ParentMoney:
     facts = MongoParentPaymentFacts(db)
@@ -145,8 +150,27 @@ def compose_parent_money(
             }
         return out
 
+    async def receipt(parent_id: str, invoice_id: str) -> dict[str, Any] | None:
+        detail = await get_invoice(parent_id=parent_id, invoice_id=invoice_id)
+        if detail is None or str(detail["invoice"].status) != "paid":
+            return None
+        invoice: LedgerInvoice = detail["invoice"]
+        academy = await get_academy_info(academy_id=current_academy_id())
+        _, timezone_name = await academy_clock()
+        names = await child_names(parent_id)
+        return build_receipt(
+            invoice=invoice,
+            lines=detail["lines"],
+            facts=await facts.for_invoices([invoice.invoice_id]),
+            academy=academy,
+            payer_name=await payer_name(parent_id),
+            student_name=names.get(invoice.student_id or ""),
+            timezone_name=timezone_name,
+        )
+
     return ParentMoney(
         summary=summary_uc.execute,
         invoice_extras=invoice_extras,
         payment_extras=payment_extras,
+        receipt=receipt,
     )

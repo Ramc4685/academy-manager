@@ -27068,6 +27068,210 @@
         "title": "ParentProgressResponse",
         "type": "object"
       },
+      "ParentReceiptAcademyView": {
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "logo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Url"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ParentReceiptAcademyView",
+        "type": "object"
+      },
+      "ParentReceiptLineView": {
+        "properties": {
+          "amount_cents": {
+            "title": "Amount Cents",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "amount_cents"
+        ],
+        "title": "ParentReceiptLineView",
+        "type": "object"
+      },
+      "ParentReceiptPaymentView": {
+        "properties": {
+          "amount_cents": {
+            "title": "Amount Cents",
+            "type": "integer"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On"
+          }
+        },
+        "required": [
+          "method",
+          "amount_cents"
+        ],
+        "title": "ParentReceiptPaymentView",
+        "type": "object"
+      },
+      "ParentReceiptView": {
+        "description": "S58: a paid invoice as a printable receipt.",
+        "properties": {
+          "academy": {
+            "$ref": "#/components/schemas/ParentReceiptAcademyView"
+          },
+          "balance_cents": {
+            "title": "Balance Cents",
+            "type": "integer"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "invoice_id": {
+            "title": "Invoice Id",
+            "type": "string"
+          },
+          "invoice_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Number"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/ParentReceiptLineView"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "paid_in_full_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid In Full On"
+          },
+          "payer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payer Name"
+          },
+          "payments": {
+            "items": {
+              "$ref": "#/components/schemas/ParentReceiptPaymentView"
+            },
+            "title": "Payments",
+            "type": "array"
+          },
+          "period_label": {
+            "title": "Period Label",
+            "type": "string"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
+          },
+          "total_cents": {
+            "title": "Total Cents",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "academy",
+          "invoice_id",
+          "period_label",
+          "lines",
+          "total_cents",
+          "currency",
+          "payments",
+          "balance_cents"
+        ],
+        "title": "ParentReceiptView",
+        "type": "object"
+      },
       "ParentReferralResponse": {
         "properties": {
           "enabled": {
@@ -58464,6 +58668,48 @@
           }
         },
         "summary": "Create a Stripe Checkout Session to retry paying an open invoice",
+        "tags": [
+          "parent.invoices"
+        ]
+      }
+    },
+    "/api/v2/parent/invoices/{invoice_id}/receipt": {
+      "get": {
+        "operationId": "get_invoice_receipt_api_v2_parent_invoices__invoice_id__receipt_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invoice_id",
+            "required": true,
+            "schema": {
+              "title": "Invoice Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentReceiptView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Printable receipt for one of the parent's own paid invoices",
         "tags": [
           "parent.invoices"
         ]

@@ -31,6 +31,20 @@ class _Money:
             "periods": [], "last_payment": None,
         }
 
+    async def receipt(self, parent_id: str, invoice_id: str):
+        if parent_id != "parent-1" or invoice_id != "inv-paid":
+            return None
+        return {
+            "academy": {"name": "Demo Academy", "address": None, "phone": None,
+                        "email": None, "logo_url": None},
+            "invoice_id": "inv-paid", "invoice_number": "DEMO-202610-0001",
+            "period_label": "October 2026", "payer_name": "Demo Parent",
+            "student_name": "Sam Demo", "lines": [{"label": "Tuition", "amount_cents": 6000}],
+            "total_cents": 6000, "currency": "usd",
+            "payments": [{"paid_on": date(2026, 10, 3), "method": "Cash", "amount_cents": 6000}],
+            "balance_cents": 0, "paid_in_full_on": date(2026, 10, 3),
+        }
+
     async def payment_extras(self, parent_id: str, rows) -> dict:
         return {"pay-1": {"student_names": ["Sam Demo"], "method_label": "Paid in cash"}}
 
@@ -88,3 +102,16 @@ def test_payment_history_names_the_child_and_method() -> None:
     row = res.json()["payments"][0]
     assert row["student_names"] == ["Sam Demo"]
     assert row["method_label"] == "Paid in cash"
+
+
+def test_receipt_for_a_paid_invoice_of_the_caller() -> None:
+    with _client(_UseCases(_Money())) as client:
+        res = client.get("/api/v2/parent/invoices/inv-paid/receipt")
+    assert res.status_code == 200
+    assert res.json()["payments"][0] == {"paid_on": "2026-10-03", "method": "Cash", "amount_cents": 6000}
+
+
+def test_receipt_is_404_when_not_the_callers_or_not_paid() -> None:
+    with _client(_UseCases(_Money())) as client:
+        assert client.get("/api/v2/parent/invoices/inv-open/receipt").status_code == 404
+        assert client.get("/api/v2/parent/invoices/other-family/receipt").status_code == 404
