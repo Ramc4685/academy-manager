@@ -186,3 +186,35 @@ async def test_a_neighbouring_period_that_only_grazes_the_month_is_not_its_paysl
     november = await use_case.execute(academy_id=ACADEMY, coach_id="casey", month="2026-11")
     assert october.payslip is not None and october.payslip.total_cents == 1000
     assert november.payslip is not None and november.payslip.total_cents == 2000
+
+
+@pytest.mark.asyncio
+async def test_a_grazing_neighbour_alone_is_not_the_months_payslip(db: Any, acad: str) -> None:
+    """October's own period is still a draft; November's approved slip on UTC
+    bounds grazes October by hours and must not stand in for it."""
+    await _seed(db)
+    await db["payout_periods"].delete_many({"coach_id": "casey"})
+    await db["payout_periods"].insert_many(
+        [
+            _period(
+                "casey",
+                "draft",
+                datetime(2026, 10, 1, tzinfo=UTC),
+                datetime(2026, 11, 1, tzinfo=UTC),
+                total_minor=1000,
+            ),
+            _period(
+                "casey",
+                "approved",
+                datetime(2026, 11, 1, tzinfo=UTC),
+                datetime(2026, 12, 1, tzinfo=UTC),
+                total_minor=2000,
+                payout_period_id="pp_nov_utc",
+            ),
+        ]
+    )
+    use_case = _use_case(db)
+    october = await use_case.execute(academy_id=ACADEMY, coach_id="casey", month="2026-10")
+    november = await use_case.execute(academy_id=ACADEMY, coach_id="casey", month="2026-11")
+    assert october.payslip is None
+    assert november.payslip is not None and november.payslip.total_cents == 2000

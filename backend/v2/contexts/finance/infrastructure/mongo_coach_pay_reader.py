@@ -135,6 +135,10 @@ class MongoCoachPayReader:
         # window by hours; the period that covers most of the month is its
         # payslip. max() keeps the latest start on a tie (docs are newest first).
         doc = max(docs, key=overlap)
+        # A grazing neighbour alone is not this month's payslip: when the month's
+        # own period is missing or still a draft, show no payslip.
+        if overlap(doc) * 2 <= end - start:
+            return None
         zone = report_zone(await self.academy_timezone(academy_id))
 
         def local_day(value: object, *, exclusive: bool = False) -> date | None:
