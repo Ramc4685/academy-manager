@@ -75,6 +75,7 @@ A request returning **404** means "the route does not exist for you," regardless
 | Send DM to coach | Yes | N/A | Yes |
 | Send DM to parent | Yes | Yes (assigned children's parents) | N/A |
 | View own messages | Yes | Yes | Yes |
+| Send message to the academy (`POST /parent/messages`, D-18) | Reads and replies (every admin and owner sees every family's thread) | No | Yes (own thread only; no thread id accepted from the client; 10/hour, 30/day; 1–1000 chars) |
 | **Admin / System** | | | |
 | View audit logs | Yes | No | No |
 | Trigger waiver re-acknowledgement | Yes | No | No |
@@ -101,6 +102,13 @@ This section is updated per wave as routes ship.
 | View attendance for session (coach: assigned) | ✅ implemented | ☐ | `backend/v2/tests/interface/test_coach_today.py` |
 
 (Filled in as W1A-09 lands.)
+
+### Academy inbox (D-18, S61)
+
+| Action | Access implemented | Wrong persona returns 404 | Test file |
+|---|:---:|:---:|---|
+| Send message to the academy | ✅ parent, own thread | ✅ coach, admin | `backend/v2/tests/interface/test_parent_messages_routes.py` |
+| Admin reads and replies to family threads | ✅ every admin; private DMs stay private | n/a | `backend/v2/tests/interface/test_admin_academy_inbox.py`, `backend/v2/tests/contract/test_message_repo_tenant_isolation.py` |
 
 ### Wave 1B, 2, 3 — Not yet started
 

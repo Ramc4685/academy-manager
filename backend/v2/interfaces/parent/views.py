@@ -19,6 +19,7 @@ from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers
 )
 from backend.v2.interfaces.dropoff_views import DropoffCheckinView
 from backend.v2.interfaces.parent.absence_makeup import AbsenceMakeupView
+from backend.v2.shared.comms import MAX_ACADEMY_MESSAGE_BODY
 
 # --- Onboarding ---
 
@@ -679,6 +680,23 @@ class ParentMessageView(BaseModel):
     scope_label: str | None = None
     urgency: Literal["routine", "urgent"] = "routine"
     author_display_name: str | None = None
+    #: True on what this parent sent to the academy (D-18), so the client
+    #: never compares ids to place a bubble.
+    mine: bool = False
+
+
+class ParentSendMessageRequest(BaseModel):
+    body: str
+
+    @field_validator("body")
+    @classmethod
+    def _trimmed_and_capped(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Write a message first.")
+        if len(v) > MAX_ACADEMY_MESSAGE_BODY:
+            raise ValueError(f"Messages can be up to {MAX_ACADEMY_MESSAGE_BODY} characters.")
+        return v
 
 
 class ParentMessagesResponse(BaseModel):

@@ -6,7 +6,7 @@ goes to the in-memory stub, so nothing reaches a phone.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from backend.v2.contexts.communications.application.ports import PushSendPort
@@ -51,26 +51,8 @@ def compose_message_push(db: Any, settings: Any) -> NotifyMessageByPush:
     from backend.v2.contexts.communications.infrastructure.mongo_email_preference_repo import (
         MongoEmailPreferenceRepository,
     )
-    from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
-        MongoMembershipRepository,
-    )
-    from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 
-    # Same role source as authentication: academy_memberships in SaaS mode, the
-    # users record in single-academy mode (main.py's legacy membership adapter).
-    if getattr(settings, "saas_mode", False):
-        memberships = MongoMembershipRepository(db)
-
-        async def roles_of(academy_id: str, user_id: str) -> Sequence[str]:
-            membership = await memberships.get_membership(academy_id, user_id)
-            return membership.roles if membership else ()
-
-    else:
-        users = MongoUserRepository(db)
-
-        async def roles_of(academy_id: str, user_id: str) -> Sequence[str]:
-            user = await users.get_by_id(user_id)
-            return user.roles if user is not None and user.is_active else ()
+    roles_of = compose_roles_of(db, settings)
 
     async def inbox_path(academy_id: str, user_id: str) -> str:
         return message_inbox_path(await roles_of(academy_id, user_id))
@@ -81,6 +63,33 @@ def compose_message_push(db: Any, settings: Any) -> NotifyMessageByPush:
         preferences=MongoEmailPreferenceRepository(db),
         inbox_path=inbox_path,
     )
+
+
+def compose_roles_of(db: Any, settings: Any) -> Callable[[str, str], Awaitable[Sequence[str]]]:
+    """A person's roles in one academy, from the same source as authentication:
+    academy_memberships in SaaS mode, the users record in single-academy mode
+    (main.py's legacy membership adapter)."""
+    from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
+        MongoMembershipRepository,
+    )
+    from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
+
+    if getattr(settings, "saas_mode", False):
+        memberships = MongoMembershipRepository(db)
+
+        async def roles_of(academy_id: str, user_id: str) -> Sequence[str]:
+            membership = await memberships.get_membership(academy_id, user_id)
+            return membership.roles if membership else ()
+
+        return roles_of
+
+    users = MongoUserRepository(db)
+
+    async def legacy_roles_of(academy_id: str, user_id: str) -> Sequence[str]:
+        user = await users.get_by_id(user_id)
+        return user.roles if user is not None and user.is_active else ()
+
+    return legacy_roles_of
 
 
 def message_inbox_path(roles: Sequence[str]) -> str:

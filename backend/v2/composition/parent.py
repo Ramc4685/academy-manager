@@ -311,7 +311,7 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_parent_waiver_repo impo
 from backend.v2.contexts.onboarding.infrastructure.mongo_registration_waiver_repo import (
     MongoRegistrationWaiverRepository,
 )
-from backend.v2.shared.comms import Message, MongoMessageRepository
+from backend.v2.shared.comms import CommsService, Message, MongoMessageRepository
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
@@ -440,6 +440,7 @@ class ParentComposition:
     # cannot place a non-default field after a defaulted one.
     list_messages: object = None  # Callable[[str], Awaitable[list[Message]]]
     mark_message_read: object = None  # Callable[[str, str], Awaitable[None]]
+    send_academy_message: object = None  # CommsService.send_to_academy (D-18)
     #: callable(parent_id) -> bool: the Stripe portal can open for this parent.
     billing_portal_available: object = None
     # Waivers to sign for a chosen class + whether any is program-scoped
@@ -3303,6 +3304,9 @@ def compose_parent(
         curriculum=curriculum_composition,
         list_messages=list_messages,
         mark_message_read=mark_message_read,
+        send_academy_message=CommsService(
+            messages=messages_repo, academy_id=current_academy_id
+        ).send_to_academy,
         get_parent_profile=get_parent_profile,
         update_parent_profile=update_parent_profile,
         confirm_parent_email=confirm_parent_email,

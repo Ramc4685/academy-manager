@@ -122,6 +122,8 @@ class ParentUseCases:
     # predate it; real parent composition always sets both.
     list_messages: Callable[[str], Awaitable[list[Message]]] | None = None
     mark_message_read: Callable[[str, str], Awaitable[None]] | None = None
+    # D-18: callable(*, parent_id, body) -> Message; raises AcademyInboxRateLimited.
+    send_academy_message: Callable[..., Awaitable[Message]] | None = None
     # Self-service profile (issue #380)
     get_parent_profile: object | None = None  # callable
     update_parent_profile: object | None = None  # callable

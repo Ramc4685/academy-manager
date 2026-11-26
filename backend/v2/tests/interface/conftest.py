@@ -1955,8 +1955,9 @@ class FakeMessageRepo:
             return False
         if m.recipient_id == recipient_id:
             return True
-        if m.kind != "announcement":
-            return False
+        if m.kind == "dm":
+            # D-18: what the viewer sent to the academy inbox.
+            return m.sender_id == recipient_id and m.inbox_thread_id == recipient_id
         if m.scope_type != "session":
             return True
         return m.scope_id in set(visible_session_ids)
@@ -1978,12 +1979,33 @@ class FakeMessageRepo:
                 and (
                     m.recipient_id == user_id
                     or (m.kind == "dm" and m.sender_id == user_id)
+                    or (m.kind == "dm" and m.inbox_thread_id is not None)
                     or m.kind == "announcement"
                 )
             ),
             key=lambda m: m.created_at,
             reverse=True,
         )
+
+    async def count_academy_inbox_sent(self, sender_id, *, since):
+        return sum(
+            1
+            for m in self.rows.values()
+            if m.kind == "dm"
+            and m.sender_id == sender_id
+            and m.inbox_thread_id == sender_id
+            and m.created_at >= since
+        )
+
+    async def mark_read_by_staff(self, message_id, user_id):
+        """Mirrors MongoMessageRepository.mark_read_by_staff (_staff_dm_filter)."""
+        m = self.rows.get(message_id)
+        if m is None or m.deleted_at is not None:
+            return
+        if not (m.recipient_id == user_id or (m.kind == "dm" and m.inbox_thread_id)):
+            return
+        if user_id not in m.read_by:
+            m.read_by.append(user_id)
 
     async def for_session(self, session_id):
         return sorted(

@@ -6780,7 +6780,13 @@ export interface paths {
         /** List Messages */
         get: operations["list_messages_api_v2_parent_messages_get"];
         put?: never;
-        post?: never;
+        /**
+         * Send Message To Academy
+         * @description Open or continue this family's thread with the academy (D-18).
+         *
+         *     No email or push goes to staff (decided); they see it in admin Messages.
+         */
+        post: operations["send_message_to_academy_api_v2_parent_messages_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9508,6 +9514,8 @@ export interface components {
         };
         /** AdminMessageView */
         AdminMessageView: {
+            /** Author Display Name */
+            author_display_name?: string | null;
             /** Body */
             body: string;
             /** Counterparty Id */
@@ -17751,6 +17759,11 @@ export interface components {
             kind: "dm" | "announcement";
             /** Message Id */
             message_id: string;
+            /**
+             * Mine
+             * @default false
+             */
+            mine: boolean;
             /** Read */
             read: boolean;
             /** Scope Label */
@@ -18202,6 +18215,11 @@ export interface components {
              * @default false
              */
             dropoff_checkin_enabled: boolean;
+        };
+        /** ParentSendMessageRequest */
+        ParentSendMessageRequest: {
+            /** Body */
+            body: string;
         };
         /** ParentSignedWaiverView */
         ParentSignedWaiverView: {
@@ -35372,6 +35390,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ParentMessagesResponse"];
+                };
+            };
+        };
+    };
+    send_message_to_academy_api_v2_parent_messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ParentSendMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParentMessageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

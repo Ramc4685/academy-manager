@@ -1765,6 +1765,9 @@ class AdminMessageView(BaseModel):
     #: opened yet. Broadcasts and the admin's own sends are never unread, so
     #: the default is the safe one for any view that does not compute it.
     is_read: bool = True
+    #: Who on staff wrote a reply in an academy-inbox thread (D-18), since any
+    #: admin can answer. ``None`` on everything else.
+    author_display_name: str | None = None
 
 
 class AdminMessageList(BaseModel):

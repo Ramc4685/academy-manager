@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -37,6 +37,25 @@ MAX_ANNOUNCEMENT_BODY = 2000
 #: principle (a busy class could accumulate hundreds of posts), so it takes the
 #: same limit the inbox reads already use.
 _READ_LIMIT = 200
+
+#: A parent's message to the academy (D-18): long enough for a real question,
+#: short enough to stay a message rather than a letter.
+MAX_ACADEMY_MESSAGE_BODY = 1000
+
+#: Per-parent send limits on the academy inbox, counted in Mongo so they hold
+#: across server instances. (window, most messages allowed in it).
+ACADEMY_INBOX_LIMITS: tuple[tuple[timedelta, int], ...] = (
+    (timedelta(hours=1), 10),
+    (timedelta(days=1), 30),
+)
+
+
+class AcademyInboxRateLimited(Exception):
+    """A parent has sent too many academy-inbox messages in a window."""
+
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__("Too many messages")
+        self.retry_after_seconds = retry_after_seconds
 
 
 class Message(BaseModel):
@@ -64,6 +83,11 @@ class Message(BaseModel):
     #: what was posted has to survive for support; the read predicate hides it.
     deleted_at: datetime | None = None
     deleted_by: str | None = None
+    #: The academy inbox (D-18): the user id of the family whose conversation
+    #: with the academy this DM belongs to. Set on a parent's message to the
+    #: academy and on staff replies to a parent; every admin can read these.
+    #: ``None`` on every other DM, which stays private to its two ends.
+    inbox_thread_id: str | None = None
 
 
 def _visibility_filter(recipient_id: str, visible_session_ids: Sequence[str]) -> dict[str, Any]:
@@ -80,7 +104,9 @@ def _visibility_filter(recipient_id: str, visible_session_ids: Sequence[str]) ->
       (``scope_type`` null or ``"academy"``) stays visible to the whole
       academy exactly as it is today — no data migration, no behaviour change;
     * a session announcement whose ``scope_id`` is one of the sessions this
-      viewer can see, resolved per request from live enrollment/assignment.
+      viewer can see, resolved per request from live enrollment/assignment;
+    * what the viewer themselves sent to the academy inbox (D-18). Both ids
+      must be the viewer's, so one family can never read another's thread.
 
     Fail-closed: an empty ``visible_session_ids`` yields ``$in: []``, which
     matches nothing, so a viewer with no sessions sees no session
@@ -96,6 +122,19 @@ def _visibility_filter(recipient_id: str, visible_session_ids: Sequence[str]) ->
                 "scope_type": SESSION_SCOPE,
                 "scope_id": {"$in": list(visible_session_ids)},
             },
+            {"kind": "dm", "sender_id": recipient_id, "inbox_thread_id": recipient_id},
+        ],
+    }
+
+
+def _staff_dm_filter(user_id: str) -> dict[str, Any]:
+    """DMs an admin may read and mark read: their own, plus every academy-inbox
+    thread (D-18), which all admins and owners share."""
+    return {
+        "deleted_at": None,
+        "$or": [
+            {"recipient_id": user_id},
+            {"kind": "dm", "inbox_thread_id": {"$ne": None}},
         ],
     }
 
@@ -130,6 +169,7 @@ class MongoMessageRepository(TenantScopedRepository):
             ),
             deleted_at=doc.get("deleted_at"),
             deleted_by=(str(doc["deleted_by"]) if doc.get("deleted_by") else None),
+            inbox_thread_id=(str(doc["inbox_thread_id"]) if doc.get("inbox_thread_id") else None),
         )
 
     async def insert(self, m: Message) -> None:
@@ -177,6 +217,7 @@ class MongoMessageRepository(TenantScopedRepository):
                 "$or": [
                     {"recipient_id": user_id},
                     {"kind": "dm", "sender_id": user_id},
+                    {"kind": "dm", "inbox_thread_id": {"$ne": None}},
                     {"kind": "announcement"},
                 ],
             },
@@ -184,6 +225,25 @@ class MongoMessageRepository(TenantScopedRepository):
             limit=_READ_LIMIT,
         )
         return [self._to_domain(d) async for d in cursor]
+
+    async def count_academy_inbox_sent(self, sender_id: str, *, since: datetime) -> int:
+        """How many messages ``sender_id`` has sent to the academy inbox since
+        ``since`` (soft-deleted ones included: they were still sent)."""
+        return await self._count(
+            {
+                "kind": "dm",
+                "sender_id": sender_id,
+                "inbox_thread_id": sender_id,
+                "created_at": {"$gte": since},
+            }
+        )
+
+    async def mark_read_by_staff(self, message_id: str, user_id: str) -> None:
+        """Admin read receipt, scoped by :func:`_staff_dm_filter`."""
+        await self._update_one(
+            {"message_id": message_id, **_staff_dm_filter(user_id)},
+            {"$addToSet": {"read_by": user_id}},
+        )
 
     async def list_announcements(self) -> list[Message]:
         cursor = self._find_many(
@@ -267,6 +327,8 @@ class CommsService:
         sender_persona: Persona,
         recipient_id: str,
         body: str,
+        inbox_thread_id: str | None = None,
+        author_display_name: str | None = None,
     ) -> Message:
         m = Message(
             message_id=str(new_ulid()),
@@ -277,6 +339,36 @@ class CommsService:
             recipient_id=recipient_id,
             body=body,
             created_at=datetime.now(UTC),
+            inbox_thread_id=inbox_thread_id,
+            author_display_name=author_display_name,
+        )
+        await self.messages.insert(m)
+        return m
+
+    async def send_to_academy(self, *, parent_id: str, body: str) -> Message:
+        """A parent's message to the academy inbox (D-18).
+
+        No recipient: the thread is the family's own id, so nothing a client
+        sends can place a message in another family's thread. Raises
+        :class:`AcademyInboxRateLimited` past :data:`ACADEMY_INBOX_LIMITS`.
+        """
+        now = datetime.now(UTC)
+        # shortcut: count-then-insert can let a burst of parallel posts past the
+        # limit by a message or two; a soft abuse limit, not a quota.
+        for window, limit in ACADEMY_INBOX_LIMITS:
+            sent = await self.messages.count_academy_inbox_sent(parent_id, since=now - window)
+            if sent >= limit:
+                raise AcademyInboxRateLimited(int(window.total_seconds()))
+        m = Message(
+            message_id=str(new_ulid()),
+            academy_id=self._tenant_id(),
+            kind="dm",
+            sender_id=parent_id,
+            sender_persona="parent",
+            recipient_id=None,
+            body=body,
+            created_at=now,
+            inbox_thread_id=parent_id,
         )
         await self.messages.insert(m)
         return m
@@ -365,11 +457,7 @@ class CommsService:
     async def mark_read_for_admin(self, message_id: str, user_id: str) -> None:
         """Record that an admin has read one message (#864).
 
-        Deliberately the same :meth:`MongoMessageRepository.mark_read` the
-        parent and coach surfaces call, with no visible sessions: an admin's
-        unread items are DMs addressed to them, which the first branch of
-        :func:`_visibility_filter` matches on its own. Passing ``[]`` rather
-        than "everything" keeps the fail-closed default — an admin cannot
-        stamp a read receipt onto a message that is not theirs to read.
+        Scoped by :func:`_staff_dm_filter`: DMs addressed to this admin and the
+        shared academy-inbox threads (D-18), never another admin's private DM.
         """
-        await self.messages.mark_read(message_id, user_id, visible_session_ids=[])
+        await self.messages.mark_read_by_staff(message_id, user_id)

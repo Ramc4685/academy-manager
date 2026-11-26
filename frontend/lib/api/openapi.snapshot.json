@@ -3546,6 +3546,17 @@
       },
       "AdminMessageView": {
         "properties": {
+          "author_display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Display Name"
+          },
           "body": {
             "title": "Body",
             "type": "string"
@@ -26531,6 +26542,11 @@
             "title": "Message Id",
             "type": "string"
           },
+          "mine": {
+            "default": false,
+            "title": "Mine",
+            "type": "boolean"
+          },
           "read": {
             "title": "Read",
             "type": "boolean"
@@ -27737,6 +27753,19 @@
           }
         },
         "title": "ParentSelfServiceSwitchesView",
+        "type": "object"
+      },
+      "ParentSendMessageRequest": {
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "title": "ParentSendMessageRequest",
         "type": "object"
       },
       "ParentSignedWaiverView": {
@@ -58869,6 +58898,46 @@
           }
         },
         "summary": "List Messages",
+        "tags": [
+          "parent.messages"
+        ]
+      },
+      "post": {
+        "description": "Open or continue this family's thread with the academy (D-18).\n\nNo email or push goes to staff (decided); they see it in admin Messages.",
+        "operationId": "send_message_to_academy_api_v2_parent_messages_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParentSendMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentMessageView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Send Message To Academy",
         "tags": [
           "parent.messages"
         ]

@@ -28,6 +28,7 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
 
+from backend.v2.composition.academy_inbox import compose_academy_inbox
 from backend.v2.composition.admin import AcademyPortalUrlAdapter, compose_admin
 from backend.v2.composition.admin_platform_fee import compose_admin_platform_fee
 from backend.v2.composition.audit_log import compose_admin_audit_log
@@ -835,6 +836,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.release_email_suppression = compose_release_email_suppression(db)
     app.state.delivery_problems = compose_delivery_problems(db)
     app.state.message_push = compose_message_push(db, settings)
+    app.state.academy_inbox = compose_academy_inbox(db, settings)
 
     # Tenant resolver — wired only in SaaS mode. In non-SaaS mode the
     # middleware falls back to ``settings.default_academy_id`` so existing
