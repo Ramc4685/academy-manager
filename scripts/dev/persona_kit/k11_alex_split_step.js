@@ -1,5 +1,7 @@
 // K11 (S18, partial): Alex Demo is working on "Split step" (PRACTICING), with
-// one shared coach note and one private note. The pass itself is recorded in
+// one coach note ticked shared before parents could see skill notes (no
+// shared_at, so it stays off the parent feed until re-shared; S53) and one
+// private note. The pass itself is recorded in
 // the coach app during the re-test (Today -> class -> mark the pass), so it
 // goes through the real pass pipeline instead of hand-made attempt rows.
 const A = "acad_demo_academy", now = new Date(), S = "demo_student_alex";
@@ -16,6 +18,6 @@ if (!skill) {
   [["kit_note_alex_shared", "shared", "Split step is getting quicker; keep the small hop before each shot.", 4],
    ["kit_note_alex_private", "private", "Start the split step earlier on returns; check again next week.", 2]].forEach(([id, vis, body, daysAgo]) =>
     db.coach_skill_notes.updateOne({note_id:id}, {$set:{note_id:id, academy_id:A, student_id:S, skill_id:skill.skill_id,
-      coach_id:"demo_user_coach", session_id:"demo_session_sat", body, visibility:vis, created_at:new Date(+now - daysAgo * 864e5)}}, {upsert:true}));
+      coach_id:"demo_user_coach", session_id:"demo_session_sat", body, visibility:vis, created_at:new Date(+now - daysAgo * 864e5)}, $unset:{shared_at:""}}, {upsert:true}));
   print(`k11: Alex working on ${skill.name} (${skill.skill_id})`);
 }

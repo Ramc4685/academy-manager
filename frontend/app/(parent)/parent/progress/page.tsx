@@ -10,8 +10,10 @@ import {
   listParentChildProgress,
   listParentChildren,
   getParentProgressJourney,
+  listParentChildSkillNotes,
   type ParentProgressNote,
 } from "@/lib/api/parent";
+import { CoachSkillNotesList } from "@/components/parent/coach-skill-notes";
 import { getParentStudentCertificates } from "@/lib/api/curriculum";
 import { queryKeys } from "@/lib/query/keys";
 import { ClassRecapList } from "@/components/parent/ClassRecapList";
@@ -305,6 +307,10 @@ function ChildJourney({ studentId, childName }: { studentId: string; childName: 
     queryKey: ["parent", "certificates", studentId],
     queryFn: () => getParentStudentCertificates(studentId),
   });
+  const { data: skillNotes } = useQuery({
+    queryKey: queryKeys.parent.childSkillNotes(studentId),
+    queryFn: () => listParentChildSkillNotes(studentId),
+  });
   const firstName = childName.split(" ")[0] || childName;
 
   if (journeyQuery.isLoading) return <JourneySkeleton />;
@@ -339,6 +345,9 @@ function ChildJourney({ studentId, childName }: { studentId: string; childName: 
         <p className="rounded-2xl p-4 bg-white border border-rally-line text-sm text-rally-muted">
           Their coach will assign a level after the first classes.
         </p>
+      )}
+      {skillNotes && skillNotes.notes.length > 0 && (
+        <CoachSkillNotesList notes={skillNotes.notes} firstName={firstName} />
       )}
       <MilestoneList milestones={journey.milestones ?? []} firstName={firstName} />
       <RecentWins wins={journey.recent_wins} studentId={studentId} />

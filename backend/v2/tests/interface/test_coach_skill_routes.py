@@ -1132,10 +1132,14 @@ class _InMemorySkillNoteRepo:
     async def get(self, student_id: str, note_id: str) -> object | None:
         return next((n for n in self.saved if getattr(n, "note_id", None) == note_id), None)
 
-    async def set_visibility(self, student_id: str, note_id: str, visibility: str) -> object:
+    async def set_visibility(
+        self, student_id: str, note_id: str, visibility: str, shared_at: object = None
+    ) -> object:
         note = await self.get(student_id, note_id)
         assert note is not None
-        updated = note.model_copy(update={"visibility": visibility})  # type: ignore[attr-defined]
+        updated = note.model_copy(  # type: ignore[attr-defined]
+            update={"visibility": visibility, "shared_at": shared_at}
+        )
         self.saved = [updated if n is note else n for n in self.saved]
         return updated
 

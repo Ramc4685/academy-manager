@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import cast
 
 from backend.v2.contexts.coaching.domain.models import CoachSkillNote, NoteVisibility
@@ -24,6 +25,7 @@ class MongoSkillNoteRepository(TenantScopedRepository):
             created_at=doc["created_at"],
             # Legacy docs (pre-0167) carry no flag and read as private.
             visibility=cast(NoteVisibility, doc.get("visibility") or "private"),
+            shared_at=cast("datetime | None", doc.get("shared_at")),
         )
 
     async def save(self, note: CoachSkillNote) -> None:
@@ -37,6 +39,7 @@ class MongoSkillNoteRepository(TenantScopedRepository):
                 "body": note.body,
                 "created_at": note.created_at,
                 "visibility": note.visibility,
+                "shared_at": note.shared_at,
             }
         )
 
@@ -45,13 +48,25 @@ class MongoSkillNoteRepository(TenantScopedRepository):
         return self._to_domain(doc) if doc else None
 
     async def set_visibility(
-        self, student_id: str, note_id: str, visibility: NoteVisibility
+        self,
+        student_id: str,
+        note_id: str,
+        visibility: NoteVisibility,
+        shared_at: datetime | None = None,
     ) -> CoachSkillNote | None:
         doc = await self._find_one_and_update(
             {"student_id": student_id, "note_id": note_id},
-            {"$set": {"visibility": visibility}},
+            {"$set": {"visibility": visibility, "shared_at": shared_at}},
         )
         return self._to_domain(doc) if doc else None
+
+    async def list_shared_with_parent(self, student_id: str, limit: int) -> list[CoachSkillNote]:
+        cursor = self._find_many(
+            {"student_id": student_id, "visibility": "shared", "shared_at": {"$ne": None}},
+            sort=[("shared_at", -1)],
+            limit=limit,
+        )
+        return [self._to_domain(doc) async for doc in cursor]
 
     async def list_for_student_skill(self, student_id: str, skill_id: str) -> list[CoachSkillNote]:
         cursor = self._find_many(

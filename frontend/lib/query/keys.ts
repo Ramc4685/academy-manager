@@ -252,6 +252,7 @@ export const queryKeys = {
     childProgressNotes: (studentId: string) => ["parent", "progress", studentId] as const,
     progressJourney: (studentId: string) =>
       ["parent", "progress-journey", studentId] as const,
+    childSkillNotes: (studentId: string) => ["parent", "skill-notes", studentId] as const,
     classRecaps: (studentId: string) => ["parent", "class-recaps", studentId] as const,
     cancellationPreview: (enrollmentId: string) =>
       ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,

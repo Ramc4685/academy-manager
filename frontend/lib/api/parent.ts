@@ -640,6 +640,22 @@ export function listParentChildProgress(
   });
 }
 
+export interface ParentSkillNoteView {
+  note_id: string;
+  skill_name: string;
+  body: string;
+  shared_at: string;
+}
+
+/** Skill notes a coach shared with this family (D-15). */
+export function listParentChildSkillNotes(
+  studentId: string,
+): Promise<{ notes: ParentSkillNoteView[] }> {
+  return apiFetch(`/parent/students/${encodeURIComponent(studentId)}/coach-notes`, {
+    method: "GET",
+  });
+}
+
 export function getParentProgressJourney(
   studentId: string,
 ): Promise<ParentProgressJourney> {

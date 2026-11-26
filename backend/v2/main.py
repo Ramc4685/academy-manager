@@ -1068,6 +1068,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.pathway import compose_place_on_enrollment
 
     _placement = compose_place_on_enrollment(db, outbox)
+    from backend.v2.composition.parent_coach_notes import compose_parent_coach_notes
+
+    app.state.parent_coach_notes = compose_parent_coach_notes(db)
     app.state.admin.admin_registration_review.set_level_placement(_placement)
     app.state.admin.edit_roster_add.set_level_placement(_placement)
     app.state.coach.add_student_to_roster.set_level_placement(_placement)

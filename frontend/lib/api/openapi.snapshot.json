@@ -59955,6 +59955,49 @@
         ]
       }
     },
+    "/api/v2/parent/students/{student_id}/coach-notes": {
+      "get": {
+        "description": "Skill notes a coach shared with this family (D-15). Private notes, and\nnotes ticked shared before parents could see them, never appear.",
+        "operationId": "get_coach_notes_api_v2_parent_students__student_id__coach_notes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Get Coach Notes Api V2 Parent Students  Student Id  Coach Notes Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Coach Notes",
+        "tags": [
+          "parent-progress"
+        ]
+      }
+    },
     "/api/v2/parent/students/{student_id}/practice-resources": {
       "get": {
         "operationId": "get_practice_resources_api_v2_parent_students__student_id__practice_resources_get",

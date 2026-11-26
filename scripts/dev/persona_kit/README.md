@@ -42,6 +42,6 @@ Rules for a new kit:
 | k02 | Free Wednesday clinic; for Rosa Alvarez (sign her up first) a PENDING_APPROVAL Lucia in it and a CHECKOUT_PENDING Mateo in Junior Beginners. |
 | k09 | The busy parent owes this month's tuition for Sam and Alex with a $20.00 sibling discount on Alex ($140.00 due; the base seed's paid invoices reopened, their cash payments dropped). Last month stays paid in cash. |
 | k10 | Alex Demo: next Saturday class (48h+ out) with no absence reported, and a late mark on the latest past class this month. |
-| k11 | Alex Demo working on Split step (PRACTICING) with one shared and one private coach note. Partial: record the pass in the coach app during the re-test. |
+| k11 | Alex Demo working on Split step (PRACTICING) with one private coach note and one ticked shared before S53 (no `shared_at`, so the parent does not see it until the coach shares it again). Partial: record the pass in the coach app during the re-test. |
 | k19 | Rosa Alvarez (sign her up first) has no phone, for the named profile gap. Partial: the broadcast-audience half is S69's. |
 | k51 | (S51) Mila Quinn's PENDING_APPROVAL registration for Casey's class. Run after k01 and k06. |

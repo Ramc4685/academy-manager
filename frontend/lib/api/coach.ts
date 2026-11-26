@@ -299,6 +299,9 @@ export interface SkillNote {
   body: string;
   created_at: string;
   visibility: NoteVisibility;
+  /** Set when shared with the parent; a note shared before parents could
+   * see skill notes has none and stays off their Progress page. */
+  shared_at?: string | null;
 }
 
 export interface CoachScheduleEntry {

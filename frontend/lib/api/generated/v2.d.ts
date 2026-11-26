@@ -7191,6 +7191,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/parent/students/{student_id}/coach-notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Coach Notes
+         * @description Skill notes a coach shared with this family (D-15). Private notes, and
+         *     notes ticked shared before parents could see them, never appear.
+         */
+        get: operations["get_coach_notes_api_v2_parent_students__student_id__coach_notes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/parent/students/{student_id}/practice-resources": {
         parameters: {
             query?: never;
@@ -36185,6 +36206,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChildClassRecapList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_coach_notes_api_v2_parent_students__student_id__coach_notes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                student_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
