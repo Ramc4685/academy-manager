@@ -218,10 +218,11 @@ class MongoPaymentRepository(TenantScopedRepository):
         )
 
     def _ledger_legacy_shape_query(self, query: dict[str, Any]) -> dict[str, Any]:
-        # Not tenant-scoped on its own: every caller wraps it in ``_scoped`` so
-        # the raw ``ledger_payments`` call site carries a visible scoping
-        # signal for tests/test_no_raw_tenant_mongo_access.py.
-        return {**query, "payment_origin": "legacy_payment"}
+        return {
+            **query,
+            "academy_id": current_academy_id(),
+            "payment_origin": "legacy_payment",
+        }
 
     async def _ledger_legacy_shape_docs(
         self,

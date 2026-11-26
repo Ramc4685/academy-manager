@@ -42,6 +42,10 @@ import ast
 from dataclasses import dataclass
 from pathlib import Path
 
+from backend.v2.contexts.platform.application.use_cases.tenant_data_offboarding import (
+    PLATFORM_INTERNAL_COLLECTIONS,
+)
+
 V2_ROOT = Path(__file__).resolve().parents[1]
 
 # Collections that are per-academy and MUST be tenant-scoped on every access.
@@ -211,6 +215,8 @@ TENANT_OWNED_COLLECTIONS = {
     "message_deliveries",
     "email_preferences",
     "trial_requests",
+    # Sibling discount decisions (migration 0237, unique per academy)
+    "sibling_discount_decisions",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are
@@ -231,6 +237,8 @@ GLOBAL_COLLECTIONS = {
     # Self-service account deletion requests (migration 0216, mobile M5): one
     # Firebase account spans academies, so its deletion request does too.
     "account_deletion_requests",
+    # Platform operator roles; a platform role is not tied to one academy.
+    "platform_roles",
 }
 
 assert not (TENANT_OWNED_COLLECTIONS & GLOBAL_COLLECTIONS), (
@@ -241,30 +249,29 @@ assert not (TENANT_OWNED_COLLECTIONS & GLOBAL_COLLECTIONS), (
 # not identity rows either, so they sit in neither set above. Listing them here
 # changes no check (a repository's own-collection mutations are still
 # inspected); it only records that someone looked. A collection literal that is
-# in none of the three sets fails ``test_every_collection_literal_is_classified``,
-# so a new per-academy collection cannot ship without being registered above.
-PLATFORM_AND_INFRA_COLLECTIONS = {
+# in none of the three sets fails ``test_every_collection_literal_is_classified``.
+# That check sees ``db["x"]`` / ``self._db["x"]`` subscripts and literal
+# ``collection_name = "x"`` declarations only; constants, ``db.x`` attribute
+# access and ``get_collection("x")`` still slip past it.
+PLATFORM_AND_INFRA_COLLECTIONS = set(PLATFORM_INTERNAL_COLLECTIONS) | {
     # Event plumbing, drained by workers that set the tenant per event.
     "outbox_events",
     "dead_letter_events",
-    # Auth throttles and magic-link tokens, looked up before a tenant scope
-    # exists (token hash / email keyed).
+    "event_audit",
+    "event_handler_runs",
+    "idempotency_keys",
+    # Scheduler and ops bookkeeping.
+    "scheduler_leases",
+    "ops_job_runs",
+    # Login-audit dedupe rows (``_id = user:academy:iat``) and the
+    # verification-email throttle, written at auth time.
     "login_attempts",
     "verification_email_cooldowns",
+    # Only purged by account deletion (one Firebase account spans academies).
     "parent_magic_links",
     # Provider-level email state keyed by address or provider message id.
     "email_suppressions",
     "email_provider_events",
-    # Platform operator plane (/api/v2/platform/*), cross-tenant by design.
-    "platform_audit_events",
-    "platform_governance_audit_logs",
-    "platform_plans",
-    "platform_tenant_subscriptions",
-    "support_access_grants",
-    "support_impersonation_requests",
-    "tenant_deletion_requests",
-    "tenant_export_requests",
-    "student_data_deletion_requests",
 }
 
 assert not (PLATFORM_AND_INFRA_COLLECTIONS & (TENANT_OWNED_COLLECTIONS | GLOBAL_COLLECTIONS)), (
