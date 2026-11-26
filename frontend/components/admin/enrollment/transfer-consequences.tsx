@@ -96,7 +96,7 @@ export function TransferConsequences({
           />
           <span>
             {formatMonthlyPrice(to) === "No price set"
-              ? `The new class has no price yet, so this child will not be billed for it until the owner sets one (${formatMonthlyPrice(from)} to No price set).`
+              ? `The new class has no price yet (${formatMonthlyPrice(from)} to No price set). This month's invoice drops the classes left in the old class, and the new class is not billed until the owner sets a price.`
               : `The monthly price changes from ${formatMonthlyPrice(from)} to ${formatMonthlyPrice(to)}.`}{" "}
             Move anyway.
           </span>

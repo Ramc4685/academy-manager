@@ -42,6 +42,14 @@ describe("transfer consequences (S27)", () => {
     expect(html).toContain("Tuesdays 9:00–10:00 AM");
   });
 
+  it("says the old class's remaining dates come off this month's invoice (S27 persona follow-up)", () => {
+    // The move quote prices an unpriced target at $0, so the family is
+    // credited for the old class's remaining dates: the dialog must say so.
+    const html = render(TUE_UNPRICED);
+    expect(html).toContain("drops the classes left in the old class");
+    expect(html).toContain("not billed until the owner sets a price");
+  });
+
   it("asks for no tick when the price stays the same", () => {
     expect(render(SAT_COPY)).not.toContain("transfer-price-ack");
   });
