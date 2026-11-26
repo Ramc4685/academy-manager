@@ -464,3 +464,43 @@ class CoachAcademyView(BaseModel):
     contact_phone: str | None = None
     # S05: coach screens render instants in the academy's zone.
     timezone: str | None = None
+
+
+class CoachPayClassView(BaseModel):
+    occurrence_id: str
+    start_at: datetime
+    class_name: str
+    minutes: int
+    role: Literal["lead", "cover", "assistant"]
+
+
+class CoachPayslipView(BaseModel):
+    """An approved or paid payslip: its total only. No lines, no rate."""
+
+    period_start: date
+    period_end: date
+    status: Literal["approved", "paid"]
+    total_cents: int
+    currency: str
+    approved_on: date | None = None
+    paid_on: date | None = None
+    paid_method_label: str | None = None
+    paid_amount_cents: int | None = None
+
+
+class CoachAcademyContactView(BaseModel):
+    name: str
+    phone: str | None = None
+    email: str | None = None
+
+
+class CoachPayResponse(BaseModel):
+    """S59: the signed-in coach's own classes taught and released payslip."""
+
+    month: str
+    month_label: str
+    classes_taught: int
+    minutes_taught: int
+    classes: list[CoachPayClassView]
+    payslip: CoachPayslipView | None = None
+    academy_contact: CoachAcademyContactView

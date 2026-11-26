@@ -62,6 +62,7 @@ A request returning **404** means "the route does not exist for you," regardless
 | **Finance** | | | |
 | View academy revenue | Yes | No | No |
 | View own coach payout | Yes | Self only | No |
+| View own classes taught and approved or paid payslips (`GET /coach/profile/pay`, S59) | Own only on this route | Self only: never a draft, rate, per-class amount or revenue | No (404) |
 | View coach payouts (any) | Yes | No | No |
 | Record expense | Yes | No | No |
 | **Identity** | | | |
@@ -100,6 +101,8 @@ This section is updated per wave as routes ship.
 | View sessions assigned to me | ✅ implemented | ☐ | `backend/v2/tests/interface/test_coach_today.py` |
 | Mark attendance for assigned session | ✅ implemented | ☐ | `backend/v2/tests/interface/test_coach_attendance.py` |
 | View attendance for session (coach: assigned) | ✅ implemented | ☐ | `backend/v2/tests/interface/test_coach_today.py` |
+
+| View own classes taught and released payslips (`GET /coach/profile/pay`) | ✅ implemented (coach id is always the signed-in user) | ✅ | `backend/v2/tests/interface/test_coach_pay_route.py`, `backend/v2/tests/contract/test_coach_pay_summary.py` |
 
 (Filled in as W1A-09 lands.)
 

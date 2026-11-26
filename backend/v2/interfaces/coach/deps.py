@@ -125,6 +125,8 @@ class CoachUseCases:
     # Row 14: {name, logo_url, brand_color} for GET /coach/academy. Optional
     # for fixtures that predate it; real coach composition always sets it.
     get_academy_info: object | None = None  # Callable(*, academy_id: str) -> Awaitable[dict]
+    # S59: GetCoachPaySummary for GET /coach/profile/pay (own pay only).
+    get_coach_pay: object | None = None
     # Issue #774: overdue balance in cents per student, so the roster row can
     # carry ONE "PAYMENT DUE $X" chip. The owner's decision was that this is
     # the only thing about money a coach ever sees; the billing drawer and the

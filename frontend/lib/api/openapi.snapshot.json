@@ -14391,6 +14391,41 @@
         "title": "ClosureDateView",
         "type": "object"
       },
+      "CoachAcademyContactView": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CoachAcademyContactView",
+        "type": "object"
+      },
       "CoachAcademyView": {
         "description": "Row 14: the coach shell's academy mark. Deliberately minimal \u2014 a coach\nnever sees the rest of the academy profile, so this is not\n``ParentAcademyView``/``AdminAcademyView`` with fields dropped, it is its\nown narrow DTO.",
         "properties": {
@@ -14829,6 +14864,182 @@
           "messages"
         ],
         "title": "CoachMessagesResponse",
+        "type": "object"
+      },
+      "CoachPayClassView": {
+        "properties": {
+          "class_name": {
+            "title": "Class Name",
+            "type": "string"
+          },
+          "minutes": {
+            "title": "Minutes",
+            "type": "integer"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "lead",
+              "cover",
+              "assistant"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "start_at",
+          "class_name",
+          "minutes",
+          "role"
+        ],
+        "title": "CoachPayClassView",
+        "type": "object"
+      },
+      "CoachPayResponse": {
+        "description": "S59: the signed-in coach's own classes taught and released payslip.",
+        "properties": {
+          "academy_contact": {
+            "$ref": "#/components/schemas/CoachAcademyContactView"
+          },
+          "classes": {
+            "items": {
+              "$ref": "#/components/schemas/CoachPayClassView"
+            },
+            "title": "Classes",
+            "type": "array"
+          },
+          "classes_taught": {
+            "title": "Classes Taught",
+            "type": "integer"
+          },
+          "minutes_taught": {
+            "title": "Minutes Taught",
+            "type": "integer"
+          },
+          "month": {
+            "title": "Month",
+            "type": "string"
+          },
+          "month_label": {
+            "title": "Month Label",
+            "type": "string"
+          },
+          "payslip": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoachPayslipView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "month",
+          "month_label",
+          "classes_taught",
+          "minutes_taught",
+          "classes",
+          "academy_contact"
+        ],
+        "title": "CoachPayResponse",
+        "type": "object"
+      },
+      "CoachPayslipView": {
+        "description": "An approved or paid payslip: its total only. No lines, no rate.",
+        "properties": {
+          "approved_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved On"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "paid_amount_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Amount Cents"
+          },
+          "paid_method_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Method Label"
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On"
+          },
+          "period_end": {
+            "format": "date",
+            "title": "Period End",
+            "type": "string"
+          },
+          "period_start": {
+            "format": "date",
+            "title": "Period Start",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "approved",
+              "paid"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total_cents": {
+            "title": "Total Cents",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "period_start",
+          "period_end",
+          "status",
+          "total_cents",
+          "currency"
+        ],
+        "title": "CoachPayslipView",
         "type": "object"
       },
       "CoachProfileBody": {
@@ -55527,6 +55738,57 @@
           }
         },
         "summary": "Update the current coach's display name, phone, or email",
+        "tags": [
+          "coach"
+        ]
+      }
+    },
+    "/api/v2/coach/profile/pay": {
+      "get": {
+        "description": "Self only (D-05). The coach is always ``claims.user_id``: there is no\nparameter naming a coach, so no URL can return someone else's pay.",
+        "operationId": "get_my_pay_api_v2_coach_profile_pay_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoachPayResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The current coach's classes taught and approved or paid payslip",
         "tags": [
           "coach"
         ]

@@ -5615,6 +5615,27 @@ export interface paths {
         patch: operations["update_profile_api_v2_coach_profile_patch"];
         trace?: never;
     };
+    "/api/v2/coach/profile/pay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The current coach's classes taught and approved or paid payslip
+         * @description Self only (D-05). The coach is always ``claims.user_id``: there is no
+         *     parameter naming a coach, so no URL can return someone else's pay.
+         */
+        get: operations["get_my_pay_api_v2_coach_profile_pay_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/coach/sessions": {
         parameters: {
             query?: never;
@@ -13555,6 +13576,15 @@ export interface components {
              */
             status: "cancelled" | "would_cancel" | "skipped";
         };
+        /** CoachAcademyContactView */
+        CoachAcademyContactView: {
+            /** Email */
+            email?: string | null;
+            /** Name */
+            name: string;
+            /** Phone */
+            phone?: string | null;
+        };
         /**
          * CoachAcademyView
          * @description Row 14: the coach shell's academy mark. Deliberately minimal — a coach
@@ -13705,6 +13735,76 @@ export interface components {
         CoachMessagesResponse: {
             /** Messages */
             messages: components["schemas"]["CoachMessageView"][];
+        };
+        /** CoachPayClassView */
+        CoachPayClassView: {
+            /** Class Name */
+            class_name: string;
+            /** Minutes */
+            minutes: number;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "lead" | "cover" | "assistant";
+            /**
+             * Start At
+             * Format: date-time
+             */
+            start_at: string;
+        };
+        /**
+         * CoachPayResponse
+         * @description S59: the signed-in coach's own classes taught and released payslip.
+         */
+        CoachPayResponse: {
+            academy_contact: components["schemas"]["CoachAcademyContactView"];
+            /** Classes */
+            classes: components["schemas"]["CoachPayClassView"][];
+            /** Classes Taught */
+            classes_taught: number;
+            /** Minutes Taught */
+            minutes_taught: number;
+            /** Month */
+            month: string;
+            /** Month Label */
+            month_label: string;
+            payslip?: components["schemas"]["CoachPayslipView"] | null;
+        };
+        /**
+         * CoachPayslipView
+         * @description An approved or paid payslip: its total only. No lines, no rate.
+         */
+        CoachPayslipView: {
+            /** Approved On */
+            approved_on?: string | null;
+            /** Currency */
+            currency: string;
+            /** Paid Amount Cents */
+            paid_amount_cents?: number | null;
+            /** Paid Method Label */
+            paid_method_label?: string | null;
+            /** Paid On */
+            paid_on?: string | null;
+            /**
+             * Period End
+             * Format: date
+             */
+            period_end: string;
+            /**
+             * Period Start
+             * Format: date
+             */
+            period_start: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "approved" | "paid";
+            /** Total Cents */
+            total_cents: number;
         };
         /** CoachProfileBody */
         CoachProfileBody: {
@@ -33178,6 +33278,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CoachProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_my_pay_api_v2_coach_profile_pay_get: {
+        parameters: {
+            query?: {
+                month?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoachPayResponse"];
                 };
             };
             /** @description Validation Error */
