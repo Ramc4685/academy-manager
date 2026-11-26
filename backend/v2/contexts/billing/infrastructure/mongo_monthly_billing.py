@@ -1167,6 +1167,8 @@ class MongoMonthlyBillingGenerator:
         academy_id = current_academy_id()
         academy_timezone = await self._load_academy_timezone() or "UTC"
         count = 0
+        # The dashboard runs this on every load: price each class once, not per student.
+        fee_by_session: dict[str, int] = {}
         async for classified in self.classify_monthly_enrollments(
             period, now=self._clock(), academy_timezone=academy_timezone
         ):
@@ -1174,12 +1176,16 @@ class MongoMonthlyBillingGenerator:
                 continue
             if not resolved_parent_id(classified.enrollment, classified.student_doc):
                 continue
-            session_doc = await self._db["sessions"].find_one(
-                {"academy_id": academy_id, "session_id": classified.session_id}
-            )
-            # shortcut: the class fee, not the prorated charge (pricing stamps a
-            # snapshot), so a first month with no class dates left still counts.
-            if await class_fee_cents_for_period(self._db, session_doc or {}, period) <= 0:
+            if classified.session_id not in fee_by_session:
+                session_doc = await self._db["sessions"].find_one(
+                    {"academy_id": academy_id, "session_id": classified.session_id}
+                )
+                # shortcut: the class fee, not the prorated charge (pricing stamps a
+                # snapshot), so a first month with no class dates left still counts.
+                fee_by_session[classified.session_id] = await class_fee_cents_for_period(
+                    self._db, session_doc or {}, period
+                )
+            if fee_by_session[classified.session_id] <= 0:
                 continue
             if await self._find_existing_invoice_for_enrollment_period(
                 enrollment_id=classified.enrollment_id, period=period
