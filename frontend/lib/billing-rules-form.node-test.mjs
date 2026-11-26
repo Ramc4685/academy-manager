@@ -7,12 +7,13 @@ import {
   ACH_PERCENT_FIELD,
   boundsMessage,
   canSave,
+  canSaveRules,
+  changedRulesText,
   diffForm,
   editableRows,
   inputToValue,
   isChoiceRow,
   rowToInput,
-  saveSummary,
   toForm,
   turnsLateFeeOn,
 } from "./billing-rules-form.ts";
@@ -144,16 +145,24 @@ test("an unchanged form saves nothing", () => {
   const diff = diffForm(view(), toForm(view()), MONEY);
   assert.deepEqual(diff.changed, []);
   assert.equal(canSave(diff), false);
-  assert.equal(saveSummary(diff), "No changes");
+  assert.equal(changedRulesText(diff), "No changes yet.");
 });
 
-test("the save button says which fields it will write", () => {
+test("the helper beside Save changes says which rules it will write", () => {
   const diff = diffForm(view(), {
     ...toForm(view()),
     late_fee_cents: "30.00",
     grace_days: "5",
   }, MONEY);
-  assert.equal(saveSummary(diff), "Save Grace days after due and Late fee");
+  assert.equal(changedRulesText(diff), "Saves Grace days after due and Late fee.");
+  const one = diffForm(view(), { ...toForm(view()), grace_days: "5" }, MONEY);
+  assert.equal(changedRulesText(one), "Saves Grace days after due.");
+});
+
+test("the rules button always reads Save changes, with the changed rules beside it", () => {
+  assert.match(panel, /"Save changes"/);
+  assert.match(panel, /changedRulesText\(diff\)/);
+  assert.doesNotMatch(panel, /saveSummary/);
 });
 
 test("a value outside its bound is an error, not a payload field", () => {
@@ -317,6 +326,18 @@ test("changing a fee that is already on, or turning it off, is not a turn-on", (
   assert.equal(turnsLateFeeOn(view(), off), false);
   const untouched = diffForm(view(), { ...toForm(view()), grace_days: "9" }, MONEY);
   assert.equal(turnsLateFeeOn(view(), untouched), false);
+});
+
+test("a late fee turned on without the acknowledgement is still refused (S31)", () => {
+  const stored = viewWith("late_fee_cents", 0);
+  const diff = diffForm(stored, { ...toForm(stored), late_fee_cents: "15.00" }, MONEY);
+  assert.equal(canSave(diff), true);
+  assert.equal(canSaveRules(diff, turnsLateFeeOn(stored, diff), false), false);
+  assert.equal(canSaveRules(diff, turnsLateFeeOn(stored, diff), true), true);
+  // A save that does not turn the fee on never needs the tick.
+  const grace = diffForm(view(), { ...toForm(view()), grace_days: "9" }, MONEY);
+  assert.equal(canSaveRules(grace, turnsLateFeeOn(view(), grace), false), true);
+  assert.match(panel, /canSaveRules\(diff, needsLateFeeAck, lateFeeAcknowledged\)/);
 });
 
 test("turning a fee on needs an explicit acknowledgement before Save is enabled", () => {

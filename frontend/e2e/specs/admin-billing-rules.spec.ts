@@ -155,7 +155,8 @@ test.describe("admin settings → billing rules", () => {
     await expect(page.getByTestId("billing-rules-save")).toBeDisabled();
 
     await page.getByTestId("billing-rules-input-late_fee_cents").fill("17.50");
-    await expect(page.getByTestId("billing-rules-save")).toContainText("Save Late fee");
+    await expect(page.getByTestId("billing-rules-save")).toHaveText("Save changes");
+    await expect(page.getByTestId("billing-rules-changed")).toContainText("Saves Late fee");
     await page.getByTestId("billing-rules-save").click();
 
     await expect.poll(() => seen.put).toEqual({ late_fee_cents: 1750 });
@@ -180,7 +181,8 @@ test.describe("admin settings → billing rules", () => {
     await expect(page.getByTestId("billing-rules-save")).toBeDisabled();
 
     await page.getByTestId("billing-rules-input-ach_discount-percent").fill("2.5");
-    await expect(page.getByTestId("billing-rules-save")).toContainText("Save Bank (ACH) discount");
+    await expect(page.getByTestId("billing-rules-save")).toHaveText("Save changes");
+    await expect(page.getByTestId("billing-rules-changed")).toContainText("Saves Bank (ACH) discount");
     await page.getByTestId("billing-rules-save").click();
     await expect
       .poll(() => seen.put)

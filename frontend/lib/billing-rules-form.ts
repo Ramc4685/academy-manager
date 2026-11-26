@@ -317,12 +317,27 @@ export function canSave(diff: BillingRulesDiff): boolean {
   return diff.changed.length > 0 && Object.keys(diff.errors).length === 0;
 }
 
-/** "Save Late fee and Grace days after due" — says what will be written. */
-export function saveSummary(diff: BillingRulesDiff): string {
-  if (diff.changedLabels.length === 0) return "No changes";
-  if (diff.changedLabels.length === 1) return `Save ${diff.changedLabels[0]}`;
-  const head = diff.changedLabels.slice(0, -1).join(", ");
-  return `Save ${head} and ${diff.changedLabels[diff.changedLabels.length - 1]}`;
+/**
+ * The helper beside the always-"Save changes" button: which rules it will
+ * write ("Saves Late fee and Grace days after due."), or that nothing changed.
+ */
+export function changedRulesText(diff: BillingRulesDiff): string {
+  const labels = diff.changedLabels;
+  if (labels.length === 0) return "No changes yet.";
+  if (labels.length === 1) return `Saves ${labels[0]}.`;
+  return `Saves ${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}.`;
+}
+
+/**
+ * The rules Save gate: something valid changed and, when this save turns a
+ * late fee on, the owner ticked the acknowledgement (money audit X4).
+ */
+export function canSaveRules(
+  diff: BillingRulesDiff,
+  needsLateFeeAck: boolean,
+  lateFeeAcknowledged: boolean,
+): boolean {
+  return canSave(diff) && (!needsLateFeeAck || lateFeeAcknowledged);
 }
 
 /**

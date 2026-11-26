@@ -306,6 +306,7 @@ export function FamilyOffersCard() {
 
   const mutation = useMutation({
     mutationFn: () => updateFamilyOffers(payload),
+    meta: { success: "Family offers saved" },
     onSuccess: (data) => {
       queryClient.setQueryData(queryKeys.admin.familyOffers(), data);
       setSaved(true);
