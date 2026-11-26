@@ -10,8 +10,8 @@ import {
   getAdminGateway,
   startStripeConnect,
 } from "@/lib/api/admin";
-import { isManualPaymentMethod, MANUAL_PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 import { queryKeys } from "@/lib/query/keys";
+import { manualMethodLabel } from "@/lib/payment-methods";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
@@ -138,7 +138,7 @@ export function GatewayPanel() {
               </p>
               <div className="flex flex-wrap gap-2">
                 {(gateway?.manual_methods ?? []).map((method) => (
-                  <Chip key={method} variant="manual" label={isManualPaymentMethod(method) ? MANUAL_PAYMENT_METHOD_LABELS[method] : method} />
+                  <Chip key={method} variant="manual" label={manualMethodLabel(method)} />
                 ))}
               </div>
             </div>

@@ -141,4 +141,15 @@ describe("next.config CSP Turnstile", () => {
       "https://challenges.cloudflare.com",
     );
   });
+
+  // S19: /parent and /coach were 404s.
+  it.each([
+    ["/parent", "/parent/dashboard"],
+    ["/coach", "/coach/today"],
+  ])("sends the persona root %s to %s", async (source, destination) => {
+    const entry = (await resolveRedirects()).find((redirect) => redirect.source === source);
+    expect(entry?.destination).toBe(destination);
+    expect(entry?.permanent).toBe(false);
+    expect(entry?.has).toBeUndefined();
+  });
 });

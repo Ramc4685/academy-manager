@@ -630,8 +630,13 @@ function ClassRow({
         )}
       </td>
       <td className="px-4 py-3">
-        <label className="inline-flex min-h-11 items-center gap-2">
+        {/* S19: explicit for/id so the whole word toggles the class, not just the box. */}
+        <label
+          htmlFor={`public-page-published-${row.session_id}`}
+          className="inline-flex min-h-11 cursor-pointer items-center gap-2"
+        >
           <input
+            id={`public-page-published-${row.session_id}`}
             type="checkbox"
             role="switch"
             data-testid="public-page-class-published"

@@ -3,16 +3,17 @@
 import { useInstallPrompt, useIsIOSSafari } from "@/lib/pwa/install-prompt";
 
 /**
- * Shown on coach surfaces after login.
+ * Shown on the coach's Today page (the layout decides where).
  *
  * - Android Chrome / desktop: native install prompt via `beforeinstallprompt`.
  * - iOS Safari: explicit "Add to Home Screen" instructions (no native prompt).
+ * - A dismissal hides it for 30 days on every platform.
  */
 export function CoachInstallCard() {
-  const { canInstall, installed, prompt, dismiss } = useInstallPrompt();
+  const { canInstall, installed, dismissed, prompt, dismiss } = useInstallPrompt();
   const isIOSSafari = useIsIOSSafari();
 
-  if (installed) return null;
+  if (installed || dismissed) return null;
   if (!canInstall && !isIOSSafari) return null;
 
   return (
@@ -23,9 +24,10 @@ export function CoachInstallCard() {
       {canInstall ? (
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="font-semibold">Install Academy</p>
+            <p className="font-semibold">Add Academy to your home screen</p>
             <p className="text-neutral-700 dark:text-neutral-300">
-              Get faster launches and offline today screen.
+              It opens faster and shows Today even without a signal. On Android, tap
+              Install, then Add.
             </p>
           </div>
           <div className="flex gap-2">

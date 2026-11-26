@@ -209,8 +209,17 @@ export function sessionFilterKey(payment: AdminPaymentView): string {
   return payment.session_id || "__none__";
 }
 
-export function sessionFilterLabel(value: string): string {
-  return value === "__none__" ? "No session" : value;
+/**
+ * S19: the filter showed raw ids ("demo_session_sat"). `titles` maps session
+ * id to title from the sessions list; an id the list does not know (a deleted
+ * class) still shows its id rather than vanishing.
+ */
+export function sessionFilterLabel(
+  value: string,
+  titles: ReadonlyMap<string, string> = new Map(),
+): string {
+  if (value === "__none__") return "No session";
+  return titles.get(value) || value;
 }
 
 export const PAGE_SIZE = 50;

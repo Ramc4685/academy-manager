@@ -350,7 +350,7 @@ export function PublicPageContentCard() {
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <span className="text-sm font-semibold text-rally-ink">{name}</span>
-                  <label className="inline-flex items-center gap-2 text-sm text-rally-ink">
+                  <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm text-rally-ink">
                     <input
                       type="checkbox"
                       role="switch"
@@ -366,7 +366,8 @@ export function PublicPageContentCard() {
                       }
                       className="size-4 accent-blue-600"
                     />
-                    Shown
+                    {/* S19: the word follows the box; it said "Shown" beside an unchecked one. */}
+                    {isCoachShown(profile) ? "Shown" : "Hidden"}
                   </label>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">

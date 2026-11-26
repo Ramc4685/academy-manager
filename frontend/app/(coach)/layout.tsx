@@ -12,6 +12,7 @@ import { useServiceWorkerUpdate } from "@/lib/pwa/update-flow";
 import { startAutoSync } from "@/lib/offline/sync";
 import { useNeedsReviewCount } from "@/lib/offline/use-needs-review-count";
 import { CoachInstallCard } from "@/components/coach/install-card";
+import { showInstallCardOn } from "@/lib/pwa/install-prompt";
 import { CoachSurfaceProvider } from "@/components/coach/coach-surface-context";
 import { ToastProvider } from "@/components/ds/toast";
 import { UnsavedChangesProvider } from "@/components/admin/unsaved-changes-guard";
@@ -182,7 +183,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
             you&apos;re assigned to and can mark attendance, update skills and add notes.
           </p>
         )}
-        <CoachInstallCard />
+        {showInstallCardOn(pathname) && <CoachInstallCard />}
         {children}
       </main>
 

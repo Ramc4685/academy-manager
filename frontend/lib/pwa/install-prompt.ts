@@ -9,18 +9,44 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const DISMISSED_KEY = "pwa.install.dismissedUntil";
+const DISMISS_FOR_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** S19: one dismissal window for every platform, iOS included. */
+export function isInstallDismissed(
+  storage: Pick<Storage, "getItem"> | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  try {
+    return Number(storage?.getItem(DISMISSED_KEY) ?? 0) > now;
+  } catch {
+    return false;
+  }
+}
+
+function rememberDismissal() {
+  try {
+    window.localStorage.setItem(DISMISSED_KEY, String(Date.now() + DISMISS_FOR_MS));
+  } catch {
+    // Private mode: the card hides for this page view only.
+  }
+}
+
+/** S19: the install card belongs on the coach's home (Today), not every page. */
+export function showInstallCardOn(pathname: string | null | undefined): boolean {
+  return pathname === "/coach/today" || pathname === "/coach/today/";
+}
 
 export function useInstallPrompt() {
   const [event, setEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    setDismissed(isInstallDismissed(window.localStorage));
     const onBeforeInstall = (e: Event) => {
       e.preventDefault();
-      // Respect dismissal window (30 days).
-      const until = Number(window.localStorage.getItem(DISMISSED_KEY) ?? 0);
-      if (until > Date.now()) return;
+      if (isInstallDismissed(window.localStorage)) return;
       setEvent(e as BeforeInstallPromptEvent);
     };
     const onInstalled = () => setInstalled(true);
@@ -37,20 +63,17 @@ export function useInstallPrompt() {
     await event.prompt();
     const result = await event.userChoice;
     setEvent(null);
-    if (result.outcome === "dismissed") {
-      const thirtyDays = 30 * 24 * 60 * 60 * 1000;
-      window.localStorage.setItem(DISMISSED_KEY, String(Date.now() + thirtyDays));
-    }
+    if (result.outcome === "dismissed") rememberDismissal();
     return result.outcome;
   };
 
   const dismiss = () => {
-    const thirtyDays = 30 * 24 * 60 * 60 * 1000;
-    window.localStorage.setItem(DISMISSED_KEY, String(Date.now() + thirtyDays));
+    rememberDismissal();
+    setDismissed(true);
     setEvent(null);
   };
 
-  return { canInstall: event !== null, installed, prompt, dismiss };
+  return { canInstall: event !== null, installed, dismissed, prompt, dismiss };
 }
 
 /** Detect iOS Safari (no native install prompt; show instructions instead). */

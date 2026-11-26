@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  listAdminSessions,
   listAdminPayments,
   undoPaymentPaid,
   type AdminPaymentListFilters,
@@ -138,12 +139,20 @@ export function AllInvoicesTab() {
       ).sort(),
     [payments, methodFilter],
   );
+  const sessionsQuery = useQuery({
+    queryKey: queryKeys.admin.sessions("window-all"),
+    queryFn: () => listAdminSessions(undefined, { window: "all" }),
+  });
+  const sessionTitles = useMemo(
+    () => new Map((sessionsQuery.data?.sessions ?? []).map((s) => [s.session_id, s.title])),
+    [sessionsQuery.data?.sessions],
+  );
   const sessionOptions = useMemo(
     () =>
       Array.from(new Set(payments.map((payment) => sessionFilterKey(payment)))).sort((a, b) =>
-        sessionFilterLabel(a).localeCompare(sessionFilterLabel(b)),
+        sessionFilterLabel(a, sessionTitles).localeCompare(sessionFilterLabel(b, sessionTitles)),
       ),
-    [payments],
+    [payments, sessionTitles],
   );
   const filteredPayments = useMemo(
     () =>
@@ -265,7 +274,7 @@ export function AllInvoicesTab() {
               <option value="all">All sessions</option>
               {sessionOptions.map((session) => (
                 <option key={session} value={session}>
-                  {sessionFilterLabel(session)}
+                  {sessionFilterLabel(session, sessionTitles)}
                 </option>
               ))}
             </select>

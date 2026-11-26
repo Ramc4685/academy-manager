@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   MANUAL_PAYMENT_METHODS,
+  manualMethodLabel,
   manualMethodOptions,
   resolveManualMethod,
 } from "./payment-methods";
@@ -45,5 +46,16 @@ describe("manual payment methods (row 22)", () => {
   it("keeps a still-offered pick and snaps a withdrawn one back to the default", () => {
     expect(resolveManualMethod("zelle", manualMethodOptions(undefined))).toBe("zelle");
     expect(resolveManualMethod("cash", manualMethodOptions(["zelle", "other"]))).toBe("zelle");
+  });
+});
+
+describe("manualMethodLabel (S19)", () => {
+  it("reads stored methods as words, whatever their case", () => {
+    expect(manualMethodLabel("bank_transfer")).toBe("Bank transfer");
+    expect(manualMethodLabel("BANK_TRANSFER")).toBe("Bank transfer");
+    expect(manualMethodLabel("cash")).toBe("Cash");
+  });
+  it("turns an unknown code into a sentence rather than shouting it", () => {
+    expect(manualMethodLabel("money_order")).toBe("Money order");
   });
 });
