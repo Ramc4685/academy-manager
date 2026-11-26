@@ -92,7 +92,7 @@ class ParentRegistrationView(BaseModel):
     session_title: str | None = None
     schedule_label: str | None = None
     status: str
-    state: Literal["finish", "waiting", "waitlisted", "declined"]
+    state: Literal["finish", "paying", "waiting", "waitlisted", "declined"]
     submitted_at: datetime
 
 

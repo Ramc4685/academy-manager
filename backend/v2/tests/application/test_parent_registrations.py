@@ -106,8 +106,10 @@ def _app(
     )
 
 
-async def _states(repo, parent="parent-1"):
-    rows = await ListParentRegistrations(repo, clock=lambda: NOW).execute(parent)
+async def _states(repo, parent="parent-1", payment_status=None):
+    rows = await ListParentRegistrations(
+        repo, clock=lambda: NOW, payment_status=payment_status
+    ).execute(parent)
     return [(a.application_id, state) for a, state in rows]
 
 
@@ -155,6 +157,55 @@ async def test_a_newer_attempt_hides_the_older_one_for_the_same_child_and_class(
     assert await _states(repo) == [("new", "waiting"), ("other-class", "waiting")]
 
 
+@pytest.mark.asyncio
+async def test_a_newer_unfinished_draft_never_hides_a_submitted_registration():
+    # K02: "Add a child" resumed Mateo's checkout and was retyped as Lucia.
+    repo = ManyAppRepo(
+        _app("lucia", "PENDING_APPROVAL", age=5),
+        _app("retyped", "DRAFT", age=1),
+        _app("mateo", "CHECKOUT_PENDING", child="Mateo Rivera", session="sess-paid", age=3),
+    )
+    assert await _states(repo) == [("mateo", "finish"), ("lucia", "waiting")]
+
+
+@pytest.mark.asyncio
+async def test_an_approved_child_drops_its_leftover_draft():
+    repo = ManyAppRepo(
+        _app("approved", "APPROVED", age=5),
+        _app("leftover", "DRAFT", age=1),
+    )
+    assert await _states(repo) == []
+
+
+@pytest.mark.asyncio
+async def test_months_old_unfinished_registrations_are_not_shown():
+    repo = ManyAppRepo(
+        _app("old-draft", "DRAFT", age=24 * 90),
+        _app("old-exp", "CHECKOUT_EXPIRED", child="Mateo Rivera", age=24 * 90),
+        _app("past-ttl", "DRAFT", child="Rosa Rivera", age=24 * 8),
+        _app("old-wait", "PENDING_APPROVAL", child="Ana Rivera", age=24 * 90),
+    )
+    assert await _states(repo) == [("old-wait", "waiting")]
+
+
+@pytest.mark.asyncio
+async def test_a_paid_or_just_started_checkout_offers_no_second_payment():
+    async def payment_status(payment_id):
+        return {"pay-ok": "succeeded", "pay-open": "pending"}.get(payment_id)
+
+    repo = ManyAppRepo(
+        _app("paid", "CHECKOUT_PENDING", child="Ana Rivera", age=2, payment_id="pay-ok"),
+        _app("open", "CHECKOUT_PENDING", child="Rosa Rivera", age=3, payment_id="pay-open"),
+    )
+    fresh = _app("fresh", "CHECKOUT_PENDING", child="Mateo Rivera", payment_id="pay-open")
+    repo.apps["fresh"] = fresh.model_copy(update={"updated_at": NOW - timedelta(minutes=2)})
+    assert await _states(repo, payment_status=payment_status) == [
+        ("fresh", "paying"),
+        ("paid", "paying"),
+        ("open", "finish"),
+    ]
+
+
 def _transition(repo):
     return TransitionApplication(repo, clock=lambda: NOW)
 
@@ -168,6 +219,26 @@ async def test_same_child_same_class_is_refused_in_plain_words():
     with pytest.raises(ApplicationNotEditable, match="already registered for this class"):
         await _transition(repo).execute("again", "CHECKOUT_PENDING")
     assert repo.apps["again"].status == "DRAFT"
+
+
+@pytest.mark.asyncio
+async def test_an_unpaid_checkout_for_the_same_class_points_to_finish_registration():
+    repo = ManyAppRepo(
+        _app("first", "CHECKOUT_PENDING", age=2),
+        _app("again", "DRAFT", age=1),
+    )
+    with pytest.raises(ApplicationNotEditable, match="unfinished registration"):
+        await _transition(repo).execute("again", "CHECKOUT_PENDING")
+
+
+@pytest.mark.asyncio
+async def test_an_expired_unpaid_checkout_does_not_block_forever():
+    repo = ManyAppRepo(
+        _app("stale", "CHECKOUT_PENDING", age=24 * 8),
+        _app("again", "DRAFT", age=1),
+    )
+    moved = await _transition(repo).execute("again", "CHECKOUT_PENDING")
+    assert moved.status == "CHECKOUT_PENDING"
 
 
 @pytest.mark.asyncio

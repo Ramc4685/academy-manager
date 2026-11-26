@@ -18,6 +18,11 @@ export function registrationStateCopy(row: ParentRegistration): {
         label: "Finish registration",
         detail: "This registration is not finished yet. Pick up where you left off.",
       };
+    case "paying":
+      return {
+        label: "Payment being processed",
+        detail: "We will email you when the academy confirms.",
+      };
     case "waiting":
       return {
         label: "Waiting for the academy to confirm",

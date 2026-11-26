@@ -397,7 +397,7 @@ export interface ParentRegistration {
   session_title: string | null;
   schedule_label: string | null;
   status: string;
-  state: "finish" | "waiting" | "waitlisted" | "declined";
+  state: "finish" | "paying" | "waiting" | "waitlisted" | "declined";
   submitted_at: string;
 }
 

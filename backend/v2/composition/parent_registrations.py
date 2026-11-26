@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from backend.v2.composition.roster_notifications import format_session_schedule
+from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoPaymentRepository
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_writer import MongoSessionWriter
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
@@ -28,7 +29,13 @@ from backend.v2.shared.time.mongo import ensure_utc
 def compose_list_parent_registrations(
     db: Any,
 ) -> Callable[[str], Awaitable[list[dict[str, Any]]]]:
-    use_case = ListParentRegistrations(MongoApplicationRepository(db))
+    payments = MongoPaymentRepository(db)
+
+    async def payment_status(payment_id: str) -> str | None:
+        payment = await payments.get(payment_id)
+        return payment.status if payment else None
+
+    use_case = ListParentRegistrations(MongoApplicationRepository(db), payment_status=payment_status)
     sessions = MongoSessionWriter(db)
     academies = MongoAcademyRepository(db)
 

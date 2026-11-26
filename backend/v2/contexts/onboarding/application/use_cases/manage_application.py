@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
 
@@ -76,6 +76,11 @@ REGISTRATION_STATES: dict[str, str] = {
 #: the same child and class is a duplicate (S02).
 _SUBMITTED = ["CHECKOUT_PENDING", "PENDING_APPROVAL", "APPROVING", "WAITLISTING", "WAITLISTED"]
 DECLINED_VISIBLE_FOR = timedelta(days=30)
+#: A checkout this fresh may already be paid while Stripe's webhook is in
+#: flight, so the family is not invited to pay it again.
+CHECKOUT_IN_FLIGHT_FOR = timedelta(minutes=15)
+#: Payment statuses that mean money for a CHECKOUT_PENDING application arrived.
+_PAID = {"succeeded", "partially_paid"}
 
 
 def _child_key(app: Application) -> str:
@@ -445,35 +450,63 @@ class PatchApplication:
 class ListParentRegistrations:
     """S02: the family's applications that are not finished or not confirmed.
 
-    Newest first, one row per child and class: a newer attempt for the same
-    child and class hides an older one (an expired checkout restarted).
-    Applications with no child named yet are wizard scratch, not a child.
+    One row per child and class. A submitted (or approved) application wins
+    over any unfinished attempt for the same pair, whatever their order; among
+    equals the newest wins. Unfinished rows past the 7-day TTL are dropped so
+    old abandoned wizards never resurface. Applications with no child named
+    yet are wizard scratch, not a child.
     """
 
-    def __init__(self, apps: ApplicationRepository, clock=lambda: datetime.now(UTC)) -> None:
+    def __init__(
+        self,
+        apps: ApplicationRepository,
+        clock=lambda: datetime.now(UTC),
+        payment_status: Callable[[str], Awaitable[str | None]] | None = None,
+    ) -> None:
         self._apps = apps
         self._now = clock
+        self._payment_status = payment_status
 
     async def execute(self, parent_user_id: str) -> list[tuple[Application, str]]:
         now = self._now()
+        fetched = await self._apps.list_open_for_parent(
+            parent_user_id, [*REGISTRATION_STATES, "APPROVED"]
+        )
         rows: list[tuple[Application, str]] = []
-        for app in await self._apps.list_open_for_parent(parent_user_id, list(REGISTRATION_STATES)):
-            state = REGISTRATION_STATES.get(app.status)
+        # Stable sort: submitted rows claim their child-and-class pair first.
+        for app in sorted(fetched, key=lambda a: REGISTRATION_STATES.get(a.status) == "finish"):
+            state = "done" if app.status == "APPROVED" else REGISTRATION_STATES.get(app.status)
             if state is None or app.parent_user_id != parent_user_id:
                 continue
             if not app.child_profile.first_name.strip():
+                continue
+            if state == "finish" and (
+                app.is_expired(now)
+                or ensure_utc(app.updated_at) < now - timedelta(days=APPLICATION_TTL_DAYS)
+            ):
                 continue
             if state == "declined" and (
                 ensure_utc(app.decided_at or app.updated_at) < now - DECLINED_VISIBLE_FOR
             ):
                 continue
+            if app.status == "CHECKOUT_PENDING" and await self._checkout_in_flight(app, now):
+                state = "paying"
             if any(
                 seen.selected_session_id == app.selected_session_id and same_child(seen, app)
                 for seen, _ in rows
             ):
                 continue
             rows.append((app, state))
-        return rows
+        rows.sort(key=lambda r: r[0].created_at, reverse=True)
+        return [(a, state) for a, state in rows if state != "done"]
+
+    async def _checkout_in_flight(self, app: Application, now: datetime) -> bool:
+        """Paid, or so fresh the payment webhook may still be on its way."""
+        if ensure_utc(app.updated_at) > now - CHECKOUT_IN_FLIGHT_FOR:
+            return True
+        if self._payment_status is None or not app.payment_id:
+            return False
+        return await self._payment_status(app.payment_id) in _PAID
 
 
 class GetApplicationStatus:
@@ -764,13 +797,21 @@ class TransitionApplication:
         """
         if not app.selected_session_id:
             return
+        now = self._now()
         for other in await self._apps.list_open_for_parent(app.parent_user_id, _SUBMITTED):
             if (
                 other.application_id != app.application_id
                 and other.selected_session_id == app.selected_session_id
                 and same_child(other, app)
+                # An unpaid checkout whose expiry webhook never came must not block forever.
+                and not other.is_expired(now)
             ):
                 name = app.child_profile.first_name.strip() or "This child"
+                if other.status == "CHECKOUT_PENDING":
+                    raise ApplicationNotEditable(
+                        f"{name} has an unfinished registration for this class. "
+                        "Use Finish registration on your Home page."
+                    )
                 raise ApplicationNotEditable(
                     f"{name} is already registered for this class. "
                     "You can see it on your Home page; we will email you when the academy confirms."
