@@ -27,6 +27,10 @@ describe("shouldPersistQuery", () => {
     expect(shouldPersistQuery(["coach", "skill-notes", "st-1", "sk-1"], "success")).toBe(false);
   });
 
+  it("never persists a coach's pay", () => {
+    expect(shouldPersistQuery(["coach", "pay", "2026-11"], "success")).toBe(false);
+  });
+
   it("does not persist other personas", () => {
     expect(shouldPersistQuery(["parent", "messages"], "success")).toBe(false);
     expect(shouldPersistQuery(["parent", "children"], "success")).toBe(false);

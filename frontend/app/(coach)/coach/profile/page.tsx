@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -105,11 +106,17 @@ export default function CoachProfilePage() {
             </button>
           </div>
 
-          {/*
-            No "Pay & statements" card: there are no coach statements to open
-            yet, and a card that only says so is noise. Bring it back with the
-            first real statement download.
-          */}
+          <Link
+            href="/coach/profile/pay"
+            data-testid="coach-profile-pay"
+            className="flex min-h-touch w-full items-center justify-between rounded-lg border border-neutral-200 bg-white px-4 py-2 dark:border-neutral-800 dark:bg-neutral-900"
+          >
+            <span>
+              <span className="block font-medium">Pay</span>
+              <span className="block text-sm text-neutral-500">Classes taught and payslips</span>
+            </span>
+            <span aria-hidden="true">→</span>
+          </Link>
         </div>
       )}
 

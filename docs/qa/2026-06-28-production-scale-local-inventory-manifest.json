@@ -2593,6 +2593,41 @@
       ]
     },
     {
+      "route": "/coach/profile/pay",
+      "role": "coach",
+      "source": "frontend/app/(coach)/coach/profile/pay/page.tsx",
+      "workflows": [
+        "Read classes taught and payslip",
+        "Step between months"
+      ],
+      "controls": {
+        "buttons": [
+          "Previous month",
+          "Next month",
+          "Try again"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error",
+        "offline"
+      ],
+      "risk_edges": [
+        "Another coach's pay or a draft payslip shown",
+        "Pay figures persisted on a shared device"
+      ],
+      "acceptance": [
+        "Only the signed-in coach's classes and approved or paid payslip appear; never a draft, rate or per-class amount",
+        "Workflow evidence: \"Read classes taught and payslip\" completes for the coach route /coach/profile/pay with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Step between months\" completes for the coach route /coach/profile/pay with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Another coach's pay or a draft payslip shown\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Pay figures persisted on a shared device\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/coach/sessions",
       "role": "coach",
       "source": "frontend/app/(coach)/coach/sessions/page.tsx",

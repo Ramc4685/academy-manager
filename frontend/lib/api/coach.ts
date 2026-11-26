@@ -919,3 +919,12 @@ export function listCoachPendingNarratives(date?: string): Promise<{ narratives:
     method: "GET",
   });
 }
+
+/** S59: the signed-in coach's classes taught and released payslip for one month. */
+export type CoachPay = components["schemas"]["CoachPayResponse"];
+
+/** Never persisted or cached by the service worker; `month` is "YYYY-MM", omitted = this month. */
+export function getCoachPay(month?: string): Promise<CoachPay> {
+  const query = month ? `?month=${encodeURIComponent(month)}` : "";
+  return apiFetch<CoachPay>(`/coach/profile/pay${query}`, { method: "GET" });
+}

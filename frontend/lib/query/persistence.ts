@@ -55,6 +55,8 @@ export function shouldPersistQuery(queryKey: unknown, status: string): boolean {
   // on a shared device any more than message bodies may.
   if (queryKey[1] === "progress-notes") return false;
   if (queryKey[1] === "skill-notes") return false;
+  // A coach's pay is online-only (S60): no payslip on a shared device.
+  if (queryKey[1] === "pay") return false;
   return status === "success";
 }
 
