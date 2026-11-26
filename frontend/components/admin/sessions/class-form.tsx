@@ -23,8 +23,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createAdminSession,
   getAdminAcademy,
+  getAdminPublicPageSettings,
   getSelfServicePolicy,
   listAdminUsers,
+  updateAdminClassPublicFields,
   updateAdminSession,
   type AdminSessionView,
   type AdminUserView,
@@ -39,7 +41,11 @@ import {
   type ScheduledClassFee,
 } from "@/lib/api/v2/pricing";
 import { queryKeys } from "@/lib/query/keys";
-import { parseAcademyInstant, resolveAcademyTimeZone } from "@/lib/format/academy-time";
+import {
+  ShowOnPublicPageSwitch,
+  defaultShowOnPublicPage,
+} from "@/components/admin/sessions/class-public-page";
+import { formatInAcademyZone, resolveAcademyTimeZone } from "@/lib/format/academy-time";
 
 import { Button } from "@/components/ds/button";
 import {
@@ -69,7 +75,7 @@ import {
   type WelcomeEmailValues,
 } from "./class-form-logic";
 import { shouldAdoptAcademyCapacity } from "./capacity-seed";
-import { saveClassCreate, saveClassEdit } from "./class-form-save";
+import { publishCreatedClass, saveClassCreate, saveClassEdit } from "./class-form-save";
 
 const inputClass =
   "w-full rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30";
@@ -424,7 +430,7 @@ export function WelcomeEmailFields({
         aria-expanded={open}
         className="flex min-h-touch w-full items-center justify-between px-3 py-2 text-left text-sm font-medium text-rally-ink"
       >
-        <span>Welcome email (optional)</span>
+        <span>What families need to know (optional)</span>
         <span aria-hidden className="text-rally-muted">
           {open ? "−" : "+"}
         </span>
@@ -446,7 +452,7 @@ export function WelcomeEmailFields({
           </Field>
           {text("venue_address", "Venue address", academyDefaultPlaceholder(defaults.venue_address))}
           {text("parking_notes", "Parking notes", academyDefaultPlaceholder(defaults.parking_notes))}
-          {text("what_to_bring", "What to bring", academyDefaultPlaceholder(defaults.what_to_bring))}
+          {text("what_to_bring", "What to bring (also on your public page)", academyDefaultPlaceholder(defaults.what_to_bring))}
           <Field label="Arrive N minutes before class">
             <input
               type="number"
@@ -612,7 +618,7 @@ export function EditClassDialog({
       setError(null);
       onSaved(saved);
     },
-    onError: (err: unknown) => setError(errorMessage(err, "Failed to update session.")),
+    onError: (err: unknown) => setError(errorMessage(err, "Failed to update class.")),
   });
 
   const onChange = <K extends keyof ClassFormValues>(key: K, value: ClassFormValues[K]) =>
@@ -620,11 +626,10 @@ export function EditClassDialog({
 
   const oneOffDateLabel =
     session && !(session.days_of_week?.length && session.start_time && session.end_time)
-      ? parseAcademyInstant(session.start_at).toLocaleDateString("en-US", {
+      ? formatInAcademyZone(session.start_at, session.timezone, {
           month: "short",
           day: "numeric",
           year: "numeric",
-          timeZone: resolveAcademyTimeZone(session.timezone).timeZone,
         })
       : null;
 
@@ -635,9 +640,9 @@ export function EditClassDialog({
         if (!nextOpen) setError(null);
         onOpenChange(nextOpen);
       }}
-      title="Edit session"
+      title="Edit class"
       description="Coach, schedule, seats and price."
-      overline="Session"
+      overline="Class"
     >
       {error && <DialogError message={error} />}
       {values && (
@@ -742,6 +747,20 @@ export function CreateClassDialog({
     enabled: open,
     retry: false,
   });
+  // D-22: the switch starts on once the academy page is published, and
+  // follows a late load until the admin touches it.
+  const publicPageQuery = useQuery({
+    queryKey: queryKeys.admin.publicPage(),
+    queryFn: getAdminPublicPageSettings,
+    enabled: open,
+    retry: false,
+  });
+  const pagePublished = publicPageQuery.data?.published;
+  const [showOnPublicPage, setShowOnPublicPage] = useState(false);
+  const [publicTouched, setPublicTouched] = useState(false);
+  useEffect(() => {
+    if (open && !publicTouched) setShowOnPublicPage(defaultShowOnPublicPage(pagePublished));
+  }, [open, publicTouched, pagePublished]);
   const { coaches, loading: coachesLoading } = useCoaches(open);
   const pricingQuery = usePricing(open && isOwner);
   const plans = pickablePlans(pricingQuery.data?.plans);
@@ -770,6 +789,7 @@ export function CreateClassDialog({
       setTimezoneTouched(false);
       setEndTimeTouched(false);
       setCapacityTouched(false);
+      setPublicTouched(false);
       setError(null);
     } else if (open && academyTimezone && !timezoneTouched) {
       setValues((current) => ({ ...current, timezone: academyTimezone }));
@@ -813,17 +833,21 @@ export function CreateClassDialog({
       };
       // The class exists once created; a link failure comes back as a
       // warning (retrying Create would duplicate the class).
-      return saveClassCreate(
+      const result = await saveClassCreate(
         { payload, isOwner, choice, customChoice: CUSTOM_PRICE },
         { createSession: createAdminSession, setClassPlan },
+      );
+      return publishCreatedClass(result, showOnPublicPage, (sessionId) =>
+        updateAdminClassPublicFields(sessionId, { published: true }),
       );
     },
     onSuccess: ({ created, warning, pricingTouched }) => {
       if (pricingTouched) invalidatePricing(queryClient);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.classPublicProfiles() });
       setError(null);
       onCreated(created, warning);
     },
-    onError: (err: unknown) => setError(errorMessage(err, "Failed to create session.")),
+    onError: (err: unknown) => setError(errorMessage(err, "Failed to create class.")),
   });
 
   const onChange = <K extends keyof ClassFormValues>(key: K, value: ClassFormValues[K]) => {
@@ -845,9 +869,9 @@ export function CreateClassDialog({
     <RallyModal
       open={open}
       onOpenChange={onOpenChange}
-      title="Create session"
-      description="Create a weekly recurring session."
-      overline="New session"
+      title="Create class"
+      description="Create a weekly class."
+      overline="New class"
     >
       {error && <DialogError message={error} />}
       <form
@@ -885,17 +909,28 @@ export function CreateClassDialog({
             onReasonChange: () => {},
           }}
           footer={
-            <WelcomeEmailFields
-              values={welcome}
-              onChange={(key, value) => setWelcome((current) => ({ ...current, [key]: value }))}
-              defaults={{
-                venue_address: academy?.default_venue_address,
-                parking_notes: academy?.default_parking_note,
-                what_to_bring: academy?.default_what_to_bring,
-                arrival_minutes_before: academy?.default_arrival_minutes_before,
-                absence_policy: policyQuery.data?.welcome_email_absence_policy_default,
-              }}
-            />
+            <>
+              <ShowOnPublicPageSwitch
+                testId="class-form-show-on-public-page"
+                checked={showOnPublicPage}
+                pagePublished={pagePublished}
+                onChange={(checked) => {
+                  setPublicTouched(true);
+                  setShowOnPublicPage(checked);
+                }}
+              />
+              <WelcomeEmailFields
+                values={welcome}
+                onChange={(key, value) => setWelcome((current) => ({ ...current, [key]: value }))}
+                defaults={{
+                  venue_address: academy?.default_venue_address,
+                  parking_notes: academy?.default_parking_note,
+                  what_to_bring: academy?.default_what_to_bring,
+                  arrival_minutes_before: academy?.default_arrival_minutes_before,
+                  absence_policy: policyQuery.data?.welcome_email_absence_policy_default,
+                }}
+              />
+            </>
           }
         />
         <DialogActions>

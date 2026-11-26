@@ -14,9 +14,11 @@ import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 import { ShellBackButton } from "@/components/persona/back-button";
 import { ToastProvider } from "@/components/ds/toast";
+import { AcademyZoneProvider } from "@/lib/format/academy-zone";
 import { listParentMessages } from "@/lib/api/v2/messages";
 import { queryKeys } from "@/lib/query/keys";
 import { getParentAcademy, getParentProfile } from "@/lib/api/parent";
+import { profileGapSummary } from "@/lib/parent/profile-gaps";
 import { AcademyMark } from "@/components/ds/academy-mark";
 import { safeHexColor } from "@/lib/public-page/format";
 
@@ -80,6 +82,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
   }
 
   return (
+    <AcademyZoneProvider timezone={academyData?.timezone}>
     <ToastProvider>
     <div className="min-h-screen flex flex-col pb-20" style={{ background: "var(--rally-paper)" }}>
       {/* Header */}
@@ -198,6 +201,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
       </nav>
     </div>
     </ToastProvider>
+    </AcademyZoneProvider>
   );
 }
 
@@ -333,14 +337,9 @@ function ProfileGapBanner({ pathname }: { pathname: string | null }) {
   if (pathname === "/parent/profile") return null;
   if (!data || data.gaps.is_complete || dismissed) return null;
 
-  const childCount = Object.values(data.gaps.children).filter((gaps) => gaps.length > 0).length;
-  const total = data.gaps.parent.length + childCount;
-  const subject =
-    childCount > 0 && data.gaps.parent.length > 0
-      ? "your profile and a child's"
-      : childCount > 0
-        ? "a child's profile"
-        : "your profile";
+  // S23: say what is missing, not just how many.
+  const summary = profileGapSummary(data);
+  if (!summary) return null;
 
   return (
     <div
@@ -348,7 +347,7 @@ function ProfileGapBanner({ pathname }: { pathname: string | null }) {
       role="status"
     >
       <p className="text-sm text-amber-900">
-        {total} detail{total === 1 ? "" : "s"} missing from {subject}.
+        {summary}
       </p>
       <div className="flex shrink-0 items-center gap-2">
         <Link

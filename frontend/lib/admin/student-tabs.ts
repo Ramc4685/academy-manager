@@ -12,7 +12,7 @@ export type StudentTab = "overview" | "training" | "sessions" | "billing" | "fam
 export const STUDENT_TABS: ReadonlyArray<{ id: StudentTab; label: string }> = [
   { id: "overview", label: "Overview" },
   { id: "training", label: "Training" },
-  { id: "sessions", label: "Sessions" },
+  { id: "sessions", label: "Classes" },
   { id: "billing", label: "Billing" },
   { id: "family", label: "Family & Compliance" },
 ];

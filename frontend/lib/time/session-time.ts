@@ -1,3 +1,5 @@
+import { formatInAcademyZone } from "@/lib/format/academy-time";
+
 /**
  * Last resort only: a session with no zone of its own AND no academy zone.
  * A class always runs on its academy's clock, so rendering in UTC (a 6pm
@@ -21,10 +23,9 @@ export function formatSessionTimeRange(
 ): string {
   const timeZone = sessionTimezone(timezone, academyTimezone);
   const fmt = (value: string) =>
-    parseSessionInstant(value).toLocaleTimeString(undefined, {
+    formatInAcademyZone(parseSessionInstant(value), timeZone, {
       hour: "numeric",
       minute: "2-digit",
-      timeZone,
     });
   return `${fmt(start)} – ${fmt(end)}`;
 }

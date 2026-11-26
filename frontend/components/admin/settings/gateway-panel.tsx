@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,6 +11,7 @@ import {
   startStripeConnect,
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
+import { manualMethodLabel } from "@/lib/payment-methods";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
@@ -17,7 +19,7 @@ import { PlatformFallbackCard } from "@/components/admin/settings/platform-fallb
 import { ProcessingFeeCard } from "@/components/admin/settings/processing-fee-card";
 import { PlanCard } from "@/components/admin/settings/plan-card";
 import { EmailSendingCard } from "@/components/admin/settings/email-sending-card";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 
 export function GatewayPanel() {
   const router = useRouter();
@@ -95,12 +97,12 @@ export function GatewayPanel() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="font-display text-[18px] font-semibold text-rally-ink">
-                  Stripe Connect
+                  Card and bank payments (Stripe)
                 </p>
                 <p className="mt-1 text-sm text-rally-muted">
                   {gateway?.stripe_connected
                     ? `Connected — ${gateway.stripe_account_id_masked ?? "account linked"}`
-                    : "Connect your Stripe account to enable card payments for parents."}
+                    : "Connect your Stripe account so parents can pay by card or bank."}
                 </p>
               </div>
               <Chip
@@ -136,12 +138,27 @@ export function GatewayPanel() {
               </p>
               <div className="flex flex-wrap gap-2">
                 {(gateway?.manual_methods ?? []).map((method) => (
-                  <Chip key={method} variant="manual" label={method.toUpperCase()} />
+                  <Chip key={method} variant="manual" label={manualMethodLabel(method)} />
                 ))}
               </div>
             </div>
           </div>
         )}
+      </Card>
+
+      {/* S29: Billing Health lives here now, demoted from the Money nav. */}
+      <Card p={24} className="max-w-3xl" data-testid="admin-settings-payment-status-link">
+        <Overline>Payment system status</Overline>
+        <p className="mt-3 text-sm text-rally-muted">
+          Whether parents can pay right now, payment updates from Stripe that got stuck, and
+          checking that payments match invoices.
+        </p>
+        <Link
+          href="/admin/billing-health"
+          className="mt-3 inline-block text-sm font-medium text-rally-cobalt underline"
+        >
+          Open payment system status
+        </Link>
       </Card>
 
       <EmailSendingCard />

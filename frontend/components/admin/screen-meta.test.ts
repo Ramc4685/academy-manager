@@ -70,11 +70,10 @@ describe("navForRoles", () => {
     const ownerOnly = ADMIN_NAV.flatMap((group) =>
       group.items.filter((item) => item.ownerOnly).map((item) => item.href),
     );
-    // Billing Health joined this list with the trim (spec 2026-09-07 §2):
-    // Stripe plumbing is governance, the same tier as Reports and Payouts.
+    // S29: Billing Health left the nav for Settings > Integrations; its
+    // route stays owner-only (isOwnerOnlyRoute below).
     expect(ownerOnly.sort()).toEqual([
       "/admin/audit-logs",
-      "/admin/billing-health",
       "/admin/payouts",
       "/admin/pricing",
       "/admin/reports",
@@ -123,7 +122,6 @@ describe("ADMIN_NAV shape", () => {
       "/admin/expenses": "expenses",
       "/admin/reports": "month-close",
       "/admin/payouts": "coach-payouts",
-      "/admin/billing-health": "billing-health",
       "/admin/audit-logs": "audit-logs",
       "/admin/pricing": "pricing",
     });
@@ -245,7 +243,7 @@ describe("metaForPath", () => {
   });
 
   it("still appends Detail for routes without a dynamic key", () => {
-    expect(metaForPath("/admin/sessions/sess_1").breadcrumbs).toEqual(["Admin", "Sessions", "Detail"]);
+    expect(metaForPath("/admin/sessions/sess_1").breadcrumbs).toEqual(["Admin", "Classes", "Detail"]);
   });
 });
 
@@ -256,5 +254,24 @@ describe("Progress sidebar item (Settings overhaul Phase 3 PR 11)", () => {
     expect(item?.match("/admin/pathway/progress")).toBe(true);
     expect(metaForPath("/admin/pathway/dashboard").title).toBe("Progress");
     expect(metaForPath("/admin/pathway/progress").title).toBe("Progress");
+  });
+});
+
+describe("Billing Health demoted to Settings (S29)", () => {
+  it("is not in the Money nav", () => {
+    const money = ADMIN_NAV.find((group) => group.group === "MONEY");
+    expect(money?.items.map((item) => item.href)).not.toContain("/admin/billing-health");
+  });
+
+  it("is titled Payment system status under Settings > Integrations", () => {
+    const meta = metaForPath("/admin/billing-health");
+    expect(meta.title).toBe("Payment system status");
+    expect(meta.breadcrumbs).toEqual(["Admin", "Settings", "Integrations", "Payment system status"]);
+  });
+
+  it("lights the Settings nav item and stays owner-only", () => {
+    const settings = ADMIN_NAV.flatMap((group) => group.items).find((item) => item.id === "settings");
+    expect(settings?.match("/admin/billing-health")).toBe(true);
+    expect(isOwnerOnlyRoute("/admin/billing-health")).toBe(true);
   });
 });

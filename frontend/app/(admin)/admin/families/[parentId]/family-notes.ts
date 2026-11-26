@@ -6,6 +6,7 @@
 import type { FollowUp, FollowUpBucket } from "@/lib/api/admin-family-crm";
 import type { AdminUserView } from "@/lib/api/admin";
 import type { ChipVariant } from "@/components/ds";
+import { formatPlainDate } from "@/lib/format/plain-date";
 
 export const MAX_NOTE_BODY_LEN = 4000;
 export const MAX_FOLLOW_UP_TITLE_LEN = 200;
@@ -100,11 +101,7 @@ export function bucketVariant(bucket: FollowUpBucket): ChipVariant {
 export function dueLabel(isoDate: string): string {
   const [y, m, d] = isoDate.split("-").map(Number);
   if (!y || !m || !d) return isoDate;
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
+  return formatPlainDate(isoDate, { month: "short", day: "numeric" });
 }
 
 /** Counts for the dashboard card: overdue and due today among open rows. */

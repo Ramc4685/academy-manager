@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   coachSessionHref,
   correctionWindowClosed,
+  dateFromOccurrenceId,
+  emptyRosterCopy,
+  marksSummary,
+  sessionIdFromOccurrenceId,
   isCancelled,
   latestUnfinishedRecap,
   markingNotOpenYet,
@@ -93,6 +97,34 @@ describe("coachSessionHref", () => {
 
   it("omits the query when no date can be resolved", () => {
     expect(coachSessionHref("occ-1")).toBe("/coach/sessions/occ-1");
+  });
+
+  it("falls back to the date in the occurrence id", () => {
+    expect(coachSessionHref("sess_sat:2026-12-01:09:00")).toBe(
+      "/coach/sessions/sess_sat%3A2026-12-01%3A09%3A00?date=2026-12-01",
+    );
+  });
+});
+
+describe("dateFromOccurrenceId", () => {
+  it("reads the local date from a dated occurrence id", () => {
+    expect(dateFromOccurrenceId("sess_sat:2026-12-01:09:00")).toBe("2026-12-01");
+    expect(dateFromOccurrenceId("sess_sat:2026-11-21")).toBe("2026-11-21");
+  });
+
+  it("returns null for a bare session id or junk", () => {
+    expect(dateFromOccurrenceId("sess_sat")).toBeNull();
+    expect(dateFromOccurrenceId("sess_sat:not-a-date")).toBeNull();
+    expect(dateFromOccurrenceId("sess_sat:2026-13-99Tjunk")).toBeNull();
+    // No wired writer emits instant-shaped ids; guessing a zone would be wrong.
+    expect(dateFromOccurrenceId("sess_sat:2026-11-21T01:00:00+00:00")).toBeNull();
+  });
+});
+
+describe("sessionIdFromOccurrenceId", () => {
+  it("keeps the session half and passes bare ids through", () => {
+    expect(sessionIdFromOccurrenceId("sess_sat:2026-12-01:09:00")).toBe("sess_sat");
+    expect(sessionIdFromOccurrenceId("sess_sat")).toBe("sess_sat");
   });
 });
 
@@ -278,5 +310,25 @@ describe("latestUnfinishedRecap", () => {
       ]),
     ];
     expect(latestUnfinishedRecap(sessions, now)).toBeNull();
+  });
+});
+
+describe("emptyRosterCopy", () => {
+  it("does not blame the roster for a time lock", () => {
+    expect(emptyRosterCopy(true)).toContain("before it starts");
+    expect(emptyRosterCopy(true)).not.toContain("No students enrolled");
+    expect(emptyRosterCopy(false)).toBe("No students were on this class.");
+  });
+});
+
+describe("marksSummary", () => {
+  it("counts each mark in present, late, absent order", () => {
+    expect(marksSummary(["absent", "present", "late", "present", null, "present"])).toBe(
+      "3 present, 1 late, 1 absent",
+    );
+  });
+
+  it("is empty when nothing is marked", () => {
+    expect(marksSummary([null, undefined, "voided"])).toBe("");
   });
 });

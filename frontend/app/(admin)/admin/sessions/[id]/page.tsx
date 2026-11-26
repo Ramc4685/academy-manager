@@ -33,7 +33,7 @@ import {
   type AdminWaitlistEntry,
 } from "@/lib/api/admin";
 import { getFullPathway, placeStudentInLevel } from "@/lib/api/curriculum";
-import { parseAcademyInstant, resolveAcademyTimeZone } from "@/lib/format/academy-time";
+import { formatInAcademyZone, parseAcademyInstant } from "@/lib/format/academy-time";
 import { PathwayPlacementUndoWindow } from "@/lib/admin/pathway-placement-undo";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -46,9 +46,12 @@ import { AdminTeachingPlan } from "@/components/teaching/admin-teaching-plan";
 import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
 
 import { HoldEnrollmentDialog, ReturnFromHoldDialog } from "@/components/admin/enrollment/hold-dialogs";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { ClassRecapDialog } from "@/components/admin/ClassReportHandoffsCard";
 
+import { ClassPublicPageCard } from "@/components/admin/sessions/class-public-page";
+import { UnpricedClassBanner } from "@/components/admin/sessions/unpriced-class";
+import { refreshAfterEnrollmentChange } from "@/lib/admin/refresh-after-enrollment-change";
 import { AddToRosterDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";
 import { formatCurrencyCents, sessionTimeRange } from "./format";
 import { CopyClassDialog } from "./copy-class-dialog";
@@ -69,7 +72,7 @@ const DETAIL_TABS = [
   { id: "dates", label: "Class dates" },
   { id: "waitlist", label: "Waitlist" },
   { id: "teaching-plan", label: "Teaching plan" },
-  { id: "welcome", label: "Welcome email" },
+  { id: "welcome", label: "What families need to know" },
 ] as const;
 type DetailTab = (typeof DETAIL_TABS)[number]["id"];
 
@@ -79,7 +82,7 @@ const ROSTER_VIEWS = [
 ] as const;
 type RosterView = (typeof ROSTER_VIEWS)[number]["id"];
 
-const CANCEL_FAILED_FALLBACK = "Could not cancel session.";
+const CANCEL_FAILED_FALLBACK = "Could not cancel class.";
 
 // #711: a long-running series lists 20+ dates; by default show the 3 most
 // recent past dates and the next 3 upcoming, in order.
@@ -104,7 +107,7 @@ function windowedOccurrences(
 
 function cancelErrorMessage(err: unknown): string {
   const reason = err instanceof Error ? err.message.trim() : "";
-  return reason ? `Could not cancel session: ${reason}` : CANCEL_FAILED_FALLBACK;
+  return reason ? `Could not cancel class: ${reason}` : CANCEL_FAILED_FALLBACK;
 }
 
 export default function AdminSessionDetailPage() {
@@ -284,6 +287,10 @@ export default function AdminSessionDetailPage() {
       ),
     [enrollments],
   );
+  const activeStudentNameById = useMemo(
+    () => new Map(activeEnrollments.map((e) => [e.student_id, e.full_name])),
+    [activeEnrollments],
+  );
   const waitlist = waitlistQuery.data?.waitlist ?? [];
   const waitingCount = waitlist.filter((w) => w.status === "waiting").length;
 
@@ -399,7 +406,7 @@ export default function AdminSessionDetailPage() {
             href="/admin/sessions"
             className="inline-flex items-center gap-1 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted hover:text-rally-ink"
           >
-            ← Sessions
+            ← Classes
           </Link>
           {sessionsQuery.isLoading ? (
             <div className="mt-2 h-8 w-48 animate-pulse rounded bg-rally-line/40" />
@@ -411,19 +418,20 @@ export default function AdminSessionDetailPage() {
               <p className="mt-1 text-sm text-rally-muted">
                 {session.location} · {sessionTimeRange(session)}
                 {session.coach_name ? ` · Coach ${session.coach_name}` : ""}
-                {` · ${formatCurrencyCents(session.amount_cents)}/month`}
+                {session.unpriced ? " · No price" : ` · ${formatCurrencyCents(session.amount_cents)}/month`}
               </p>
+              {session.unpriced && <UnpricedClassBanner />}
             </>
           ) : (
             <h1 className="font-display text-2xl font-semibold text-rally-ink">
-              Session unavailable
+              Class unavailable
             </h1>
           )}
         </div>
         <div className="flex flex-wrap gap-2">
           {session && (
             <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>
-              Edit session
+              Edit class
             </Button>
           )}
           {session && (
@@ -439,14 +447,17 @@ export default function AdminSessionDetailPage() {
           >
             Add to roster
           </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={() => setCancelSessionOpen(true)}
-            disabled={cancelSessionMutation.isPending}
-          >
-            {cancelSessionMutation.isPending ? "Cancelling…" : "Cancel session"}
-          </Button>
+          {/* S69: set apart from Edit so cancelling the whole class is never a slip. */}
+          <div className="border-l border-rally-line pl-3 sm:ml-3">
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => setCancelSessionOpen(true)}
+              disabled={cancelSessionMutation.isPending}
+            >
+              {cancelSessionMutation.isPending ? "Cancelling…" : "Cancel class"}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -464,6 +475,8 @@ export default function AdminSessionDetailPage() {
       {session && (
         <CoachingStaffStrip session={session} onEditAssistants={() => setAssistantsOpen(true)} />
       )}
+
+      {session && <ClassPublicPageCard sessionId={session.session_id} />}
 
       <div className="flex flex-wrap gap-2 border-b border-rally-line">
         {DETAIL_TABS.map((tab) => (
@@ -754,9 +767,9 @@ export default function AdminSessionDetailPage() {
       <ConfirmActionDialog
         open={cancelSessionOpen}
         onOpenChange={setCancelSessionOpen}
-        overline="Cancel session"
-        title="Cancel this session for everyone?"
-        subject={session ? `${session.title} · ${session.location}` : "This session"}
+        overline="Cancel class"
+        title="Cancel this class for everyone?"
+        subject={session ? `${session.title} · ${session.location}` : "This class"}
         consequence={
           <>
             <p>
@@ -764,14 +777,14 @@ export default function AdminSessionDetailPage() {
                 ? "1 family loses its seat"
                 : `${activeEnrollments.length} families lose their seats`}
               , and {waitlist.length === 1 ? "1 entry" : `${waitlist.length} entries`} on the
-              waitlist {waitlist.length === 1 ? "is" : "are"} dropped. Billing for the session
+              waitlist {waitlist.length === 1 ? "is" : "are"} dropped. Billing for the class
               stops; invoices already raised stay and must be voided or credited by hand.
             </p>
-            <p>Every enrolled family is emailed that the session was cancelled.</p>
+            <p>Every enrolled family is emailed that the class was cancelled.</p>
             <p className="font-semibold text-rally-ink">This cannot be undone.</p>
           </>
         }
-        confirmLabel="Cancel session"
+        confirmLabel="Cancel class"
         pending={cancelSessionMutation.isPending}
         onConfirm={() => {
           cancelSessionMutation.mutate();
@@ -831,6 +844,7 @@ export default function AdminSessionDetailPage() {
           if (!next) setReEnrollTarget(null);
         }}
         sessionId={sessionId}
+        unpriced={Boolean(session?.unpriced)}
         prefill={
           reEnrollTarget
             ? {
@@ -843,9 +857,7 @@ export default function AdminSessionDetailPage() {
         onAdded={() => {
           setAddOpen(false);
           setReEnrollTarget(null);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionDetail(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+          refreshAfterEnrollmentChange(queryClient);
         }}
       />
       <SessionEditDialog
@@ -901,17 +913,17 @@ export default function AdminSessionDetailPage() {
         sessionTitle={session?.title ?? null}
         timezone={occurrenceTimezone}
         studentNameById={studentNameById}
+        activeStudentNameById={activeStudentNameById}
         onClose={() => setAttendanceTarget(null)}
       />
       <ClassRecapDialog
         occurrenceId={recapTarget?.occurrence_id ?? null}
         when={
           recapTarget
-            ? parseAcademyInstant(recapTarget.start_at).toLocaleString("en-US", {
+            ? formatInAcademyZone(recapTarget.start_at, session?.timezone ?? null, {
                 weekday: "long",
                 month: "short",
                 day: "numeric",
-                timeZone: resolveAcademyTimeZone(session?.timezone ?? null).timeZone,
               })
             : ""
         }
@@ -919,6 +931,7 @@ export default function AdminSessionDetailPage() {
       />
       <OccurrenceReplacementDialog
         sessionId={sessionId}
+        scheduledCoachId={session?.coach_id ?? null}
         open={replacementOpen}
         occurrence={occurrenceTarget}
         onClose={() => {
@@ -940,12 +953,12 @@ export default function AdminSessionDetailPage() {
         enrollments={transferTargets}
         currentSessionId={sessionId}
         currentSessionTitle={session?.title ?? ""}
+        currentSession={session ?? null}
         onClose={() => setTransferTargets([])}
         onMoved={(close) => {
           if (close) setTransferTargets([]);
           setSelectedIds(new Set());
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+          refreshAfterEnrollmentChange(queryClient);
         }}
       />
       <HoldEnrollmentDialog
@@ -953,10 +966,12 @@ export default function AdminSessionDetailPage() {
         studentName={holdTarget?.full_name ?? ""}
         onClose={() => setHoldTarget(null)}
         onHeld={() => {
+          refreshAfterEnrollmentChange(queryClient, {
+            studentId: holdTarget?.student_id,
+            parentId: holdTarget?.parent_id,
+          });
           setHoldTarget(null);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
       <ReturnFromHoldDialog
@@ -964,29 +979,34 @@ export default function AdminSessionDetailPage() {
         studentName={returnTarget?.full_name ?? ""}
         onClose={() => setReturnTarget(null)}
         onReturned={() => {
+          refreshAfterEnrollmentChange(queryClient, {
+            studentId: returnTarget?.student_id,
+            parentId: returnTarget?.parent_id,
+          });
           setReturnTarget(null);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
       <WithdrawalCreditDialog
         enrollment={withdrawalTarget}
         onClose={() => setWithdrawalTarget(null)}
         onApproved={() => {
-          setWithdrawalTarget(null);
-          void queryClient.invalidateQueries({
-            queryKey: queryKeys.admin.enrollments(sessionId),
+          refreshAfterEnrollmentChange(queryClient, {
+            studentId: withdrawalTarget?.student_id,
+            parentId: withdrawalTarget?.parent_id,
           });
+          setWithdrawalTarget(null);
         }}
       />
       <RemoveEnrollmentDialog
         enrollment={removeTarget}
         onClose={() => setRemoveTarget(null)}
         onRemoved={() => {
+          refreshAfterEnrollmentChange(queryClient, {
+            studentId: removeTarget?.student_id,
+            parentId: removeTarget?.parent_id,
+          });
           setRemoveTarget(null);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
     </section>

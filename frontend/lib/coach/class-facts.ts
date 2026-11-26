@@ -1,0 +1,52 @@
+import type { CoachAgeBand, CoachScheduleEntry, CoachSession } from "@/lib/api/coach";
+
+/** "Ages 8–12", "Ages 13+", "Up to age 9"; null when the class has no age span. */
+export function ageBandLabel(band: CoachAgeBand | null | undefined): string | null {
+  const min = band?.min_age ?? null;
+  const max = band?.max_age ?? null;
+  if (min !== null && max !== null) return min === max ? `Age ${min}` : `Ages ${min}–${max}`;
+  if (min !== null) return `Ages ${min}+`;
+  if (max !== null) return `Up to age ${max}`;
+  return null;
+}
+
+/** Quiet roster-row line: "Age 9 · Grip & Control"; empty when neither is known. */
+export function rosterRowMeta(row: { age_years?: number | null; level_name?: string | null }): string {
+  return [row.age_years != null ? `Age ${row.age_years}` : "", row.level_name ?? ""]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+export function headcountLabel(count: number): string {
+  return `${count} ${count === 1 ? "child" : "children"}`;
+}
+
+/** The teaching plan for a class date (the plan route is per day, not per class). */
+export function coachPlanHref(date: string): string {
+  return `/coach/today/plan?date=${encodeURIComponent(date)}`;
+}
+
+/** "8 children · Ages 8–12 · Beginner" for a Sessions row; empty when none is known. */
+export function classFacts(
+  session: Pick<CoachScheduleEntry, "enrolled_count" | "age_band" | "level">,
+): string {
+  return [
+    typeof session.enrolled_count === "number" ? headcountLabel(session.enrolled_count) : "",
+    ageBandLabel(session.age_band) ?? "",
+    session.level?.trim() ?? "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** Venue lines for the class page: address, parking, arrival time. Empty when the owner set none. */
+export function venueLines(
+  session: Pick<CoachSession, "venue_address" | "parking_notes" | "arrival_minutes_before">,
+): string[] {
+  const minutes = session.arrival_minutes_before;
+  return [
+    session.venue_address?.trim() ?? "",
+    session.parking_notes?.trim() ? `Parking: ${session.parking_notes.trim()}` : "",
+    typeof minutes === "number" && minutes > 0 ? `Arrive ${minutes} minutes before the start` : "",
+  ].filter(Boolean);
+}

@@ -83,6 +83,8 @@ test.describe("admin setup checklist", () => {
 
     const card = page.getByTestId("dashboard-setup-checklist");
     await expect(card).toBeVisible();
+    // S09: the card is collapsed to one line until opened.
+    await card.locator("summary").click();
     await expect(page.getByTestId("dashboard-setup-checklist-progress")).toHaveText(
       "5 of 9 steps done",
     );

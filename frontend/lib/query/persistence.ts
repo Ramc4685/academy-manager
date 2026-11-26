@@ -55,7 +55,28 @@ export function shouldPersistQuery(queryKey: unknown, status: string): boolean {
   // on a shared device any more than message bodies may.
   if (queryKey[1] === "progress-notes") return false;
   if (queryKey[1] === "skill-notes") return false;
+  // A coach's pay is online-only (S60): no payslip on a shared device.
+  if (queryKey[1] === "pay") return false;
+  // Children's health notes and emergency contacts (S49, D-14) are never
+  // stored on the device: online-only, like the service worker treats them.
+  if (queryKey[1] === "roster-health") return false;
+  // A cover request (S67) must never show a stale "requested" from the device.
+  if (queryKey[1] === "cover-request") return false;
   return status === "success";
+}
+
+/** Bumped when the coach cache policy or a persisted read's shape changes, so stale copies are dropped. */
+export const PERSISTER_BUSTER = "coach-passport-header-v3";
+
+/**
+ * Coach reads paint from the persisted copy but always revalidate on mount:
+ * a roster can change (new assignment, transfer) while the coach still holds
+ * a cached copy, and a 5-minute staleTime hid that for minutes. Offline, the
+ * refetch pauses and the persisted copy keeps painting. Per-query staleTime
+ * would override this, so coach queries must not set one (a test scans).
+ */
+export function applyCoachQueryDefaults(client: QueryClient): void {
+  client.setQueryDefaults(["coach"], { staleTime: 0 });
 }
 
 export async function attachPersistence(client: QueryClient): Promise<void> {
@@ -76,7 +97,7 @@ export async function attachPersistence(client: QueryClient): Promise<void> {
       persister: createSyncStoragePersister({ storage: window.localStorage }) as unknown as Parameters<
         typeof persistQueryClient
       >[0]["persister"],
-      buster: "coach-success-only-v1",
+      buster: PERSISTER_BUSTER,
       maxAge: 24 * 60 * 60 * 1000,
       dehydrateOptions: {
         shouldDehydrateQuery: (q) => shouldPersistQuery(q.queryKey, q.state.status),

@@ -356,6 +356,10 @@ function TemplateManagementPanel({
           <div data-testid="admin-waiver-list">
             <div className="border-b border-neutral-200 bg-neutral-50 px-5 py-3">
               <Overline>Waivers · who signs what</Overline>
+              <p className="mt-1 text-[12px] text-rally-muted" data-testid="admin-waiver-version-help">
+                To change a waiver families already sign, use New version on its row. New waiver
+                above adds a separate one.
+              </p>
             </div>
             <ul className="divide-y divide-neutral-100">
               {current.map((template) => (
@@ -713,7 +717,7 @@ function SummaryCards({ summary }: { summary: AdminWaiverSummary }) {
       <Card p={20} accent="#f59e0b">
         <Overline>Pending signature</Overline>
         <BigNum size={32}>{summary.pending_signature}</BigNum>
-        <p className="mt-1 text-[11px] text-rally-subtle">Blocks first session</p>
+        <p className="mt-1 text-[11px] text-rally-subtle">Blocks first class date</p>
       </Card>
       <Card p={20} accent="#facc15">
         <Overline>Expiring 30d</Overline>

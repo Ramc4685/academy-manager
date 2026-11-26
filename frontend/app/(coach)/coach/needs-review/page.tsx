@@ -251,14 +251,14 @@ export default function NeedsReviewPage() {
 // Plain-language reasons keyed by the queue's internal error code. The raw code
 // and backend message are never shown to the coach — only the friendly reason.
 const REVIEW_REASONS: Record<string, string> = {
-  "Coaching.SessionCancelled": "This session was cancelled, so your mark wasn’t saved.",
+  "Coaching.SessionCancelled": "This class date was cancelled, so your mark wasn’t saved.",
   "Coaching.StudentNotEnrolled":
-    "This student is no longer enrolled in the session, so your mark wasn’t saved.",
+    "This student is no longer enrolled in the class, so your mark wasn’t saved.",
   "Coaching.ConflictAttendanceExists":
     "Attendance was already recorded for this student, so your mark wasn’t applied.",
   "Coaching.OccurrenceNotStarted": "That class hadn’t started yet, so your mark wasn’t saved.",
   "Coaching.SessionNotAssigned":
-    "This session isn’t assigned to you for that date, so your mark wasn’t saved.",
+    "This class isn’t assigned to you for that date, so your mark wasn’t saved.",
 };
 
 function reviewReason(m: QueuedMutation): string {
@@ -268,5 +268,5 @@ function reviewReason(m: QueuedMutation): string {
   }
   const code = m.error?.code;
   if (code && REVIEW_REASONS[code]) return REVIEW_REASONS[code];
-  return "This change couldn’t be saved. Retry it, or dismiss it and mark again from the session.";
+  return "This change couldn’t be saved. Retry it, or dismiss it and mark again from the class.";
 }

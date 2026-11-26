@@ -36,6 +36,13 @@ describe("PublicTenantPage without content (today's page)", () => {
     expect(html).toContain("Full, join waitlist");
   });
 
+  it("answers level, what to bring and refunds before sign-up (S46)", () => {
+    expect(html).toContain("Beginner: new, or played only a few times");
+    expect(html).toContain("What should the player bring?");
+    expect(html).toContain('data-testid="joining-refund-policy"');
+    expect(html).toContain('href="https://riverside.example.test/refunds"');
+  });
+
   it("shows the support email as the only contact", () => {
     expect(html).toContain("mailto:hello@riverside.example.test");
     expect(html).not.toContain("tel:");

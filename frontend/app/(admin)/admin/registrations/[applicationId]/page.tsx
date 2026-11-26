@@ -14,7 +14,8 @@ import {
 } from "@/lib/api/admin";
 import { queryKeys } from "@/lib/query/keys";
 import { Card, Chip, LaneHeader, Overline } from "@/components/ds";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
+import { StartLevelSelect } from "@/components/admin/enrollment/start-level-select";
 
 /** The three decisions, and the second look each one now needs (#838). */
 type Decision = "approve" | "waitlist" | "reject";
@@ -25,6 +26,7 @@ export default function AdminRegistrationDetailPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [overrideReason, setOverrideReason] = useState("");
+  const [startLevelId, setStartLevelId] = useState("");
   const [waitlistReason, setWaitlistReason] = useState("");
   const [rejectReason, setRejectReason] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +52,9 @@ export default function AdminRegistrationDetailPage() {
     mutationFn: () =>
       approveAdminRegistration(applicationId, {
         waiver_override_reason: overrideReason.trim() || null,
+        start_level_id: startLevelId || null,
       }),
+    meta: { success: "Registration approved" },
     onSuccess: refresh,
     onError: (err: Error) => setError(err.message),
   });
@@ -59,6 +63,7 @@ export default function AdminRegistrationDetailPage() {
       waitlistAdminRegistration(applicationId, {
         reason: waitlistReason.trim() || "Registration waitlisted by admin",
       }),
+    meta: { success: "Moved to the waitlist" },
     onSuccess: refresh,
     onError: (err: Error) => setError(err.message),
   });
@@ -77,7 +82,7 @@ export default function AdminRegistrationDetailPage() {
   const studentName = query.data?.student_name || "this student";
   const familyLabel = query.data?.parent_name || query.data?.parent_email || "the family";
   const sessionLabel =
-    query.data?.session_title || query.data?.selected_session_id || "the requested session";
+    query.data?.session_title || query.data?.selected_session_id || "the requested class";
 
   const runDecision = (decision: Decision) => {
     setError(null);
@@ -113,7 +118,17 @@ export default function AdminRegistrationDetailPage() {
             </Card>
           )}
 
-          {query.data.zero_quote_period && !query.data.payment_id && (
+          {decidedLine(query.data.status, studentName, sessionLabel) && (
+            <Card p={20} data-testid="admin-registration-decided" style={{ borderColor: "#bbf7d0", background: "#f0fdf4" }}>
+              <p role="status" className="text-sm font-semibold text-green-900">
+                {decidedLine(query.data.status, studentName, sessionLabel)}
+              </p>
+            </Card>
+          )}
+
+          {/* S02 persona follow-up: the pre-approval warning and the decision
+              cards only make sense while the registration is undecided. */}
+          {isUndecided(query.data.status) && query.data.zero_quote_period && !query.data.payment_id && (
             <Card
               data-testid="admin-registration-zero-quote-warning"
               p={20}
@@ -139,6 +154,8 @@ export default function AdminRegistrationDetailPage() {
             </Card>
           )}
 
+          {isUndecided(query.data.status) && (
+          <>
           <LaneHeader index="02" title="Decision" />
           <Card p={20}>
             {/* Issue #747: `grid-cols-1` and `min-w-0` (below) are load-bearing.
@@ -165,7 +182,7 @@ export default function AdminRegistrationDetailPage() {
               />
               <ActionPanel
                 title="Waitlist"
-                copy="Create the student record and place the registration into the selected session queue."
+                copy="Create the student record and place the registration into the selected class queue."
                 textareaLabel="Waitlist reason"
                 textareaValue={waitlistReason}
                 onTextareaChange={setWaitlistReason}
@@ -202,8 +219,17 @@ export default function AdminRegistrationDetailPage() {
                 }}
               />
             </div>
+            <div className="mt-4 max-w-xs">
+              <StartLevelSelect
+                value={startLevelId}
+                onChange={setStartLevelId}
+                className="rounded-md border border-neutral-200 px-2 py-1.5 text-sm"
+              />
+            </div>
             {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
           </Card>
+          </>
+          )}
 
           <ConfirmActionDialog
             open={confirming === "approve"}
@@ -217,7 +243,8 @@ export default function AdminRegistrationDetailPage() {
                   Creates the student record and takes a seat in {sessionLabel}. Enrollment goes
                   active, so the family starts being invoiced for it.
                 </p>
-                <p>{familyLabel} is emailed a confirmation with the session details.</p>
+                <p>A child with no level yet starts on the level chosen above.</p>
+                <p>{familyLabel} is emailed a confirmation with the class details.</p>
               </>
             }
             confirmLabel="Approve registration"
@@ -295,9 +322,9 @@ function RegistrationSummary({ registration }: { registration: AdminRegistration
         </dl>
       </Card>
       <Card p={20}>
-        <Overline>Session and waiver</Overline>
+        <Overline>Class and waiver</Overline>
         <div className="mt-4 space-y-4">
-          <Meta label="Requested session" value={registration.session_title || registration.selected_session_id || "Not selected"} />
+          <Meta label="Requested class" value={registration.session_title || registration.selected_session_id || "Not selected"} />
           <Meta label="Capacity" value={registration.session_capacity == null ? "Not reported" : String(registration.session_capacity)} />
           <div>
             <Overline>Waiver</Overline>
@@ -322,6 +349,19 @@ function RegistrationSummary({ registration }: { registration: AdminRegistration
       </Card>
     </div>
   );
+}
+
+/** Statuses that still wait on a staff decision (MANUAL_REVIEW keeps its own warning). */
+function isUndecided(status: string): boolean {
+  return !["APPROVED", "WAITLISTED", "DECLINED"].includes(status);
+}
+
+/** S02 persona follow-up: what happened, once the registration is decided. */
+function decidedLine(status: string, student: string, session: string): string | null {
+  if (status === "APPROVED") return `Approved. ${student} is enrolled in ${session} and the family has been emailed.`;
+  if (status === "WAITLISTED") return `On the waitlist for ${session}. The family has been emailed.`;
+  if (status === "DECLINED") return "Rejected. The family has been emailed.";
+  return null;
 }
 
 function ActionPanel({

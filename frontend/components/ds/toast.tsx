@@ -11,18 +11,24 @@ import {
   type ReactNode,
 } from "react";
 
-import { registerMutationErrorSink } from "@/lib/query/mutation-errors";
+import { registerMutationToastSink } from "@/lib/query/mutation-errors";
 
 export type ToastKind = "success" | "error" | "info";
 
+/**
+ * `toast({ kind, title, description?, durationMs?, action? })`. `action` adds one
+ * button (e.g. Undo); clicking it runs `onClick` and dismisses the toast.
+ * For mutation feedback prefer `meta: { success }` on the mutation (lib/query/mutation-errors).
+ */
 export interface ToastOptions {
   kind?: ToastKind;
   title: string;
   description?: string;
   durationMs?: number;
+  action?: { label: string; onClick: () => void };
 }
 
-interface ToastItem extends ToastOptions {
+export interface ToastItem extends ToastOptions {
   id: string;
   kind: ToastKind;
 }
@@ -77,11 +83,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo(() => ({ toast, dismiss }), [toast, dismiss]);
 
-  // Surface globally-unhandled mutation failures (#509) as error toasts.
+  // Surface globally-unhandled mutation failures (#509) and `meta.success` as toasts.
   useEffect(
     () =>
-      registerMutationErrorSink(({ title, description }) => {
-        toast({ kind: "error", title, description });
+      registerMutationToastSink(({ kind, title, description }) => {
+        toast({ kind, title, description });
       }),
     [toast],
   );
@@ -91,40 +97,58 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div className="pointer-events-none fixed inset-x-0 bottom-[max(1rem,env(safe-area-inset-bottom,0px))] z-[60] flex flex-col items-center gap-2 px-4 sm:inset-x-auto sm:right-4 sm:items-end">
         {items.map((t) => (
-          <div
-            key={t.id}
-            role={t.kind === "error" ? "alert" : "status"}
-            className={`pointer-events-auto w-full max-w-sm rounded-lg border px-4 py-3 shadow-lg ${KIND_CLASSES[t.kind]}`}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm font-semibold">{t.title}</p>
-                {t.description && <p className="mt-0.5 text-xs">{t.description}</p>}
-              </div>
-              <button
-                type="button"
-                onClick={() => dismiss(t.id)}
-                aria-label="Dismiss notification"
-                className="shrink-0 opacity-70 transition-opacity hover:opacity-100"
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  aria-hidden="true"
-                >
-                  <path d="M6 6l12 12M18 6L6 18" />
-                </svg>
-              </button>
-            </div>
-          </div>
+          <ToastCard key={t.id} item={t} onDismiss={() => dismiss(t.id)} />
         ))}
       </div>
     </ToastContext.Provider>
+  );
+}
+
+/** One toast. Exported for tests; render toasts through `useToast()`. */
+export function ToastCard({ item: t, onDismiss }: { item: ToastItem; onDismiss: () => void }) {
+  return (
+    <div
+      role={t.kind === "error" ? "alert" : "status"}
+      className={`pointer-events-auto w-full max-w-sm rounded-lg border px-4 py-3 shadow-lg ${KIND_CLASSES[t.kind]}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">{t.title}</p>
+          {t.description && <p className="mt-0.5 text-xs">{t.description}</p>}
+        </div>
+        {t.action && (
+          <button
+            type="button"
+            onClick={() => {
+              t.action?.onClick();
+              onDismiss();
+            }}
+            className="shrink-0 text-sm font-semibold underline underline-offset-2"
+          >
+            {t.action.label}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss notification"
+          className="shrink-0 opacity-70 transition-opacity hover:opacity-100"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+    </div>
   );
 }
 

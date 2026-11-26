@@ -65,11 +65,14 @@ export function DialogActions({
   submitLabel?: string;
   children?: ReactNode;
 }) {
+  // Sticky inside RallyModal's 70vh scroll body, so a tall dialog (the transfer
+  // warning) never hides its buttons below the fold (S27 persona follow-up).
+  const bar = "sticky bottom-0 flex justify-end gap-2 bg-white pt-2";
   if (children) {
-    return <div className="flex justify-end gap-2 pt-2">{children}</div>;
+    return <div className={bar}>{children}</div>;
   }
   return (
-    <div className="flex justify-end gap-2 pt-2">
+    <div className={bar}>
       <Button variant="secondary" size="sm" type="button" onClick={onCancel}>
         Cancel
       </Button>

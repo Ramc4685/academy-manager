@@ -335,3 +335,95 @@ def test_coach_today_survives_a_failed_recap_lookup(seed):
         r = client.get("/api/v2/coach/today?date=2026-05-16")
     assert r.status_code == 200, r.text
     assert all(s["recap_saved"] is False for s in r.json()["sessions"])
+
+
+def test_coach_roster_row_carries_age_in_years_and_level_never_the_date_of_birth(seed):
+    from types import SimpleNamespace
+
+    from backend.v2.contexts.enrollment.domain.models import age_in_years
+    from backend.v2.contexts.enrollment.domain.programs import AgeBand
+
+    seed["students"] = [
+        Student(
+            student_id="st1",
+            academy_id="test-academy",
+            parent_id="p1",
+            full_name="Alice",
+            date_of_birth="2015-03-02",
+        ),
+        Student(student_id="st2", academy_id="test-academy", parent_id="p2", full_name="Bob"),
+    ]
+    seed["sessions"][0] = seed["sessions"][0].model_copy(
+        update={"age_band": AgeBand(min_age=8, max_age=12)}
+    )
+    use_cases = _build_use_cases(seed)
+
+    class _Levels:
+        async def execute(self, student_ids, program_id):
+            assert program_id == "prog-1"
+            return {"st1": "Grip & Control"} if "st1" in student_ids else {}
+
+    class _Program:
+        async def execute(self):
+            return SimpleNamespace(program_id="prog-1")
+
+    use_cases.student_progress = SimpleNamespace(get_active_level_names=_Levels())
+    use_cases.curriculum = SimpleNamespace(resolve_default_program=_Program())
+    app = _make_app(_coach_claims(), use_cases)
+    with TestClient(app) as client:
+        r = client.get("/api/v2/coach/today?date=2026-05-16")
+
+    assert r.status_code == 200, r.text
+    assert "date_of_birth" not in r.text and "2015-03-02" not in r.text
+    first = r.json()["sessions"][0]
+    by_id = {entry["student_id"]: entry for entry in first["roster"]}
+    assert by_id["st1"]["age_years"] == age_in_years("2015-03-02", date.today())
+    assert isinstance(by_id["st1"]["age_years"], int)
+    assert by_id["st1"]["level_name"] == "Grip & Control"
+    assert by_id["st2"]["age_years"] is None and by_id["st2"]["level_name"] is None
+    assert first["age_band"] == {"min_age": 8, "max_age": 12}
+
+
+def test_coach_today_survives_a_failing_level_lookup(seed):
+    from types import SimpleNamespace
+
+    use_cases = _build_use_cases(seed)
+
+    class _Broken:
+        async def execute(self):
+            raise RuntimeError("curriculum down")
+
+    use_cases.student_progress = SimpleNamespace(get_active_level_names=None)
+    use_cases.curriculum = SimpleNamespace(resolve_default_program=_Broken())
+    app = _make_app(_coach_claims(), use_cases)
+    with TestClient(app) as client:
+        r = client.get("/api/v2/coach/today?date=2026-05-16")
+
+    assert r.status_code == 200, r.text
+    assert all(e["level_name"] is None for e in r.json()["sessions"][0]["roster"])
+
+
+def test_age_in_years_counts_whole_birthdays():
+    from backend.v2.contexts.enrollment.domain.models import age_in_years
+
+    assert age_in_years("2015-12-01", date(2026, 11, 30)) == 10
+    assert age_in_years("2015-12-01", date(2026, 12, 1)) == 11
+    assert age_in_years(None, date(2026, 12, 1)) is None
+    assert age_in_years("not a date", date(2026, 12, 1)) is None
+
+
+def test_coach_today_carries_the_class_venue_facts(seed):
+    seed["sessions"][0] = seed["sessions"][0].model_copy(
+        update={
+            "venue_address": "12 Court Lane, Normal IL",
+            "parking_notes": "Use the north lot",
+            "arrival_minutes_before": 10,
+        }
+    )
+    app = _make_app(_coach_claims(), _build_use_cases(seed))
+    with TestClient(app) as client:
+        first = client.get("/api/v2/coach/today?date=2026-05-16").json()["sessions"][0]
+
+    assert first["venue_address"] == "12 Court Lane, Normal IL"
+    assert first["parking_notes"] == "Use the north lot"
+    assert first["arrival_minutes_before"] == 10

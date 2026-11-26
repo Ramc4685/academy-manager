@@ -39,7 +39,7 @@ import {
   type ParentHomeChild,
 } from "@/lib/api/parent-home";
 import { getParentProgressSummary } from "@/lib/api/curriculum";
-import { resolveAcademyTimeZone } from "@/lib/format/academy-time";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 import { nameGradient, nameInitial } from "@/lib/avatar-gradient";
 import {
   attendanceCopy,
@@ -52,7 +52,13 @@ import {
   type ParentHomeActivity,
 } from "@/lib/parent-home";
 import { ErrorNotice } from "@/components/ds/error-notice";
-import { scheduleSourceLabel } from "@/lib/parent/schedule-events";
+import {
+  AddChildLink,
+  OpenRegistrationsCard,
+  useParentRegistrations,
+} from "@/components/parent/open-registrations";
+import { ABSENT_REPORTED_CHIP, scheduleSourceLabel } from "@/lib/parent/schedule-events";
+import { nextClassDetails } from "@/lib/parent/next-class-details";
 
 const progressOverviewEnabled =
   process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
@@ -103,6 +109,9 @@ export default function ParentDashboardPage() {
     queryFn: () => getParentProgressSummary(),
     enabled: progressOverviewEnabled,
   });
+
+  const registrationsQuery = useParentRegistrations();
+  const registrations = registrationsQuery.data?.registrations ?? [];
 
   const homeChildren = useMemo(
     () => homeQuery.data?.children ?? [],
@@ -176,7 +185,7 @@ export default function ParentDashboardPage() {
         own visible h1 inside RegistrationHero, so this one is hidden only
         when there are children to head.
       */}
-      {hasChildren && <h1 className="sr-only">Home</h1>}
+      {(hasChildren || registrations.length > 0) && <h1 className="sr-only">Home</h1>}
       {coreLoading ? (
         <DashboardSkeleton />
       ) : homeQuery.isError ? (
@@ -192,10 +201,16 @@ export default function ParentDashboardPage() {
       ) : (
         <>
           {showBanner && balance && <BalanceBanner balance={balance} />}
+          <OpenRegistrationsCard rows={registrations} />
           {hasChildren ? (
-            <ChildCardList items={homeChildren} timezone={academyTimezone} />
-          ) : (
+            <>
+              <ChildCardList items={homeChildren} timezone={academyTimezone} />
+              <AddChildLink />
+            </>
+          ) : registrations.length === 0 ? (
             <RegistrationHero academy={academyQuery.data} />
+          ) : (
+            <AddChildLink />
           )}
         </>
       )}
@@ -276,8 +291,9 @@ function ChildCardList({
   return (
     <ul data-testid="parent-child-cards" className="space-y-3 stagger-children">
       {items.map((child) => (
-        <li key={child.student_id}>
+        <li key={child.student_id} className="space-y-2">
           <ChildCard child={child} timezone={timezone} />
+          <NextClassInfo child={child} />
         </li>
       ))}
     </ul>
@@ -330,11 +346,12 @@ function ChildCard({
       <dl className="mt-3 space-y-2.5">
         <CardRow
           icon={<CalendarDays size={15} />}
-          label="Next session"
-          value={next ? next.when : "No upcoming sessions"}
+          label="Next class"
+          value={next ? next.when : "No upcoming classes"}
           meta={
             next
               ? [
+                  child.next_session?.absence_reported ? ABSENT_REPORTED_CHIP : null,
                   // #1038: say when the next class is a one-time make-up / trial.
                   oneTimeClassLabel(child.next_session?.source),
                   next.where,
@@ -349,16 +366,77 @@ function ChildCard({
           icon={<Trophy size={15} />}
           label="Attendance this month"
           value={attendanceCopy(child.attendance_this_month)}
-          meta={null}
+          meta={
+            (child.attendance_this_month?.total ?? 0) > 0
+              ? "Out of the class dates the coach has marked so far"
+              : null
+          }
         />
         <CardRow
           icon={<Sparkles size={15} />}
-          label="Latest milestone"
+          label={child.latest_milestone?.kind === "skill" ? "Latest milestone" : "Progress"}
           value={milestone ?? "No milestones yet"}
           meta={null}
         />
       </dl>
     </Link>
+  );
+}
+
+/**
+ * S45: where to go, what to bring and who coaches. Sits below the card, not
+ * inside it: the card is one link, and a link inside a link is invalid.
+ * Until the child's first attended class it is an open "Before your first
+ * class" card; after that a collapsed disclosure.
+ */
+function NextClassInfo({ child }: { child: ParentHomeChild }) {
+  const details = nextClassDetails(child.next_session, child.first_class_pending);
+  if (!details) return null;
+  const list = details.rows.length > 0 && (
+    <dl className="mt-2 space-y-1.5">
+      {details.rows.map((row) => (
+        <div key={row.label}>
+          <dt className="text-[10px] font-bold uppercase tracking-widest text-rally-subtle">{row.label}</dt>
+          <dd className="text-sm text-rally-ink">{row.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+  const directions = details.directionsHref && (
+    <a
+      href={details.directionsHref}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mt-2 inline-flex min-h-touch items-center text-sm font-semibold text-rally-cobalt-700 underline"
+    >
+      Get directions
+    </a>
+  );
+  if (details.firstClass) {
+    return (
+      <section
+        aria-labelledby={`first-class-${child.student_id}`}
+        data-testid={`first-class-${child.student_id}`}
+        className="rounded-2xl border border-rally-cobalt-100 bg-rally-cobalt-50 p-4"
+      >
+        <h3 id={`first-class-${child.student_id}`} className="text-sm font-bold text-rally-ink">
+          Before {child.full_name.split(" ")[0]}&apos;s first class
+        </h3>
+        {list}
+        {directions}
+      </section>
+    );
+  }
+  return (
+    <div className="rounded-2xl border border-rally-line bg-white px-4 py-2">
+      <details>
+        <summary className="min-h-touch cursor-pointer py-2 text-sm font-semibold text-rally-ink">
+          What to bring and parking
+        </summary>
+        {list}
+      </details>
+      {directions}
+    </div>
   );
 }
 
@@ -553,7 +631,7 @@ function RequestsCard() {
       <div className="min-w-0 flex-1">
         <p className="text-sm font-bold text-rally-ink">Requests</p>
         <p className="mt-0.5 line-clamp-2 text-xs text-rally-muted">
-          Report an absence, request a makeup, or ask for a trial class
+          Report an absence, request a make-up, or ask for a trial class
         </p>
       </div>
       <ChevronRight className="shrink-0 text-rally-muted" size={18} />
@@ -597,6 +675,12 @@ function AcademyContact({ academy }: { academy?: ParentAcademy }) {
               {academy.contact_phone}
             </a>
           )}
+          <Link
+            href="/parent/messages#academy"
+            className="inline-flex min-h-touch items-center rounded-lg border border-rally-line bg-white px-3 text-xs font-bold text-rally-ink"
+          >
+            Message the academy
+          </Link>
         </div>
       </div>
     </div>
@@ -620,8 +704,5 @@ function IssueStrip({ issues }: { issues: string[] }) {
 }
 
 function formatShortDate(value: string, academyTimezone: string | null): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const { timeZone } = resolveAcademyTimeZone(academyTimezone);
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone });
+  return formatInAcademyZone(value, academyTimezone, { month: "short", day: "numeric" });
 }

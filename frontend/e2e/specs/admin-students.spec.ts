@@ -546,7 +546,7 @@ test.describe("admin students", () => {
       reason: "Admin profile update",
     });
 
-    await page.getByRole("tab", { name: "Sessions" }).click();
+    await page.getByRole("tab", { name: "Classes" }).click();
     await expect(page.getByTestId("admin-student-enrolled-sessions")).toContainText(
       "Advanced Footwork",
     );

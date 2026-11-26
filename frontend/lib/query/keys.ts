@@ -22,6 +22,11 @@ export const queryKeys = {
     schedule: () => ["coach", "schedule"] as const,
     profile: () => ["coach", "profile"] as const,
     academy: () => ["coach", "academy"] as const,
+    pay: (month: string) => ["coach", "pay", month] as const,
+    // Health notes (S50, D-14): gcTime 0, never persisted; see health-alert.tsx.
+    rosterHealth: (occurrenceId: string) => ["coach", "roster-health", occurrenceId] as const,
+    coverRequest: (occurrenceId: string) => ["coach", "cover-request", occurrenceId] as const,
+    pathway: () => ["coach", "pathway"] as const,
     session: (sessionId: string) => ["coach", "session", sessionId] as const,
     sessionAnnouncements: (sessionId: string) =>
       ["coach", "session", sessionId, "announcements"] as const,
@@ -49,6 +54,16 @@ export const queryKeys = {
   admin: {
     all: ["admin"] as const,
     sessions: (date?: string) => ["admin", "sessions", date ?? "all"] as const,
+    today: (date?: string) => ["admin", "today", date ?? "current"] as const,
+    coverDates: (coachId: string) => ["admin", "coach-cover", "dates", coachId] as const,
+    coverOptions: (occurrenceIds: string[]) =>
+      ["admin", "coach-cover", "options", ...occurrenceIds] as const,
+    cancelPreview: (occurrenceId: string) =>
+      ["admin", "coach-cover", "cancel-preview", occurrenceId] as const,
+    // Health notes (D-14): gcTime 0, never persisted; see roster-sheet.tsx.
+    todayRosterHealth: (occurrenceId: string) =>
+      ["admin", "today", "roster-health", occurrenceId] as const,
+    phoneSearch: (digits: string) => ["admin", "phone-search", digits] as const,
     coachSessions: (coachId: string) =>
       ["admin", "sessions", "coach", coachId] as const,
     users: (role?: string) => ["admin", "users", role ?? "all"] as const,
@@ -190,6 +205,7 @@ export const queryKeys = {
     sessionTypesList: (includeArchived: boolean) =>
       ["admin", "session-types", { includeArchived }] as const,
     pathwayDashboard: () => ["admin", "pathway", "dashboard"] as const,
+    pathwayUnplaced: () => ["admin", "pathway", "unplaced"] as const,
     lessonCards: (programId: string) =>
       ["admin", "pathway", programId, "lesson-cards"] as const,
     coachDigestLog: () => ["admin", "comms", "digests", "log"] as const,
@@ -244,12 +260,14 @@ export const queryKeys = {
       ["parent", "makeups", "targets", studentId, missedOccurrenceId] as const,
     trials: () => ["parent", "trials"] as const,
     waitlist: () => ["parent", "waitlist"] as const,
+    registrations: () => ["parent", "registrations"] as const,
     // Same arrays the Requests page and shell already use inline.
     academy: () => ["parent", "academy"] as const,
     children: () => ["parent", "children"] as const,
     childProgressNotes: (studentId: string) => ["parent", "progress", studentId] as const,
     progressJourney: (studentId: string) =>
       ["parent", "progress-journey", studentId] as const,
+    childSkillNotes: (studentId: string) => ["parent", "skill-notes", studentId] as const,
     classRecaps: (studentId: string) => ["parent", "class-recaps", studentId] as const,
     cancellationPreview: (enrollmentId: string) =>
       ["parent", "enrollments", enrollmentId, "cancellation-preview"] as const,

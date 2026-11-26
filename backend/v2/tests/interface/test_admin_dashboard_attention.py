@@ -9,9 +9,11 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
     PauseRequest,
 )
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
+    AdminWaiverDocument,
     AdminWaiverReport,
     AdminWaiverSummary,
 )
+from backend.v2.shared.starter_waiver import DEFAULT_WAIVER_BODY
 
 
 def _dt(value: str) -> datetime:
@@ -371,4 +373,166 @@ def test_session_pressure_reads_the_academy_local_today(admin_client, monkeypatc
     r = admin_client.get("/api/v2/admin/dashboard/attention")
 
     assert r.status_code == 200, r.text
-    assert seen == [date(2026, 1, 2)]
+    # Today's classes on the academy's date; the second read is the S10
+    # unpriced-class scan, which takes no date.
+    assert seen == [date(2026, 1, 2), None]
+
+
+def test_unpriced_classes_with_students_are_listed_and_free_ones_are_not(admin_client):
+    """S10: a fee of None with children enrolled is loud; a free class (0) is not."""
+    rows = [
+        {
+            "session_id": "s-unpriced",
+            "title": "Tuesday Intermediate",
+            "amount_cents": None,
+            "enrolled_count": 2,
+            "status": "scheduled",
+        },
+        {
+            "session_id": "s-free",
+            "title": "Free clinic",
+            "amount_cents": 0,
+            "enrolled_count": 4,
+            "status": "scheduled",
+        },
+        {
+            "session_id": "s-empty",
+            "title": "Empty new class",
+            "amount_cents": None,
+            "enrolled_count": 0,
+            "status": "scheduled",
+        },
+    ]
+
+    async def list_admin_sessions(on_date, *, window=None, coach_id=None):
+        return rows if window == "open" else []
+
+    admin_client.use_cases.list_admin_sessions = list_admin_sessions
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    items = [i for i in r.json()["items"] if i["kind"] == "unpriced_classes"]
+    assert len(items) == 1
+    assert items[0]["count"] == 1
+    assert items[0]["href"] == "/admin/sessions/s-unpriced"
+    assert "Tuesday Intermediate (2 students)" in items[0]["detail"]
+    assert "Free clinic" not in items[0]["detail"]
+
+    rows[0]["amount_cents"] = 9000  # the owner prices it: the item clears
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+    assert not [i for i in r.json()["items"] if i["kind"] == "unpriced_classes"]
+
+
+def test_unpriced_classes_sharing_a_title_say_which_is_which(admin_client):
+    """S10 persona follow-up: two unpriced 'Tuesday Intermediate' rows read as
+    one; each gets its day and start time."""
+    rows = [
+        {
+            "session_id": f"s-{start}",
+            "title": "Tuesday Intermediate",
+            "amount_cents": None,
+            "enrolled_count": 2,
+            "status": "scheduled",
+            "days_of_week": ["Tue"],
+            "start_time": start,
+        }
+        for start in ("09:00", "17:30")
+    ]
+
+    async def list_admin_sessions(on_date, *, window=None, coach_id=None):
+        return rows if window == "open" else []
+
+    admin_client.use_cases.list_admin_sessions = list_admin_sessions
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    detail = next(i for i in r.json()["items"] if i["kind"] == "unpriced_classes")["detail"]
+    assert "Tuesday Intermediate, Tue 09:00 (2 students)" in detail
+    assert "Tuesday Intermediate, Tue 17:30 (2 students)" in detail
+
+
+def test_starter_waiver_is_an_attention_item_until_a_real_one_is_published(admin_client):
+    """S47 / D-11: families are not asked to sign the starter, so no "pending"."""
+    starter = AdminWaiverDocument(waiver_id="wt-starter", version="1", body=DEFAULT_WAIVER_BODY)
+    summary = AdminWaiverSummary(
+        total_students=3, signed_count=0, current_count=0, pending_count=3, outdated_count=0
+    )
+    admin_client.seed["waivers"].report = AdminWaiverReport(
+        summary=summary, active_waiver=starter, rows=[], live_waivers=[starter]
+    )
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    items = [i for i in r.json()["items"] if i["kind"] == "waivers"]
+    assert [i["attention_id"] for i in items] == ["starter-waiver"]
+    assert items[0]["href"] == "/admin/settings?panel=family-policies"
+
+    real = AdminWaiverDocument(waiver_id="wt-real", version="2", body="Our participation waiver.")
+    admin_client.seed["waivers"].report = AdminWaiverReport(
+        summary=summary, active_waiver=real, rows=[], live_waivers=[real]
+    )
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+    items = [i for i in r.json()["items"] if i["kind"] == "waivers"]
+    assert [(i["attention_id"], i["count"]) for i in items] == [("waiver-status", 3)]
+
+
+def test_an_optional_starter_waiver_is_not_an_attention_item(admin_client):
+    starter = AdminWaiverDocument(
+        waiver_id="wt-starter", version="1", body=DEFAULT_WAIVER_BODY, required=False
+    )
+    admin_client.seed["waivers"].report = AdminWaiverReport(
+        summary=AdminWaiverSummary(
+            total_students=0, signed_count=0, current_count=0, pending_count=0, outdated_count=0
+        ),
+        rows=[],
+        live_waivers=[starter],
+    )
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert not [i for i in r.json()["items"] if i["attention_id"] == "starter-waiver"]
+
+
+class _Unbilled:
+    def __init__(self, count: int) -> None:
+        self._count = count
+        self.periods: list[str] = []
+
+    async def count(self, period: str) -> int:
+        self.periods.append(period)
+        return self._count
+
+
+def test_unbilled_students_item_links_to_generate_monthly(admin_client):
+    reader = _Unbilled(3)
+    admin_client.app.state.admin_unbilled_students = reader
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    item = next(i for i in r.json()["items"] if i["kind"] == "unbilled_students")
+    assert item["count"] == 3
+    assert item["href"] == "/admin/payments?tab=invoices"
+    assert "3 students have no invoice for" in item["detail"]
+    # The academy's current month, as YYYY-MM.
+    assert len(reader.periods) == 1 and len(reader.periods[0]) == 7
+
+
+def test_everyone_invoiced_means_no_unbilled_item(admin_client):
+    admin_client.app.state.admin_unbilled_students = _Unbilled(0)
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert all(i["kind"] != "unbilled_students" for i in r.json()["items"])
+
+
+def test_unreadable_unbilled_count_is_unavailable_not_zero(admin_client):
+    admin_client.app.state.admin_unbilled_students = _BrokenOverdue()
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert {"source": "unbilled_students", "label": "students with no invoice"} in r.json()[
+        "unavailable"
+    ]

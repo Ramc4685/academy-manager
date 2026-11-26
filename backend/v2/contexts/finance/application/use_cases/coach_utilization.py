@@ -1,16 +1,11 @@
 """GetCoachUtilization use case — Phase 2 analytics.
 
-Reads ``CoachPayoutSnapshot`` records for the requested periods via an
-injected ``CoachPayoutSnapshotReader`` port and returns per-coach
-utilization metrics.
+Reads each coach's held-class hours and payroll for the requested months via
+an injected ``HeldClassReader`` and returns per-coach utilization metrics.
 
 Utilization rate is ``hours / max_hours`` where ``max_hours`` is a soft
 cap (default 40 per period, configurable at construction time), rounded
 to 4 decimal places and capped at ``Decimal("1.0")``.
-
-``CoachPayoutSnapshot`` has no raw session count field — the domain
-aggregate stores ``hours`` and ``payout_minor``.  The use case therefore
-reports ``hours`` directly and derives a utilization rate from it.
 """
 
 from __future__ import annotations
@@ -20,7 +15,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from pydantic import BaseModel
 
 from backend.v2.contexts.finance.application.ports import (
-    CoachPayoutSnapshotReader,
+    HeldClassReader,
     MarkedWithin24hReader,
 )
 
@@ -39,7 +34,7 @@ class CoachUtilizationPoint(BaseModel):
 
     coach_id: str
     period: str
-    hours: Decimal  # total hours from CoachPayoutSnapshot
+    hours: Decimal  # hours of held classes (lead or assistant)
     payout_minor: int  # total payout in minor currency units
     utilization_rate: Decimal  # hours / max_hours, 4dp, capped at 1.0
     # Share of this coach's past occurrences (across the requested periods)
@@ -69,8 +64,7 @@ class GetCoachUtilization:
     """Return per-coach utilization metrics for the given academy and periods.
 
     Args:
-        snapshot_repo: Port that reads persisted ``CoachPayoutSnapshot``
-            records from the data store.
+        classes: Port that reads each coach's held-class hours per month.
         academy_id: Scopes the query to a single academy.
         max_hours: Soft cap for the utilization rate denominator.  A coach
             with ``hours >= max_hours`` receives a rate of ``1.0``.
@@ -80,12 +74,12 @@ class GetCoachUtilization:
     def __init__(
         self,
         *,
-        snapshot_repo: CoachPayoutSnapshotReader,
+        classes: HeldClassReader,
         academy_id: str,
         max_hours: int = 40,
         compliance_reader: MarkedWithin24hReader | None = None,
     ) -> None:
-        self._repo = snapshot_repo
+        self._classes = classes
         self._academy_id = academy_id
         self._max_hours = Decimal(max_hours)
         self._compliance_reader = compliance_reader
@@ -99,8 +93,8 @@ class GetCoachUtilization:
 
         Returns:
             ``CoachUtilizationResult`` with one ``CoachUtilizationPoint`` per
-            (coach, period) pair found in the snapshots.  Periods or coaches
-            that have no snapshots simply do not appear in the output.
+            (coach, period) pair with held hours or payroll.  Coaches with
+            neither in a period do not appear for it.
         """
         if not periods:
             return CoachUtilizationResult(
@@ -109,7 +103,7 @@ class GetCoachUtilization:
                 total_payout_minor=0,
             )
 
-        snapshots = await self._repo.list_snapshots_for_periods(
+        coach_hours = await self._classes.coach_hours_for_periods(
             academy_id=self._academy_id,
             periods=periods,
         )
@@ -131,25 +125,25 @@ class GetCoachUtilization:
         points: list[CoachUtilizationPoint] = []
         total_payout = 0
 
-        for snap in snapshots:
-            if snap.period not in periods:
+        for hours_row in coach_hours:
+            if hours_row.period not in periods:
                 continue  # defensive — reader should already filter
 
-            rate = (snap.hours / self._max_hours).quantize(_FOUR_DP, rounding=ROUND_HALF_UP)
+            rate = (hours_row.hours / self._max_hours).quantize(_FOUR_DP, rounding=ROUND_HALF_UP)
             if rate > _ONE:
                 rate = _ONE
 
             points.append(
                 CoachUtilizationPoint(
-                    coach_id=snap.coach_id,
-                    period=snap.period,
-                    hours=snap.hours,
-                    payout_minor=snap.payout_minor,
+                    coach_id=hours_row.coach_id,
+                    period=hours_row.period,
+                    hours=hours_row.hours,
+                    payout_minor=hours_row.payout_minor,
                     utilization_rate=rate,
-                    compliance_within_24h_rate=compliance_by_coach.get(snap.coach_id),
+                    compliance_within_24h_rate=compliance_by_coach.get(hours_row.coach_id),
                 )
             )
-            total_payout += snap.payout_minor
+            total_payout += hours_row.payout_minor
 
         return CoachUtilizationResult(
             coaches=points,

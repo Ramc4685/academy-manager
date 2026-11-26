@@ -1,12 +1,11 @@
 """Unit tests for GetAttendanceTrends use case.
 
-All tests use a simple stub ``AttendanceSnapshotReader`` — no Mongo
-required.
+All tests use a simple stub ``HeldClassReader`` — no Mongo required.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from dataclasses import dataclass
 from decimal import Decimal
 
 import pytest
@@ -15,9 +14,15 @@ from backend.v2.contexts.finance.application.use_cases.attendance_trends import 
     AttendanceTrendsResult,
     GetAttendanceTrends,
 )
-from backend.v2.contexts.finance.domain.reporting_snapshots import SessionAttendanceSnapshot
 
-_NOW = datetime(2026, 5, 1, 0, 0, tzinfo=UTC)
+
+@dataclass(frozen=True)
+class _Counts:
+    period: str
+    scheduled_count: int
+    completed_count: int
+    no_show_count: int
+    cancelled_count: int = 0
 
 
 def _snap(
@@ -26,36 +31,35 @@ def _snap(
     scheduled: int,
     completed: int,
     no_show: int,
-    academy_id: str = "test-academy",
-) -> SessionAttendanceSnapshot:
-    return SessionAttendanceSnapshot(
-        academy_id=academy_id,
-        session_id=session_id,
+    cancelled: int = 0,
+    **_: object,
+) -> _Counts:
+    return _Counts(
         period=period,
         scheduled_count=scheduled,
         completed_count=completed,
         no_show_count=no_show,
-        computed_at=_NOW,
+        cancelled_count=cancelled,
     )
 
 
-class StubSnapshotReader:
-    """Stub implementation of AttendanceSnapshotReader for unit tests."""
+class StubHeldClassReader:
+    """Stub ``HeldClassReader`` returning fixed per-period rows."""
 
-    def __init__(self, snapshots: list[SessionAttendanceSnapshot]) -> None:
-        self._snapshots = snapshots
+    def __init__(self, rows: list[_Counts]) -> None:
+        self._rows = rows
 
-    async def list_snapshots_for_periods(
+    async def class_counts_for_periods(
         self, *, academy_id: str, periods: list[str]
-    ) -> list[SessionAttendanceSnapshot]:
-        return [s for s in self._snapshots if s.period in periods]
+    ) -> list[_Counts]:
+        return [r for r in self._rows if r.period in periods]
+
+    async def coach_hours_for_periods(self, *, academy_id: str, periods: list[str]) -> list:
+        return []
 
 
-def _use_case(snapshots: list[SessionAttendanceSnapshot]) -> GetAttendanceTrends:
-    return GetAttendanceTrends(
-        snapshot_repo=StubSnapshotReader(snapshots),
-        academy_id="test-academy",
-    )
+def _use_case(rows: list[_Counts]) -> GetAttendanceTrends:
+    return GetAttendanceTrends(classes=StubHeldClassReader(rows), academy_id="test-academy")
 
 
 @pytest.mark.asyncio
@@ -132,3 +136,16 @@ async def test_overall_rate_zero_when_no_scheduled():
     assert len(result.periods) == 1
     assert result.periods[0].completion_rate == Decimal("0")
     assert result.overall_completion_rate == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_dates_lower_the_held_rate():
+    """A finished month with a cancelled date is not 100% held."""
+    result = await _use_case(
+        [_snap("sess-1", "2026-05", scheduled=4, completed=4, no_show=0, cancelled=1)]
+    ).execute(["2026-05"])
+
+    (point,) = result.periods
+    assert (point.scheduled_count, point.cancelled_count) == (4, 1)
+    assert point.completion_rate == Decimal("0.8000")
+    assert result.overall_completion_rate == Decimal("0.8000")

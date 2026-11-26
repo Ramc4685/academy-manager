@@ -186,3 +186,35 @@ export function programOptions(
   }
   return options;
 }
+
+/**
+ * S55: what a new family still cannot find on the public page, in the words
+ * the admin acts on. Empty means nothing obvious is missing.
+ */
+export function publicPageGaps(input: {
+  classes: ReadonlyArray<AdminClassPublicProfileView>;
+  programs: ReadonlyArray<AdminProgramView>;
+  address: string | null | undefined;
+  refundPolicyUrl: string | null | undefined;
+}): string[] {
+  const programs = new Map(input.programs.map((p) => [p.program_id, p]));
+  const shown = listableClasses(input.classes).filter(
+    (row) => row.published && row.status !== "cancelled" && row.status !== "completed"
+  );
+  const gaps: string[] = [];
+  if (shown.length === 0) gaps.push("No class is shown yet. Switch one on below or on its class page.");
+  const unlabelled = shown.filter((row) => {
+    const program = row.program_id ? programs.get(row.program_id) : undefined;
+    return !(row.level || program?.level) || !(row.age_band || program?.age_band);
+  }).length;
+  if (unlabelled > 0) {
+    gaps.push(
+      unlabelled === 1
+        ? "1 shown class has no level or no ages, so parents cannot tell if it fits."
+        : `${unlabelled} shown classes have no level or no ages, so parents cannot tell if they fit.`
+    );
+  }
+  if (!input.address?.trim()) gaps.push("No address: add it in Academy profile.");
+  if (!input.refundPolicyUrl?.trim()) gaps.push("No refund policy link: add it in Academy profile.");
+  return gaps;
+}

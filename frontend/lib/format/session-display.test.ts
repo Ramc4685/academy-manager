@@ -17,6 +17,7 @@ import { academyTimeZoneLabel } from "./academy-time";
 import {
   formatAcademyMoment,
   formatSessionOccurrence,
+  formatWeeklyPattern,
   sessionDisplayZone,
 } from "./session-display";
 
@@ -118,5 +119,34 @@ describe("sessionDisplayZone", () => {
 describe("formatAcademyMoment", () => {
   it("renders a single timestamp in the academy zone with a label", () => {
     expect(formatAcademyMoment(START, "America/Chicago")).toBe("Thu, Sep 3 · 6:00 PM CDT");
+  });
+});
+
+describe("formatWeeklyPattern (S27)", () => {
+  it("reads one weekly day as a plural with the hours", () => {
+    expect(
+      formatWeeklyPattern({ days_of_week: ["Sat"], start_time: "09:00", end_time: "10:00" }),
+    ).toBe("Saturdays 9:00–10:00 AM");
+  });
+
+  it("keeps both meridiems when the class crosses noon", () => {
+    expect(
+      formatWeeklyPattern({ days_of_week: ["sunday"], start_time: "11:30", end_time: "12:15" }),
+    ).toBe("Sundays 11:30 AM–12:15 PM");
+  });
+
+  it("lists several days short", () => {
+    expect(
+      formatWeeklyPattern({ days_of_week: ["mon", "Wed"], start_time: "16:30", end_time: "17:30" }),
+    ).toBe("Mon & Wed 4:30–5:30 PM");
+  });
+
+  it("is empty for a class with no weekly pattern", () => {
+    expect(formatWeeklyPattern({ days_of_week: [], start_time: "09:00", end_time: "10:00" })).toBe("");
+    expect(formatWeeklyPattern({})).toBe("");
+  });
+
+  it("shows the days alone when the hours are missing", () => {
+    expect(formatWeeklyPattern({ days_of_week: ["Tue"] })).toBe("Tuesdays");
   });
 });

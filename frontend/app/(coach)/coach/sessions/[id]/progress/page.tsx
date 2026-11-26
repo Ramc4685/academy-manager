@@ -3,27 +3,29 @@
 import { useParams, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { useState } from "react";
+
 import {
   getCoachSessionSkillBoard,
+  placeCoachUnplacedStudent,
   recordTestAttempt,
   updateSkillStatus,
   type SkillStatus,
 } from "@/lib/api/curriculum";
 import { SkillBoardView, type SkillBoardActions } from "@/components/pathway/skill-board";
 import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
+import { Button } from "@/components/ds/button";
+import { dateFromOccurrenceId, sessionIdFromOccurrenceId, todayISO } from "@/lib/coach/marking";
 
-function todayISO(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
-    now.getDate(),
-  ).padStart(2, "0")}`;
-}
 
 export default function CoachSessionProgressPage() {
-  const { id: sessionId } = useParams<{ id: string }>();
+  const { id } = useParams<{ id: string }>();
+  const routeId = decodeURIComponent(id);
+  // The board is per class; an occurrence-shaped id still names its class and date.
+  const sessionId = sessionIdFromOccurrenceId(routeId);
   const searchParams = useSearchParams();
   const programId = searchParams.get("program_id") ?? "";
-  const date = searchParams.get("date") ?? todayISO();
+  const date = searchParams.get("date") ?? dateFromOccurrenceId(routeId) ?? todayISO();
   const queryClient = useQueryClient();
 
   const boardKey = ["coach", "skill-board", sessionId, programId || "default"];
@@ -74,6 +76,14 @@ export default function CoachSessionProgressPage() {
     onSettled: invalidate,
   });
 
+  const [placeError, setPlaceError] = useState<string | null>(null);
+  const placeMutation = useMutation({
+    mutationFn: (studentId: string) => placeCoachUnplacedStudent(sessionId, studentId),
+    onMutate: () => setPlaceError(null),
+    onError: (err: Error) => setPlaceError(err.message),
+    onSettled: invalidate,
+  });
+
   const actions: SkillBoardActions = {
     setStatus: (args) => statusMutation.mutateAsync(args),
     quickPass: (args) =>
@@ -84,14 +94,14 @@ export default function CoachSessionProgressPage() {
   return (
     <section data-testid="coach-session-progress" className="space-y-4">
       <SessionDetailTabs
-        attendanceSkillsId={sessionId}
+        attendanceSkillsId={routeId}
         progressSessionId={sessionId}
         date={date}
         active="progress"
       />
 
       <div>
-        <h1 className="text-xl font-semibold">Session skill board</h1>
+        <h1 className="text-xl font-semibold">Class skill board</h1>
         <p className="text-sm text-neutral-500">{board?.program_name ?? ""}</p>
       </div>
 
@@ -110,7 +120,28 @@ export default function CoachSessionProgressPage() {
           ))}
         </div>
       ) : board ? (
-        <SkillBoardView board={board} actions={actions} />
+        <>
+          {placeError && (
+            <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+              {placeError}
+            </p>
+          )}
+          <SkillBoardView
+            board={board}
+            actions={actions}
+            renderUnplacedAction={(student) => (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={placeMutation.isPending}
+                onClick={() => placeMutation.mutate(student.student_id)}
+                data-testid={`place-unplaced-${student.student_id}`}
+              >
+                Start on the first level
+              </Button>
+            )}
+          />
+        </>
       ) : null}
     </section>
   );

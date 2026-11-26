@@ -44,6 +44,10 @@ export interface AdminStudentSessionSummary {
   location?: string | null;
   start_at?: string | null;
   end_at?: string | null;
+  /** S27: the weekly pattern; `start_at` alone is the class's first date. */
+  days_of_week?: string[];
+  start_time?: string | null;
+  end_time?: string | null;
   status: string;
   payment_mode?: string | null;
   subscription_status?: string | null;

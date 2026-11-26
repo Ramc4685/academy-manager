@@ -74,7 +74,7 @@ test.describe("Coach Sessions links use the class's local date (#1045)", () => {
     await link.click();
     await expect(page).toHaveURL(/\/coach\/sessions\/occ-eve-1105\?date=2026-11-05$/);
     await expect(page.getByTestId("session-detail")).toContainText("Evan Evening");
-    await expect(page.getByText("Session not found.")).toHaveCount(0);
+    await expect(page.getByText("Class not found.")).toHaveCount(0);
   });
 
   test("Calendar links the same occurrence to the same URL", async ({ page }) => {

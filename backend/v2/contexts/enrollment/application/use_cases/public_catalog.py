@@ -68,6 +68,9 @@ class PublicCatalogSession(BaseModel):
     title: str
     location: str | None = None
     venue_address: str | None = None
+    #: The class's "what to bring" line (communication pack); public per the
+    #: brief's FAQ row, unlike parking notes and the group link.
+    what_to_bring: str | None = None
     days_of_week: tuple[str, ...] = ()
     start_time: str | None = None
     end_time: str | None = None
@@ -119,6 +122,7 @@ class PublicClassView(BaseModel):
     starts_on: date | None = None
     location: str | None = None
     venue_address: str | None = None
+    what_to_bring: str | None = None
     coach_name: str | None = None
     #: None when the academy hides prices or the class has no price set.
     price: PublicPrice | None = None
@@ -276,6 +280,7 @@ def _class_view(
         starts_on=row.starts_on,
         location=row.location,
         venue_address=row.venue_address or default_venue_address,
+        what_to_bring=row.what_to_bring,
         coach_name=coach_public_name(coach_name, profile.coach_display),
         price=price,
         seats=seats,

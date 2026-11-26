@@ -537,3 +537,27 @@ async def test_self_service_policy_update_fields_is_partial_and_tenant_scoped(db
     assert policy_a.absence_notice_min_hours == 6
     assert policy_b.cancellation_fee_cents == 0
     assert policy_b.absence_notice_min_hours == 2
+
+
+@pytest.mark.asyncio
+async def test_absence_notice_delete_from_another_academy_leaves_the_row(db) -> None:
+    """S43: withdrawing under academy B with A's notice id is a no-op on A."""
+    repo = MongoAbsenceNoticeRepository(db)
+    notice = AbsenceNotice(
+        notice_id="notice-a",
+        academy_id="academy-a",
+        student_id="student-1",
+        occurrence_id="occ-1",
+        session_id="session-1",
+        submitted_by="parent-1",
+        submitted_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+        notice_window_met=True,
+    )
+    with tenant_scope("academy-a"):
+        await repo.add(notice)
+    with tenant_scope("academy-b"):
+        await repo.delete(notice)
+    with tenant_scope("academy-a"):
+        assert await repo.get_for_occurrence_and_student("occ-1", "student-1") is not None
+        await repo.delete(notice)
+        assert await repo.get_for_occurrence_and_student("occ-1", "student-1") is None

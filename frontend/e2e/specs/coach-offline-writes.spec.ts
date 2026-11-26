@@ -64,7 +64,7 @@ test.describe.skip("Wave 1B — offline writes + sync", () => {
     await context.setOffline(false);
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await page.goto(NEEDS_REVIEW_URL);
-    await expect(page.getByTestId("tray-list")).toContainText("This session was cancelled");
+    await expect(page.getByTestId("tray-list")).toContainText("This class date was cancelled");
   });
 
   test("case #3: student removed from roster → tray entry", async ({
@@ -89,7 +89,7 @@ test.describe.skip("Wave 1B — offline writes + sync", () => {
     await context.setOffline(false);
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await page.goto(NEEDS_REVIEW_URL);
-    await expect(page.getByTestId("tray-list")).toContainText("no longer enrolled in the session");
+    await expect(page.getByTestId("tray-list")).toContainText("no longer enrolled in the class");
   });
 
   test("case #4: two-device race → server first wins, second to tray", async ({

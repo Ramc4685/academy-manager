@@ -40,6 +40,12 @@ class _AbsenceNoticeRef(Protocol):
     @property
     def occurrence_id(self) -> str: ...
 
+    @property
+    def submitted_by(self) -> str: ...
+
+    @property
+    def recorded_by_admin(self) -> bool: ...
+
 
 class _AbsenceNoticeQuery(Protocol):
     async def list_for_student(self, student_id: str) -> Sequence[_AbsenceNoticeRef]: ...
@@ -76,6 +82,8 @@ class ChildScheduleEntry(BaseModel):
     #: The child already has an absence notice for this date, so the parent
     #: UI shows "Already reported" instead of offering a duplicate notice.
     absence_reported: bool = False
+    #: S43: this parent filed that notice, so they may undo it (before start).
+    absence_undoable: bool = False
 
 
 class GetChildSchedule:
@@ -237,21 +245,26 @@ class GetChildSchedule:
         all_entries.sort(key=lambda e: e.start_at)
         total = len(all_entries)
         page = all_entries[offset : offset + limit]
-        reported = await self._reported_occurrence_ids(student_id) if page else set()
+        reported = await self._reported_notices(student_id) if page else {}
         if reported:
             page = [
-                e.model_copy(update={"absence_reported": True})
+                e.model_copy(
+                    update={
+                        "absence_reported": True,
+                        "absence_undoable": _filed_by(reported[e.occurrence_id], parent_id),
+                    }
+                )
                 if e.occurrence_id in reported
                 else e
                 for e in page
             ]
         return page, total
 
-    async def _reported_occurrence_ids(self, student_id: str) -> set[str]:
+    async def _reported_notices(self, student_id: str) -> dict[str, _AbsenceNoticeRef]:
         if self._absence_notices is None:
-            return set()
+            return {}
         notices = await self._absence_notices.list_for_student(student_id)
-        return {n.occurrence_id for n in notices}
+        return {n.occurrence_id: n for n in notices}
 
     async def _one_time_occurrences(
         self, student_id: str, start_dt: datetime, end_dt: datetime
@@ -289,3 +302,10 @@ class GetChildSchedule:
                 continue
             result.append((occ, source))
         return result
+
+
+def _filed_by(notice: _AbsenceNoticeRef, parent_id: str) -> bool:
+    """Mirrors ``WithdrawAbsenceNotice``'s ownership rule."""
+    return getattr(notice, "submitted_by", None) == parent_id and not getattr(
+        notice, "recorded_by_admin", False
+    )

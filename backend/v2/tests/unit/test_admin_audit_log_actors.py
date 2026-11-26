@@ -13,24 +13,25 @@ from typing import Any
 
 import pytest
 
-from backend.v2.composition.admin import compose_admin
+from backend.v2.composition.audit_log import compose_admin_audit_log
 from backend.v2.shared.config.settings import get_settings
 from backend.v2.shared.tenancy.context import tenant_scope
 
 ACADEMY = "acad-468"
 
 
-class _NoopStripe:
-    pass
+class _AuditLog:
+    """The S39 merged read, called the way the old admin use case was."""
+
+    def __init__(self, db: Any) -> None:
+        self._log = compose_admin_audit_log(db)
+
+    async def list_audit_logs(self, actor_type: str | None = None) -> list[dict[str, Any]]:
+        return (await self._log.list_page(actor_type=actor_type))["logs"]
 
 
-def _admin_use_cases(db: Any):
-    return compose_admin(
-        db,
-        outbox=object(),  # type: ignore[arg-type]
-        idempotency_store=object(),  # type: ignore[arg-type]
-        stripe=_NoopStripe(),  # type: ignore[arg-type]
-    )
+def _admin_use_cases(db: Any) -> _AuditLog:
+    return _AuditLog(db)
 
 
 @pytest.fixture

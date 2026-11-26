@@ -116,7 +116,7 @@ test("the child schedule shows loading before its first class", async ({ page })
   await page.goto("/parent/children");
   try {
     await expect(page.getByText("Loading class schedule…")).toBeVisible();
-    await expect(page.getByText("No upcoming sessions.")).toHaveCount(0);
+    await expect(page.getByText("No upcoming class dates.")).toHaveCount(0);
   } finally {
     releaseSchedule();
   }
@@ -242,7 +242,10 @@ test.describe("parent self-service — absences", () => {
     await absenceForm.getByRole("combobox").nth(1).selectOption("occ-100");
     await page.getByRole("button", { name: "Report absence" }).click();
 
-    await expect(page.getByRole("status")).toContainText("Absence notice submitted.");
+    // The inline confirmation; the success toast is a second status region.
+    await expect(
+      page.getByRole("status").filter({ hasText: "Absence notice submitted." }),
+    ).toBeVisible();
   });
 
   test("a date that already has a notice is shown as Already reported and cannot be picked", async ({
@@ -532,7 +535,7 @@ test.describe("parent self-service — makeups", () => {
     });
 
     await page.goto("/parent/requests");
-    await page.getByRole("tab", { name: "Makeups" }).click();
+    await page.getByRole("tab", { name: "Make-ups" }).click();
 
     const picker = page.getByLabel("Missed class");
     await expect(picker.locator("option")).toHaveText([
@@ -552,7 +555,7 @@ test.describe("parent self-service — makeups", () => {
     await stubMakeupCandidates(page, "error");
 
     await page.goto("/parent/requests");
-    await page.getByRole("tab", { name: "Makeups" }).click();
+    await page.getByRole("tab", { name: "Make-ups" }).click();
 
     await expect(page.getByText("Could not load your missed classes.")).toBeVisible();
     await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
@@ -621,7 +624,7 @@ test.describe("parent self-service — makeups", () => {
     });
 
     await page.goto("/parent/requests");
-    await page.getByRole("tab", { name: "Makeups" }).click();
+    await page.getByRole("tab", { name: "Make-ups" }).click();
 
     await page.getByLabel("Missed class").selectOption(`${STUDENT_ID}:occ-050`);
     await page.getByLabel("Preferred makeup class (optional)").selectOption("occ-200");
@@ -739,7 +742,9 @@ test.describe("parent self-service — self-cancel enrollment", () => {
     await expect(dialog).toBeVisible();
 
     // Fee and timing must be visible before the parent confirms.
-    await expect(dialog.getByText("Cancellation fee: $25.00")).toBeVisible();
+    await expect(dialog.getByTestId("cancellation-timing-copy")).toContainText(
+      "charged a $25.00 cancellation fee",
+    );
     // Issue #675: human copy, never the raw policy token.
     const timing = dialog.getByTestId("cancellation-timing-copy");
     await expect(timing).toContainText("keeps their place through");

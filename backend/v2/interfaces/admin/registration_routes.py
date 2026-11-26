@@ -66,6 +66,7 @@ async def approve_admin_registration(
             actor_id=claims.user_id,
             session_id=body.session_id,
             waiver_override_reason=body.waiver_override_reason,
+            start_level_id=body.start_level_id,
         )
     )
     return AdminRegistrationDetailView(**detail.model_dump())

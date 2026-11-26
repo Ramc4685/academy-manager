@@ -169,15 +169,15 @@ test.describe("parent home — kid-first cards", () => {
     await expect(first).toContainText("Ava Kim");
     await expect(first).toContainText("Thu, Sep 10 · 6:00 PM CDT");
     await expect(first).toContainText("Court 2");
-    await expect(first).toContainText("6 of 7 sessions this month");
+    await expect(first).toContainText("Present at 6 of 7 class dates this month");
     await expect(first).toContainText("Backhand lift");
     await expect(first).toContainText("Aug 20");
 
     // A child with nothing yet still gets a complete, honest card.
     const second = page.getByTestId("parent-child-card-st-2");
     await expect(second).toContainText("Bo Chen");
-    await expect(second).toContainText("No upcoming sessions");
-    await expect(second).toContainText("No sessions marked yet this month");
+    await expect(second).toContainText("No upcoming classes");
+    await expect(second).toContainText("No class dates marked yet this month");
     await expect(second).toContainText("No milestones yet");
 
     await expect(page.getByTestId("parent-balance-banner")).toHaveCount(0);

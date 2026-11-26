@@ -98,9 +98,16 @@ describe("TapSkillsWorkspace", () => {
     expect(out).toContain("1 of 3");
   });
 
-  it("points the coach at placement when nobody is on a level", () => {
+  it("says which level the tap list shows and how much of the class that is", () => {
+    const b = board({ unplaced: [{ student_id: "s3", student_name: "C" }] });
+    b.groups.push({ ...b.groups[0], level_id: "lvl-2", level_name: "Footwork", sequence: 2, students: [b.groups[0].students[0]] });
+    expect(html(b)).toContain("Level 1 · 2 of 4 in this class");
+  });
+
+  it("points the coach at Progress to place children when nobody is on a level (S52)", () => {
     const out = html(board({ groups: [], unplaced: [{ student_id: "s3", student_name: "C" }] }));
-    expect(out).toContain("No one in this class is placed on a level yet");
+    expect(out).toContain("No one in this class is on a level yet");
+    expect(out).toContain("Start them on the first level from the Progress tab");
   });
 });
 

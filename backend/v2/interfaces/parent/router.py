@@ -16,6 +16,7 @@ from .home_routes import router as home_router
 from .invoice_routes import router as invoice_router
 from .makeup_routes import router as makeup_router
 from .messages_routes import router as messages_router
+from .money_views import router as money_router
 from .onboarding_routes import router as onboarding_router
 from .pause_routes import router as pause_router
 from .payment_routes import router as payment_router
@@ -41,6 +42,7 @@ router.include_router(home_router)
 router.include_router(invoice_router)
 router.include_router(makeup_router)
 router.include_router(messages_router)
+router.include_router(money_router)
 router.include_router(onboarding_router)
 router.include_router(pause_router)
 router.include_router(payment_router)

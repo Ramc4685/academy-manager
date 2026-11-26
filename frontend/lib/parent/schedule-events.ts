@@ -35,6 +35,19 @@ export function noClassReason(entry: Pick<ParentScheduleEntry, "cancellation_rea
 export const ALREADY_REPORTED_LABEL = "Already reported";
 
 /**
+ * S18: late marks count as present by design (the BFF counts present + late),
+ * so the label says so rather than the count changing.
+ */
+export const PRESENT_INCLUDING_LATE = "Present (including late)";
+
+export function presentIncludingLate(records: ReadonlyArray<{ status: string }>): number {
+  return records.filter((r) => r.status === "present" || r.status === "late").length;
+}
+
+/** S17: the chip a reported absence wears on Home and Calendar. */
+export const ABSENT_REPORTED_CHIP = "Absent (reported)";
+
+/**
  * Whether the academy has published `month` ("YYYY-MM") as final. An academy
  * that never publishes (`publishedThrough` null) shows every month as final,
  * which is how the calendar behaved before publishing existed.
@@ -50,7 +63,8 @@ export function scheduleEntryToEvent(
   const cancelled = entry.status === "cancelled";
   const sourceLabel = scheduleSourceLabel(entry.source);
   const base = `${childName} — ${entry.session_title}`;
-  const labelled = sourceLabel ? `${sourceLabel} — ${base}` : base;
+  const sourced = sourceLabel ? `${sourceLabel} — ${base}` : base;
+  const labelled = entry.absence_reported ? `${ABSENT_REPORTED_CHIP} — ${sourced}` : sourced;
   return {
     id: entry.occurrence_id,
     title: cancelled ? `No class (${noClassReason(entry)}) — ${labelled}` : labelled,

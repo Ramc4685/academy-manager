@@ -24,6 +24,7 @@ import {
   stubParentProfile,
   stubParentAcademy,
   stubParentMessages,
+  stubParentMoneySummary,
 } from "../fixtures/saas-stubs";
 
 const ADMIN_ME = {
@@ -398,6 +399,7 @@ async function stubParentLaunchBff(page: Page): Promise<void> {
   await page.route("**/api/v2/parent/invoices", (route) =>
     fulfillJson(route, { invoices: [] })
   );
+  await stubParentMoneySummary(page);
   await page.route("**/api/v2/parent/enrollments", (route) =>
     fulfillJson(route, { enrollments: [] })
   );

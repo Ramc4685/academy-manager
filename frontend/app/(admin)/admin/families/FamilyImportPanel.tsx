@@ -64,8 +64,9 @@ import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 import { Th } from "@/components/ds/dialog-chrome";
 import { ErrorNotice } from "@/components/ds/error-notice";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { useIsNativeApp } from "@/lib/use-native-app";
+import { formatCount } from "@/lib/format/count";
 
 interface ChosenFile {
   name: string;
@@ -448,7 +449,7 @@ export function FamilyImportPanel({ onImported }: { onImported: () => void }) {
               >
                 {toAdd === 0
                   ? "Nothing to import"
-                  : `Import ${toAdd.toLocaleString("en-US")} ${toAdd === 1 ? "child" : "children"}`}
+                  : `Import ${formatCount(toAdd)} ${toAdd === 1 ? "child" : "children"}`}
               </Button>
               <Button
                 type="button"

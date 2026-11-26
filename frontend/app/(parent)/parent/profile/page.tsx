@@ -7,6 +7,7 @@ import { Button } from "@/components/ds/button";
 import { FormField, fieldDescribedBy } from "@/components/ds/form-field";
 import { Skeleton } from "@/components/ds/skeleton";
 import { useToast } from "@/components/ds/toast";
+import { ContactAcademyCard } from "@/components/parent/contact-academy-card";
 import { ChildWaiverStatus } from "@/components/parent/child-waiver-status";
 import { ReferralCard } from "@/components/parent/referral-card";
 import { AppLockSetting } from "@/components/persona/app-lock-setting";
@@ -30,6 +31,8 @@ import {
   type NotificationChannelKey,
   type ParentEmailPreferences,
 } from "@/lib/parent/notification-preferences";
+import { localIsoDate } from "@/lib/parent/onboarding-copy";
+import { childGapLabels, gapBadgeText, parentGapLabels } from "@/lib/parent/profile-gaps";
 
 const NO_MEDICAL_SENTINEL = "__none_declared__";
 
@@ -50,6 +53,10 @@ export default function ParentProfilePage() {
       <div className="mb-4 animate-fade-in-up">
         <h1 className="font-display text-2xl font-bold tracking-tight text-rally-ink">My profile</h1>
         <p className="text-sm mt-0.5 text-rally-muted">Keep your details and your children&apos;s up to date</p>
+      </div>
+
+      <div className="mb-4">
+        <ContactAcademyCard />
       </div>
 
       {isError ? (
@@ -77,11 +84,16 @@ export default function ParentProfilePage() {
   );
 }
 
-function GapBadge({ count }: { count: number }) {
-  if (count === 0) return null;
+/** S23: names the missing fields ("Missing: your phone number"), not a bare count. */
+function GapBadge({ labels }: { labels: string[] }) {
+  const text = gapBadgeText(labels);
+  if (!text) return null;
   return (
-    <span className="inline-block rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-100 text-amber-800">
-      {count} missing
+    <span
+      className="inline-block rounded-full px-2 py-0.5 text-right text-xs font-semibold bg-amber-100 text-amber-800"
+      data-testid="profile-gap-badge"
+    >
+      {text}
     </span>
   );
 }
@@ -98,10 +110,10 @@ function AboutYouCard({ profile }: { profile: ParentSelfProfile }) {
   }, [profile.display_name, profile.phone]);
 
   const saveMutation = useMutation({
+    meta: { success: "Profile saved" },
     mutationFn: () => updateParentProfile({ display_name: displayName, phone }),
     onSuccess: (updated) => {
       queryClient.setQueryData(queryKeys.parent.profile(), updated);
-      toast({ kind: "success", title: "Saved" });
     },
   });
 
@@ -121,7 +133,7 @@ function AboutYouCard({ profile }: { profile: ParentSelfProfile }) {
     <article className="rounded-2xl border border-rally-line bg-white p-4 animate-fade-in-up">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="font-bold text-rally-ink text-[15px]">About you</h2>
-        <GapBadge count={profile.gaps.parent.length} />
+        <GapBadge labels={parentGapLabels(profile.gaps.parent)} />
       </div>
 
       <form
@@ -276,11 +288,15 @@ function ChildCard({ child }: { child: ParentSelfChild }) {
   const [medicalNotes, setMedicalNotes] = useState(child.medical_notes ?? "");
   const [noMedicalConditions, setNoMedicalConditions] = useState(child.no_medical_conditions);
 
-  const gapCount =
-    (dateOfBirth ? 0 : 1) +
-    (emergencyContactName ? 0 : 1) +
-    (emergencyContactPhone ? 0 : 1) +
-    (noMedicalConditions || medicalNotes ? 0 : 1);
+  // Live from the form, so the badge clears as the parent fills each field.
+  const gapLabels = childGapLabels(
+    [
+      dateOfBirth ? null : "date_of_birth",
+      emergencyContactName ? null : "emergency_contact_name",
+      emergencyContactPhone ? null : "emergency_contact_phone",
+      noMedicalConditions || medicalNotes ? null : "medical_notes",
+    ].filter((key): key is string => key !== null),
+  );
 
   const saveMutation = useMutation({
     mutationFn: () =>
@@ -302,10 +318,13 @@ function ChildCard({ child }: { child: ParentSelfChild }) {
     : null;
 
   return (
-    <article className="rounded-2xl border border-rally-line bg-white p-4 animate-fade-in-up">
+    <article
+      id={`child-${child.student_id}`}
+      className="scroll-mt-20 rounded-2xl border border-rally-line bg-white p-4 animate-fade-in-up"
+    >
       <div className="mb-3 flex items-center justify-between">
         <h2 className="font-bold text-rally-ink text-[15px]">{child.full_name}</h2>
-        <GapBadge count={gapCount} />
+        <GapBadge labels={gapLabels} />
       </div>
       <div className="mb-3">
         <ChildWaiverStatus studentId={child.student_id} />
@@ -323,9 +342,8 @@ function ChildCard({ child }: { child: ParentSelfChild }) {
             id={`dob-${child.student_id}`}
             className={inputClass}
             aria-describedby={fieldDescribedBy(`dob-${child.student_id}`, { error: saveError })}
-            placeholder="YYYY-MM-DD"
-            pattern="\d{4}-\d{2}-\d{2}"
-            maxLength={10}
+            type="date"
+            max={localIsoDate(new Date())}
             value={dateOfBirth}
             onChange={(e) => setDateOfBirth(e.target.value)}
           />

@@ -19,7 +19,7 @@ import { useClampMenuToViewport } from "./use-clamp-menu";
 const PERSONA_HOME: Record<PersonaRole, string> = {
   admin: "/admin",
   coach: "/coach/today",
-  parent: "/parent/payments",
+  parent: "/parent/dashboard",
   student: "/student/dashboard",
 };
 

@@ -15,10 +15,8 @@ from backend.v2.contexts.identity.application.get_academy_use_case import GetAca
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserSummary,
 )
-from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
-    DEFAULT_WAIVER_BODY,
-)
 from backend.v2.interfaces.admin.setup_checklist_routes import build_setup_checklist
+from backend.v2.shared.starter_waiver import DEFAULT_WAIVER_BODY, is_starter_waiver_body
 
 URL = "/api/v2/admin/setup-checklist"
 
@@ -276,6 +274,25 @@ def test_waiver_step_is_done_with_any_live_waiver_lineage():
     assert _derive(waivers=(True, {"live_waivers": [photo]}))["waiver"] == "done"
     # Nothing but the bootstrap placeholder is still to do.
     assert _derive(waivers=(True, {"live_waivers": [placeholder]}))["waiver"] == "todo"
-    # A real waiver next to the placeholder counts.
-    assert _derive(waivers=(True, {"live_waivers": [placeholder, photo]}))["waiver"] == "done"
+    # An optional placeholder next to a real waiver counts: nobody signs it.
+    optional_placeholder = {"body": DEFAULT_WAIVER_BODY, "required": False}
+    assert (
+        _derive(waivers=(True, {"live_waivers": [optional_placeholder, photo]}))["waiver"] == "done"
+    )
     assert _derive(waivers=(True, {"live_waivers": []}))["waiver"] == "todo"
+
+
+def test_required_starter_waiver_is_not_done_even_beside_a_custom_one():
+    """S09: families still sign the starter text, so the step is not done."""
+    starter = {"body": DEFAULT_WAIVER_BODY, "required": True}
+    photo = {"body": "Photo consent wording.", "required": False}
+    assert _derive(waivers=(True, {"live_waivers": [starter, photo]}))["waiver"] == "todo"
+    own = {"body": "Liability wording.", "required": True}
+    assert _derive(waivers=(True, {"live_waivers": [own, photo]}))["waiver"] == "done"
+
+
+def test_is_starter_waiver_body():
+    assert is_starter_waiver_body(DEFAULT_WAIVER_BODY)
+    assert is_starter_waiver_body(f"  {DEFAULT_WAIVER_BODY}\n")
+    assert not is_starter_waiver_body(DEFAULT_WAIVER_BODY + " Edited.")
+    assert not is_starter_waiver_body(None)

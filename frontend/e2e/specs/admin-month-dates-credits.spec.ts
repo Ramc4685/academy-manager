@@ -174,7 +174,7 @@ test.describe("Month dates credits", () => {
     await dialog.getByTestId("confirm-action-submit").click();
     await expect(page.getByTestId("credit-missed-families")).toBeVisible();
     await dialog.getByTestId("confirm-action-submit").click();
-    await expect(page.getByTestId("month-dates-credit-row")).toContainText("Check Billing Health");
+    await expect(page.getByTestId("month-dates-credit-row")).toContainText("Check Payment system status");
     expect(errors, `App console errors: ${errors.join("\n")}`).toEqual([]);
   });
 });

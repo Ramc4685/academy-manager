@@ -266,13 +266,21 @@ class _SkillNotes:
             (n for n in self.saved if n.student_id == student_id and n.note_id == note_id), None
         )
 
-    async def set_visibility(self, student_id: str, note_id: str, visibility):
+    async def set_visibility(self, student_id: str, note_id: str, visibility, shared_at=None):
         note = await self.get(student_id, note_id)
         if note is None:
             return None
-        updated = note.model_copy(update={"visibility": visibility})
+        updated = note.model_copy(update={"visibility": visibility, "shared_at": shared_at})
         self.saved = [updated if n is note else n for n in self.saved]
         return updated
+
+    async def list_shared_with_parent(self, student_id: str, limit: int):
+        shared = [
+            n
+            for n in self.saved
+            if n.student_id == student_id and n.visibility == "shared" and n.shared_at is not None
+        ]
+        return sorted(shared, key=lambda n: n.shared_at, reverse=True)[:limit]
 
 
 def _skill_note(note_id: str, coach_id: str, visibility: str = "private") -> CoachSkillNote:

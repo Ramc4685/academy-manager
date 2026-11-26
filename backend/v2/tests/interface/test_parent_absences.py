@@ -263,3 +263,61 @@ def test_get_absences_without_the_describer_still_lists_notices() -> None:
 
     assert response.status_code == 200, response.text
     assert response.json()["notices"][0]["makeup"] is None
+
+
+# --- S43: DELETE undoes a reported absence ---------------------------------
+
+
+class _Withdraw:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.commands: list[object] = []
+        self._error = error
+
+    async def execute(self, cmd) -> None:
+        self.commands.append(cmd)
+        if self._error is not None:
+            raise self._error
+
+
+def _with_withdraw(withdraw: _Withdraw) -> _ParentUseCases:
+    use_cases = _ParentUseCases()
+    use_cases.withdraw_absence_notice = withdraw  # type: ignore[attr-defined]
+    return use_cases
+
+
+def test_delete_absence_withdraws_for_the_callers_own_parent_id() -> None:
+    withdraw = _Withdraw()
+    with _make_client(use_cases=_with_withdraw(withdraw)) as client:
+        response = client.delete("/api/v2/parent/absences/student-1/occ-1")
+
+    assert response.status_code == 204, response.text
+    [cmd] = withdraw.commands
+    assert (cmd.parent_id, cmd.student_id, cmd.occurrence_id) == (  # type: ignore[attr-defined]
+        "parent-1",
+        "student-1",
+        "occ-1",
+    )
+
+
+def test_delete_absence_after_start_is_409_and_unknown_is_404() -> None:
+    from backend.v2.contexts.enrollment.domain.self_service import (
+        AbsenceNoticeNotFound,
+        AbsenceWindowClosed,
+    )
+
+    with _make_client(use_cases=_with_withdraw(_Withdraw(AbsenceWindowClosed("started")))) as c:
+        started = c.delete("/api/v2/parent/absences/student-1/occ-1")
+    with _make_client(use_cases=_with_withdraw(_Withdraw(AbsenceNoticeNotFound("no")))) as c:
+        missing = c.delete("/api/v2/parent/absences/student-9/occ-1")
+
+    assert started.status_code == 409
+    assert started.json()["error"]["code"] == "Enrollment.AbsenceWindowClosed"
+    assert missing.status_code == 404
+
+
+def test_wrong_persona_cannot_delete_absence() -> None:
+    withdraw = _Withdraw()
+    with _make_client("admin", use_cases=_with_withdraw(withdraw)) as client:
+        response = client.delete("/api/v2/parent/absences/student-1/occ-1")
+    assert response.status_code == 404
+    assert withdraw.commands == []

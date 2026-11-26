@@ -48,11 +48,10 @@ describe("setupChecklistRows", () => {
     item({ key: "waiver", status: "unknown", href: "/admin/waivers" }),
   ]);
 
-  it("puts open steps before done ones, keeping server order", () => {
+  it("lists only the open steps, keeping server order", () => {
     expect(setupChecklistRows(data, true).map((row) => row.key)).toEqual([
       "stripe_connect",
       "waiver",
-      "academy_profile",
     ]);
   });
 
@@ -69,7 +68,6 @@ describe("setupChecklistRows", () => {
     expect(setupChecklistRows(data, true).map((row) => row.statusLabel)).toEqual([
       "To do",
       "Couldn't check",
-      "Done",
     ]);
   });
 });

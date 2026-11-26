@@ -26,7 +26,12 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_program_lookup i
 from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
     LIVE_TEMPLATE_STATUSES,
 )
+from backend.v2.shared.starter_waiver import is_starter_waiver_body
 from backend.v2.shared.tenancy import TenantScopedRepository
+
+
+def _body(doc: dict[str, Any]) -> str:
+    return str(doc.get("body") or doc.get("text") or doc.get("waiver_text") or "")
 
 
 class MongoRegistrationWaiverRepository(TenantScopedRepository):
@@ -43,7 +48,7 @@ class MongoRegistrationWaiverRepository(TenantScopedRepository):
 
     @classmethod
     def _to_domain(cls, doc: dict[str, Any]) -> Waiver:
-        text = str(doc.get("body") or doc.get("text") or doc.get("waiver_text") or "")
+        text = _body(doc)
         content_hash = doc.get("content_hash") or sha256(text.encode("utf-8")).hexdigest()
         effective_from = (
             doc.get("effective_from")
@@ -71,12 +76,14 @@ class MongoRegistrationWaiverRepository(TenantScopedRepository):
         assigned at all, the pre-assignment fallback in :meth:`get_active` still
         applies, so an academy that never assigned a waiver behaves as before.
         """
+        # S47 / D-11: the untouched starter text is never put to a family.
         docs = [
             doc
             async for doc in self._find_many(
                 {"status": {"$in": list(LIVE_TEMPLATE_STATUSES)}},
                 sort=[("assigned_at", -1), ("effective_from", -1)],
             )
+            if not is_starter_waiver_body(_body(doc))
         ]
         assigned = [(doc, assignment_from_document(doc)) for doc in docs]
         program_id = await MongoWaiverProgramLookup(self._db).program_id_for_session(session_id)
@@ -103,13 +110,14 @@ class MongoRegistrationWaiverRepository(TenantScopedRepository):
         return False
 
     async def get_active(self) -> Waiver | None:
+        """The registration waiver, or None. A starter placeholder is not one (S47)."""
         cursor = self._find_many(
             {"status": {"$in": ["active", "published"]}, "assigned_to_registration": True},
             sort=[("assigned_at", -1), ("effective_from", -1)],
-            limit=1,
         )
         async for doc in cursor:
-            return self._to_domain(doc)
+            if not is_starter_waiver_body(_body(doc)):
+                return self._to_domain(doc)
 
         cursor = self._find_many(
             {
@@ -118,8 +126,8 @@ class MongoRegistrationWaiverRepository(TenantScopedRepository):
                 "assigned_to_registration": {"$exists": False},
             },
             sort=[("published_at", -1), ("effective_from", -1), ("updated_at", -1)],
-            limit=1,
         )
         async for doc in cursor:
-            return self._to_domain(doc)
+            if not is_starter_waiver_body(_body(doc)):
+                return self._to_domain(doc)
         return None

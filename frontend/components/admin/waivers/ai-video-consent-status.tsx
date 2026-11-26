@@ -6,6 +6,7 @@ import { Card, Chip } from "@/components/ds";
 import { listAdminAiVideoConsents } from "@/lib/api/admin";
 import type { AiVideoConsentRow } from "@/lib/api/parent";
 import { queryKeys } from "@/lib/query/keys";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 /** Read-only per-child AI/video consent status (Phase 3 E1). Parents grant and revoke. */
 export function AiVideoConsentStatus() {
@@ -42,7 +43,7 @@ export function AiVideoConsentStatusList({ rows }: { rows: AiVideoConsentRow[] }
               <li key={row.student_id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
                 <span className="font-medium text-rally-ink">{row.student_name}</span>
                 <span className="flex items-center gap-2 text-xs text-rally-subtle">
-                  {when && <span>{new Date(when).toLocaleDateString()}</span>}
+                  {when && <span>{formatInAcademyZone(when)}</span>}
                   {row.text_version && <span>{row.text_version}</span>}
                   <Chip variant={chip.variant} label={chip.label} />
                 </span>

@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from backend.v2.contexts.student_progress.application.errors import StudentNotPlaced
 from backend.v2.contexts.student_progress.application.use_cases.certificate_share import (
@@ -146,6 +146,34 @@ async def get_skill_updates(
         raise HTTPException(status_code=503, detail="Student progress service not configured")
     updates = await use_cases.student_progress.get_recent_skill_updates.execute(student_id)
     return {"updates": [_public_skill_update(update) for update in updates]}
+
+
+@router.get("/students/{student_id}/coach-notes")
+async def get_coach_notes(
+    student_id: str,
+    request: Request,
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> object:
+    """Skill notes a coach shared with this family (D-15). Private notes, and
+    notes ticked shared before parents could see them, never appear."""
+    await _verify_child_ownership(claims.user_id, student_id, use_cases)
+    list_notes = getattr(request.app.state, "parent_coach_notes", None)
+    if list_notes is None:
+        raise HTTPException(status_code=503, detail="Coach notes service not configured")
+    notes = await list_notes.execute(student_id)
+    return {
+        "notes": [
+            {
+                "note_id": n.note_id,
+                "skill_id": n.skill_id,
+                "skill_name": n.skill_name,
+                "body": n.body,
+                "shared_at": n.shared_at.isoformat(),
+            }
+            for n in notes
+        ]
+    }
 
 
 @router.get("/students/{student_id}/practice-resources")

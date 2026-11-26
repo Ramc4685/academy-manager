@@ -1,13 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 
 import { listAuditLogs, type AdminAuditActorType } from "@/lib/api/admin";
 import { Card } from "@/components/ds/card";
 import { Chip, type ChipVariant, CHIP_VARIANTS } from "@/components/ds/chip";
 import { Avatar } from "@/components/ds/avatar";
 import { LaneHeader } from "@/components/ds/lane";
+import { useAcademyZone } from "@/lib/format/academy-zone";
+import { formatAcademyStamp } from "@/lib/format/academy-time";
 
 function getActionVariant(action: string): ChipVariant {
   const normalized = action.toLowerCase();
@@ -49,14 +51,19 @@ function formatActorType(actorType: AdminAuditActorType | null) {
 }
 
 export default function AdminAuditLogsPage() {
+  const academyTimezone = useAcademyZone();
   const [actorType, setActorType] = useState<AdminAuditActorType | null>(null);
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery({
     queryKey: ["admin", "audit-logs", actorType],
-    queryFn: () => listAuditLogs(actorType),
+    queryFn: ({ pageParam }) => listAuditLogs(actorType, pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
 
-  const logs = data?.logs ?? [];
+  // S39: one trail over sign-ins, money (late fees, payments, refunds),
+  // payslips and coach rates, newest first, a page at a time.
+  const logs = data?.pages.flatMap((page) => page.logs) ?? [];
 
   return (
     <section data-testid="admin-audit-logs" className="space-y-6">
@@ -121,7 +128,7 @@ export default function AdminAuditLogsPage() {
                     className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50 dark:border-slate-800 dark:hover:bg-slate-800/50"
                   >
                     <td className="px-5 py-4 font-mono text-[13px] text-slate-600 dark:text-slate-300">
-                      {new Date(log.created_at).toLocaleString()}
+                      {formatAcademyStamp(log.created_at, academyTimezone)}
                     </td>
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-3">
@@ -145,7 +152,7 @@ export default function AdminAuditLogsPage() {
                       </div>
                     </td>
                     <td className="px-5 py-4">
-                      <Chip variant={actionVariant} label={formatActionLabel(log.action)} />
+                      <Chip variant={actionVariant} label={log.action_label ?? formatActionLabel(log.action)} />
                     </td>
                     <td className="px-5 py-4">
                       <div>
@@ -165,6 +172,19 @@ export default function AdminAuditLogsPage() {
             </tbody>
           </table>
         </Card>
+      )}
+      {hasNextPage && (
+        <div className="flex justify-center">
+          <button
+            type="button"
+            data-testid="admin-audit-logs-more"
+            onClick={() => void fetchNextPage()}
+            disabled={isFetchingNextPage}
+            className="rounded-full border border-slate-200 px-4 py-1.5 text-sm font-medium text-rally-ink hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:hover:bg-slate-800"
+          >
+            {isFetchingNextPage ? "Loading…" : "Show older events"}
+          </button>
+        </div>
       )}
     </section>
   );

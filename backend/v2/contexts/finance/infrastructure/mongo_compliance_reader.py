@@ -15,22 +15,15 @@ since those genuinely cannot be judged yet.
 
 from __future__ import annotations
 
-import calendar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from backend.v2.shared.reporting_definitions import month_window
+from backend.v2.shared.time import academy_timezone_lookup, resolve_reporting_timezone
+
 _OCCURRENCE_COLLECTION = "session_occurrences"
 _ATTENDANCE_COLLECTION = "attendance"
-
-
-def _month_bounds(period: str) -> tuple[datetime, datetime]:
-    """Parse a ``YYYY-MM`` period string into UTC ``[start, end)`` bounds."""
-    year, month = (int(part) for part in period.split("-"))
-    start = datetime(year, month, 1, tzinfo=UTC)
-    last_day = calendar.monthrange(year, month)[1]
-    end = start + timedelta(days=last_day)
-    return start, end
 
 
 @dataclass(frozen=True)
@@ -44,6 +37,7 @@ class MongoComplianceReader:
     """Aggregates ``session_occurrences`` + ``attendance`` per coach per period."""
 
     def __init__(self, db: object) -> None:
+        self._db = db
         self._occurrences = db[_OCCURRENCE_COLLECTION]  # type: ignore[index]
         self._attendance = db[_ATTENDANCE_COLLECTION]  # type: ignore[index]
 
@@ -55,9 +49,11 @@ class MongoComplianceReader:
 
         now = datetime.now(tz=UTC)
         counts: dict[str, list[int]] = {}  # coach_id -> [within_24h, total]
+        # The academy's own month, the same window coach hours use.
+        zone = await resolve_reporting_timezone(academy_timezone_lookup(self._db), academy_id)
 
         for period in periods:
-            period_start, period_end = _month_bounds(period)
+            period_start, period_end = month_window(period, zone)
             match: dict[str, Any] = {
                 "academy_id": academy_id,
                 "start_at": {"$gte": period_start, "$lt": period_end},

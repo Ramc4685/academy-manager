@@ -76,10 +76,15 @@ export function DeleteAccountSection({ persona = "parent" }: { persona?: "parent
   }
 
   return (
-    <section
-      data-testid="delete-account"
-      className="rounded-2xl border border-status-red-200 bg-white p-4"
+    // S19: a neutral, collapsed "Account" disclosure so the profile does not lead with Delete.
+    <details
+      data-testid="account-disclosure"
+      className="rounded-2xl border border-rally-line bg-white p-4"
     >
+      <summary className="min-h-touch cursor-pointer select-none content-center font-semibold text-rally-ink">
+        Account
+      </summary>
+      <section data-testid="delete-account" className="mt-3 border-t border-rally-line pt-3">
       <h2 className="font-semibold text-rally-ink">Delete account</h2>
       {!open ? (
         <>
@@ -206,6 +211,7 @@ export function DeleteAccountSection({ persona = "parent" }: { persona?: "parent
           </div>
         </div>
       )}
-    </section>
+      </section>
+    </details>
   );
 }

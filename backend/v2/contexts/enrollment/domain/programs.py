@@ -67,6 +67,16 @@ class AgeBand(BaseModel):
         return self
 
 
+def age_band_from_doc(value: object) -> AgeBand | None:
+    """A stored ``{min_age, max_age}`` dict as an AgeBand; None when absent or invalid."""
+    if not isinstance(value, dict):
+        return None
+    try:
+        return AgeBand(min_age=value.get("min_age"), max_age=value.get("max_age"))
+    except ValueError:
+        return None
+
+
 class Program(BaseModel):
     """A public grouping of classes: name, level, ages, description, order."""
 

@@ -15,7 +15,8 @@ from __future__ import annotations
 import csv
 import io
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -49,14 +50,15 @@ from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import 
 )
 from backend.v2.shared.billing_type import is_not_billed
 from backend.v2.shared.occurrences import occurrence_session_id
+from backend.v2.shared.reporting_definitions import (
+    Headcount,
+    attendance_for_classes_filter,
+    class_state,
+    headcount,
+    is_present,
+)
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.time import academy_timezone_lookup, resolve_reporting_timezone
-
-# Attendance-rate denominator and numerator (#554). ``voided`` appears in
-# neither: an annulled mark drops out of the rate entirely rather than
-# counting as an absence.
-ATTENDANCE_RATE_COUNTED_STATUSES = ("present", "late", "absent")
-ATTENDANCE_RATE_PRESENT_STATUSES = frozenset({"present", "late"})
 
 
 async def _reporting_timezone(db: AsyncIOMotorDatabase[Any], academy_id: str) -> str:
@@ -564,9 +566,272 @@ def _period_has_unresolved_pay_issues(payout_period: dict[str, Any]) -> bool:
     )
 
 
+@dataclass(frozen=True)
+class _MonthPayroll:
+    payout_period_rows: int
+    estimated_cents: int
+    approved_cents: int
+    paid_cents: int
+    #: Why the month's payroll is not final yet; None when it is.
+    blocked_by: str | None
+
+
+async def _month_payroll_completeness(
+    db: AsyncIOMotorDatabase[Any], academy_id: str, start: datetime, end: datetime
+) -> _MonthPayroll:
+    """The month close rule for "is this month's coach payroll final?".
+
+    Shared by the dashboard P&L and session economics so neither shows a
+    profit on top of payroll that has not been generated or approved.
+    """
+    # Which coaches owe payroll this month? Same rule payroll generation
+    # uses: actual_coach_id when set, else scheduled_coach_id, plus assistants.
+    # Completion is clock-derived, matching MonthlyCoachOccurrenceReader —
+    # nothing in the app writes status="completed".
+    now = datetime.now(UTC)
+    expected_coach_ids: set[str] = set()
+    expected_cursor = db["session_occurrences"].find(
+        {
+            "academy_id": academy_id,
+            "start_at": {"$gte": start, "$lt": end},
+            "is_payable": {"$ne": False},
+            "status": {"$ne": "cancelled"},
+            "$or": [{"status": "completed"}, {"end_at": {"$lt": now}}],
+        },
+        {"scheduled_coach_id": 1, "actual_coach_id": 1, "assistant_coach_ids": 1},
+    )
+    async for occurrence in expected_cursor:
+        paying_coach = str(
+            occurrence.get("actual_coach_id") or occurrence.get("scheduled_coach_id") or ""
+        )
+        if paying_coach:
+            expected_coach_ids.add(paying_coach)
+        # Assistants are paid their own line (L7), so they owe payroll too.
+        expected_coach_ids.update(str(c) for c in occurrence.get("assistant_coach_ids") or [] if c)
+
+    estimated_payroll_cents = 0
+    approved_payroll_cents = 0
+    paid_payroll_cents = 0
+    payout_period_rows = 0
+    covered_coach_ids: set[str] = set()
+    draft_period_count = 0
+    unresolved_period_count = 0
+    partial_window_count = 0
+    payout_cursor = db["payout_periods"].find(
+        {
+            "academy_id": academy_id,
+            "period_start": {"$gte": start, "$lt": end},
+        }
+    )
+    async for payout_period in payout_cursor:
+        payout_period_rows += 1
+        total = int(payout_period.get("total_minor") or 0)
+        estimated_payroll_cents += total
+        status = str(payout_period.get("status") or "draft")
+        if status in {"approved", "paid"}:
+            approved_payroll_cents += total
+        if status == "paid":
+            paid_payroll_cents += int(payout_period.get("paid_amount_minor") or total)
+
+        # Only a period spanning exactly [month_start, next_month_start)
+        # can stand in for the month's payroll. A row that starts inside
+        # the month but ends early covers part of it and nothing else does.
+        if (
+            _as_utc_or_none(payout_period.get("period_start")) != start
+            or _as_utc_or_none(payout_period.get("period_end")) != end
+        ):
+            partial_window_count += 1
+            continue
+        covered_coach_ids.add(str(payout_period.get("coach_id") or ""))
+        if status == "draft":
+            draft_period_count += 1
+        if _period_has_unresolved_pay_issues(payout_period):
+            unresolved_period_count += 1
+
+    # P&L is either accurate or explicitly blocked — never a confident
+    # profit number sitting on top of incomplete payroll (#225).
+    missing_coach_count = len(expected_coach_ids - covered_coach_ids)
+    blocked_reasons: list[str] = []
+    if expected_coach_ids and payout_period_rows == 0:
+        blocked_reasons.append("No generated payout periods for this month.")
+    elif missing_coach_count:
+        blocked_reasons.append(
+            f"Payroll has not been generated for {missing_coach_count} "
+            f"{_pluralize(missing_coach_count, 'coach', 'coaches')} this month."
+        )
+    if draft_period_count:
+        blocked_reasons.append(
+            f"{draft_period_count} payout "
+            f"{_pluralize(draft_period_count, 'period is', 'periods are')} still in draft."
+        )
+    if unresolved_period_count:
+        blocked_reasons.append(
+            f"{unresolved_period_count} payout "
+            f"{_pluralize(unresolved_period_count, 'period has', 'periods have')} "
+            "unresolved pay issues."
+        )
+    if partial_window_count:
+        blocked_reasons.append(
+            f"{partial_window_count} payout "
+            f"{_pluralize(partial_window_count, 'period does', 'periods do')} "
+            "not cover the full month."
+        )
+    return _MonthPayroll(
+        payout_period_rows=payout_period_rows,
+        estimated_cents=estimated_payroll_cents,
+        approved_cents=approved_payroll_cents,
+        paid_cents=paid_payroll_cents,
+        blocked_by=" ".join(blocked_reasons) if blocked_reasons else None,
+    )
+
+
 def _now() -> datetime:
     """Seam for tests: the dashboard's aging buckets age against this instant."""
     return datetime.now(UTC)
+
+
+_PAYMENT_RISK_PROJECTION = {
+    "payment_id": 1,
+    "invoice_id": 1,
+    "invoice_number": 1,
+    "stripe_invoice_id": 1,
+    "stripe_payment_intent_id": 1,
+    "stripe_checkout_session_id": 1,
+    "status": 1,
+    "parent_id": 1,
+    "family_id": 1,
+    "student_id": 1,
+    "due_date": 1,
+    "due_at": 1,
+    "created_at": 1,
+    "amount_cents": 1,
+    "final_amount_cents": 1,
+    "gross_amount_cents": 1,
+    "paid_amount_cents": 1,
+    "amount_received_cents": 1,
+    "balance_due_cents": 1,
+    "refunded_cents": 1,
+}
+
+
+async def period_billing_rows(
+    db: AsyncIOMotorDatabase[Any],
+    *,
+    academy_id: str,
+    period: str,
+    month_end: date,
+    as_of: date,
+) -> list[dict[str, Any]]:
+    """One row per billed item in ``period``: live invoices, then legacy payment
+    rows no invoice covers. The dashboard's billed, outstanding and aging
+    figures are sums over these rows, and the S41 CSVs export them as-is.
+    """
+    rows: list[dict[str, Any]] = []
+    invoice_keys: set[str] = set()
+    invoices_cursor = db["invoices"].find(
+        {
+            "academy_id": academy_id,
+            "period": period,
+            "status": {"$nin": ["void", "waived", "cancelled"]},
+            "is_deleted": {"$ne": True},
+        }
+    )
+    async for invoice in invoices_cursor:
+        invoice_keys.update(invoice_provider_keys(invoice))
+        outstanding = invoice_outstanding_cents(invoice)
+        paid = invoice_paid_cents(invoice)
+        due = invoice_due_date(invoice, month_end)
+        rows.append(
+            {
+                "source": "invoice",
+                "id": str(invoice.get("invoice_id") or invoice.get("_id") or ""),
+                "invoice_number": invoice.get("invoice_number"),
+                "family_id": str(
+                    invoice.get("parent_id")
+                    or invoice.get("family_id")
+                    or invoice.get("student_id")
+                    or invoice.get("invoice_id")
+                    or ""
+                ),
+                "status": str(invoice.get("status") or ""),
+                "due_date": due,
+                "billed_cents": paid + outstanding,
+                "paid_cents": paid,
+                "outstanding_cents": outstanding,
+                "aging": aging_label(max((as_of - due).days, 0)),
+            }
+        )
+
+    payments_cursor = db["payments"].find(
+        {"academy_id": academy_id, "period": period, "is_deleted": {"$ne": True}},
+        _PAYMENT_RISK_PROJECTION,
+    )
+    async for payment in payments_cursor:
+        if payment_provider_keys(payment) & invoice_keys:
+            continue
+        outstanding = payment_outstanding_cents(payment)
+        collected = payment_collected_cents(payment)
+        due = payment_due_date(payment, month_end)
+        rows.append(
+            {
+                "source": "payment",
+                "id": str(payment.get("payment_id") or payment.get("_id") or ""),
+                "invoice_number": payment.get("invoice_number"),
+                "family_id": str(
+                    payment.get("parent_id")
+                    or payment.get("family_id")
+                    or payment.get("student_id")
+                    or payment.get("payment_id")
+                    or ""
+                ),
+                "status": str(payment.get("status") or ""),
+                "due_date": due,
+                "billed_cents": collected + outstanding,
+                "paid_cents": collected,
+                "outstanding_cents": outstanding,
+                "aging": aging_label(max((as_of - due).days, 0)),
+            }
+        )
+    return rows
+
+
+async def family_display_names(
+    db: AsyncIOMotorDatabase[Any], *, academy_id: str, family_ids: set[str]
+) -> dict[str, str]:
+    """Display names for family ids. parent_id may be a user_id, a firebase uid,
+    or a raw ObjectId depending on the writer, so match all three (same lookup
+    the billing/finance paths use)."""
+    family_names: dict[str, str] = {}
+    if not family_ids:
+        return family_names
+    id_list = sorted(family_ids)
+    oid_ids = [BsonObjectId(p) for p in id_list if BsonObjectId.is_valid(p)]
+    or_filter: list[dict[str, Any]] = [
+        {"user_id": {"$in": id_list}},
+        {"firebase_uid": {"$in": id_list}},
+    ]
+    if oid_ids:
+        or_filter.append({"_id": {"$in": oid_ids}})
+    users_cursor = db["users"].find(
+        {"academy_id": academy_id, "$or": or_filter},
+        {"user_id": 1, "firebase_uid": 1, "display_name": 1, "first_name": 1, "last_name": 1},
+    )
+    async for user in users_cursor:
+        display = str(
+            user.get("display_name")
+            or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+            or ""
+        )
+        if not display:
+            continue
+        for key in (
+            str(user.get("user_id") or ""),
+            str(user.get("firebase_uid") or ""),
+            str(user["_id"]),
+        ):
+            if key and key in family_ids:
+                family_names[key] = display
+    return family_names
 
 
 def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
@@ -597,38 +862,23 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             label: {"amount_cents": 0, "family_ids": set(), "family_amounts": {}}
             for label in ("Current", "1-30", "31-60", "60+")
         }
-        # Rebuilt here for the ``risk_payments`` pass below only; the cash
-        # reader keeps its own copy because its legacy dedup depends on it.
-        invoice_keys: set[str] = set()
-        invoices_cursor = db["invoices"].find(
-            {
-                "academy_id": academy_id,
-                "period": period,
-                "status": {"$nin": ["void", "waived", "cancelled"]},
-                "is_deleted": {"$ne": True},
-            }
-        )
-        async for invoice in invoices_cursor:
-            invoice_keys.update(invoice_provider_keys(invoice))
-            if str(invoice.get("status") or "") == "partially_paid":
+        # S41: the same rows back the invoices and aging CSVs, so a file's
+        # totals can never drift from this dashboard.
+        for row in await period_billing_rows(
+            db, academy_id=academy_id, period=period, month_end=end.date(), as_of=aging_as_of
+        ):
+            if row["status"] == "partially_paid":
                 partial_payment_count += 1
-            outstanding = invoice_outstanding_cents(invoice)
+            elif row["status"] == "failed" and row["source"] == "payment":
+                failed_payment_count += 1
+            outstanding = row["outstanding_cents"]
             outstanding_dues_cents += outstanding
-            billed_cents += invoice_paid_cents(invoice) + outstanding
+            billed_cents += row["billed_cents"]
             if outstanding:
-                family_id = str(
-                    invoice.get("parent_id")
-                    or invoice.get("family_id")
-                    or invoice.get("student_id")
-                    or invoice.get("invoice_id")
-                    or ""
-                )
+                family_id = row["family_id"]
                 if family_id:
                     collection_family_ids.add(family_id)
-                due_date = invoice_due_date(invoice, end.date())
-                days_late = max((aging_as_of - due_date).days, 0)
-                label = aging_label(days_late)
-                bucket = aging_totals[label]
+                bucket = aging_totals[row["aging"]]
                 bucket["amount_cents"] = int(bucket["amount_cents"]) + outstanding
                 family_ids = bucket["family_ids"]
                 if isinstance(family_ids, set) and family_id:
@@ -646,99 +896,49 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         async for _attempt in failed_attempts_cursor:
             failed_payment_count += 1
 
-        risk_payments_cursor = db["payments"].find(
-            {
-                "academy_id": academy_id,
-                "period": period,
-                "is_deleted": {"$ne": True},
-            },
-            {
-                "payment_id": 1,
-                "invoice_id": 1,
-                "invoice_number": 1,
-                "stripe_invoice_id": 1,
-                "stripe_payment_intent_id": 1,
-                "stripe_checkout_session_id": 1,
-                "status": 1,
-                "parent_id": 1,
-                "family_id": 1,
-                "student_id": 1,
-                "due_date": 1,
-                "due_at": 1,
-                "created_at": 1,
-                "amount_cents": 1,
-                "final_amount_cents": 1,
-                "gross_amount_cents": 1,
-                "paid_amount_cents": 1,
-                "amount_received_cents": 1,
-                "balance_due_cents": 1,
-                "refunded_cents": 1,
-            },
-        )
-        async for payment in risk_payments_cursor:
-            payment_keys = payment_provider_keys(payment)
-            if payment_keys & invoice_keys:
-                continue
-            status = str(payment.get("status") or "")
-            if status == "failed":
-                failed_payment_count += 1
-            elif status == "partially_paid":
-                partial_payment_count += 1
-            outstanding = payment_outstanding_cents(payment)
-            outstanding_dues_cents += outstanding
-            billed_cents += payment_collected_cents(payment) + outstanding
-            if outstanding:
-                family_id = str(
-                    payment.get("parent_id")
-                    or payment.get("family_id")
-                    or payment.get("student_id")
-                    or payment.get("payment_id")
-                    or ""
-                )
-                if family_id:
-                    collection_family_ids.add(family_id)
-                due_date = payment_due_date(payment, end.date())
-                days_late = max((aging_as_of - due_date).days, 0)
-                label = aging_label(days_late)
-                bucket = aging_totals[label]
-                bucket["amount_cents"] = int(bucket["amount_cents"]) + outstanding
-                family_ids = bucket["family_ids"]
-                if isinstance(family_ids, set) and family_id:
-                    family_ids.add(family_id)
-                    family_amounts = bucket["family_amounts"]
-                    family_amounts[family_id] = int(family_amounts.get(family_id, 0)) + outstanding
-
-        present_count = 0
-        recorded_count = 0
-        attendance_cursor = db["attendance"].find(
-            {
-                "academy_id": academy_id,
-                "marked_at": {"$gte": start, "$lt": end},
-                "status": {"$in": list(ATTENDANCE_RATE_COUNTED_STATUSES)},
-            }
-        )
-        async for attendance in attendance_cursor:
-            recorded_count += 1
-            if str(attendance.get("status")) in ATTENDANCE_RATE_PRESENT_STATUSES:
-                present_count += 1
-        attendance_rate = round(present_count / recorded_count, 4) if recorded_count else None
-
         session_ids: list[str] = []
-        scheduled_count = 0
-        completed_count = 0
-        cancelled_count = 0
         capacity = 0
+        # Class dates, not class records: one row per occurrence in the month,
+        # held/upcoming/cancelled by the shared definition (nothing writes a
+        # session's status to "completed", so that read 0 forever).
+        class_counts = {"held": 0, "upcoming": 0, "cancelled": 0}
+        month_occurrence_ids: list[str] = []
         # A class counts in every month it meets, not only the month it began:
         # its occurrences in the month name it (as session economics does),
         # plus any class whose first date falls in the month.
         month_session_ids: set[str] = set()
+        now = datetime.now(UTC)
         async for occurrence in db["session_occurrences"].find(
             {"academy_id": academy_id, "start_at": {"$gte": start, "$lt": end}},
-            {"session_id": 1, "template_session_id": 1},
+            {
+                "occurrence_id": 1,
+                "session_id": 1,
+                "template_session_id": 1,
+                "status": 1,
+                "end_at": 1,
+            },
         ):
+            state = class_state(occurrence, now=now)
+            class_counts[state] += 1
+            if state != "cancelled" and occurrence.get("occurrence_id"):
+                month_occurrence_ids.append(str(occurrence["occurrence_id"]))
             occurrence_session = occurrence_session_id(occurrence)
             if occurrence_session:
                 month_session_ids.add(occurrence_session)
+
+        # Attendance by class date: marks on this month's classes.
+        present_count = 0
+        recorded_count = 0
+        if month_occurrence_ids:
+            async for attendance in db["attendance"].find(
+                {"academy_id": academy_id, **attendance_for_classes_filter(month_occurrence_ids)},
+                {"status": 1},
+            ):
+                recorded_count += 1
+                if is_present(attendance.get("status")):
+                    present_count += 1
+        attendance_rate = round(present_count / recorded_count, 4) if recorded_count else None
+
         # Two queries, not one $or: session_id carries a partial index and the
         # planner will not use it inside $or (docs/agent/backend-api-rules.md).
         month_sessions: dict[str, dict[str, Any]] = {}
@@ -752,29 +952,26 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 month_sessions.setdefault(str(doc.get("session_id") or doc.get("_id")), doc)
         for session_id, session in month_sessions.items():
             session_ids.append(session_id)
-            status = str(session.get("status") or "scheduled")
-            if status == "completed":
-                completed_count += 1
-            elif status == "cancelled":
-                cancelled_count += 1
-            else:
-                scheduled_count += 1
-            if status != "cancelled":
+            if str(session.get("status") or "scheduled") != "cancelled":
                 capacity += int(session.get("capacity") or session.get("max_students") or 0)
 
-        enrolled_seats = 0
+        seats = Headcount(enrolled=0, paying=0)
         if session_ids:
-            enrollments_cursor = db["enrollments"].find(
-                {
-                    "academy_id": academy_id,
-                    "session_id": {"$in": session_ids},
-                    "status": "active",
-                    "is_deleted": {"$ne": True},
-                },
-                {"student_id": 1},
+            seats = headcount(
+                [
+                    enrollment
+                    async for enrollment in db["enrollments"].find(
+                        {
+                            "academy_id": academy_id,
+                            "session_id": {"$in": session_ids},
+                            "status": "active",
+                            "is_deleted": {"$ne": True},
+                        },
+                        {"student_id": 1, "billing_type": 1},
+                    )
+                ]
             )
-            async for _enrollment in enrollments_cursor:
-                enrolled_seats += 1
+        enrolled_seats = seats.enrolled
         capacity_utilization = round(enrolled_seats / capacity, 4) if capacity else None
 
         waitlist_count = 0
@@ -814,102 +1011,13 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         rent_cents = int(expense_categories.get("rent", {}).get("amount_cents", 0))
         misc_expenses_cents = expenses_total_cents - rent_cents
 
-        # Which coaches owe payroll this month? Same rule payroll generation
-        # uses: actual_coach_id when set, else scheduled_coach_id, plus assistants.
-        # Completion is clock-derived, matching MonthlyCoachOccurrenceReader —
-        # nothing in the app writes status="completed".
-        now = datetime.now(UTC)
-        expected_coach_ids: set[str] = set()
-        expected_cursor = db["session_occurrences"].find(
-            {
-                "academy_id": academy_id,
-                "start_at": {"$gte": start, "$lt": end},
-                "is_payable": {"$ne": False},
-                "status": {"$ne": "cancelled"},
-                "$or": [{"status": "completed"}, {"end_at": {"$lt": now}}],
-            },
-            {"scheduled_coach_id": 1, "actual_coach_id": 1, "assistant_coach_ids": 1},
-        )
-        async for occurrence in expected_cursor:
-            paying_coach = str(
-                occurrence.get("actual_coach_id") or occurrence.get("scheduled_coach_id") or ""
-            )
-            if paying_coach:
-                expected_coach_ids.add(paying_coach)
-            # Assistants are paid their own line (L7), so they owe payroll too.
-            expected_coach_ids.update(
-                str(c) for c in occurrence.get("assistant_coach_ids") or [] if c
-            )
-
-        estimated_payroll_cents = 0
-        approved_payroll_cents = 0
-        paid_payroll_cents = 0
-        payout_period_rows = 0
-        covered_coach_ids: set[str] = set()
-        draft_period_count = 0
-        unresolved_period_count = 0
-        partial_window_count = 0
-        payout_cursor = db["payout_periods"].find(
-            {
-                "academy_id": academy_id,
-                "period_start": {"$gte": start, "$lt": end},
-            }
-        )
-        async for payout_period in payout_cursor:
-            payout_period_rows += 1
-            total = int(payout_period.get("total_minor") or 0)
-            estimated_payroll_cents += total
-            status = str(payout_period.get("status") or "draft")
-            if status in {"approved", "paid"}:
-                approved_payroll_cents += total
-            if status == "paid":
-                paid_payroll_cents += int(payout_period.get("paid_amount_minor") or total)
-
-            # Only a period spanning exactly [month_start, next_month_start)
-            # can stand in for the month's payroll. A row that starts inside
-            # the month but ends early covers part of it and nothing else does.
-            if (
-                _as_utc_or_none(payout_period.get("period_start")) != start
-                or _as_utc_or_none(payout_period.get("period_end")) != end
-            ):
-                partial_window_count += 1
-                continue
-            covered_coach_ids.add(str(payout_period.get("coach_id") or ""))
-            if status == "draft":
-                draft_period_count += 1
-            if _period_has_unresolved_pay_issues(payout_period):
-                unresolved_period_count += 1
+        payroll = await _month_payroll_completeness(db, academy_id, start, end)
+        payout_period_rows = payroll.payout_period_rows
+        estimated_payroll_cents = payroll.estimated_cents
+        approved_payroll_cents = payroll.approved_cents
+        paid_payroll_cents = payroll.paid_cents
         unpaid_payroll_cents = max(approved_payroll_cents - paid_payroll_cents, 0)
-
-        # P&L is either accurate or explicitly blocked — never a confident
-        # profit number sitting on top of incomplete payroll (#225).
-        missing_coach_count = len(expected_coach_ids - covered_coach_ids)
-        blocked_reasons: list[str] = []
-        if expected_coach_ids and payout_period_rows == 0:
-            blocked_reasons.append("No generated payout periods for this month.")
-        elif missing_coach_count:
-            blocked_reasons.append(
-                f"Payroll has not been generated for {missing_coach_count} "
-                f"{_pluralize(missing_coach_count, 'coach', 'coaches')} this month."
-            )
-        if draft_period_count:
-            blocked_reasons.append(
-                f"{draft_period_count} payout "
-                f"{_pluralize(draft_period_count, 'period is', 'periods are')} still in draft."
-            )
-        if unresolved_period_count:
-            blocked_reasons.append(
-                f"{unresolved_period_count} payout "
-                f"{_pluralize(unresolved_period_count, 'period has', 'periods have')} "
-                "unresolved pay issues."
-            )
-        if partial_window_count:
-            blocked_reasons.append(
-                f"{partial_window_count} payout "
-                f"{_pluralize(partial_window_count, 'period does', 'periods do')} "
-                "not cover the full month."
-            )
-        payroll_blocked_by = " ".join(blocked_reasons) if blocked_reasons else None
+        payroll_blocked_by = payroll.blocked_by
 
         payroll_for_pnl = None if payroll_blocked_by else approved_payroll_cents
         net_profit_cents = (
@@ -935,49 +1043,15 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         if payout_period_rows == 0:
             empty_states.append("No payout periods generated for this month.")
 
-        # Resolve display names for aging drill-down. parent_id may be a
-        # user_id, a firebase uid, or a raw ObjectId depending on the writer,
-        # so match all three (same lookup the billing/finance paths use).
-        all_family_ids = {
-            family_id
-            for label in aging_totals
-            for family_id in aging_totals[label]["family_amounts"]
-        }
-        family_names: dict[str, str] = {}
-        if all_family_ids:
-            id_list = sorted(all_family_ids)
-            oid_ids = [BsonObjectId(p) for p in id_list if BsonObjectId.is_valid(p)]
-            or_filter: list[dict[str, Any]] = [
-                {"user_id": {"$in": id_list}},
-                {"firebase_uid": {"$in": id_list}},
-            ]
-            if oid_ids:
-                or_filter.append({"_id": {"$in": oid_ids}})
-            users_cursor = db["users"].find(
-                {"academy_id": academy_id, "$or": or_filter},
-                {
-                    "user_id": 1,
-                    "firebase_uid": 1,
-                    "display_name": 1,
-                    "first_name": 1,
-                    "last_name": 1,
-                },
-            )
-            async for user in users_cursor:
-                display = str(
-                    user.get("display_name")
-                    or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
-                    or ""
-                )
-                if not display:
-                    continue
-                for key in (
-                    str(user.get("user_id") or ""),
-                    str(user.get("firebase_uid") or ""),
-                    str(user["_id"]),
-                ):
-                    if key and key in all_family_ids:
-                        family_names[key] = display
+        family_names = await family_display_names(
+            db,
+            academy_id=academy_id,
+            family_ids={
+                family_id
+                for label in aging_totals
+                for family_id in aging_totals[label]["family_amounts"]
+            },
+        )
 
         aging_buckets = [
             {
@@ -1016,10 +1090,12 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 "empty": recorded_count == 0,
             },
             "sessions": {
-                "scheduled_count": scheduled_count,
-                "completed_count": completed_count,
-                "cancelled_count": cancelled_count,
+                # Held plus still to come, the same meaning as attendance trends.
+                "scheduled_count": class_counts["held"] + class_counts["upcoming"],
+                "completed_count": class_counts["held"],
+                "cancelled_count": class_counts["cancelled"],
                 "enrolled_seats": enrolled_seats,
+                "paying_seats": seats.paying,
                 "capacity": capacity,
                 "capacity_utilization": capacity_utilization,
                 "waitlist_count": waitlist_count,
@@ -1097,10 +1173,12 @@ def make_projected_income_report(
             },
         )
         not_billed_count = 0
+        enrolled_by_session: dict[str, int] = {}
         async for enrollment in enrollments_cursor:
             session_id = str(enrollment.get("session_id") or "")
             if not session_id:
                 continue
+            enrolled_by_session[session_id] = enrolled_by_session.get(session_id, 0) + 1
             if is_not_billed(enrollment):
                 # Never invoiced, so never income; reported as "+N not billed".
                 not_billed_count += 1
@@ -1171,9 +1249,9 @@ def make_projected_income_report(
                 continue
             monthly_fee = fee_by_session.get(row["session_id"], 0)
             override = override_by_enrollment.get(row["enrollment_id"])
-            expected = override if override is not None else monthly_fee
-            if expected <= 0:
-                continue
+            # A $0 fee or override still counts as paying, as on the dashboard
+            # and session economics: only "not billed" leaves the paying count.
+            expected = max(override if override is not None else monthly_fee, 0)
             is_autopay = autopay_by_enrollment.get(row["enrollment_id"]) == "active"
             total_cents += expected
             if is_autopay:
@@ -1189,6 +1267,8 @@ def make_projected_income_report(
                     "title": str(session.get("title") or session.get("name") or ""),
                     "monthly_fee_cents": monthly_fee,
                     "enrollment_count": 0,
+                    # "9 paying of 11 enrolled": the same two counts every report shows.
+                    "enrolled_count": enrolled_by_session.get(row["session_id"], 0),
                     "expected_cents": 0,
                 },
             )
@@ -1727,7 +1807,10 @@ def make_financial_report_csv(db: AsyncIOMotorDatabase[Any]) -> object:
 
 
 def make_session_economics_report(
-    db: AsyncIOMotorDatabase[Any], *, class_fees: MongoProjectedClassFees | None = None
+    db: AsyncIOMotorDatabase[Any],
+    *,
+    class_fees: MongoProjectedClassFees | None = None,
+    staff_names: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
 ) -> object:
     """Returns an async callable for monthly session-level economics.
 
@@ -1735,6 +1818,10 @@ def make_session_economics_report(
     uses the fee that month will be charged (a scheduled plan price change
     applied); a past month reads the fee it was billed at (an applied
     change's flip undone); the current month reads the stored fee.
+
+    ``staff_names`` fills ``coach_name`` / ``assistant_coach_names`` on rows
+    carrying ``coach_id`` / ``assistant_coach_ids`` (composition wires the
+    membership-gated admin sessions resolver).
     """
     from backend.v2.shared.tenancy import current_academy_id
 
@@ -1753,8 +1840,18 @@ def make_session_economics_report(
                 "status": {"$ne": "cancelled"},
                 "is_payable": {"$ne": False},
             },
-            {"occurrence_id": 1, "session_id": 1, "template_session_id": 1},
+            {
+                "occurrence_id": 1,
+                "session_id": 1,
+                "template_session_id": 1,
+                "status": 1,
+                "end_at": 1,
+            },
         )
+        # A class still to come this month has no payroll yet, so its row
+        # cannot show a final margin (same clock rule as month close).
+        now = datetime.now(UTC)
+        sessions_with_unheld: set[str] = set()
         async for occurrence in occurrences_cursor:
             session_id = occurrence_session_id(occurrence)
             occurrence_id = str(occurrence.get("occurrence_id") or "")
@@ -1762,6 +1859,8 @@ def make_session_economics_report(
                 continue
             occurrence_by_id[occurrence_id] = session_id
             occurrences_by_session[session_id] = occurrences_by_session.get(session_id, 0) + 1
+            if class_state(occurrence, now=now) != "held":
+                sessions_with_unheld.add(session_id)
 
         session_ids = sorted(occurrences_by_session)
         sessions_by_id: dict[str, dict[str, Any]] = {}
@@ -1775,6 +1874,15 @@ def make_session_economics_report(
             )
             async for session in sessions_cursor:
                 sessions_by_id[str(session.get("session_id") or session.get("_id"))] = session
+        staff_by_session: dict[str, dict[str, Any]] = {
+            session_id: {
+                "coach_id": session.get("coach_id"),
+                "assistant_coach_ids": session.get("assistant_coach_ids") or [],
+            }
+            for session_id, session in sessions_by_id.items()
+        }
+        if staff_names is not None:
+            await staff_names(list(staff_by_session.values()))
 
         active_enrollments_by_session: dict[str, int] = {
             session_id: 0 for session_id in session_ids
@@ -1958,6 +2066,8 @@ def make_session_economics_report(
             else:
                 other_expenses_cents += amount
 
+        month_payroll = await _month_payroll_completeness(db, academy_id, start, end)
+
         expected_total = sum(expected_by_session.values())
         rent_allocations = _allocate_report_amount(rent_cents, expected_by_session)
         other_allocations = _allocate_report_amount(other_expenses_cents, expected_by_session)
@@ -1971,6 +2081,9 @@ def make_session_economics_report(
             coach_payroll = coach_payroll_by_session.get(session_id, 0)
             rent = rent_allocations.get(session_id, 0)
             other = other_allocations.get(session_id, 0)
+            payroll_complete = (
+                month_payroll.blocked_by is None and session_id not in sessions_with_unheld
+            )
             profit = expected_revenue - coach_payroll - rent - other
             paid_student_count = len(paid_enrollments_by_session.get(session_id, set()))
             unpaid_student_count = max(
@@ -1986,7 +2099,9 @@ def make_session_economics_report(
                         or session.get("session_name")
                         or "Untitled session"
                     ),
-                    "coach_name": str(session.get("coach_name") or "") or None,
+                    "coach_name": _session_coach_label(
+                        session, staff_by_session.get(session_id, {})
+                    ),
                     "active_enrollment_count": active_enrollments_by_session.get(session_id, 0),
                     "not_billed_enrollment_count": not_billed_by_session.get(session_id, 0),
                     "paid_student_count": paid_student_count,
@@ -2002,9 +2117,11 @@ def make_session_economics_report(
                     "coach_payroll_cents": coach_payroll,
                     "rent_cents": rent,
                     "other_expenses_cents": other,
-                    "expected_profit_cents": profit,
+                    "payroll_status": "complete" if payroll_complete else "needs_payroll",
+                    # Withheld, never a margin over a coach cost of $0 (#S35).
+                    "expected_profit_cents": profit if payroll_complete else None,
                     "profit_margin": round(profit / expected_revenue, 4)
-                    if expected_revenue
+                    if expected_revenue and payroll_complete
                     else None,
                 }
             )
@@ -2015,6 +2132,12 @@ def make_session_economics_report(
         unpaid_total = sum(int(row["unpaid_cents"]) for row in rows)
         coach_payroll_total = sum(coach_payroll_by_session.values())
         expected_profit = expected_total - coach_payroll_total - rent_cents - other_expenses_cents
+        payroll_complete = all(row["payroll_status"] == "complete" for row in rows) and (
+            month_payroll.blocked_by is None
+        )
+        payroll_blocked_by = month_payroll.blocked_by
+        if payroll_blocked_by is None and not payroll_complete:
+            payroll_blocked_by = "Some classes this month have not been held yet."
         empty_states: list[str] = []
         if not rows:
             empty_states.append("No payable session occurrences found for this month.")
@@ -2034,9 +2157,11 @@ def make_session_economics_report(
                 "coach_payroll_cents": coach_payroll_total,
                 "rent_cents": rent_cents,
                 "other_expenses_cents": other_expenses_cents,
-                "expected_profit_cents": expected_profit,
+                "payroll_status": "complete" if payroll_complete else "needs_payroll",
+                "payroll_blocked_by": payroll_blocked_by,
+                "expected_profit_cents": expected_profit if payroll_complete else None,
                 "profit_margin": round(expected_profit / expected_total, 4)
-                if expected_total
+                if expected_total and payroll_complete
                 else None,
             },
             "sessions": rows,
@@ -2044,6 +2169,15 @@ def make_session_economics_report(
         }
 
     return get_session_economics
+
+
+def _session_coach_label(session: dict[str, Any], staff: dict[str, Any]) -> str | None:
+    """Lead coach then assistants, e.g. "Demo Coach, Casey Newcoach"."""
+    names = [staff.get("coach_name"), *(staff.get("assistant_coach_names") or [])]
+    labels = list(dict.fromkeys(str(name) for name in names if name))
+    if labels:
+        return ", ".join(labels)
+    return str(session.get("coach_name") or "") or None
 
 
 def _allocate_report_amount(
@@ -2135,3 +2269,98 @@ def make_list_enrollment_events(
         return results, next_cursor
 
     return list_enrollment_events
+
+
+BILLING_EXPORT_REPORTS = frozenset({"invoices", "aging"})
+
+
+def make_billing_exports_csv(db: AsyncIOMotorDatabase[Any]) -> object:
+    """S41: the period's invoices and the aging drill-down as CSV.
+
+    Both read ``period_billing_rows``, the rows behind the reports dashboard's
+    billed, outstanding and aging figures, so a file's totals match the page.
+    Returns ``None`` for any other report name.
+    """
+
+    async def billing_export_csv(report_name: str, period: str | None = None) -> str | None:
+        if report_name not in BILLING_EXPORT_REPORTS:
+            return None
+        academy_id = current_academy_id()
+        timezone_name = await _reporting_timezone(db, academy_id)
+        zone = ZoneInfo(timezone_name)
+        effective_period = period or _now().astimezone(zone).strftime("%Y-%m")
+        _, end = month_bounds(effective_period, timezone_name)
+        rows = await period_billing_rows(
+            db,
+            academy_id=academy_id,
+            period=effective_period,
+            month_end=end.date(),
+            as_of=_now().astimezone(zone).date(),
+        )
+        names = await family_display_names(
+            db,
+            academy_id=academy_id,
+            family_ids={row["family_id"] for row in rows if row["family_id"]},
+        )
+        out = io.StringIO()
+        writer = csv.writer(out)
+        if report_name == "invoices":
+            writer.writerow(
+                [
+                    "period",
+                    "invoice_number",
+                    "record_id",
+                    "family_id",
+                    "family_name",
+                    "status",
+                    "due_date",
+                    "billed_cents",
+                    "paid_cents",
+                    "outstanding_cents",
+                ]
+            )
+            for row in rows:
+                writer.writerow(
+                    [
+                        effective_period,
+                        _csv_safe(row["invoice_number"]),
+                        row["id"],
+                        row["family_id"],
+                        _csv_safe(names.get(row["family_id"])),
+                        row["status"],
+                        row["due_date"].isoformat(),
+                        row["billed_cents"],
+                        row["paid_cents"],
+                        row["outstanding_cents"],
+                    ]
+                )
+        else:
+            writer.writerow(
+                [
+                    "bucket",
+                    "family_id",
+                    "family_name",
+                    "invoice_number",
+                    "due_date",
+                    "outstanding_cents",
+                ]
+            )
+            order = {"Current": 0, "1-30": 1, "31-60": 2, "60+": 3}
+            owing = sorted(
+                (row for row in rows if row["outstanding_cents"]),
+                key=lambda row: (order[row["aging"]], -row["outstanding_cents"], row["id"]),
+            )
+            for row in owing:
+                writer.writerow(
+                    [
+                        row["aging"],
+                        row["family_id"],
+                        _csv_safe(names.get(row["family_id"])),
+                        _csv_safe(row["invoice_number"]),
+                        row["due_date"].isoformat(),
+                        row["outstanding_cents"],
+                    ]
+                )
+        return out.getvalue()
+
+    return billing_export_csv

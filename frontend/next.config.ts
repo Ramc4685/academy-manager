@@ -95,6 +95,10 @@ const RETIRED_ROUTE_REDIRECTS = [
   // #839: the orphan add-user page. One form now — the directory's dialog,
   // which `?add=1` opens.
   { source: "/admin/users/new", destination: "/admin/users?add=1", permanent: true },
+  // S19: a typed persona root lands on that persona's home instead of a 404.
+  // Temporary so a future landing page can take the path back.
+  { source: "/parent", destination: "/parent/dashboard", permanent: false },
+  { source: "/coach", destination: "/coach/today", permanent: false },
 ];
 
 const config: NextConfig = {

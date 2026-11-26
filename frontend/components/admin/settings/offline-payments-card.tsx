@@ -61,6 +61,7 @@ export function OfflinePaymentsCard() {
   useReportSettingsDirty("payment-instructions", instructionsDirty);
   const instructionsMutation = useMutation({
     mutationFn: () => updateSelfServicePolicy({ payment_instructions: instructions }),
+    meta: { success: "Payment instructions saved" },
     onSuccess: (data) => {
       queryClient.setQueryData(queryKeys.admin.selfServicePolicy(), data);
       setInstructionsSaved(true);
@@ -84,6 +85,7 @@ export function OfflinePaymentsCard() {
 
   const mutation = useMutation({
     mutationFn: () => updateAdminPaymentMethods({ manual_methods: picked }),
+    meta: { success: "Offline payment options saved" },
     onSuccess: (data) => {
       queryClient.setQueryData(queryKeys.admin.paymentMethods(), data);
       // The Payments tab lists the same methods off the gateway read.
@@ -144,7 +146,7 @@ export function OfflinePaymentsCard() {
               onClick={() => mutation.mutate()}
               data-testid="offline-payments-save"
             >
-              {mutation.isPending ? "Saving…" : "Save offline payments"}
+              {mutation.isPending ? "Saving…" : "Save offline payment options"}
             </Button>
             {saved && !mutation.isPending && !dirty && (
               <span className="text-sm text-rally-muted" data-testid="offline-payments-saved">

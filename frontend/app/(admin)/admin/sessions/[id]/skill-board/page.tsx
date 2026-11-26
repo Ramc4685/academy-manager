@@ -94,7 +94,7 @@ export default function AdminSessionSkillBoardPage() {
         className="inline-flex items-center gap-1.5 text-sm text-rally-muted hover:text-rally-ink"
       >
         <ArrowLeft className="size-4" aria-hidden="true" />
-        <span>Back to session</span>
+        <span>Back to class</span>
       </Link>
       <div>
         <h1 className="text-2xl font-semibold">Skill board</h1>

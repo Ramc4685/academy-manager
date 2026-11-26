@@ -51,3 +51,52 @@ export function formatAcademyMoment(
 ): string {
   return formatAcademyDateTime(iso, academyTimezone ?? null);
 }
+
+export interface WeeklyPatternFields {
+  days_of_week?: string[] | null;
+  start_time?: string | null;
+  end_time?: string | null;
+}
+
+const WEEKDAY_PLURAL: Record<string, string> = {
+  mon: "Mondays",
+  tue: "Tuesdays",
+  wed: "Wednesdays",
+  thu: "Thursdays",
+  fri: "Fridays",
+  sat: "Saturdays",
+  sun: "Sundays",
+};
+
+function wallClock(value: string): { text: string; meridiem: "AM" | "PM" } | null {
+  const match = /^(\d{1,2}):(\d{2})/.exec(value.trim());
+  if (!match || Number(match[1]) > 23) return null;
+  const hour = Number(match[1]);
+  return { text: `${hour % 12 || 12}:${match[2]}`, meridiem: hour < 12 ? "AM" : "PM" };
+}
+
+/**
+ * S27: a weekly class's pattern, "Saturdays 9:00–10:00 AM" or
+ * "Mon & Wed 4:30–5:30 PM". The class's first dated start is not its schedule:
+ * shown on its own it reads as a one-off date that has already passed.
+ * Returns "" when the class has no weekly pattern.
+ */
+export function formatWeeklyPattern(session: WeeklyPatternFields): string {
+  const days = (session.days_of_week ?? []).map((d) => d.trim()).filter(Boolean);
+  if (days.length === 0) return "";
+  const key = (d: string) => d.toLowerCase().slice(0, 3);
+  const shortDay = (d: string) => d.charAt(0).toUpperCase() + d.slice(1, 3).toLowerCase();
+  const dayText =
+    days.length === 1
+      ? WEEKDAY_PLURAL[key(days[0])] ?? days[0]
+      : `${days
+          .slice(0, -1)
+          .map(shortDay)
+          .join(", ")} & ${shortDay(days[days.length - 1])}`;
+  const start = session.start_time ? wallClock(session.start_time) : null;
+  const end = session.end_time ? wallClock(session.end_time) : null;
+  if (!start) return dayText;
+  if (!end) return `${dayText} ${start.text} ${start.meridiem}`;
+  const startText = start.meridiem === end.meridiem ? start.text : `${start.text} ${start.meridiem}`;
+  return `${dayText} ${startText}–${end.text} ${end.meridiem}`;
+}

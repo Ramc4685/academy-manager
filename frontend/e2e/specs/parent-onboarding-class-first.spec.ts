@@ -82,9 +82,11 @@ const SESSION = {
 async function stubOnboarding(
   page: Page,
   classFirst: boolean,
+  parentPhone?: string,
 ): Promise<{ waiverRequests: string[] }> {
   const waiverRequests: string[] = [];
   const application = draftApplication(classFirst);
+  if (parentPhone !== undefined) application.parent_profile.phone = parentPhone;
   await stubMe(page, {
     user_id: "user-parent-class-first",
     email: "parent@example.com",
@@ -170,12 +172,11 @@ function stepLabels(page: Page) {
   return page.getByTestId("onboarding-progress").locator("li button span:last-child");
 }
 
-/** Parent step, then the child step (the returning child is pre-filled). */
+/** The child step (the returning child is pre-filled). */
 async function throughParentAndChild(page: Page) {
   const next = page.getByTestId("parent-onboarding").getByRole("button", { name: "Next" });
   await page.goto(`/parent/onboarding?child=${STUDENT_ID}`);
-  await expect(page.getByRole("heading", { name: "Your details" })).toBeVisible();
-  await next.click();
+  // S21: the parent's details are already on the draft, so it opens at Child.
   await expect(page.getByRole("heading", { name: "Your child" })).toBeVisible();
   await page.getByRole("radio", { name: "beginner" }).click();
   await next.click();
@@ -187,9 +188,9 @@ test.describe("class-first onboarding order", () => {
 
     await throughParentAndChild(page);
 
-    await expect(stepLabels(page)).toHaveText(["parent", "child", "session", "waiver", "review"]);
+    await expect(stepLabels(page)).toHaveText(["parent", "child", "class", "waiver", "review"]);
     // Third step is the class; no waiver is fetched before one is chosen.
-    await expect(page.getByRole("heading", { name: "Pick a session" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Pick a class" })).toBeVisible();
     expect(waiverRequests).toHaveLength(0);
 
     await page.getByRole("button", { name: /Juniors Saturday/ }).click();
@@ -205,7 +206,7 @@ test.describe("class-first onboarding order", () => {
 
     await throughParentAndChild(page);
 
-    await expect(stepLabels(page)).toHaveText(["parent", "child", "waiver", "session", "review"]);
+    await expect(stepLabels(page)).toHaveText(["parent", "child", "waiver", "class", "review"]);
     await expect(page.getByRole("heading", { name: "Waiver", exact: true })).toBeVisible();
     // Asked without a class, exactly as it always was. The step heading can
     // render before the waiver request goes out, so wait for the request.
@@ -216,7 +217,7 @@ test.describe("class-first onboarding order", () => {
     await page.getByLabel("Full legal name").fill("Priya Rao");
     await page.getByLabel("I agree to sign electronically.").check();
     await page.getByRole("button", { name: "Sign and continue" }).click();
-    await expect(page.getByRole("heading", { name: "Pick a session" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Pick a class" })).toBeVisible();
   });
 });
 
@@ -225,7 +226,8 @@ test.describe("referral code on the parent step", () => {
   const KEY = "courtmastr.referral_code";
 
   async function startWithStoredCode(page: Page): Promise<string[]> {
-    await stubOnboarding(page, false);
+    // A new parent: no phone on the account yet, so the wizard opens at Your details.
+    await stubOnboarding(page, false, "");
     await page.addInitScript(
       ([key, value]) => {
         if (!sessionStorage.getItem("seeded")) {
@@ -243,6 +245,7 @@ test.describe("referral code on the parent step", () => {
     });
     await page.goto("/parent/onboarding");
     await expect(page.getByRole("heading", { name: "Your details" })).toBeVisible();
+    await page.getByLabel("Your phone").fill("+1 555 0100");
     return patches;
   }
 
@@ -255,6 +258,26 @@ test.describe("referral code on the parent step", () => {
     await next(page).click();
     await expect(page.getByRole("heading", { name: "Your child" })).toBeVisible();
     expect(JSON.parse(patches[0]).parent_profile.referral_code).toBe("QZ7KX4MP");
+    expect(await page.evaluate((key) => localStorage.getItem(key), KEY)).toBeNull();
+  });
+
+  test("a known parent who skips Your details still gets the code attached", async ({ page }) => {
+    await stubOnboarding(page, false);
+    await page.addInitScript(
+      ([key, value]) => localStorage.setItem(key, value),
+      [KEY, JSON.stringify({ code: "QZ7KX4MP", at: Date.now() })],
+    );
+    const patches: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() === "PATCH" && req.url().includes(APPLICATION_ID)) {
+        patches.push(req.postData() ?? "");
+      }
+    });
+    await page.goto("/parent/onboarding");
+    await expect(page.getByRole("heading", { name: "Your child" })).toBeVisible();
+    await expect
+      .poll(() => patches.map((p) => JSON.parse(p).parent_profile?.referral_code))
+      .toContain("QZ7KX4MP");
     expect(await page.evaluate((key) => localStorage.getItem(key), KEY)).toBeNull();
   });
 

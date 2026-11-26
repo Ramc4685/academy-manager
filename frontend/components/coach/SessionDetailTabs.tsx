@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 
+import { coachPlanHref } from "@/lib/coach/class-facts";
+
 export type SessionDetailTab = "attendance" | "skills" | "progress";
 
 const TAB_BUTTON_BASE =
@@ -36,7 +38,7 @@ export function SessionDetailTabs({
   const encodedAttendanceSkillsId = encodeURIComponent(attendanceSkillsId);
   const encodedProgressSessionId = encodeURIComponent(progressSessionId);
   const encodedDate = encodeURIComponent(date);
-  const tabs: Array<{ id: SessionDetailTab; label: string; href: string }> = [
+  const tabs: Array<{ id: SessionDetailTab | "plan"; label: string; href: string }> = [
     {
       id: "attendance",
       label: "Attendance",
@@ -52,12 +54,14 @@ export function SessionDetailTabs({
       label: "Progress",
       href: `/coach/sessions/${encodedProgressSessionId}/progress?date=${encodedDate}`,
     },
+    // The teaching plan is per day, so this tab opens that day's plan page.
+    { id: "plan", label: "Plan", href: coachPlanHref(date) },
   ];
 
   return (
     <div
       role="tablist"
-      aria-label="Session detail sections"
+      aria-label="Class detail sections"
       className="mb-4 flex gap-1 overflow-x-auto border-b border-neutral-200"
     >
       {tabs.map((tab) => {

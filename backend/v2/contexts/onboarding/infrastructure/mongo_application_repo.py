@@ -84,6 +84,17 @@ class MongoApplicationRepository(TenantScopedRepository):
             return self._to_domain(doc)
         return None
 
+    async def list_open_for_parent(
+        self, parent_user_id: str, statuses: list[str]
+    ) -> list[Application]:
+        """This parent's applications in ``statuses``, newest first (tenant-scoped)."""
+        cursor = self._find_many(
+            {"parent_user_id": parent_user_id, "status": {"$in": statuses}},
+            sort=[("created_at", -1)],
+            limit=50,
+        )
+        return [self._to_domain(doc) async for doc in cursor]
+
     async def get_by_payment_id(self, payment_id: str) -> Application | None:
         """Resolve an application from the payment attempt it CURRENTLY owns.
 

@@ -310,3 +310,16 @@ async def test_an_assistants_frozen_payout_is_flagged_too() -> None:
     )
     preview = await use_case.preview_missed("occ-1")
     assert preview.payroll_flag and "approved" in preview.payroll_flag
+
+
+@pytest.mark.asyncio
+async def test_a_future_date_prices_its_cancellation_without_writing() -> None:
+    """S66: the cover flow's review shows each family's credit before Confirm."""
+    occurrences, billing = FakeOccurrences({"occ-1": _occurrence()}), FakeBillingWithPreview()
+    use_case = _build(occurrences, attendance=FakeAttendance(), billing=billing)
+
+    preview = await use_case.preview("occ-1")
+
+    assert occurrences.rows["occ-1"].status == "scheduled"
+    assert billing.applied == []
+    assert preview.credit_total_cents == 3000

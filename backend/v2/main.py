@@ -28,8 +28,10 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
 
+from backend.v2.composition.academy_inbox import compose_academy_inbox
 from backend.v2.composition.admin import AcademyPortalUrlAdapter, compose_admin
 from backend.v2.composition.admin_platform_fee import compose_admin_platform_fee
+from backend.v2.composition.audit_log import compose_admin_audit_log
 from backend.v2.composition.billing_health import compose_admin_billing_health
 from backend.v2.composition.billing_rules import compose_admin_billing_rules
 from backend.v2.composition.coach import compose_coach
@@ -76,7 +78,9 @@ from backend.v2.composition.public_page_read import compose_public_page_read
 from backend.v2.composition.public_trial_requests import compose_public_trial_requests
 from backend.v2.composition.push import _build_push_sender, compose_message_push
 from backend.v2.composition.referrals import compose_referrals
+from backend.v2.composition.report_exports import compose_report_exports
 from backend.v2.composition.student import compose_student
+from backend.v2.composition.unbilled_students import compose_unbilled_students
 from backend.v2.composition.waitlist_offers import (
     compose_decline_waitlist_offer,
     compose_sweep_expired_waitlist_offers,
@@ -832,6 +836,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.release_email_suppression = compose_release_email_suppression(db)
     app.state.delivery_problems = compose_delivery_problems(db)
     app.state.message_push = compose_message_push(db, settings)
+    app.state.academy_inbox = compose_academy_inbox(db, settings)
 
     # Tenant resolver — wired only in SaaS mode. In non-SaaS mode the
     # middleware falls back to ``settings.default_academy_id`` so existing
@@ -1024,6 +1029,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # A website guest booked on a cancelled date hears it is off; attached
     # here because composition/admin.py is at its line cap (#743 pattern).
     app.state.admin.cancel_session_occurrence._guest_notifier = app.state.trial_emails
+    # S44: in-app notice to a coach whose classes an admin changed (outbox +
+    # handler); kept out of composition/admin.py, which is at its line cap.
+    from backend.v2.composition.coach_schedule_notices import compose_coach_schedule_notices
+
+    app.state.coach_schedule_notices = compose_coach_schedule_notices(
+        db, outbox, message_push=app.state.message_push, settings=settings
+    )
     # Lead nurture (AI strategy Phase 3 C1): the daily job and the admin editor.
     from backend.v2.composition.nurture import compose_nurture
 
@@ -1058,6 +1070,17 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.crm_pipeline import compose_mark_lead_enrolled
 
     app.state.admin.admin_registration_review.set_lead_conversion(compose_mark_lead_enrolled(db))
+    # D-10: approval, quick add and roster add (admin or coach) place the
+    # child on a level, attached the same way.
+    from backend.v2.composition.pathway import compose_place_on_enrollment
+
+    _placement = compose_place_on_enrollment(db, outbox)
+    from backend.v2.composition.parent_coach_notes import compose_parent_coach_notes
+
+    app.state.parent_coach_notes = compose_parent_coach_notes(db)
+    app.state.admin.admin_registration_review.set_level_placement(_placement)
+    app.state.admin.edit_roster_add.set_level_placement(_placement)
+    app.state.coach.add_student_to_roster.set_level_placement(_placement)
     # The event-driven promotion path (Enrollment.EnrollmentCancelled ->
     # PromoteFromWaitlist, wired via install_handlers in compose_parent) is a
     # SECOND PromoteFromWaitlist instance, distinct from the one above that
@@ -1126,6 +1149,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Payments bucket view (composition/admin.py is at its line budget).
     app.state.admin_collections = compose_admin_collections(db)
     app.state.admin_overdue_families = compose_overdue_families(db)
+    app.state.admin_unbilled_students = compose_unbilled_students(db)
     app.state.admin_billing_rules = compose_admin_billing_rules(db, app.state.admin)
     app.state.admin_family_offers = compose_admin_family_offers(db)
     app.state.admin_enrollment_billing = compose_admin_enrollment_billing(db, app.state.admin)
@@ -1162,7 +1186,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.unsubscribe_prospect = compose_unsubscribe_prospect(db)
     # Billing Health plumbing, owner-only (spec 2026-09-07 §5.1).
     app.state.admin_billing_health = compose_admin_billing_health(db, stripe_gw)
+    # Owner's merged Audit log over every audit trail (S39).
+    app.state.admin_audit_log = compose_admin_audit_log(db)
     app.state.admin_month_close = compose_admin_month_close(db)
+    app.state.report_exports = compose_report_exports(db)
     # Academy admin's read-only view of the processing markup (Phase 2 A1).
     app.state.admin_platform_fee = compose_admin_platform_fee(db)
     # Automated late fees, driven from the dunning tick below (#552).
@@ -1184,6 +1211,20 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.dropoff_checkins import compose_dropoff_checkins
 
     app.state.dropoff_checkins = compose_dropoff_checkins(db, outbox, idempotency_store)
+    # S49 (D-14): children's health notes for assigned coaches, never cached.
+    from backend.v2.composition.coach_roster_health import compose_coach_roster_health
+
+    app.state.coach_roster_health = compose_coach_roster_health(db)
+    # S66/S67: the "Coach is sick" cover flow and coach cover requests, sharing that reader's roster.
+    from backend.v2.composition.coach_cover import compose_coach_cover
+
+    app.state.coach_cover = compose_coach_cover(db, health=app.state.coach_roster_health)
+    # S63 (D-20): the admin dashboard's Today block, sharing both readers.
+    from backend.v2.composition.admin_today import compose_admin_today
+
+    app.state.admin_today = compose_admin_today(
+        db, health=app.state.coach_roster_health, cover=app.state.coach_cover
+    )
     # B5 month-close narrator (paid AI): the gated LlmPort over the month-close reader.
     from backend.v2.composition.ai_reports import compose_ai_reports
 

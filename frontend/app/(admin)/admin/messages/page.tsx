@@ -13,6 +13,8 @@
  * until the admin presses Send.
  */
 
+import type { Route } from "next";
+import Link from "next/link";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -33,16 +35,18 @@ import {
   type CampaignAudiencePayload,
 } from "@/lib/api/admin";
 import type { ApiError } from "@/lib/api/client";
+import { fetchFamilyRecord } from "@/lib/api/admin-families";
 import { queryKeys } from "@/lib/query/keys";
 import { formatAcademyDate, formatAcademyDateTime } from "@/lib/format/academy-time";
 import { campaignAudienceLabel, type CampaignAudienceState } from "@/lib/format/campaign-audience";
 
 import { CampaignRecipientReview } from "@/components/admin/campaign-recipient-review";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { DeliveryProblemsPanel } from "@/components/admin/delivery-problems-panel";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
+import { Chip } from "@/components/ds/chip";
 import { LaneHeader } from "@/components/ds/lane";
 
 /** The three lanes on this page, in page order; ids double as fragment anchors. */
@@ -187,6 +191,9 @@ function AdminMessagesContent() {
       >
         <Card p={20} id="direct">
           <LaneHeader index="01" title="Direct messages" />
+          <p className="-mt-2 mb-4 text-sm text-rally-subtle">
+            Goes to one parent&apos;s app inbox. Every admin can see and answer the conversation.
+          </p>
 
           {isLoading ? (
             <MessageSkeleton />
@@ -244,6 +251,7 @@ function AdminMessagesContent() {
                     </h3>
                   </div>
 
+                  <ThreadFamily parentId={dmRecipientId} />
                   {threadMessages.length === 0 && (
                     <p
                       className="mb-2 text-sm text-rally-subtle"
@@ -284,6 +292,10 @@ function AdminMessagesContent() {
 
         <Card p={20} id="broadcast">
           <LaneHeader index="02" title="Broadcast" />
+          <p className="-mt-2 mb-4 text-sm text-rally-subtle">
+            Goes to every parent account in the app inbox, with a phone notification where they
+            turned those on. It is not emailed, so it counts every parent.
+          </p>
           <BroadcastComposer onSent={invalidate} />
           <div className="mt-6">
             <h3 className="mb-2 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
@@ -310,6 +322,11 @@ function AdminMessagesContent() {
 
       <Card p={20} id="campaign">
         <LaneHeader index="03" title="Email campaign" />
+        <p className="-mt-2 mb-4 text-sm text-rally-subtle">
+          Emails the parents you choose, plus family contacts set to get notices. Anyone with no
+          email address, a bounced address or who unsubscribed is skipped, so this count can be
+          lower than Broadcast&apos;s.
+        </p>
         <EmailCampaignComposer />
       </Card>
 
@@ -332,6 +349,39 @@ interface DmThread {
   counterpartyId: string;
   latest: AdminMessageView;
   unreadIds: string[];
+}
+
+/** D-18: the newest message came from the family, so the academy owes a reply.
+ * Display state, not a business rule. */
+function needsReply(thread: DmThread): boolean {
+  return thread.latest.sender_id === thread.counterpartyId;
+}
+
+/**
+ * D-18 (spec 3.4 a, b): the family's children and a link to the family
+ * record. Reads the record the family page already uses; a coach or staff DM
+ * has no family record, so nothing renders.
+ */
+function ThreadFamily({ parentId }: { parentId: string }) {
+  const record = useQuery({
+    queryKey: queryKeys.admin.familyRecord(parentId),
+    queryFn: () => fetchFamilyRecord(parentId),
+    retry: false,
+  });
+  const family = record.data?.family;
+  if (!family) return null;
+  const kids = family.children.map((c) => c.name).filter(Boolean);
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-x-3 text-[12px]" data-testid="dm-thread-family">
+      {kids.length > 0 && <span className="text-rally-muted">{kids.join(", ")}</span>}
+      <Link
+        href={`/admin/families/${encodeURIComponent(record.data?.family_id ?? parentId)}`}
+        className="inline-flex min-h-touch items-center font-medium text-rally-cobalt-700 hover:underline"
+      >
+        Open family →
+      </Link>
+    </div>
+  );
 }
 
 /** The family a DM belongs to, whichever direction it travelled. */
@@ -420,6 +470,11 @@ function DmThreadRow({
               >
                 {name}
               </span>
+              {needsReply(thread) && (
+                <span data-testid="dm-needs-reply" className="shrink-0">
+                  <Chip variant="approval" label="NEEDS REPLY" />
+                </span>
+              )}
               {unreadCount > 0 && (
                 <>
                   <span
@@ -578,6 +633,7 @@ function DmComposer({
   const [error, setError] = useState<string | null>(null);
 
   const mutation = useMutation({
+    meta: { success: "Reply sent." },
     mutationFn: () => sendDm({ recipient_id: recipientId, body }),
     onSuccess: () => {
       setBody("");
@@ -617,7 +673,7 @@ function DmComposer({
             e.currentTarget.form?.requestSubmit();
           }
         }}
-        placeholder="Type a message..."
+        placeholder="Write a reply…"
         className="min-w-0 flex-1 rounded-md border border-rally-line bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600/30"
         aria-label="DM message body"
       />
@@ -723,7 +779,8 @@ function MessageBubble({
     ? `${message.scope_label ?? "Whole academy announcement"} · ${message.delivery_status ?? "recorded"}`
     : fromParent
       ? (parentName ?? "Parent")
-      : "You";
+      // D-18: any admin can answer a family, so a staff reply names its author.
+      : (message.author_display_name ?? "You");
 
   return (
     <li className={outbound ? "flex justify-end" : "flex justify-start"}>
@@ -735,10 +792,19 @@ function MessageBubble({
             : { background: "var(--rally-paper)" }
         }
       >
-        <p className="text-sm text-rally-ink">{message.body}</p>
+        <p className="whitespace-pre-wrap text-sm text-rally-ink">{message.body}</p>
         <p className="mt-1 font-mono text-[10px] text-rally-subtle">
           {who} · {formatAcademyDateTime(message.sent_at, null)}
         </p>
+        {message.scope_type === "cover_request" && message.scope_id ? (
+          <Link
+            href={`/admin?cover=${encodeURIComponent(message.scope_id)}` as Route}
+            className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-rally-cobalt underline"
+            data-testid="admin-message-find-cover"
+          >
+            Find cover
+          </Link>
+        ) : null}
       </div>
     </li>
   );
@@ -884,12 +950,12 @@ function EmailCampaignComposer() {
   const audienceLabel =
     audienceType === "session"
       ? selectedSessions.length === 0
-        ? "the selected sessions"
+        ? "the selected classes"
         : campaignAudienceLabel(
             previewState,
             selectedSessions.length === 1
               ? `on ${selectedSessions[0].title}`
-              : `across ${selectedSessions.length} sessions`,
+              : `across ${selectedSessions.length} classes`,
           )
       : campaignAudienceLabel(previewState, "in the academy");
   const toggleSession = (id: string) =>
@@ -962,18 +1028,18 @@ function EmailCampaignComposer() {
               onChange={() => setAudienceType("session")}
               className="accent-rally-cobalt"
             />
-            By session
+            By class
           </label>
         </div>
 
         {audienceType === "session" && (
           <div className="space-y-2">
             <ul
-              aria-label="Select sessions"
+              aria-label="Select classes"
               className="max-h-56 divide-y divide-rally-line overflow-y-auto rounded-md border border-rally-line bg-white"
             >
               {sessions.length === 0 && (
-                <li className="px-3 py-2 text-sm text-rally-subtle">No upcoming sessions.</li>
+                <li className="px-3 py-2 text-sm text-rally-subtle">No upcoming classes.</li>
               )}
               {sessions.map((s) => (
                 <li key={s.session_id}>
@@ -995,7 +1061,7 @@ function EmailCampaignComposer() {
             </ul>
             <p className="text-[12px] text-rally-subtle" data-testid="campaign-selected-sessions">
               {selectedSessions.length === 0
-                ? "Select one or more sessions."
+                ? "Select one or more classes."
                 : `Selected: ${selectedSessions.map((s) => s.title).join(", ")}`}
             </p>
           </div>

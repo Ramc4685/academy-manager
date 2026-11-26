@@ -86,6 +86,25 @@ test.describe("billing trust and recovery surfaces", () => {
         ],
       });
     });
+    // S57: the one figure is the backend's, never a client sum of invoices.
+    await page.route("**/api/v2/parent/money-summary", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        currency: "usd",
+        amount_due_cents: 4500,
+        due_date: "2026-06-15",
+        overdue: false,
+        days_overdue: 0,
+        multiple_due_dates: false,
+        can_pay_online: true,
+        lines: [
+          { kind: "child", student_id: "stu-1", label: "Alice Chen", detail: "Junior Badminton · June", amount_cents: 9000 },
+          { kind: "paid", label: "Already paid", amount_cents: -4500 },
+        ],
+        periods: [],
+        last_payment: null,
+      });
+    });
     await page.route("**/api/v2/parent/invoices/inv-open", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, {
@@ -155,32 +174,37 @@ test.describe("billing trust and recovery surfaces", () => {
     await page.goto("/parent/payments");
 
     await expect(page.getByTestId("parent-payments")).toBeVisible();
-    await expect(page.getByText("Balance due")).toBeVisible();
+    await expect(page.getByTestId("money-summary")).toContainText("You owe");
+    await expect(page.getByTestId("money-summary-amount")).toHaveText("$45.00");
     await expect(page.getByText("open", { exact: true })).toBeVisible();
     await expect(page.getByText("$45.00").first()).toBeVisible();
-    await expect(page.getByRole("button", { name: "Pay $45.00", exact: true })).toBeVisible();
+    await expect(page.getByTestId("pay-invoice-inv-open")).toHaveText("Pay $45.00");
     // Voided invoice renders $0 / Cancelled with its reason, and no Pay button
     // or autopay opt-in — the stale $90.00 ledger balance never surfaces.
     await expect(page.getByText("Cancelled", { exact: true })).toBeVisible();
     await expect(page.getByText("Enrollment cancelled")).toBeVisible();
     await expect(page.getByText("$0.00").first()).toBeVisible();
-    await expect(page.getByText("$90.00")).toHaveCount(0);
+    // S57: the only $90.00 is the open invoice's per-child charge line.
+    await expect(page.getByTestId("money-summary-lines")).toContainText("$90.00");
+    await expect(page.getByText("$90.00")).toHaveCount(1);
     await expect(page.getByRole("button", { name: /^Pay \$90/ })).toHaveCount(0);
     await expect(page.getByTestId("invoice-autopay-optin-inv-void")).toHaveCount(0);
-    // Balance hero excludes the voided invoice.
-    await expect(page.getByRole("button", { name: "Pay balance · $45.00" })).toBeVisible();
+    // The summary figure excludes the voided invoice.
+    await expect(page.getByTestId("pay-balance")).toHaveText("Pay $45.00");
     await expect(page.getByRole("button", { name: "Billing portal" })).toBeVisible();
     await expect(page.getByText("Autopay active, payment issue")).toBeVisible();
     await expect(
       page.getByText("The latest autopay attempt failed."),
     ).toBeVisible();
     await page.getByRole("button", { name: "Payment history" }).click();
-    await expect(page.getByText("Invoice in_test_paid_1")).toBeVisible();
+    // S57: plain status words, and no Stripe ids in the parent view.
+    await expect(page.getByTestId("payment-lp_ledger_1")).toContainText("Paid");
+    await expect(page.getByText("in_test_paid_1")).toHaveCount(0);
 
     await page.getByRole("button", { name: "View", exact: true }).click();
     await expect(page.getByText("Alice Chen monthly tuition × 1")).toBeVisible();
 
-    await page.getByRole("button", { name: "Pay $45.00", exact: true }).click();
+    await page.getByTestId("pay-invoice-inv-open").click();
     await expect.poll(() => retryRequests.length).toBe(1);
     expect(retryRequests[0]).toMatchObject({
       success_url: expect.stringContaining("/parent/payments?invoice=paid"),
@@ -206,6 +230,10 @@ test.describe("billing trust and recovery surfaces", () => {
     // endpoint on every admin page, so every shell stub must cover it.
     await page.route("**/api/v2/admin/inbox/counts", (route) =>
       fulfillJson(route, { counts: {}, total: 0 }),
+    );
+    // The All invoices tab names each class from the all-classes list.
+    await page.route("**/api/v2/admin/sessions?window=all", (route) =>
+      fulfillJson(route, { sessions: [] }),
     );
 
     await page.route("**/api/v2/admin/payments*", (route) => {
@@ -304,21 +332,15 @@ test.describe("billing trust and recovery surfaces", () => {
 
     await expect(page.getByTestId("admin-payments")).toBeVisible();
     await expect(page.getByTestId("payments-all-invoices")).toBeVisible();
-    await expect(page.getByText("Failed webhook queue")).toBeVisible();
-    // #892: the recovery queue names the event in words. The raw Stripe type
-    // and ids stay in the row, behind the same disclosure the invoice rows use.
-    await expect(page.getByText("Invoice payment failed")).toBeVisible();
-    const webhookIds = page.getByTestId("webhook-ids-evt_failed_1");
-    await expect(webhookIds).toContainText("invoice.payment_failed");
-    await expect(webhookIds.getByText("evt_failed_1")).toBeHidden();
-    await expect(page.getByText("QUARANTINED")).toBeVisible();
-    await expect(page.getByText("duplicate obligation")).toBeVisible();
+    // S29: the stuck-update queue moved to Payment system status with the rest
+    // of the Stripe plumbing; All invoices only points there.
+    await expect(page.getByText("Failed webhook queue")).toHaveCount(0);
     // #892: the reconciliation trail stays on the row, but the raw Stripe ids
     // are no longer the first thing the row says — they sit behind a
     // disclosure. The note an admin has to act on stays visible.
     // UI-5: the note is a sentence with a next step, not the backend code.
     await expect(page.getByTestId("payment-row-pmt_failed_1")).toContainText(
-      "Payment received but not matched to this invoice. Check Billing Health.",
+      "Payment received but not matched to this invoice. Check Payment system status.",
     );
     await expect(page.getByTestId("payment-row-pmt_failed_1")).not.toContainText(
       "missing allocation",

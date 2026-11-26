@@ -176,7 +176,7 @@ test.describe("Coach needs-review retry (#895)", () => {
     await expect.poll(() => mock.attendanceCalls.length).toBe(1);
     // Still there, with the new reason — and retryable again.
     const row = page.getByTestId(`tray-${MUTATION_ID}`);
-    await expect(row).toContainText("This session was cancelled");
+    await expect(row).toContainText("This class date was cancelled");
     await expect(page.getByTestId(`tray-retry-${MUTATION_ID}`)).toBeVisible();
   });
 });

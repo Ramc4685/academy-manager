@@ -9,12 +9,14 @@ import {
   ACH_KEY,
   ACH_PERCENT_FIELD,
   canSave,
+  canSaveRules,
+  changedRulesText,
   diffForm,
   isAchRow,
   isChoiceRow,
   isListRow,
-  saveSummary,
   toForm,
+  changesLateFee,
   turnsLateFeeOn,
   type BillingRuleGroup,
   type BillingRuleRow,
@@ -56,12 +58,17 @@ export function BillingRulesPanel() {
   }, [query.data]);
 
   const diff = useMemo(() => diffForm(query.data, form, MONEY), [query.data, form]);
-  // Money audit X4: switching the fee on starts real charges on the next
-  // hourly run, so the owner must acknowledge it before Save is enabled.
-  const needsLateFeeAck = turnsLateFeeOn(query.data, diff);
-  const saveEnabled = canSave(diff) && (!needsLateFeeAck || lateFeeAcknowledged);
+  // Money audit X4 / S31: switching the fee on or changing its amount changes
+  // real charges from the next hourly run, so the owner must acknowledge it
+  // before Save is enabled.
+  const needsLateFeeAck = changesLateFee(query.data, diff);
+  const lateFeeTurnsOn = turnsLateFeeOn(query.data, diff);
+  const saveEnabled = canSaveRules(diff, needsLateFeeAck, lateFeeAcknowledged);
+  // The tick is the only thing standing between the owner and Save: point at it.
+  const ackIsBlocker = needsLateFeeAck && !lateFeeAcknowledged && canSave(diff);
   const mutation = useMutation({
     mutationFn: () => updateBillingRules(diff.payload),
+    meta: { success: "Billing rules saved" },
     onSuccess: (data) => {
       queryClient.setQueryData(queryKeys.admin.billingRules(), data);
       // The cancellation fee and notice are shared with the Self-service tab;
@@ -113,14 +120,20 @@ export function BillingRulesPanel() {
           className="max-w-3xl rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
           data-testid="billing-rules-late-fee-warning"
         >
-          <p className="font-semibold">You are turning on a late fee.</p>
+          <p className="font-semibold">
+            {lateFeeTurnsOn ? "You are turning on a late fee." : "You are changing the late fee."}
+          </p>
           <p className="mt-1">
             From the next hourly run, the fee is added once to each unpaid invoice whose grace
             period ends today or later. Invoices that are already overdue are not charged. Autopay
             invoices wait until their card retries finish. Parents see the fee on the invoice and in
             the next reminder.
           </p>
-          <label className="mt-3 flex items-start gap-2 font-medium">
+          <label
+            className={`mt-3 flex items-start gap-2 rounded-md font-medium ${
+              ackIsBlocker ? "bg-amber-100 p-2 ring-2 ring-amber-500" : ""
+            }`}
+          >
             <input
               type="checkbox"
               className="mt-1"
@@ -141,8 +154,18 @@ export function BillingRulesPanel() {
             onClick={() => mutation.mutate()}
             data-testid="billing-rules-save"
           >
-            {mutation.isPending ? "Saving…" : saveSummary(diff)}
+            {mutation.isPending ? "Saving…" : "Save changes"}
           </Button>
+          {!(saved && !mutation.isPending) && (
+            <span
+              className={`text-sm ${ackIsBlocker ? "font-medium text-amber-900" : "text-rally-muted"}`}
+              data-testid="billing-rules-changed"
+            >
+              {ackIsBlocker
+                ? "Tick the box above to save the late fee."
+                : changedRulesText(diff)}
+            </span>
+          )}
           {saved && !mutation.isPending && (
             <span className="text-sm text-rally-muted" data-testid="billing-rules-saved">
               Saved.

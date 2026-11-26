@@ -106,6 +106,23 @@ def test_list_sessions_returns_seeded_session(admin_client):
     assert any(s["session_id"] == "sess-1" for s in body["sessions"])
 
 
+async def _seed_coach_members(db, *user_ids: str, academy_id: str = "academy-b") -> None:
+    """Active coach memberships: create/edit refuse a coach who is not on this
+    academy's staff, so every coach id a test assigns must be one."""
+    await db.academy_memberships.insert_many(
+        [
+            {
+                "membership_id": f"m-{academy_id}-{uid}",
+                "academy_id": academy_id,
+                "user_id": uid,
+                "roles": ["coach"],
+                "status": "active",
+            }
+            for uid in user_ids
+        ]
+    )
+
+
 def _mongo_admin_app(
     db,
     *,
@@ -620,6 +637,7 @@ async def test_create_recurring_session_rejects_duplicate_series(
     monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["admin-create-recurring-dedupe"]
+    await _seed_coach_members(db, "coach-kishore")
     await db.sessions.insert_one(
         {
             "academy_id": "academy-b",
@@ -664,6 +682,7 @@ async def test_admin_session_create_and_edit_persist_monthly_amount_cents(
     monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["admin-session-monthly-fee"]
+    await _seed_coach_members(db, "coach-fee")
 
     with TestClient(_mongo_admin_app(db)) as client:
         create_response = client.post(
@@ -737,7 +756,9 @@ def test_admin_session_create_blocks_missing_price_for_percent_paid_coach(admin_
     )
 
     assert response.status_code == 400
-    assert "Percent-of-revenue coach pay requires a session price" in response.json()["detail"]
+    assert "This coach is paid a share of the class fee" in response.json()["detail"]
+    # Persona follow-up (S10): no API field names in what staff read.
+    assert "amount_cents" not in response.json()["detail"]
 
 
 def test_admin_session_create_allows_explicit_zero_price_for_percent_paid_coach(
@@ -811,7 +832,7 @@ async def test_admin_session_edit_blocks_clearing_price_for_percent_paid_coach(
         )
 
     assert response.status_code == 400
-    assert "Percent-of-revenue coach pay requires a session price" in response.json()["detail"]
+    assert "This coach is paid a share of the class fee" in response.json()["detail"]
     stored = await db.sessions.find_one(
         {"academy_id": "academy-b", "session_id": "session-percent-price"}
     )
@@ -873,7 +894,7 @@ async def test_admin_session_edit_unpriced_class_blocks_switch_to_percent_paid_c
         )
 
     assert blocked.status_code == 400, blocked.text
-    assert "Percent-of-revenue coach pay requires a session price" in blocked.json()["detail"]
+    assert "This coach is paid a share of the class fee" in blocked.json()["detail"]
     # Unchanged null fee from a non-owner: not a price change, so it saves.
     assert allowed.status_code == 200, allowed.text
     stored = await db.sessions.find_one(
@@ -988,6 +1009,7 @@ async def test_edit_recurring_session_updates_series_and_future_clean_occurrence
     monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["admin-edit-recurring-series"]
+    await _seed_coach_members(db, "coach-new")
     await db.sessions.insert_one(
         {
             "academy_id": "academy-b",
@@ -2422,7 +2444,8 @@ def test_admin_can_correct_student_attendance_any_time(admin_client):
 def test_admin_correct_student_attendance_missing_mark_404(admin_client):
     r = admin_client.patch(
         "/api/v2/admin/session-occurrences/occ-admin-1/attendance/ghost",
-        json={"status": "absent"},
+        # A student unknown to the academy: no first mark either (S25).
+        json={"status": "absent", "reason": "register fix"},
     )
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "Coaching.AttendanceNotFound"
@@ -3036,6 +3059,8 @@ _PACK_PAYLOAD = {
 
 
 async def _create_pack_session(db, client, **overrides) -> dict:
+    if not await db.academy_memberships.find_one({"user_id": "coach-pack"}):
+        await _seed_coach_members(db, "coach-pack")
     body = {
         "coach_id": "coach-pack",
         "title": "Pack Session",
@@ -3268,6 +3293,7 @@ async def test_create_session_422s_when_the_academy_has_no_timezone(
     monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["admin-create-session-no-tz"]
+    await _seed_coach_members(db, "coach-kishore")
 
     with TestClient(_mongo_admin_app(db)) as client:
         response = client.post(
@@ -3300,6 +3326,7 @@ async def test_create_session_resolves_the_zone_from_the_academy_record(
     monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
     mongomock_motor = pytest.importorskip("mongomock_motor")
     db = mongomock_motor.AsyncMongoMockClient()["admin-create-session-tenant-tz"]
+    await _seed_coach_members(db, "coach-kishore")
     await db.academies.insert_one(
         {"academy_id": "academy-b", "timezone": "America/Chicago"},
     )
@@ -3476,3 +3503,84 @@ async def test_partial_patch_of_pack_fields_leaves_schedule_and_other_fields_alo
     assert body["days_of_week"] == ["Wed"]
     assert body["start_time"] == "17:45"
     assert body["title"] == "Pack Class"
+
+
+def _staff_app(db) -> FastAPI:
+    from backend.v2.shared.http import register_exception_handlers
+
+    app = _mongo_admin_app(db)
+    register_exception_handlers(app)
+    return app
+
+
+_STAFF_CLASS = {
+    "title": "Staff Check",
+    "location": "Court 1",
+    "days_of_week": ["Thu"],
+    "start_time": "17:00",
+    "end_time": "17:45",
+    "timezone": "America/Chicago",
+    "capacity": 10,
+}
+
+
+@pytest.mark.asyncio
+async def test_create_session_refuses_a_coach_from_another_academy(monkeypatch) -> None:
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-create-foreign-coach"]
+    await _seed_coach_members(db, "outsider", academy_id="other-academy")
+
+    with TestClient(_staff_app(db)) as client:
+        response = client.post(
+            "/api/v2/admin/sessions", json={**_STAFF_CLASS, "coach_id": "outsider"}
+        )
+
+    assert response.status_code == 422, response.text
+    assert await db.sessions.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+async def test_create_session_refuses_an_assistant_from_another_academy(monkeypatch) -> None:
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-create-foreign-assistant"]
+    await _seed_coach_members(db, "coach-here")
+    await _seed_coach_members(db, "outsider", academy_id="other-academy")
+
+    with TestClient(_staff_app(db)) as client:
+        response = client.post(
+            "/api/v2/admin/sessions",
+            json={**_STAFF_CLASS, "coach_id": "coach-here", "assistant_coach_ids": ["outsider"]},
+        )
+
+    assert response.status_code == 422, response.text
+    assert await db.sessions.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+async def test_edit_session_refuses_a_new_coach_from_another_academy(monkeypatch) -> None:
+    monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["admin-edit-foreign-coach"]
+    await _seed_coach_members(db, "coach-here")
+    await _seed_coach_members(db, "outsider", academy_id="other-academy")
+
+    with TestClient(_staff_app(db)) as client:
+        created = client.post(
+            "/api/v2/admin/sessions", json={**_STAFF_CLASS, "coach_id": "coach-here"}
+        )
+        assert created.status_code == 200, created.text
+        session_id = created.json()["session_id"]
+        refused = client.patch(
+            f"/api/v2/admin/sessions/{session_id}", json={"coach_id": "outsider"}
+        )
+        kept = client.patch(
+            f"/api/v2/admin/sessions/{session_id}",
+            json={"coach_id": "coach-here", "title": "Renamed"},
+        )
+
+    assert refused.status_code == 422, refused.text
+    assert kept.status_code == 200, kept.text
+    stored = await db.sessions.find_one({"session_id": session_id})
+    assert stored["coach_id"] == "coach-here"

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { LogOut } from "lucide-react";
 
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { signOutCurrent } from "@/lib/auth/firebase";
 import { clearAll as clearOfflineQueue, list as listAllMutations } from "@/lib/offline/queue";
 import { clearPersistedQueryCache } from "@/lib/query/persistence";
@@ -47,19 +48,21 @@ export function PersonaLogoutButton({
   const router = useRouter();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
+  /** Unsent marks sign-out would delete; non-null while the dialog asks. */
+  const [unsentToConfirm, setUnsentToConfirm] = useState<number | null>(null);
 
   async function handleLogOut() {
     if (busy) return;
     const unsent = await unsentMarkCount();
-    if (
-      unsent > 0 &&
-      !window.confirm(
-        `${unsent} attendance ${unsent === 1 ? "mark hasn't" : "marks haven't"} been sent yet. ` +
-          "Logging out deletes them from this device. Log out anyway?",
-      )
-    ) {
+    if (unsent > 0) {
+      setUnsentToConfirm(unsent);
       return;
     }
+    await logOut();
+  }
+
+  async function logOut() {
+    setUnsentToConfirm(null);
     setBusy(true);
     try {
       await signOutCurrent();
@@ -77,16 +80,30 @@ export function PersonaLogoutButton({
   }
 
   return (
-    <button
-      type="button"
-      aria-label={label}
-      data-testid="persona-logout-button"
-      disabled={busy}
-      onClick={() => void handleLogOut()}
-      className={`inline-flex items-center justify-center gap-2 transition-colors disabled:cursor-wait disabled:opacity-60 ${className}`}
-    >
-      <LogOut aria-hidden="true" size={18} strokeWidth={2} />
-      <span className={labelClassName}>{label}</span>
-    </button>
+    <>
+      <button
+        type="button"
+        aria-label={label}
+        data-testid="persona-logout-button"
+        disabled={busy}
+        onClick={() => void handleLogOut()}
+        className={`inline-flex items-center justify-center gap-2 transition-colors disabled:cursor-wait disabled:opacity-60 ${className}`}
+      >
+        <LogOut aria-hidden="true" size={18} strokeWidth={2} />
+        <span className={labelClassName}>{label}</span>
+      </button>
+      <ConfirmActionDialog
+        open={unsentToConfirm !== null}
+        onOpenChange={(open) => !open && setUnsentToConfirm(null)}
+        overline="Log out"
+        title="Log out anyway?"
+        consequence={`${unsentToConfirm} attendance ${
+          unsentToConfirm === 1 ? "mark hasn't" : "marks haven't"
+        } been sent yet. Logging out deletes them from this device.`}
+        confirmLabel="Log out"
+        cancelLabel="Stay logged in"
+        onConfirm={() => void logOut()}
+      />
+    </>
   );
 }

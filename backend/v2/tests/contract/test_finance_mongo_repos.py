@@ -1,14 +1,7 @@
 """Contract tests for finance-context Mongo repositories (Wave 5A).
 
-Two repo groups under test:
-
-1. ``MongoPayoutPeriodRepository`` — persisted payout period + lines,
-   including the natural-key idempotency and tenant isolation.
-2. The three snapshot repos —
-   ``MongoAcademyRevenueSnapshotRepository``,
-   ``MongoSessionAttendanceSnapshotRepository``,
-   ``MongoCoachPayoutSnapshotRepository`` — natural-key upsert and
-   cross-tenant isolation.
+``MongoPayoutPeriodRepository`` — persisted payout period + lines,
+including the natural-key idempotency and tenant isolation.
 
 We use ``mongomock-motor`` (same as the existing contract suite) and
 exercise the repos through the tenant ContextVar fixtures from
@@ -31,18 +24,8 @@ from backend.v2.contexts.finance.domain.payout_period import (
     PayoutWarning,
     PersistedPayoutLine,
 )
-from backend.v2.contexts.finance.domain.reporting_snapshots import (
-    AcademyRevenueSnapshot,
-    CoachPayoutSnapshot,
-    SessionAttendanceSnapshot,
-)
 from backend.v2.contexts.finance.infrastructure.mongo_payout_period_repo import (
     MongoPayoutPeriodRepository,
-)
-from backend.v2.contexts.finance.infrastructure.mongo_reporting_snapshot_repos import (
-    MongoAcademyRevenueSnapshotRepository,
-    MongoCoachPayoutSnapshotRepository,
-    MongoSessionAttendanceSnapshotRepository,
 )
 from backend.v2.shared.tenancy.context import _current as _tenant_var
 
@@ -484,104 +467,6 @@ async def test_lines_persist_with_decimal_minutes(db, acad) -> None:
     fetched = await repo.find_by_id("pp-dec")
     assert fetched is not None
     assert fetched.lines[0].minutes == Decimal("90.0000")
-
-
-# ---------------------------------------------------------------------------
-# Revenue snapshot repo
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_revenue_snapshot_upsert_is_idempotent(db, acad) -> None:
-    repo = MongoAcademyRevenueSnapshotRepository(db)
-    snapshot = AcademyRevenueSnapshot(
-        academy_id="test-academy",
-        period="2026-05",
-        gross_minor=100,
-        refunded_minor=10,
-        outstanding_minor=20,
-        currency="USD",
-        computed_at=_dt("2026-06-01T00:00:00"),
-    )
-    await repo.upsert(snapshot)
-    updated = snapshot.model_copy(update={"gross_minor": 200})
-    await repo.upsert(updated)
-    fetched = await repo.find(academy_id="test-academy", period="2026-05")
-    assert fetched is not None
-    assert fetched.gross_minor == 200
-
-    count = await db["academy_revenue_snapshots"].count_documents({"academy_id": "test-academy"})
-    assert count == 1
-
-
-@pytest.mark.asyncio
-async def test_revenue_snapshot_does_not_leak_across_tenants(db, acad) -> None:
-    repo = MongoAcademyRevenueSnapshotRepository(db)
-    await repo.upsert(
-        AcademyRevenueSnapshot(
-            academy_id="test-academy",
-            period="2026-05",
-            gross_minor=100,
-            refunded_minor=0,
-            outstanding_minor=0,
-            currency="USD",
-            computed_at=_dt("2026-06-01T00:00:00"),
-        )
-    )
-    token = _tenant_var.set("other-academy")
-    try:
-        other_repo = MongoAcademyRevenueSnapshotRepository(db)
-        assert await other_repo.find(academy_id="other-academy", period="2026-05") is None
-    finally:
-        _tenant_var.reset(token)
-
-
-# ---------------------------------------------------------------------------
-# Attendance snapshot repo
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_attendance_snapshot_upsert_round_trip(db, acad) -> None:
-    repo = MongoSessionAttendanceSnapshotRepository(db)
-    snap = SessionAttendanceSnapshot(
-        academy_id="test-academy",
-        session_id="sess-1",
-        period="2026-05",
-        scheduled_count=10,
-        completed_count=8,
-        no_show_count=2,
-        computed_at=_dt("2026-06-01T00:00:00"),
-    )
-    await repo.upsert(snap)
-    fetched = await repo.find(academy_id="test-academy", session_id="sess-1", period="2026-05")
-    assert fetched is not None
-    assert fetched.scheduled_count == 10
-    assert fetched.completed_count == 8
-
-
-# ---------------------------------------------------------------------------
-# Coach payout snapshot repo
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_coach_payout_snapshot_preserves_decimal_hours(db, acad) -> None:
-    repo = MongoCoachPayoutSnapshotRepository(db)
-    snap = CoachPayoutSnapshot(
-        academy_id="test-academy",
-        coach_id="coach-A",
-        period="2026-05",
-        hours=Decimal("12.7500"),
-        payout_minor=63_750,
-        currency="USD",
-        computed_at=_dt("2026-06-01T00:00:00"),
-    )
-    await repo.upsert(snap)
-    fetched = await repo.find(academy_id="test-academy", coach_id="coach-A", period="2026-05")
-    assert fetched is not None
-    assert fetched.hours == Decimal("12.7500")
-    assert fetched.payout_minor == 63_750
 
 
 # ---------------------------------------------------------------------------

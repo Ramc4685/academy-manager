@@ -47,7 +47,7 @@ import {
   warningLine,
 } from "@/lib/month-close-view";
 import type { MonthCloseTile } from "@/lib/month-close-view";
-import { notBilledSuffix } from "@/components/admin/not-billed";
+import { headcountLabel, notBilledSuffix } from "@/components/admin/not-billed";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
@@ -67,8 +67,8 @@ import {
 const FINANCIAL_REPORTS = [
   {
     href: "/admin/reports/session-economics",
-    title: "Session economics",
-    description: "Revenue, cost and profit by session.",
+    title: "Class economics",
+    description: "Revenue, cost and profit by class.",
   },
   {
     href: "/admin/reports/refunds",
@@ -164,6 +164,13 @@ export default function AdminMonthClosePage() {
     onSuccess: (csv) => downloadCsv(`deposit-slip-${period}`, csv),
   });
 
+  // S41: the month's invoices and the aging drill-down, from the same rows as
+  // the billed, outstanding and aging figures on this page.
+  const billingExportMutation = useMutation({
+    mutationFn: (report: "invoices" | "aging") => exportAdminReportCsv(report, period),
+    onSuccess: (csv, report) => downloadCsv(`${report}-${period}`, csv),
+  });
+
   // Normalized, so a partial payload renders zeros instead of crashing the page.
   const close = useMemo(
     () => normalizeMonthClose(monthCloseQuery.data, period),
@@ -179,6 +186,8 @@ export default function AdminMonthClosePage() {
   const invoiceTiles = tiles.filter((tile) => tile.cents == null);
   const runBox = autopayRunBox(close);
   const odd = oddRows(close);
+  const oddFlagged = odd.filter((row) => row.count > 0);
+  const oddClear = odd.filter((row) => row.count === 0);
   const warning = warningLine(close);
   const discounts = close.tuition_discounts;
   const closeLoading = monthCloseQuery.isLoading;
@@ -279,14 +288,40 @@ export default function AdminMonthClosePage() {
                 >
                   {depositSlipMutation.isPending ? "Exporting..." : "Deposit slip"}
                 </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => billingExportMutation.mutate("invoices")}
+                  disabled={billingExportMutation.isPending}
+                  data-testid="export-invoices"
+                >
+                  {billingExportMutation.isPending && billingExportMutation.variables === "invoices"
+                    ? "Exporting..."
+                    : "Invoices CSV"}
+                </Button>
               </>
             )}
           </div>
         </div>
 
-        {(quickbooksMutation.isError || depositSlipMutation.isError) && (
+        {(quickbooksMutation.isError ||
+          depositSlipMutation.isError ||
+          billingExportMutation.isError) && (
           <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
             Could not export that report.
+          </p>
+        )}
+
+        {!isNativeApp && (
+          <p className="text-[12px] text-rally-muted" data-testid="month-close-more-exports">
+            More CSV exports:{" "}
+            <Link href="/admin/reports/refunds" className="underline">
+              Refunds &amp; credits
+            </Link>
+            {" · "}
+            <Link href="/admin/reports/revenue-by-category" className="underline">
+              Revenue by category
+            </Link>
+            {" · "}QuickBooks journal and deposit slip are the buttons above.
           </p>
         )}
 
@@ -415,17 +450,30 @@ export default function AdminMonthClosePage() {
         ) : null}
 
         {/*
-          * Always visible, never grouped: these four checks are the evidence
-          * behind a non-ok verdict, so hiding them behind a click would make
-          * the headline unanswerable.
+          * Always visible, never grouped: a check with a count is the evidence
+          * behind a non-ok verdict, so it keeps its own row. Checks at zero
+          * collapse into one "clear" line (S36).
           */}
         <Card p={24} data-testid="anything-odd-box">
             <Overline>Anything odd</Overline>
             <p className="mt-1 text-sm text-rally-subtle">
-              Four checks over this month&apos;s invoices. A zero is the answer you want.
+              Four checks over this month&apos;s invoices.
             </p>
+            {oddClear.length > 0 ? (
+              <p className="mt-4 text-sm text-rally-subtle" data-testid="odd-clear">
+                {oddFlagged.length === 0 ? "All four checks are clear: " : "Clear: "}
+                {oddClear.map((row, index) => (
+                  <span key={row.code} data-testid={`odd-${row.code}-clear`}>
+                    {index > 0 ? ", " : ""}
+                    {row.label.toLowerCase()}
+                  </span>
+                ))}
+                .
+              </p>
+            ) : null}
+            {oddFlagged.length > 0 ? (
             <ul className="mt-4 space-y-2">
-              {odd.map((row) => (
+              {oddFlagged.map((row) => (
                 <li
                   key={row.code}
                   className="rounded-md border border-rally-line"
@@ -471,6 +519,7 @@ export default function AdminMonthClosePage() {
                 </li>
               ))}
             </ul>
+            ) : null}
         </Card>
 
         <CollapsibleSection
@@ -659,7 +708,7 @@ export default function AdminMonthClosePage() {
           <KpiCard
             label="Waitlist"
             value={sessions ? formatInteger(sessions.waitlist_count) : dashboardQuery.isLoading ? "Loading" : "No data"}
-            description="Families waiting on sessions in the selected month."
+            description="Families waiting on classes in the selected month."
           />
         </div>
 
@@ -689,17 +738,24 @@ export default function AdminMonthClosePage() {
               <Overline>Operations summary</Overline>
               <div className="mt-2">
                 <BigNum size={32}>
-                  {sessions ? formatInteger(sessions.scheduled_count + sessions.completed_count) : "No data"}
+                  {sessions ? formatInteger(sessions.scheduled_count) : "No data"}
                 </BigNum>
               </div>
               <p className="text-sm text-neutral-500 mt-1">
-                Scheduled and completed sessions in {formatMonth(period)}.
+                Class dates held and still to come in {formatMonth(period)}.
               </p>
             </div>
             <dl className="grid min-w-64 gap-3 sm:grid-cols-2">
-              <DashboardTerm label="Completed" value={sessions ? formatInteger(sessions.completed_count) : "No data"} />
+              <DashboardTerm label="Held" value={sessions ? formatInteger(sessions.completed_count) : "No data"} />
               <DashboardTerm label="Cancelled" value={sessions ? formatInteger(sessions.cancelled_count) : "No data"} />
-              <DashboardTerm label="Seats" value={sessions ? `${formatInteger(sessions.enrolled_seats)} / ${formatInteger(sessions.capacity)}` : "No data"} />
+              <DashboardTerm
+                label="Seats"
+                value={
+                  sessions
+                    ? `${headcountLabel(sessions.paying_seats ?? sessions.enrolled_seats, sessions.enrolled_seats)} · ${formatInteger(sessions.capacity)} seats`
+                    : "No data"
+                }
+              />
               <DashboardTerm label="Attendance marks" value={attendance ? formatInteger(attendance.recorded_count) : "No data"} />
               <DashboardTerm label="Waitlist" value={sessions ? formatInteger(sessions.waitlist_count) : "No data"} />
             </dl>
@@ -733,7 +789,21 @@ export default function AdminMonthClosePage() {
           </Card>
 
           <Card p={24}>
-            <Overline>Collections risk</Overline>
+            <div className="flex items-center justify-between gap-3">
+              <Overline>Collections risk</Overline>
+              {!isNativeApp && (
+                <Button
+                  variant="secondary"
+                  onClick={() => billingExportMutation.mutate("aging")}
+                  disabled={billingExportMutation.isPending}
+                  data-testid="export-aging"
+                >
+                  {billingExportMutation.isPending && billingExportMutation.variables === "aging"
+                    ? "Exporting..."
+                    : "Export aging"}
+                </Button>
+              )}
+            </div>
             <dl className="mt-4 grid gap-3 sm:grid-cols-2">
               <DashboardTerm label="Families due" value={collectionsRisk ? formatInteger(collectionsRisk.overdue_family_count) : "No data"} />
               <DashboardTerm label="Amount due" value={collectionsRisk ? formatMoney(collectionsRisk.overdue_cents) : "No data"} />
@@ -864,7 +934,7 @@ export default function AdminMonthClosePage() {
             </BigNum>
           </div>
           <p className="mt-1 text-sm text-rally-subtle">
-            Expected tuition from active enrollments at each session&apos;s monthly fee.
+            Expected tuition from active enrollments at each class&apos;s monthly fee.
           </p>
           {projected && !projected.empty ? (
             <div className="mt-4 space-y-4">
@@ -907,7 +977,7 @@ export default function AdminMonthClosePage() {
                 <table className="w-full min-w-[360px] text-left text-sm">
                   <thead className="text-xs uppercase text-rally-muted">
                     <tr>
-                      <th className="px-2 py-2">Session</th>
+                      <th className="px-2 py-2">Class</th>
                       <th className="px-2 py-2">Students</th>
                       <th className="px-2 py-2">Monthly fee</th>
                       <th className="px-2 py-2">Expected</th>
@@ -917,7 +987,9 @@ export default function AdminMonthClosePage() {
                     {projectedSessions.map((row) => (
                       <tr key={row.session_id}>
                         <td className="px-2 py-2 font-medium text-rally-ink">{row.title || row.session_id}</td>
-                        <td className="px-2 py-2 text-rally-muted">{formatInteger(row.enrollment_count)}</td>
+                        <td className="px-2 py-2 text-rally-muted">
+                          {headcountLabel(row.enrollment_count, row.enrolled_count ?? row.enrollment_count)}
+                        </td>
                         <td className="px-2 py-2 text-rally-muted">{formatMoney(row.monthly_fee_cents)}</td>
                         <td className="px-2 py-2 text-rally-muted">{formatMoney(row.expected_cents)}</td>
                       </tr>
@@ -1002,7 +1074,7 @@ export default function AdminMonthClosePage() {
         <CollapsibleSection
           id="report-links"
           title="Report links"
-          summary="Session economics, refunds, revenue by category, deposit slip and leaving."
+          summary="Class economics, refunds, revenue by category, deposit slip and leaving."
         >
         <div className="grid gap-4 lg:grid-cols-3">
           {FINANCIAL_REPORTS.map((report) => (

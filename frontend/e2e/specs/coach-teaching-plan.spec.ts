@@ -223,6 +223,6 @@ test.describe("Coach teaching plan", () => {
     await page.goto("/coach/today/plan?date=2026-10-01");
 
     await expect(page.getByTestId("plan-date")).toHaveText("Thu, Oct 1");
-    await expect(page.getByTestId("plan-empty-state")).toHaveText("No sessions on Thu, Oct 1.");
+    await expect(page.getByTestId("plan-empty-state")).toHaveText("No classes on Thu, Oct 1.");
   });
 });

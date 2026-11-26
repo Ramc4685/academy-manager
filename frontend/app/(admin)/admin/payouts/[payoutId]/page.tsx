@@ -61,7 +61,7 @@ import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Overline } from "@/components/ds/typography";
 import { useAcademyTimezone } from "@/components/admin/use-academy-today";
-import { academyDateISO } from "@/lib/format/academy-time";
+import { academyDateISO, formatAcademyStamp, formatInAcademyZone } from "@/lib/format/academy-time";
 
 function money(cents: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
@@ -74,15 +74,11 @@ const STATUS_CHIP: Record<AdminPayoutPeriodView["status"], { variant: "paid" | "
 };
 
 function formatPayRuleLabel(rate: AdminCoachPayRateView): string {
-  const from = new Date(rate.effective_from);
-  const since = from.toLocaleDateString(undefined, {
-    month: "short",
-    year: "numeric",
-  });
+  const since = formatInAcademyZone(rate.effective_from, undefined, { month: "short", year: "numeric" });
   if (rate.billing_unit === "percent_of_revenue") {
     return `Pay rule: ${rate.percent ?? 0}% of invoiced tuition · effective since ${since}`;
   }
-  const unit = rate.billing_unit === "per_hour" ? "per hour" : "per session";
+  const unit = rate.billing_unit === "per_hour" ? "per hour" : "per class date";
   return `Pay rule: ${money(rate.amount_cents, rate.currency)} ${unit} · effective since ${since}`;
 }
 
@@ -110,7 +106,7 @@ function payRuleLabel(
     return "No pay rule was effective for this payout period.";
   }
   if (applicableRates.length > 1) {
-    return "Pay rule: varies by session date in this payout period.";
+    return "Pay rule: varies by class date in this payout period.";
   }
   return formatPayRuleLabel(applicableRates[0]);
 }
@@ -283,10 +279,7 @@ function Header({
   onChanged: (updated: AdminPayoutPeriodView) => void;
 }) {
   const status = period ? STATUS_CHIP[period.status] : null;
-  const monthLabel = new Date(periodStart).toLocaleDateString(undefined, {
-    month: "long",
-    year: "numeric",
-  });
+  const monthLabel = formatInAcademyZone(periodStart, undefined, { month: "long", year: "numeric" });
   return (
     <Card p={20}>
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -298,13 +291,13 @@ function Header({
             </h2>
             <p className="mt-0.5 text-sm text-rally-muted">
               {payRule ??
-                `${coachEmail ? `${coachEmail} · ` : ""}${new Date(periodStart).toLocaleDateString()} - ${new Date(periodEnd).toLocaleDateString()}`}
+                `${coachEmail ? `${coachEmail} · ` : ""}${formatInAcademyZone(periodStart)} - ${formatInAcademyZone(periodEnd)}`}
             </p>
             <div className="mt-1.5 flex items-center gap-2">
               {status && <Chip variant={status.variant} label={status.label} />}
               {period?.paid_at && (
                 <span className="font-mono text-[11px] text-rally-muted">
-                  Paid {new Date(period.paid_at).toLocaleDateString()}
+                  Paid {formatInAcademyZone(period.paid_at)}
                   {period.paid_method ? ` · ${period.paid_method}` : ""}
                 </span>
               )}
@@ -331,7 +324,7 @@ function Header({
 function SummaryCards({ period }: { period: AdminPayoutPeriodView }) {
   const replacementCount = period.lines.filter((line) => line.basis === "substitute").length;
   const metrics: { label: string; value: string }[] = [
-    { label: "Sessions coached", value: String(period.lines.length) },
+    { label: "Class dates coached", value: String(period.lines.length) },
     { label: "As replacement", value: String(replacementCount) },
     { label: "Warnings", value: String(period.payout_warnings.length) },
     { label: "Total pay", value: money(period.total_amount_cents, period.currency) },
@@ -353,10 +346,9 @@ function SummaryCards({ period }: { period: AdminPayoutPeriodView }) {
 /** The academy-local last day of the period, e.g. "Oct 31". */
 function useMonthEndLabel(periodEnd: string): string {
   const timezone = useAcademyTimezone();
-  return new Date(new Date(periodEnd).getTime() - 1).toLocaleDateString(undefined, {
+  return formatInAcademyZone(new Date(periodEnd).getTime() - 1, timezone, {
     month: "short",
     day: "numeric",
-    timeZone: timezone ?? undefined,
   });
 }
 
@@ -528,7 +520,7 @@ function Actions({
               block
                 ? block.message
                 : unresolvedCount > 0
-                  ? "Repair unpaid occurrences and recompute before approval."
+                  ? "Repair unpaid class dates and recompute before approval."
                   : "Lock the lines and move this payout to approved."
             }
             disabled={busy || unresolvedCount > 0 || block !== null}
@@ -653,7 +645,7 @@ function PayLog({
       <Card p={0}>
         <div className="border-b border-rally-line px-5 py-4">
           <Overline>
-            Session pay log ({period.lines.length + period.unpaid_occurrences.length})
+            Class date pay log ({period.lines.length + period.unpaid_occurrences.length})
           </Overline>
         </div>
         <div className="overflow-x-auto">
@@ -661,7 +653,7 @@ function PayLog({
             <thead>
               <tr className="border-b border-rally-line text-left">
                 <th className={`${TH} pl-5`}>Date</th>
-                <th className={TH}>Session</th>
+                <th className={TH}>Class</th>
                 <th className={TH}>Role</th>
                 <th className={TH}>Status</th>
                 <th className={`${TH} text-right`}>{percentBasisLabel(period.revenue_basis)}</th>
@@ -688,7 +680,7 @@ function PayLog({
                 return (
                 <tr key={occ.occurrence_id} className="border-b border-rally-line last:border-0 bg-neutral-50/50">
                   <td className="px-3 py-3 pl-5 font-mono text-xs text-rally-muted">
-                    {occ.occurred_at ? new Date(occ.occurred_at).toLocaleDateString() : "—"}
+                    {occ.occurred_at ? formatInAcademyZone(occ.occurred_at) : "—"}
                   </td>
                   <td className="px-3 py-3 text-rally-muted">
                     {occ.session_title || occ.occurrence_id}
@@ -706,7 +698,7 @@ function PayLog({
                       {replaced
                         ? attributedCoach
                           ? `Attributed to ${attributedCoach} instead.`
-                          : "A replacement coach was attributed to this session."
+                          : "A replacement coach was attributed to this class date."
                         : occ.reason
                           ? occ.message || occ.detail || unpaidReasonGuidance(occ.reason)
                           : "No pay line was created."}
@@ -732,7 +724,7 @@ function PayLog({
               {period.lines.length === 0 && period.unpaid_occurrences.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-5 py-6 text-center text-sm text-rally-muted">
-                    No sessions in this period.
+                    No class dates in this period.
                   </td>
                 </tr>
               )}
@@ -801,7 +793,7 @@ function PaidRow({
 
   const onEdit = () => {
     const amountText = window.prompt(
-      "New amount for this occurrence (e.g. 45.00):",
+      "New amount for this class date (e.g. 45.00):",
       (line.amount_cents / 100).toFixed(2),
     );
     if (amountText === null) return;
@@ -829,7 +821,7 @@ function PaidRow({
   return (
     <tr className="border-b border-rally-line last:border-0">
       <td className="px-3 py-3 pl-5 font-mono text-xs text-rally-muted">
-        {line.occurred_at ? new Date(line.occurred_at).toLocaleDateString() : "—"}
+        {line.occurred_at ? formatInAcademyZone(line.occurred_at) : "—"}
       </td>
       <td className="px-3 py-3">
         <div className="font-medium text-rally-ink">
@@ -905,7 +897,7 @@ function PaidRow({
             )}
             <button
               type="button"
-              title="Correct attendance, coach, or replacement for this occurrence"
+              title="Correct attendance, coach, or replacement for this class date"
               onClick={onCorrect}
               aria-label="Correct this line"
               className="rounded p-1 text-rally-muted hover:text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
@@ -958,7 +950,7 @@ function AuditTrail({
               <div className="flex items-center justify-between gap-3">
                 <span className="font-medium text-rally-ink">{AUDIT_LABEL[entry.action]}</span>
                 <span className="font-mono text-[11px] text-rally-muted">
-                  {new Date(entry.at).toLocaleString()}
+                  {formatAcademyStamp(entry.at)}
                 </span>
               </div>
               {entry.occurrence_id && (

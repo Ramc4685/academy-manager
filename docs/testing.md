@@ -149,6 +149,13 @@ Docker SaaS staging services:
 
 Full details live in `docs/runbooks/saas-local-staging.md`.
 
+`scripts/local_test_stack.sh` sets a dev-only `UNSUBSCRIBE_TOKEN_SECRET`
+(override it by exporting your own). The parent calendar feed and email
+unsubscribe links sign with it and stay off without it, so locally "Calendar
+subscription not available" means the stack started without it. Production
+reads its own Fly secret; the owner confirms it there through
+`/api/v2/healthz`, which warns while it is unset.
+
 ## Focused Commands
 
 Backend:

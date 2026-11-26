@@ -3,6 +3,8 @@ import Link from "next/link";
 import type { ParentProgressJourney } from "@/lib/api/parent";
 import type { SkillCertificate } from "@/lib/api/curriculum";
 import { levelColorName, levelSwatch } from "@/lib/level-color";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
+import { useAcademyZone } from "@/lib/format/academy-zone";
 
 // Presentational pieces of the parent progress journey (design: owner canvas
 // "Parent · how far along"). Data shaping lives in the BFF; these only render.
@@ -232,6 +234,7 @@ export function MilestoneList({
   milestones: NonNullable<Journey["milestones"]>;
   firstName: string;
 }) {
+  const academyTimezone = useAcademyZone();
   if (milestones.length === 0) return null;
   // Newest first, like the wins below.
   const sorted = [...milestones].sort((a, b) => b.reached_at.localeCompare(a.reached_at));
@@ -245,7 +248,7 @@ export function MilestoneList({
             className="flex flex-col gap-1 rounded-[14px] border border-rally-volt-300 bg-rally-volt-100 px-3.5 py-3"
           >
             <p className="text-xs font-bold text-rally-volt-700">
-              {formatWinDate(m.reached_at)} · Milestone
+              {formatWinDate(m.reached_at, academyTimezone)} · Milestone
             </p>
             <p className="text-sm font-bold text-rally-ink">
               {firstName}: {milestoneLabel(m)}
@@ -258,6 +261,7 @@ export function MilestoneList({
 }
 
 export function RecentWins({ wins, studentId }: { wins: JourneyWin[]; studentId: string }) {
+  const academyTimezone = useAcademyZone();
   if (wins.length === 0) return null;
   return (
     <div className="space-y-2">
@@ -270,7 +274,7 @@ export function RecentWins({ wins, studentId }: { wins: JourneyWin[]; studentId:
               className="flex flex-col gap-1 rounded-[14px] border border-rally-volt-300 bg-rally-volt-100 px-3.5 py-3"
             >
               <p className="text-xs font-bold text-rally-volt-700">
-                {formatWinDate(win.at)} · Level complete
+                {formatWinDate(win.at, academyTimezone)} · Level complete
               </p>
               <p className="text-sm font-bold text-rally-ink">Certificate: {win.title}</p>
               {win.cert_id && (
@@ -287,7 +291,7 @@ export function RecentWins({ wins, studentId }: { wins: JourneyWin[]; studentId:
               key={`skill-${win.title}-${win.at}`}
               className="flex flex-col gap-1 rounded-[14px] border border-rally-line bg-white px-3.5 py-3"
             >
-              <p className="text-xs text-rally-muted">{formatWinDate(win.at)}</p>
+              <p className="text-xs text-rally-muted">{formatWinDate(win.at, academyTimezone)}</p>
               <p className="text-sm font-bold text-rally-ink">Mastered {win.title}</p>
               {win.coach_note && (
                 <p className="mt-0.5 rounded-[10px] bg-status-slate-100 px-2.5 py-2 text-[13px] italic text-status-slate-700">
@@ -324,6 +328,7 @@ export function PracticeDrillCard({ drill }: { drill: NonNullable<Journey["pract
 }
 
 export function CertificateList({ certs }: { certs: SkillCertificate[] }) {
+  const academyTimezone = useAcademyZone();
   return (
     <div className="rounded-2xl overflow-hidden bg-white border border-rally-line">
       <h2 className="px-4 py-3 border-b border-rally-line text-sm font-bold text-rally-ink">
@@ -348,11 +353,7 @@ export function CertificateList({ certs }: { certs: SkillCertificate[] }) {
               </div>
               <div className="shrink-0 text-right">
                 <p className="text-xs font-medium text-rally-ink">
-                  {new Date(cert.completed_at).toLocaleDateString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                  })}
+                  {formatInAcademyZone(cert.completed_at, academyTimezone)}
                 </p>
                 <p className="text-[11px] text-rally-subtle">#{cert.cert_number}</p>
               </div>
@@ -377,13 +378,17 @@ export function JourneySkeleton() {
 }
 
 /** "Tue" within the last week, "Oct 17" before that. */
-export function formatWinDate(value: string, now: Date = new Date()): string {
+export function formatWinDate(
+  value: string,
+  academyTimezone: string | null,
+  now: Date = new Date(),
+): string {
   const at = new Date(value);
   const days = (now.getTime() - at.getTime()) / 86_400_000;
   if (days >= 0 && days < 6) {
-    return at.toLocaleDateString(undefined, { weekday: "short" });
+    return formatInAcademyZone(at, academyTimezone, { weekday: "short" });
   }
-  return at.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return formatInAcademyZone(at, academyTimezone, { month: "short", day: "numeric" });
 }
 
 /** The selected child's coach notes, matched on the stable student id (never

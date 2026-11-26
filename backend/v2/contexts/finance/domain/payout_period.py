@@ -17,7 +17,7 @@ Why this lives in finance, not coaching:
 
 - Coaching owns the calculation function (rates + attribution math).
 - Finance owns the persisted artifact (the period + lines + audit state).
-- Reporting (also in finance, see ``reporting_snapshots.py``) reads from
+- Reporting (also in finance, ``mongo_held_class_reader.py``) reads from
   the persisted periods. Cross-context imports stay zero because the
   coaching-context types are re-shaped into local DTOs at the composition
   layer.

@@ -123,3 +123,26 @@ export async function saveClassCreate(
     };
   }
 }
+
+/**
+ * S55: put a just-created class on the public page. Like the plan link, a
+ * failure never throws: the class exists (private, the safe side) and the
+ * warning says where to switch it on.
+ */
+export async function publishCreatedClass(
+  result: ClassCreateSaveResult,
+  publish: boolean,
+  setPublished: (sessionId: string) => Promise<unknown>,
+): Promise<ClassCreateSaveResult> {
+  if (!publish) return result;
+  try {
+    await setPublished(result.created.session_id);
+    return result;
+  } catch (err) {
+    const note = `The class was created but is not on the public page: ${messageOf(
+      err,
+      "switch it on from the class page.",
+    )}`;
+    return { ...result, warning: result.warning ? `${result.warning} ${note}` : note };
+  }
+}

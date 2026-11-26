@@ -155,7 +155,7 @@ test.describe("Assistant coach shell", () => {
       created_at: new Date().toISOString(),
       visibility: "private",
     });
-    await page.goto("/coach/students/st1/passport?student_name=Alice");
+    await page.goto("/coach/students/st1/passport");
     await expect(page.getByTestId("coach-student-passport")).toBeVisible();
     await page
       .getByTestId("passport-skill-skill-backhand")
@@ -186,7 +186,7 @@ test.describe("Assistant coach shell", () => {
     await page.goto("/coach/profile");
     await expect(page.getByTestId("coach-profile")).toBeVisible();
     await expect(page.getByText("Asha Assistant")).toBeVisible();
-    await expect(page.getByText("Assistant coach access")).toBeVisible();
+    await expect(page.getByText("Assistant coach: your details and what we teach")).toBeVisible();
     await expect(page.getByText("Pay & statements")).toHaveCount(0);
   });
 

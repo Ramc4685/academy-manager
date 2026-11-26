@@ -51,7 +51,7 @@ export function PayrollSettingsCard() {
     queryKey: queryKeys.admin.payrollSettings(),
     queryFn: getPayrollSettings,
   });
-  const [form, setForm] = useState<PayrollSettings | null>(null);
+  const [form, setForm] = useState<PayrollSettings | null>(() => query.data ?? null);
   const [saved, setSaved] = useState(false);
   useEffect(() => {
     if (query.data) setForm(query.data);
@@ -63,6 +63,7 @@ export function PayrollSettingsCard() {
 
   const mutation = useMutation({
     mutationFn: () => updatePayrollSettings(form as PayrollSettings),
+    meta: { success: "Payroll settings saved" },
     onSuccess: (data) => {
       queryClient.setQueryData(queryKeys.admin.payrollSettings(), data);
       setSaved(true);
@@ -155,10 +156,12 @@ export function PayrollSettingsCard() {
               onClick={() => mutation.mutate()}
               data-testid="payroll-settings-save"
             >
-              {mutation.isPending ? "Saving…" : "Save coach payroll"}
+              {mutation.isPending ? "Saving…" : "Save payroll settings"}
             </Button>
             {saved && !mutation.isPending && !dirty && (
-              <span className="text-sm text-rally-muted">Saved.</span>
+              <span className="text-sm text-rally-muted" data-testid="payroll-settings-saved">
+                Saved.
+              </span>
             )}
             {mutation.isError && (
               <span className="text-sm text-red-700" role="alert">

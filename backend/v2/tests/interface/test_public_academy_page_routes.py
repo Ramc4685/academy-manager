@@ -80,6 +80,9 @@ def test_published_page_lists_only_published_listable_classes() -> None:
     assert saturday["age_band"] == {"min_age": 6, "max_age": 9}
     assert saturday["days_of_week"] == ["Sat"]
     assert (saturday["start_time"], saturday["end_time"]) == ("09:00", "10:00")
+    # S46: the class's own what-to-bring line is public; a class without one is null.
+    assert saturday["what_to_bring"] == "Racket, non-marking shoes, water"
+    assert full["what_to_bring"] is None
     # Full class (active + held fill both seats; withdrawn does not) is
     # listed as waitlist, not dropped; coach shown by first name only.
     assert full["seats"] == {"band": "waitlist", "seats_left": None}
@@ -298,3 +301,82 @@ def test_no_academy_default_venue_leaves_a_bare_class_without_one() -> None:
     venues = _venues(_get(build_app(_db())).json())
     assert venues["Class jr-sat"] == "1 River Road, Riverside"
     assert venues["Class jr-full"] is None
+
+
+# --- S55: publishing a class from its class page --------------------------------
+
+
+def _admin_client(db: Any) -> TestClient:
+    """The admin per-class public-fields route on the same database, tenant
+    from a middleware (never the body), as Settings and the class page call it."""
+    from fastapi import FastAPI, Request
+
+    from backend.v2.composition.public_page_admin import compose_admin_public_page
+    from backend.v2.interfaces.admin.router import router as admin_router
+    from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
+    from backend.v2.shared.http import register_exception_handlers
+    from backend.v2.shared.tenancy.context import _current as _tenant_var
+    from backend.v2.shared.tenancy.context import set_academy_id
+
+    app = FastAPI()
+    register_exception_handlers(app)
+
+    @app.middleware("http")
+    async def _tenant(request: Request, call_next: Any) -> Any:
+        token = set_academy_id(ACADEMY)
+        try:
+            return await call_next(request)
+        finally:
+            _tenant_var.reset(token)  # type: ignore[arg-type]
+
+    app.include_router(admin_router, prefix="/api/v2")
+    app.dependency_overrides[get_auth_claims] = lambda: AuthClaims(
+        user_id="u-admin",
+        email="admin@example.test",
+        academy_id=ACADEMY,
+        roles=("admin",),  # type: ignore[arg-type]
+    )
+    app.state.admin_public_page = compose_admin_public_page(db)
+    return TestClient(app)
+
+
+def _listed_titles(body: dict[str, Any]) -> set[str]:
+    classes = [c for p in body["programs"] for c in p["classes"]] + body["ungrouped_classes"]
+    return {c["title"] for c in classes}
+
+
+def test_a_class_switched_on_from_its_page_is_public_and_switched_off_is_gone() -> None:
+    db = _db()
+    public = build_app(db)
+    admin = _admin_client(db)
+    new_class = "sess-new-from-class-page"
+    asyncio.run(
+        db["sessions"].insert_one(
+            {
+                "academy_id": ACADEMY,
+                "session_id": new_class,
+                "title": "Brand New Class",
+                "capacity": 8,
+                "status": "scheduled",
+                "days_of_week": ["Sun"],
+                "start_time": "10:00",
+                "end_time": "11:00",
+            }
+        )
+    )
+    # Created with no switch sent: private, the default the backend keeps.
+    assert "Brand New Class" not in _get(public).text
+
+    on = admin.patch(f"/api/v2/admin/sessions/{new_class}/public-fields", json={"published": True})
+    assert on.status_code == 200, on.text
+    assert on.json()["published"] is True
+    assert "Brand New Class" in _listed_titles(_get(public).json())
+
+    off = admin.patch(
+        f"/api/v2/admin/sessions/{new_class}/public-fields", json={"published": False}
+    )
+    assert off.status_code == 200, off.text
+    response = _get(public)
+    assert "Brand New Class" not in response.text
+    # The other private classes stay out throughout.
+    assert SECRETS["private_title"] not in response.text

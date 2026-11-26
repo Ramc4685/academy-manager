@@ -6,6 +6,7 @@ import {
   parseSeatsThreshold,
   privacyUrlError,
   programOptions,
+  publicPageGaps,
   publicPagePayload,
   toPublicPageForm,
   viewPageHref,
@@ -218,5 +219,63 @@ describe("programOptions", () => {
 
   it("does not duplicate an active current program", () => {
     expect(programOptions(programs, "p-juniors")).toHaveLength(1);
+  });
+});
+
+describe("publicPageGaps (S55)", () => {
+  const row = (over: Partial<AdminClassPublicProfileView>): AdminClassPublicProfileView => ({
+    session_id: "s",
+    title: "Juniors",
+    status: "scheduled",
+    program_id: null,
+    published: true,
+    price_period: null,
+    coach_display: "full_name",
+    public_description: null,
+    level: "Beginner",
+    age_band: { min_age: 6, max_age: 9 },
+    ...over,
+  });
+  const program: AdminProgramView = {
+    program_id: "p-1",
+    name: "Juniors",
+    public_description: null,
+    level: "Beginner",
+    age_band: { min_age: 6, max_age: 9 },
+    sort_order: 0,
+    archived: false,
+    created_at: "2026-09-23T12:00:00Z",
+    updated_at: "2026-09-23T12:00:00Z",
+  };
+  const complete = { address: "1 Court Rd", refundPolicyUrl: "https://x.example/refunds" };
+
+  it("is empty when a family can find everything", () => {
+    expect(publicPageGaps({ classes: [row({})], programs: [], ...complete })).toEqual([]);
+  });
+
+  it("counts a class as labelled through its program", () => {
+    const bare = row({ level: null, age_band: null, program_id: "p-1" });
+    expect(publicPageGaps({ classes: [bare], programs: [program], ...complete })).toEqual([]);
+  });
+
+  it("names every gap", () => {
+    const gaps = publicPageGaps({
+      classes: [row({ published: false }), row({ session_id: "s2", level: null })],
+      programs: [],
+      address: " ",
+      refundPolicyUrl: null,
+    });
+    expect(gaps).toEqual([
+      "1 shown class has no level or no ages, so parents cannot tell if it fits.",
+      "No address: add it in Academy profile.",
+      "No refund policy link: add it in Academy profile.",
+    ]);
+  });
+
+  it("says when nothing is shown, ended classes included", () => {
+    const ended = row({ status: "completed" });
+    expect(publicPageGaps({ classes: [ended], programs: [], ...complete })[0]).toMatch(
+      /^No class is shown yet/
+    );
   });
 });

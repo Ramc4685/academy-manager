@@ -1,9 +1,9 @@
 /**
  * v2 coach/parent messages inbox client (UIM13).
  *
- * Thin read + mark-read surface over the shared comms store. Admin already
- * has its own send UI (`lib/api/admin.ts`); this module is the read-only
- * counterpart for the coach and parent personas.
+ * Thin read + mark-read surface over the shared comms store, plus the one
+ * parent write: a message to the academy inbox (D-18). Admin has its own send
+ * UI (`lib/api/admin.ts`).
  */
 import { apiFetch } from "../client";
 
@@ -25,6 +25,8 @@ export interface InboxMessage {
   scope_label?: string | null;
   urgency?: "routine" | "urgent";
   author_display_name?: string | null;
+  /** True on what the parent sent to the academy (D-18); set by the server. */
+  mine?: boolean;
 }
 
 export interface InboxMessagesResponse {
@@ -55,4 +57,12 @@ export function markParentMessageRead(messageId: string): Promise<MarkMessageRea
     `/parent/messages/${encodeURIComponent(messageId)}/read`,
     { method: "POST" },
   );
+}
+
+/** D-18: write to the academy. The thread is always the caller's own. */
+export function sendParentMessage(body: string): Promise<InboxMessage> {
+  return apiFetch<InboxMessage>("/parent/messages", {
+    method: "POST",
+    body: JSON.stringify({ body }),
+  });
 }

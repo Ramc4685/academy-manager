@@ -77,6 +77,17 @@ export function toPaymentErrorMessage(err: unknown, fallback: string): string {
 }
 
 /**
+ * Registration checkout start: Onboarding.* refusals are plain sentences the
+ * backend wrote for the parent ("Lucia is already registered for this
+ * class..."), so they pass through; everything else is masked as above.
+ */
+export function toCheckoutStartMessage(err: unknown, fallback: string): string {
+  const message = errorMessage(err);
+  if (errorCode(err)?.startsWith("Onboarding.") && message) return message;
+  return toPaymentErrorMessage(err, fallback);
+}
+
+/**
  * Portal-open failures only: the "no Stripe customer yet" family of errors
  * means the parent must start autopay before a billing portal exists. That
  * hint is CORRECT for the portal button but circular for the autopay/pay

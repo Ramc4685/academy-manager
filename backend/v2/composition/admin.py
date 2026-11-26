@@ -480,13 +480,8 @@ from backend.v2.contexts.finance.application.use_cases.manage_payout_period impo
 from backend.v2.contexts.finance.infrastructure.mongo_application_funnel_reader import (
     MongoApplicationFunnelReader,
 )
-from backend.v2.contexts.finance.infrastructure.mongo_attendance_snapshot_reader import (
-    MongoAttendanceSnapshotReader,
-)
-from backend.v2.contexts.finance.infrastructure.mongo_coach_payout_snapshot_reader import (
-    MongoCoachPayoutSnapshotReader,
-)
 from backend.v2.contexts.finance.infrastructure.mongo_compliance_reader import MongoComplianceReader
+from backend.v2.contexts.finance.infrastructure.mongo_held_class_reader import MongoHeldClassReader
 from backend.v2.contexts.finance.infrastructure.mongo_payout_audit_log import (
     MongoPayoutAuditLogRepository,
 )
@@ -534,7 +529,6 @@ from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
     DisconnectStripeUseCase,
     StartStripeConnectUseCase,
 )
-from backend.v2.contexts.identity.domain.audit_actors import audit_actor_fields
 from backend.v2.contexts.identity.domain.errors import (
     StudentAlreadyLinked,
     StudentNotFound,
@@ -551,7 +545,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_media_repo import
     MongoAcademyMediaRepository,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
-from backend.v2.contexts.identity.infrastructure.mongo_audit_actors import MongoAuditActorDirectory
+from backend.v2.contexts.identity.infrastructure.mongo_audit_trail import MongoAuditTrail
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
@@ -808,8 +802,14 @@ def compose_admin(
     )
 
     session_tz = request_scoped_academy_timezone(db, request_academy_id)
+    audit_trail = MongoAuditTrail(db)  # S40: best-effort "who did what" rows
+    staff_check = compose_assistant_eligibility_check(db, users_r, request_academy_id)
     create_session = CreateSession(
-        sessions=sessions_w, academy_id=request_academy_id, get_academy_timezone=session_tz
+        sessions=sessions_w,
+        academy_id=request_academy_id,
+        get_academy_timezone=session_tz,
+        audit=audit_trail,
+        staff_eligibility=staff_check,
     )
     edit_session = EditSession(
         sessions=sessions_w,
@@ -817,7 +817,7 @@ def compose_admin(
         # #783: the capacity guard counts the roster, not the seat counter.
         enrollments=enrollments_w,
         # #785: the PATCH route runs SetSessionAssistants' own vetting too.
-        assistant_eligibility=compose_assistant_eligibility_check(db, users_r, request_academy_id),
+        assistant_eligibility=staff_check,
     )
     # #613 welcome email + #612 roster alerts (composition/roster_notifications.py).
     notifiers = compose_enrollment_notifiers(db, settings, users=users_r)
@@ -1070,6 +1070,7 @@ def compose_admin(
     generate_monthly_payments = GenerateMonthlyPayments(
         payments=payments_repo,
         notify_minted=_notify_minted_invoices,
+        audit=audit_trail,
     )
     mark_payment_paid = MarkPaymentPaid(payments=payments_repo)
     apply_payment_discount = ApplyPaymentDiscount(payments=payments_repo)
@@ -1878,7 +1879,7 @@ def compose_admin(
     list_admin_waivers = ListAdminWaivers(waivers_repo, copies=MongoParentWaiverRepository(db))
     waiver_templates_repo = MongoWaiverTemplateRepository(db)
     manage_admin_waiver_templates = ManageAdminWaiverTemplates(
-        waiver_templates_repo, programs=MongoWaiverProgramLookup(db)
+        waiver_templates_repo, programs=MongoWaiverProgramLookup(db), audit=audit_trail
     )
     admin_registration_review = AdminRegistrationReview(
         apps=MongoApplicationRepository(db),
@@ -3737,38 +3738,6 @@ def compose_admin(
             )
         )
 
-    async def list_audit_logs(actor_type: str | None = None):
-        from backend.v2.shared.tenancy import current_academy_id
-
-        request_academy_id = current_academy_id()
-        cursor = (
-            db["audit_logs"]
-            .find({"academy_id": request_academy_id})
-            .sort([("created_at", -1)])
-            .limit(200)
-        )
-        rows: list[dict[str, Any]] = []
-        async for doc in cursor:
-            rows.append(
-                {
-                    "audit_id": str(doc.get("audit_id") or doc.get("_id")),
-                    "actor_id": doc.get("actor_id") or doc.get("user_id"),
-                    "action": str(doc.get("action") or doc.get("event") or "unknown"),
-                    "entity_type": doc.get("entity_type") or doc.get("resource_type"),
-                    "entity_id": doc.get("entity_id") or doc.get("resource_id"),
-                    "created_at": doc.get("created_at") or datetime.now(UTC),
-                }
-            )
-
-        actors = await MongoAuditActorDirectory(db).resolve(
-            {str(row["actor_id"]) for row in rows if row["actor_id"]},
-            academy_id=request_academy_id,
-        )
-        wanted = (actor_type or "").strip().lower()
-        for row in rows:
-            row.update(audit_actor_fields(row["actor_id"], actors))
-        return [row for row in rows if not wanted or row["actor_type"] == wanted]
-
     async def _parent_payments_link(request_academy_id: str) -> tuple[str | None, str]:
         """Resolve one academy's parent-payments URL and display name.
 
@@ -4332,7 +4301,6 @@ def compose_admin(
         list_attendance_review=attendance_corrections.review,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
-        list_audit_logs=list_audit_logs,
         list_dues_followup=list_dues_followup,
         list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,
@@ -4342,7 +4310,9 @@ def compose_admin(
         get_refunds_report=get_refunds_report,
         get_revenue_by_category_report=get_revenue_by_category_report,
         get_deposit_slip_report=get_deposit_slip_report,
-        get_session_economics=make_session_economics_report(db),
+        get_session_economics=make_session_economics_report(
+            db, staff_names=lambda rows: attach_session_staff_names(db, rows)
+        ),
         get_projected_income=make_projected_income_report(db),
         list_enrollment_events=make_list_enrollment_events(db),
         comms=comms,
@@ -4415,7 +4385,7 @@ def compose_admin(
         from backend.v2.shared.tenancy import current_academy_id
 
         return await GetAttendanceTrends(
-            snapshot_repo=MongoAttendanceSnapshotReader(db),
+            classes=MongoHeldClassReader(db),
             academy_id=current_academy_id(),
         ).execute(periods)
 
@@ -4423,7 +4393,7 @@ def compose_admin(
         from backend.v2.shared.tenancy import current_academy_id
 
         return await GetCoachUtilization(
-            snapshot_repo=MongoCoachPayoutSnapshotReader(db),
+            classes=MongoHeldClassReader(db),
             compliance_reader=MongoComplianceReader(db),
             academy_id=current_academy_id(),
         ).execute(periods)

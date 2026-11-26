@@ -6,7 +6,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleHelp } from "lucide-react";
 
 import {
-  getCoachSessionStudentsProgress,
   getStudentPassport,
   recommendLevelUp,
   recordTestAttempt,
@@ -18,6 +17,9 @@ import { SkillNotesPanel } from "@/components/coach/skill-notes-panel";
 import { recommendErrorMessage } from "@/components/admin/admissions/level-up-review";
 import { SKILL_STATUS_LABELS, SkillStatusChip } from "@/components/skills/SkillStatusChip";
 import { RetryButton } from "@/components/coach/RetryButton";
+import { passportLevelLine } from "@/lib/coach/passport";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
+import type { ApiError } from "@/lib/api/client";
 
 // Statuses a coach may set directly. PASSED is earned only through "Record
 // test" (the backend's CoachSettableStatus rejects it — offering it here
@@ -37,23 +39,14 @@ export default function CoachStudentPassportPage() {
   const { studentId } = useParams<{ studentId: string }>();
   const searchParams = useSearchParams();
   const programId = searchParams.get("program_id") ?? "";
-  const fromSession = searchParams.get("from_session") ?? "";
-  const studentNameParam = searchParams.get("student_name") ?? "";
   const queryClient = useQueryClient();
 
   const passportKey = ["coach", "passport", studentId, programId || "default"];
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: passportKey,
     queryFn: () => getStudentPassport(studentId, programId || undefined),
     enabled: Boolean(studentId),
-  });
-
-  const { data: sessionRows } = useQuery({
-    queryKey: ["coach", "session-progress", fromSession, programId || "default"],
-    queryFn: () => getCoachSessionStudentsProgress(fromSession, programId || undefined),
-    enabled: Boolean(fromSession) && !studentNameParam,
-    staleTime: 2 * 60 * 1000,
   });
 
   const levelUpMutation = useMutation({
@@ -61,28 +54,44 @@ export default function CoachStudentPassportPage() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: passportKey }),
   });
 
-  const skills = data ?? [];
-  const requiredSkills = skills.filter((s) => s.is_required);
-  const allRequiredPassed = requiredSkills.length > 0 && requiredSkills.every((s) => s.status === "PASSED");
-  const resolvedStudentName =
-    studentNameParam ||
-    sessionRows?.find((row) => row.student_id === studentId)?.student_name ||
-    `Student ${studentId}`;
+  const skills = data?.passport ?? [];
+  const placed = data ? data.placed !== false : true;
+  const remaining = data?.required_remaining ?? 0;
+  const allRequiredPassed =
+    placed && remaining === 0 && skills.some((s) => s.is_required);
 
   return (
     <section data-testid="coach-student-passport" className="space-y-4">
       <div className="flex flex-col gap-3 min-[420px]:flex-row min-[420px]:items-start min-[420px]:justify-between">
         <div className="min-w-0">
           <h1 className="text-xl font-semibold">Skill Passport</h1>
-          <p className="text-sm text-neutral-500">{resolvedStudentName}</p>
+          {data?.student_name && (
+            <p data-testid="passport-student-name" className="text-sm text-neutral-600">
+              {data.student_name}
+            </p>
+          )}
+          {data && placed && (
+            <p data-testid="passport-level" className="text-sm text-neutral-600">
+              {passportLevelLine(data)}
+            </p>
+          )}
         </div>
-        <button
-          disabled={!allRequiredPassed || levelUpMutation.isPending}
-          onClick={() => levelUpMutation.mutate()}
-          className="min-h-touch rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {levelUpMutation.isPending ? "Recommending..." : "Recommend Level Up"}
-        </button>
+        {placed && (
+          <div className="flex flex-col items-start gap-1 min-[420px]:items-end">
+            <button
+              disabled={!allRequiredPassed || levelUpMutation.isPending}
+              onClick={() => levelUpMutation.mutate()}
+              className="min-h-touch rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {levelUpMutation.isPending ? "Recommending..." : "Recommend Level Up"}
+            </button>
+            {data && remaining > 0 && (
+              <p data-testid="passport-required-remaining" className="text-xs text-neutral-600">
+                {remaining} required skill{remaining === 1 ? "" : "s"} to go
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {levelUpMutation.isSuccess && (
@@ -96,7 +105,13 @@ export default function CoachStudentPassportPage() {
         </p>
       )}
 
-      {isError && (
+      {/* S13 persona follow-up: a 404 (unknown id, or another coach's child)
+          cannot succeed on retry, so it says not found and offers none. */}
+      {isError && (error as ApiError | null)?.status === 404 ? (
+        <p role="alert" data-testid="passport-not-found" className="rounded-md bg-neutral-50 p-3 text-sm text-neutral-700">
+          We couldn&apos;t find this child among the classes you teach.
+        </p>
+      ) : isError && (
         <div role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           <p>Couldn&apos;t load skill passport. Try again.</p>
           <RetryButton onClick={() => void refetch()} className="mt-2" />
@@ -105,8 +120,13 @@ export default function CoachStudentPassportPage() {
 
       {isLoading ? (
         <SkeletonList />
-      ) : isError ? null : skills.length === 0 ? (
-        <p className="text-sm text-neutral-500">No skills found for this student/program.</p>
+      ) : isError ? null : !placed ? (
+        <p data-testid="passport-not-placed" className="rounded-md bg-neutral-50 p-3 text-sm text-neutral-700">
+          Not placed in a level yet. Start them on the first level from the class&apos;s Progress tab; once{" "}
+          {data?.student_name || "this child"} is placed, their skills show here.
+        </p>
+      ) : skills.length === 0 ? (
+        <p className="text-sm text-neutral-600">This level has no skills yet.</p>
       ) : (
         <ul className="space-y-3">
           {skills.map((entry) => (
@@ -195,7 +215,7 @@ function SkillCard({
           {entry.test_attempt_count} test attempt{entry.test_attempt_count !== 1 ? "s" : ""}
           {entry.last_tested_at && (
             <> · last{" "}
-              {new Date(entry.last_tested_at).toLocaleDateString(undefined, {
+              {formatInAcademyZone(entry.last_tested_at, undefined, {
                 month: "short",
                 day: "numeric",
               })}

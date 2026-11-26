@@ -79,11 +79,11 @@ test.describe("Coach Today empty state", () => {
     await page.goto("/coach/today");
     await expect(page.getByTestId("empty-state")).toBeVisible();
 
+    // S68: the next class is the first My week card, with an "Open class" link.
     const next = page.getByTestId("next-class");
-    await expect(next).toContainText("Your next class");
     await expect(next).toContainText("Junior C");
     await expect(next).toContainText("Court 3");
-    await expect(next).toHaveAttribute(
+    await expect(page.getByTestId("next-class-open")).toHaveAttribute(
       "href",
       /\/coach\/sessions\/occ-next\?date=\d{4}-\d{2}-\d{2}$/,
     );
@@ -306,7 +306,9 @@ test.describe("Recap and skills feedback", () => {
     await expect(page.getByTestId("recap-save-state")).toHaveText("No recap saved yet.");
     await page.getByTestId("recap-skill-select").selectOption("sk-serve");
     await page.getByRole("button", { name: "Add", exact: true }).click();
-    await expect(page.getByTestId("recap-save-state")).toHaveText("Unsaved changes.");
+    await expect(page.getByTestId("recap-save-state")).toHaveText(
+      "Unsaved. Press Save recap to keep these changes.",
+    );
     await page.getByTestId("recap-save").click();
     await expect(page.getByTestId("recap-save-state")).toHaveText("Recap saved.");
     expect(saves).toHaveLength(1);

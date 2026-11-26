@@ -7,7 +7,7 @@ import { clearBffIdentityCookie } from "@/lib/api/auth-bridge-cookie";
 import {
   getCurrentUserWithToken,
   hasPlatformAccess,
-  homeForRoles,
+  postLoginDestination,
 } from "@/lib/api/me";
 import {
   clearPersonaHintCookie,
@@ -15,7 +15,6 @@ import {
 } from "@/lib/auth/persona-hint-cookie";
 import { loginPathForError, shouldSelfRegister } from "@/lib/auth/login-error";
 import { registerPublicParent } from "@/lib/api/registration";
-import { sanitizeReturnPath } from "@/lib/auth/persona-route-guard";
 import { isAuthRejection, withTransientRetry } from "@/lib/auth/me-failure";
 
 export default function PostLoginPage() {
@@ -49,8 +48,7 @@ export default function PostLoginPage() {
             // for on /login?returnTo=... and the login page handed it on
             // (#451); honour it when it is a safe in-app path, otherwise fall
             // back to this persona's home.
-            const returnTo = sanitizeReturnPath(readReturnToParam());
-            replaceLocation(router, returnTo ?? homeForRoles(currentUser.roles));
+            replaceLocation(router, postLoginDestination(readReturnToParam(), currentUser.roles));
           })
           .catch(async (err: unknown) => {
             if (shouldSelfRegister(err, user)) {

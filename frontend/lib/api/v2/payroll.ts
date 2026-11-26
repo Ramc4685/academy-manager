@@ -13,6 +13,8 @@ export interface AdminMonthlyPayrollRow {
   unresolved_unpaid_count: number;
   warning_count: number;
   warning_status: "clear" | "unresolved";
+  /** False for an active coach who taught nothing this month: listed muted, never generated. */
+  generatable?: boolean;
 }
 
 export interface AdminMonthlyPayrollView {

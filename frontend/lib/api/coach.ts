@@ -35,9 +35,19 @@ export type AttendanceStatus = "present" | "absent" | "late";
 /** People CRM L3a: what happened at an approved trial. */
 export type TrialOutcome = "came" | "no_show";
 
+/** A class's age span; `max_age` null means "and up". */
+export interface CoachAgeBand {
+  min_age?: number | null;
+  max_age?: number | null;
+}
+
 export interface CoachRosterEntry {
   student_id: string;
   full_name: string;
+  /** Whole years (the date of birth never reaches the coach). */
+  age_years?: number | null;
+  /** The child's active level; null when not placed. */
+  level_name?: string | null;
   enrollment_status: EnrollmentStatus;
   /** Issue #675: parent end-of-period cancel pending; the student still attends until then. */
   pending_cancellation_at?: string | null;
@@ -107,6 +117,11 @@ export interface CoachSession {
   /** Drop-off check-in window for this date; null when the academy has it off. */
   dropoff_window_opens_at?: string | null;
   dropoff_window_closes_at?: string | null;
+  age_band?: CoachAgeBand | null;
+  /** Where to go: set per class by the owner. Any may be unset. */
+  venue_address?: string | null;
+  parking_notes?: string | null;
+  arrival_minutes_before?: number | null;
 }
 
 /** The coach sees the parent's name and the player's age only. */
@@ -284,6 +299,9 @@ export interface SkillNote {
   body: string;
   created_at: string;
   visibility: NoteVisibility;
+  /** Set when shared with the parent; a note shared before parents could
+   * see skill notes has none and stays off their Progress page. */
+  shared_at?: string | null;
 }
 
 export interface CoachScheduleEntry {
@@ -296,6 +314,11 @@ export interface CoachScheduleEntry {
   end_at: string;
   coach_id?: string | null;
   coach_name?: string | null;
+  /** Children on the class's roster now. */
+  enrolled_count?: number | null;
+  age_band?: CoachAgeBand | null;
+  /** The class's level text, e.g. "Beginner"; null when the owner set none. */
+  level?: string | null;
 }
 
 export interface CoachScheduleResponse {
@@ -815,6 +838,11 @@ export interface CoachAcademy {
   name: string;
   logo_url: string | null;
   brand_color: string | null;
+  /** Who a new coach calls with a question. Either may be unset. */
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  /** The academy's IANA zone: every coach-facing time renders in it (S05). */
+  timezone?: string | null;
 }
 
 export function getCoachAcademy(): Promise<CoachAcademy> {
@@ -890,4 +918,51 @@ export function listCoachPendingNarratives(date?: string): Promise<{ narratives:
   return apiFetch<{ narratives: CoachNarrative[] }>(`/coach/narratives/pending${q}`, {
     method: "GET",
   });
+}
+
+/** S59: the signed-in coach's classes taught and released payslip for one month. */
+export type CoachPay = components["schemas"]["CoachPayResponse"];
+
+/** Never persisted or cached by the service worker; `month` is "YYYY-MM", omitted = this month. */
+export function getCoachPay(month?: string): Promise<CoachPay> {
+  const query = month ? `?month=${encodeURIComponent(month)}` : "";
+  return apiFetch<CoachPay>(`/coach/profile/pay${query}`, { method: "GET" });
+}
+
+/** S68: the academy's levels, skills and lesson plans ("What we teach"). Not private. */
+export type CoachPathway = components["schemas"]["CoachPathwayResponse"];
+
+export function getCoachPathway(): Promise<CoachPathway> {
+  return apiFetch<CoachPathway>("/coach/pathway", { method: "GET" });
+}
+
+export type CoachRosterHealth = components["schemas"]["CoachRosterHealthResponse"];
+export type CoachChildHealth = components["schemas"]["CoachChildHealthView"];
+
+/** Health notes (S49, D-14): never cached by the browser, the SW or the persister. */
+export function getCoachRosterHealth(occurrenceId: string): Promise<CoachRosterHealth> {
+  return apiFetch<CoachRosterHealth>(
+    `/coach/roster-health?occurrence_id=${encodeURIComponent(occurrenceId)}`,
+    { method: "GET", cache: "no-store" },
+  );
+}
+
+/** S67: when this coach asked the academy for cover on a class date, if they did. */
+export interface CoachCoverRequest {
+  requested_at: string | null;
+}
+
+/** S67: "I can't make it" — one message to the academy inbox; nothing is cancelled. */
+export function requestCoachCover(occurrenceId: string, reason?: string): Promise<CoachCoverRequest> {
+  return apiFetch<CoachCoverRequest>("/coach/cover-requests", {
+    method: "POST",
+    body: JSON.stringify({ occurrence_id: occurrenceId, reason: reason?.trim() || null }),
+  });
+}
+
+export function getCoachCoverRequest(occurrenceId: string): Promise<CoachCoverRequest> {
+  return apiFetch<CoachCoverRequest>(
+    `/coach/cover-requests?occurrence_id=${encodeURIComponent(occurrenceId)}`,
+    { method: "GET", cache: "no-store" },
+  );
 }

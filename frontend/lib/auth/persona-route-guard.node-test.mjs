@@ -39,7 +39,7 @@ test("keeps the query string in the return path", () => {
 test("sends a wrong-persona visitor to their own home instead of /login", () => {
   assert.equal(
     decide({ pathname: "/admin", personaHint: "parent", hasIdentity: true }),
-    "/parent/payments?access_denied=admin",
+    "/parent/dashboard?access_denied=admin",
   );
 });
 
@@ -104,7 +104,7 @@ test("guards only the four persona shells", () => {
 test("each guarded persona redirects a mismatched hint to that hint's home", () => {
   assert.equal(
     decide({ pathname: "/coach/today", personaHint: "parent", hasIdentity: true }),
-    "/parent/payments?access_denied=coach",
+    "/parent/dashboard?access_denied=coach",
   );
   assert.equal(
     decide({ pathname: "/parent/payments", personaHint: "admin,coach", hasIdentity: true }),

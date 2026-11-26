@@ -41,6 +41,8 @@ export interface OnboardingApplication {
   waiver_accepted: boolean;
   /** True when a waiver is assigned to a program: the stepper asks for the class first. */
   waiver_class_first?: boolean;
+  /** S47: false when there is no waiver to sign yet; the stepper skips the step. */
+  waiver_to_sign?: boolean;
   expires_at: string;
 }
 
@@ -56,6 +58,10 @@ export interface ParentPayment {
   stripe_payment_intent_id?: string | null;
   invoice_id?: string | null;
   invoice_period?: string | null;
+  /** S57: children the payment covered; empty when unallocated. */
+  student_names?: string[];
+  /** S57: "Paid in cash" etc., written by the backend; null while not settled. */
+  method_label?: string | null;
 }
 
 export interface ParentCredit {
@@ -168,6 +174,51 @@ export interface ParentInvoice {
   void_reason?: string | null;
   /** e.g. "DEMO-202611-0001"; null for invoices made before numbering. */
   invoice_number?: string | null;
+  /** S57: who and what the invoice is for, and how it was last paid. */
+  student_name?: string | null;
+  class_name?: string | null;
+  paid_on?: string | null;
+  method_label?: string | null;
+  has_receipt?: boolean;
+}
+
+/** S57: GET /parent/money-summary. Every figure is computed by the backend. */
+export interface ParentMoneyLine {
+  kind: "child" | "discount" | "paid";
+  student_id?: string | null;
+  label: string;
+  detail?: string | null;
+  amount_cents: number;
+}
+
+export interface ParentMoneySummary {
+  currency: string;
+  amount_due_cents: number;
+  due_date: string | null;
+  overdue: boolean;
+  days_overdue: number;
+  multiple_due_dates: boolean;
+  can_pay_online: boolean;
+  lines: ParentMoneyLine[];
+  periods: { period: string; label: string; billed_cents: number; paid_cents: number; due_cents: number }[];
+  last_payment: { amount_cents: number; paid_on: string | null; method_label: string } | null;
+}
+
+/** S58: GET /parent/invoices/{id}/receipt — only for the family's own paid invoice. */
+export interface ParentReceipt {
+  academy: { name: string; address?: string | null; phone?: string | null; email?: string | null; logo_url?: string | null };
+  invoice_id: string;
+  invoice_number?: string | null;
+  period_label: string;
+  payer_name?: string | null;
+  student_name?: string | null;
+  lines: { label: string; amount_cents: number }[];
+  total_cents: number;
+  currency: string;
+  payments: { paid_on: string | null; method: string; amount_cents: number }[];
+  balance_cents: number;
+  refunded_cents?: number;
+  paid_in_full_on: string | null;
 }
 
 export interface ParentInvoiceLine {
@@ -292,6 +343,8 @@ export interface ParentScheduleEntry {
   cancellation_reason?: string | null;
   /** The child already has an absence notice for this date. Absent on older responses. */
   absence_reported?: boolean;
+  /** S43: this parent filed the notice, so Undo is offered until class starts. */
+  absence_undoable?: boolean;
   /** Drop-off check-in for this date; null when the academy has the feature off. */
   checkin?: DropoffCheckinView | null;
   /** Server-computed: the "I've arrived" button may be shown right now. */
@@ -378,8 +431,31 @@ export function getRegistrationWaiver(sessionId?: string | null): Promise<Regist
   return apiFetch(`/parent/onboarding/waiver${query}`, { method: "GET" });
 }
 
-export function startOnboarding(): Promise<OnboardingApplication> {
-  return apiFetch("/parent/onboarding/start", { method: "POST", body: "{}" });
+/** Resumes `applicationId` ("Finish registration") or the latest application. */
+export function startOnboarding(applicationId?: string | null): Promise<OnboardingApplication> {
+  return apiFetch("/parent/onboarding/start", {
+    method: "POST",
+    body: JSON.stringify(applicationId ? { application_id: applicationId } : {}),
+  });
+}
+
+/**
+ * S02: a registration that is not finished or not yet confirmed.
+ * `finish` goes back into the wizard; `waiting` is the academy's turn.
+ */
+export interface ParentRegistration {
+  application_id: string;
+  child_first_name: string;
+  session_id: string | null;
+  session_title: string | null;
+  schedule_label: string | null;
+  status: string;
+  state: "finish" | "paying" | "waiting" | "waitlisted" | "declined";
+  submitted_at: string;
+}
+
+export function listParentRegistrations(): Promise<{ registrations: ParentRegistration[] }> {
+  return apiFetch("/parent/registrations", { method: "GET" });
 }
 
 export function patchOnboarding(
@@ -488,6 +564,14 @@ export function listParentInvoices(): Promise<{ invoices: ParentInvoice[] }> {
   return apiFetch("/parent/invoices", { method: "GET" });
 }
 
+export function getParentMoneySummary(): Promise<ParentMoneySummary> {
+  return apiFetch("/parent/money-summary", { method: "GET" });
+}
+
+export function getParentReceipt(invoiceId: string): Promise<ParentReceipt> {
+  return apiFetch(`/parent/invoices/${encodeURIComponent(invoiceId)}/receipt`, { method: "GET" });
+}
+
 export function getParentInvoice(invoiceId: string): Promise<ParentInvoiceDetail> {
   return apiFetch(`/parent/invoices/${encodeURIComponent(invoiceId)}`, { method: "GET" });
 }
@@ -552,6 +636,22 @@ export function listParentChildProgress(
   studentId: string,
 ): Promise<{ notes: ParentProgressNote[] }> {
   return apiFetch(`/parent/progress?student_id=${encodeURIComponent(studentId)}&limit=200`, {
+    method: "GET",
+  });
+}
+
+export interface ParentSkillNoteView {
+  note_id: string;
+  skill_name: string;
+  body: string;
+  shared_at: string;
+}
+
+/** Skill notes a coach shared with this family (D-15). */
+export function listParentChildSkillNotes(
+  studentId: string,
+): Promise<{ notes: ParentSkillNoteView[] }> {
+  return apiFetch(`/parent/students/${encodeURIComponent(studentId)}/coach-notes`, {
     method: "GET",
   });
 }
@@ -805,6 +905,17 @@ export function submitAbsenceNotice(payload: {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+/** S43: undo a reported absence; the server refuses once the class has started. */
+export function withdrawAbsenceNotice(payload: {
+  student_id: string;
+  occurrence_id: string;
+}): Promise<void> {
+  return apiFetch(
+    `/parent/absences/${encodeURIComponent(payload.student_id)}/${encodeURIComponent(payload.occurrence_id)}`,
+    { method: "DELETE" },
+  );
 }
 
 export interface MakeupRequestView {

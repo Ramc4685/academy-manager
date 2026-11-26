@@ -38,11 +38,19 @@ import type { ApiError } from "@/lib/api/client";
 
 import { useIsOwner } from "@/components/admin/owner-context";
 import { StudentSearchPicker } from "@/components/admin/student-search-picker";
+import { UnpricedEnrollAcknowledgement } from "@/components/admin/sessions/unpriced-class";
 import { DEPARTURE_ACTION_DESCRIPTION } from "@/components/admin/enrollment/departure-actions";
+import {
+  TransferConsequences,
+  sessionTransferSide,
+  transferNeedsAcknowledgement,
+  type TransferSide,
+} from "@/components/admin/enrollment/transfer-consequences";
 import { Button } from "@/components/ds/button";
 import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/components/ds/dialog-chrome";
 
 import { formatCents, formatShortDateTime, inputClass, todayDateInput } from "./format";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 export function AddToRosterDialog({
   open,
@@ -50,11 +58,14 @@ export function AddToRosterDialog({
   sessionId,
   onAdded,
   prefill,
+  unpriced = false,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   sessionId: string;
   onAdded: () => void;
+  /** S10: the class has no fee yet; enrolling waits for an acknowledgement. */
+  unpriced?: boolean;
   /**
    * Issue #827: seed the form with a student the admin already picked — the
    * Re-enroll action on a departed roster row. The dialog is otherwise
@@ -82,6 +93,10 @@ export function AddToRosterDialog({
     setForm(prefill ?? { student_id: "", parent_id: "", full_name: "" });
   }, [open, prefill]);
   const [error, setError] = useState<string | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+  useEffect(() => {
+    if (!open) setAcknowledged(false);
+  }, [open]);
   const quoteQuery = useQuery<AdminEnrollmentQuote>({
     queryKey: ["admin", "enrollment-quote", sessionId, form.student_id],
     queryFn: () => quoteAdminEnrollment({ session_id: sessionId, student_id: form.student_id }),
@@ -109,7 +124,7 @@ export function AddToRosterDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="Add to roster"
-      description="Directly enroll a student into this session."
+      description="Directly enroll a student into this class."
       overline="Roster"
     >
       {error && <DialogError message={error} />}
@@ -139,11 +154,19 @@ export function AddToRosterDialog({
             }
           />
         </Field>
+        {unpriced && (
+          <UnpricedEnrollAcknowledgement checked={acknowledged} onChange={setAcknowledged} />
+        )}
         <DialogActions>
           <Button variant="secondary" size="sm" type="button" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button variant="primary" size="sm" type="submit" disabled={mutation.isPending}>
+          <Button
+            variant="primary"
+            size="sm"
+            type="submit"
+            disabled={mutation.isPending || (unpriced && !acknowledged)}
+          >
             {mutation.isPending ? "Enrolling…" : "Enroll"}
           </Button>
         </DialogActions>
@@ -171,12 +194,15 @@ export function TransferEnrollmentDialog({
   enrollments,
   currentSessionId,
   currentSessionTitle,
+  currentSession = null,
   onClose,
   onMoved,
 }: {
   enrollments: AdminEnrollmentView[];
   currentSessionId: string;
   currentSessionTitle: string;
+  /** S27: the class being left, for the from/to price and seats block. */
+  currentSession?: AdminSessionView | null;
   onClose: () => void;
   /** `close` is false when some rows of a bulk move were refused: the roster
    * refreshes but the dialog stays open to say which ones and why. */
@@ -188,6 +214,7 @@ export function TransferEnrollmentDialog({
   const [targetSessionId, setTargetSessionId] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(todayDateInput());
   const [reason, setReason] = useState("");
+  const [priceAck, setPriceAck] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Fetch all upcoming sessions (next 30 days) so the dropdown isn't
   // limited to today's two slots — moving a student to a different weekly
@@ -221,7 +248,15 @@ export function TransferEnrollmentDialog({
       a.title.localeCompare(b.title),
     );
   })();
+  const fromSide: TransferSide = currentSession
+    ? sessionTransferSide(currentSession)
+    : { title: currentSessionTitle, schedule: "" };
+  const targetSession = candidateSessions.find((s) => s.session_id === targetSessionId);
+  const toSide = targetSession ? sessionTransferSide(targetSession) : null;
+  const needsPriceAck = toSide != null && transferNeedsAcknowledgement(fromSide, toSide);
   const mutation = useMutation({
+    // A bulk move with refused rows keeps the dialog open to list them.
+    meta: bulk ? undefined : { success: "Student moved" },
     mutationFn: async (): Promise<string[]> => {
       const payload = {
         target_session_id: targetSessionId,
@@ -248,6 +283,7 @@ export function TransferEnrollmentDialog({
       setTargetSessionId("");
       setEffectiveDate(todayDateInput());
       setReason("");
+      setPriceAck(false);
       onMoved(true);
     },
     onError: (err: Error) => setError(err.message ?? "Failed to move enrollment."),
@@ -264,9 +300,9 @@ export function TransferEnrollmentDialog({
       title={bulk ? `Transfer ${enrollments.length} students` : "Transfer enrollment"}
       description={
         bulk
-          ? `Transfer ${enrollments.map((e) => e.full_name).join(", ")} to another session.`
+          ? `Transfer ${enrollments.map((e) => e.full_name).join(", ")} to another class.`
           : open
-            ? `Transfer ${enrollments[0].full_name} to another session.`
+            ? `Transfer ${enrollments[0].full_name} to another class.`
             : ""
       }
       overline="Transfer"
@@ -309,11 +345,14 @@ export function TransferEnrollmentDialog({
           mutation.mutate();
         }}
       >
-        <Field label="Target session" required>
+        <Field label="Target class" required>
           <RallySessionPicker
             sessions={candidateSessions}
             value={targetSessionId}
-            onChange={setTargetSessionId}
+            onChange={(id) => {
+              setTargetSessionId(id);
+              setPriceAck(false);
+            }}
             loading={sessionsQuery.isLoading}
           />
         </Field>
@@ -334,11 +373,12 @@ export function TransferEnrollmentDialog({
             placeholder="Optional"
           />
         </Field>
-        <p className="text-xs text-rally-subtle">
-          Transferring reserves a seat in the target class first, then releases this seat.
-          Billing follows the new class&apos;s price from the effective date — the current
-          period&apos;s invoice is adjusted, it is not charged again.
-        </p>
+        <TransferConsequences
+          from={fromSide}
+          to={toSide}
+          acknowledged={priceAck}
+          onAcknowledge={setPriceAck}
+        />
         <p className="text-xs text-rally-subtle">{DEPARTURE_ACTION_DESCRIPTION.transfer}</p>
         <DialogActions>
           <Button
@@ -360,7 +400,8 @@ export function TransferEnrollmentDialog({
               mutation.isPending ||
               candidateSessions.length === 0 ||
               !targetSessionId ||
-              !effectiveDate
+              !effectiveDate ||
+              (needsPriceAck && !priceAck)
             }
           >
             {mutation.isPending ? "Transferring…" : "Transfer"}
@@ -389,7 +430,7 @@ export function RallySessionPicker({
   const [open, setOpen] = useState(false);
   const selected = sessions.find((s) => s.session_id === value);
   const formatTime = (s: AdminSessionView) =>
-    new Date(s.start_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    formatInAcademyZone(s.start_at, s.timezone, { hour: "numeric", minute: "2-digit", timeZoneName: "short" });
   return (
     <div className="relative">
       <button
@@ -400,12 +441,12 @@ export function RallySessionPicker({
       >
         <span className={selected ? "text-rally-ink" : "text-rally-muted"}>
           {loading
-            ? "Loading sessions…"
+            ? "Loading classes…"
             : selected
               ? `${selected.title} — ${formatTime(selected)}`
               : sessions.length === 0
-                ? "No other upcoming sessions"
-                : "Select session"}
+                ? "No other upcoming classes"
+                : "Select class"}
         </span>
         <span className="font-mono text-xs text-rally-muted">{open ? "▴" : "▾"}</span>
       </button>
@@ -433,7 +474,7 @@ export function RallySessionPicker({
                 >
                   <span className="block">{s.title}</span>
                   <span className="block font-mono text-[11px] text-rally-muted">
-                    next class: {new Date(s.start_at).toLocaleDateString()} · {formatTime(s)}
+                    next class: {formatInAcademyZone(s.start_at, s.timezone)} · {formatTime(s)}
                   </span>
                 </button>
               </li>

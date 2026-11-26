@@ -11,6 +11,13 @@ import { Skeleton } from "@/components/ds/skeleton";
 import { FormField, fieldDescribedBy } from "@/components/ds/form-field";
 import { Chip } from "@/components/ds/chip";
 import { EmptyState } from "@/components/ds/empty-state";
+import { AbsenceConfirmDialog } from "@/components/parent/absence-confirm-dialog";
+import {
+  absenceReportedToast,
+  canUndoAbsence,
+  invalidateAbsenceReaders,
+  useWithdrawAbsence,
+} from "@/components/parent/absence-undo";
 import { useToast } from "@/components/ds/toast";
 import { PauseEnrollmentForm } from "@/components/parent/pause-enrollment-form";
 import { EnrollmentActions } from "@/components/parent/enrollment-actions";
@@ -38,7 +45,7 @@ import {
 import { nameGradient } from "@/lib/avatar-gradient";
 import {
   cancellationResultTitle,
-  cancellationTimingCopy,
+  cancellationSummaryCopy,
   pendingCancellationLabel,
 } from "@/lib/format/cancellation-copy";
 import {
@@ -56,13 +63,20 @@ import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 import { reEnrollHref } from "@/lib/parent/re-enroll";
 import {
   ALREADY_REPORTED_LABEL,
+  PRESENT_INCLUDING_LATE,
   noClassReason,
+  presentIncludingLate,
   scheduleSourceLabel,
 } from "@/lib/parent/schedule-events";
 import { OneTimeClassChip } from "@/components/parent/one-time-class";
 import { ArrivalCheckin } from "@/components/parent/arrival-checkin";
 import { dropoffRefetchInterval, parentArrivalView } from "@/lib/dropoff/checkin";
 import { AbsenceMakeupStatus } from "@/components/parent/absence-makeup-status";
+import {
+  AddChildLink,
+  OpenRegistrationsCard,
+  useParentRegistrations,
+} from "@/components/parent/open-registrations";
 
 // Avatar gradients are shared with the kid-first Home cards so the same child
 // wears the same colour on both screens (lib/avatar-gradient.ts).
@@ -94,6 +108,8 @@ export default function ParentChildrenPage() {
     queryFn: listParentEnrollments,
   });
 
+  const registrationsQuery = useParentRegistrations();
+  const registrations = registrationsQuery.data?.registrations ?? [];
   const children = data?.children ?? [];
   const allAttendance = attendanceData?.records ?? [];
   const allEnrollments = enrollmentsData?.enrollments ?? [];
@@ -110,6 +126,11 @@ export default function ParentChildrenPage() {
       <div className="mb-4 animate-fade-in-up">
         <h1 className="font-display text-2xl font-bold tracking-tight text-rally-ink">My children</h1>
         <p className="text-sm mt-0.5 text-rally-muted">Sessions, attendance &amp; progress</p>
+        <AddChildLink className="mt-3" />
+      </div>
+
+      <div className="mb-4 empty:hidden">
+        <OpenRegistrationsCard rows={registrations} />
       </div>
 
       {isError ? (
@@ -127,9 +148,11 @@ export default function ParentChildrenPage() {
           ))}
         </div>
       ) : children.length === 0 ? (
-        <div className="rounded-2xl border border-rally-line bg-white p-8 animate-fade-in-up">
-          <EmptyState title="No children registered yet." />
-        </div>
+        registrations.length > 0 ? null : (
+          <div className="rounded-2xl border border-rally-line bg-white p-8 animate-fade-in-up">
+            <EmptyState title="No children registered yet." />
+          </div>
+        )
       ) : (
         <div className="space-y-4 stagger-children">
           {children.map((child) => (
@@ -190,7 +213,7 @@ function ChildCard({
     (session) => session.status !== "cancelled" && parseAcademyInstant(session.start_at).getTime() >= now,
   )?.occurrence_id;
   const gradient = nameGradient(child.full_name);
-  const presentCount = attendance.filter((r) => r.status === "present" || r.status === "late").length;
+  const presentCount = presentIncludingLate(attendance);
   const absentCount = attendance.filter((r) => r.status === "absent").length;
   // #740: a held enrollment keeps its seat but produces no sessions. Dropping
   // it here is what made the class vanish from this card with no explanation.
@@ -227,7 +250,7 @@ function ChildCard({
         <div className="flex gap-3 shrink-0 text-center">
           <div>
             <p className="font-bold text-white text-base leading-none">{presentCount}</p>
-            <p className="text-white/60 text-[10px] mt-0.5">Present</p>
+            <p className="text-white/60 text-[10px] mt-0.5 max-w-[4.5rem] leading-tight">{PRESENT_INCLUDING_LATE}</p>
           </div>
           <div className="w-px self-stretch bg-white/20" />
           <div>
@@ -244,7 +267,7 @@ function ChildCard({
       {/* Sessions */}
       <div className="px-4 py-3 border-b border-rally-line">
         <p className="text-[10px] font-bold uppercase tracking-widest mb-2.5 text-rally-cobalt-600">
-          Upcoming sessions
+          Upcoming class dates
         </p>
         {scheduleQuery.isPending ? (
           <p role="status" className="text-xs py-1 text-rally-muted">Loading class schedule…</p>
@@ -256,7 +279,7 @@ function ChildCard({
             </Button>
           </div>
         ) : sessions.length === 0 ? (
-          <p className="text-xs py-1 text-rally-subtle">{holdNote ?? "No upcoming sessions."}</p>
+          <p className="text-xs py-1 text-rally-subtle">{holdNote ?? "No upcoming class dates."}</p>
         ) : (
           <ul className="space-y-2">
             {sessions.map((s) => (
@@ -277,6 +300,21 @@ function ChildCard({
           className="mt-2 inline-flex min-h-touch items-center text-sm font-semibold text-rally-cobalt-700 underline"
         >
           Coach notes for {child.full_name}
+        </Link>
+        <Link
+          href={`/parent/profile#child-${encodeURIComponent(child.student_id)}`}
+          data-testid={`child-edit-details-${child.student_id}`}
+          className="mt-1 flex min-h-touch items-center text-sm font-semibold text-rally-cobalt-700 underline"
+        >
+          Edit emergency contact and medical notes
+        </Link>
+        {/* S48 (D-24): a second class for this child reuses their record. */}
+        <Link
+          href={reEnrollHref(child.student_id) as Parameters<typeof Link>[0]["href"]}
+          data-testid={`child-add-class-${child.student_id}`}
+          className="mt-1 flex min-h-touch items-center text-sm font-semibold text-rally-cobalt-700 underline"
+        >
+          Add another class for {child.full_name}
         </Link>
       </div>
 
@@ -335,8 +373,8 @@ function SessionRow({
   canReportAbsence: boolean;
 }) {
   const queryClient = useQueryClient();
-  const { toast } = useToast();
   const [submitted, setSubmitted] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const whenStr = formatAcademyTimeRange(entry.start_at, entry.end_at, academyTimezone);
   // #671: a cancelled date is still returned by the child-schedule feed.
   // Showing it as a normal upcoming class contradicts the cancellation email
@@ -348,13 +386,18 @@ function SessionRow({
   const arrival = parentArrivalView(entry);
   const arrived = arrival === "pending" || arrival === "confirmed";
 
+  const { toast } = useToast();
+  const absenceKey = { student_id: studentId, occurrence_id: entry.occurrence_id };
+  const withdrawMutation = useWithdrawAbsence(() => setSubmitted(false));
   const absenceMutation = useMutation({
     mutationFn: submitAbsenceNotice,
     onSuccess: () => {
       setSubmitted(true);
-      toast({ kind: "success", title: "Absence reported" });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.parent.absences() });
-      void queryClient.invalidateQueries({ queryKey: ["parent", "child-schedule", studentId] });
+      setConfirming(false);
+      // S43: the success toast carries Undo (D-12).
+      toast(absenceReportedToast(() => withdrawMutation.mutate(absenceKey)));
+      // S17: Home and Calendar show the chip too, so refresh every reader.
+      invalidateAbsenceReaders(queryClient);
     },
   });
 
@@ -422,6 +465,23 @@ function SessionRow({
           >
             {submitted ? "Absence reported" : ALREADY_REPORTED_LABEL}
           </p>
+          {(submitted || entry.absence_undoable) && canUndoAbsence(entry.start_at) && (
+            <button
+              type="button"
+              className="min-h-touch text-xs font-semibold text-rally-cobalt-700 underline"
+              disabled={withdrawMutation.isPending}
+              onClick={() => withdrawMutation.mutate(absenceKey)}
+            >
+              {withdrawMutation.isPending ? "Undoing…" : "Undo"}
+            </button>
+          )}
+          {withdrawMutation.isError && (
+            <p role="alert" className="text-xs text-status-red-800">
+              {withdrawMutation.error instanceof Error
+                ? withdrawMutation.error.message
+                : "Could not undo the absence."}
+            </p>
+          )}
           {/* A reported date also shows where it stands with makeups; a plain
               "reported" adds nothing to "Already reported". */}
           {!submitted &&
@@ -440,13 +500,25 @@ function SessionRow({
           variant="secondary"
           size="sm"
           disabled={absenceMutation.isPending}
-          onClick={() =>
-            absenceMutation.mutate({ student_id: studentId, occurrence_id: entry.occurrence_id })
-          }
+          onClick={() => setConfirming(true)}
         >
           {absenceMutation.isPending ? "Reporting…" : "Report absence"}
         </Button>
       )}
+      <AbsenceConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        childName={childName}
+        sessionTitle={entry.session_title}
+        when={whenStr}
+        pending={absenceMutation.isPending}
+        onConfirm={() =>
+          absenceMutation.mutate({
+            student_id: studentId,
+            occurrence_id: entry.occurrence_id,
+          })
+        }
+      />
     </li>
   );
 }
@@ -620,12 +692,8 @@ function CancelEnrollmentDialog({
       ) : preview ? (
         <div className="space-y-3">
           <div className="text-sm text-rally-ink">
-            <p className="font-semibold">Cancellation fee: {money(preview.fee_cents)}</p>
-            <p className="mt-1 text-xs text-rally-muted" data-testid="cancellation-timing-copy">
-              {cancellationTimingCopy(preview, academyTimezone)}
-            </p>
-            <p className="mt-1 text-xs text-rally-muted">
-              {preview.notice_met ? "Notice period met" : "Notice period not met"}
+            <p className="font-semibold" data-testid="cancellation-timing-copy">
+              {cancellationSummaryCopy(preview, academyTimezone)}
             </p>
             {!preview.allowed && preview.blocked_reason && (
               <p role="alert" className="mt-2 text-xs font-semibold text-status-red-800">
@@ -697,3 +765,4 @@ function AttendanceRow({
     </li>
   );
 }
+

@@ -32,7 +32,7 @@ import { rateTimelineIssueLabel } from "@/lib/payroll-warnings";
 import { queryKeys } from "@/lib/query/keys";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { OwnerOnlyHint } from "@/components/admin/owner-context";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { useReportUnsavedChanges } from "@/components/admin/unsaved-changes-guard";
 import { Avatar } from "@/components/ds/avatar";
 import { Button } from "@/components/ds/button";
@@ -41,6 +41,8 @@ import { Chip } from "@/components/ds/chip";
 import { ContactLinks } from "@/components/ds/contact-links";
 import { Overline } from "@/components/ds/typography";
 import { userLoginChip } from "@/lib/people-status";
+import { useAcademyZone } from "@/lib/format/academy-zone";
+import { formatAcademyDay, formatInAcademyZone } from "@/lib/format/academy-time";
 
 const editableStatuses = ["active", "inactive", "disabled"] as const;
 
@@ -152,6 +154,7 @@ export default function AdminUserDetailPage() {
 }
 
 function CoachPayRatePanel({ coachId, isOwner }: { coachId: string; isOwner: boolean }) {
+  const academyTimezone = useAcademyZone();
   const queryClient = useQueryClient();
   const ratesQuery = useQuery({
     queryKey: ["admin", "coaches", coachId, "pay-rates"],
@@ -253,7 +256,7 @@ function CoachPayRatePanel({ coachId, isOwner }: { coachId: string; isOwner: boo
             ? "Loading current pay rate…"
             : active
               ? describeRate(active)
-              : "No pay rate set — this coach's sessions will show as unpaid until one is allocated."}
+              : "No pay rate set — this coach's classes will show as unpaid until one is allocated."}
         </p>
 
         {diagnostics?.issues.length ? (
@@ -301,8 +304,8 @@ function CoachPayRatePanel({ coachId, isOwner }: { coachId: string; isOwner: boo
               className="rounded-md border border-neutral-200 px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
               data-testid="coach-pay-rate-unit"
             >
-              <option value="percent_of_revenue">% of expected session revenue</option>
-              <option value="per_session">Fixed per session</option>
+              <option value="percent_of_revenue">% of expected class revenue</option>
+              <option value="per_session">Fixed per class date</option>
               <option value="per_hour">Fixed per hour</option>
             </select>
           </label>
@@ -324,12 +327,12 @@ function CoachPayRatePanel({ coachId, isOwner }: { coachId: string; isOwner: boo
                 data-testid="coach-pay-rate-percent"
               />
               <span className="max-w-xs text-[11px] font-normal text-neutral-500">
-                Basis: <span className="font-medium">expected</span> session revenue
-                (session price × active enrollments) — billed revenue, not cash collected.
+                Basis: <span className="font-medium">expected</span> class revenue
+                (class price × active enrollments) — billed revenue, not cash collected.
               </span>
               <span className="max-w-xs text-[11px] font-normal text-amber-700">
-                Percent pay requires every assigned active session to have a session price.
-                Use $0 only for an explicitly free session.
+                Percent pay requires every assigned active class to have a class price.
+                Use $0 only for an explicitly free class.
               </span>
             </label>
           ) : (
@@ -424,9 +427,9 @@ function CoachPayRatePanel({ coachId, isOwner }: { coachId: string; isOwner: boo
               {rates.map((rate) => (
                 <li key={rate.rate_id}>
                   {describeRate(rate)} · from{" "}
-                  {new Date(rate.effective_from).toLocaleDateString()}
+                  {formatAcademyDay(rate.effective_from, academyTimezone, { month: "short", day: "numeric", year: "numeric" })}
                   {rate.effective_until
-                    ? ` until ${new Date(rate.effective_until).toLocaleDateString()}`
+                    ? ` until ${formatAcademyDay(rate.effective_until, academyTimezone, { month: "short", day: "numeric", year: "numeric" })}`
                     : ""}{" "}
                   · {rate.status}
                 </li>
@@ -446,13 +449,13 @@ function describeRate(rate: {
   currency: string;
 }): string {
   if (rate.billing_unit === "percent_of_revenue") {
-    return `${rate.percent ?? 0}% of expected session revenue`;
+    return `${rate.percent ?? 0}% of expected class revenue`;
   }
-  const amount = (rate.amount_cents / 100).toLocaleString("en-US", {
+  const amount = new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: rate.currency || "USD",
-  });
-  return rate.billing_unit === "per_session" ? `${amount} per session` : `${amount} per hour`;
+  }).format(rate.amount_cents / 100);
+  return rate.billing_unit === "per_session" ? `${amount} per class date` : `${amount} per hour`;
 }
 
 function StateCard({
@@ -1012,6 +1015,7 @@ function LoginInvitePanel({
   user: AdminUserDetail;
   onSaved: () => void;
 }) {
+  const academyTimezone = useAcademyZone();
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitOk, setSubmitOk] = useState(false);
 
@@ -1037,7 +1041,7 @@ function LoginInvitePanel({
       </p>
       <p className="text-sm text-slate-600" data-testid="invite-sent-at">
         {user.login_invite_sent_at
-          ? `Invite sent ${new Date(user.login_invite_sent_at).toLocaleDateString()}`
+          ? `Invite sent ${formatInAcademyZone(user.login_invite_sent_at, academyTimezone)}`
           : "No invite sent yet"}
       </p>
       <MutationMessages error={submitError} ok={submitOk} />
@@ -1066,6 +1070,7 @@ function CoachSessionsPanel({
   user: AdminUserDetail;
   onAssigned: () => void;
 }) {
+  const academyTimezone = useAcademyZone();
   const queryClient = useQueryClient();
   const [assignSessionId, setAssignSessionId] = useState("");
   const [assignReason, setAssignReason] = useState("Admin coach assignment");
@@ -1108,7 +1113,7 @@ function CoachSessionsPanel({
     onError: (err: unknown) => {
       setAssignOk(false);
       setAssignError(
-        err instanceof Error ? err.message : "Could not assign session.",
+        err instanceof Error ? err.message : "Could not assign class.",
       );
     },
   });
@@ -1120,28 +1125,29 @@ function CoachSessionsPanel({
   );
 
   const fmt = (iso: string) =>
-    new Date(iso).toLocaleString(undefined, {
+    formatInAcademyZone(iso, academyTimezone, {
       weekday: "short",
       month: "short",
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      timeZoneName: "short",
     });
 
   return (
     <Card p={20}>
-      <Overline>Coach Sessions</Overline>
+      <Overline>Coach classes</Overline>
 
       <div className="mt-4 space-y-6">
         <div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-rally-muted">
-            Assigned sessions ({coachSessions.length})
+            Assigned classes ({coachSessions.length})
           </p>
           {coachSessionsQuery.isPending ? (
             <div className="h-12 animate-pulse rounded-md bg-neutral-100" />
           ) : coachSessions.length === 0 ? (
             <p className="text-sm text-rally-muted">
-              No sessions assigned to this coach.
+              No classes assigned to this coach.
             </p>
           ) : (
             <ul className="divide-y divide-neutral-100 rounded-md border border-neutral-200">
@@ -1158,7 +1164,7 @@ function CoachSessionsPanel({
 
         <div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-rally-muted">
-            Assign a session to this coach
+            Assign a class to this coach
           </p>
           <form
             className="space-y-3"
@@ -1169,7 +1175,7 @@ function CoachSessionsPanel({
               assignMutation.mutate();
             }}
           >
-            <Field label="Session" htmlFor="assign-session">
+            <Field label="Class" htmlFor="assign-session">
               <select
                 id="assign-session"
                 value={assignSessionId}
@@ -1177,7 +1183,7 @@ function CoachSessionsPanel({
                 className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
                 required
               >
-                <option value="">Select a session…</option>
+                <option value="">Select a class…</option>
                 {availableSessions.map((s) => (
                   <option key={s.session_id} value={s.session_id}>
                     {s.title} — {fmt(s.start_at)} ({s.enrolled_count} students)

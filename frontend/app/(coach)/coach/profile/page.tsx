@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -13,6 +14,7 @@ import { AppLockSetting } from "@/components/persona/app-lock-setting";
 import { DeleteAccountSection } from "@/components/persona/delete-account-section";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
+import { AcademyContact } from "@/components/coach/CoachEmptyState";
 
 export default function CoachProfilePage() {
   const queryClient = useQueryClient();
@@ -21,7 +23,6 @@ export default function CoachProfilePage() {
   const { data: profile, isLoading } = useQuery({
     queryKey: queryKeys.coach.profile(),
     queryFn: getCoachProfile,
-    staleTime: 5 * 60 * 1000,
   });
 
   const [editing, setEditing] = useState(false);
@@ -39,6 +40,7 @@ export default function CoachProfilePage() {
   }
 
   const mutation = useMutation({
+    meta: { success: "Profile saved" },
     mutationFn: (payload: UpdateCoachProfileRequest) => updateCoachProfile(payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.coach.profile() });
@@ -72,8 +74,10 @@ export default function CoachProfilePage() {
     <section data-testid="coach-profile">
       <header className="mb-4">
         <h1 className="text-2xl font-semibold">Profile</h1>
-        <p className="text-sm text-neutral-500">{assistant ? "Assistant coach access" : "Coach access"}</p>
+        <p className="text-sm text-neutral-500">{assistant ? "Assistant coach: your details and what we teach" : "Your details, pay and what we teach"}</p>
       </header>
+
+      <AcademyContact className="mb-4 text-sm text-neutral-600 dark:text-neutral-300" />
 
       {isLoading && <p className="text-neutral-500">Loading profile...</p>}
 
@@ -102,11 +106,28 @@ export default function CoachProfilePage() {
             </button>
           </div>
 
-          {/*
-            No "Pay & statements" card: there are no coach statements to open
-            yet, and a card that only says so is noise. Bring it back with the
-            first real statement download.
-          */}
+          <Link
+            href="/coach/profile/pay"
+            data-testid="coach-profile-pay"
+            className="flex min-h-touch w-full items-center justify-between rounded-lg border border-neutral-200 bg-white px-4 py-2 dark:border-neutral-800 dark:bg-neutral-900"
+          >
+            <span>
+              <span className="block font-medium">Pay</span>
+              <span className="block text-sm text-neutral-500">Classes taught and payslips</span>
+            </span>
+            <span aria-hidden="true">→</span>
+          </Link>
+          <Link
+            href="/coach/pathway"
+            data-testid="coach-profile-pathway"
+            className="flex min-h-touch w-full items-center justify-between rounded-lg border border-neutral-200 bg-white px-4 py-2 dark:border-neutral-800 dark:bg-neutral-900"
+          >
+            <span>
+              <span className="block font-medium">What we teach</span>
+              <span className="block text-sm text-neutral-500">Levels, skills and lesson plans</span>
+            </span>
+            <span aria-hidden="true">→</span>
+          </Link>
         </div>
       )}
 

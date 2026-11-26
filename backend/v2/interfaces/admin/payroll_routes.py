@@ -133,10 +133,8 @@ async def get_monthly_payroll(
     if uc is None:
         raise HTTPException(status_code=503, detail="Monthly payroll not configured")
     rows = await uc.execute(academy_id=claims.academy_id, period_start=start, period_end=end)
-    coach_names = {
-        user.user_id: user.display_name
-        for user in await use_cases.list_admin_users.execute("coach", academy_id=claims.academy_id)
-    }
+    coaches = await use_cases.list_admin_users.execute("coach", academy_id=claims.academy_id)
+    coach_names = {user.user_id: user.display_name for user in coaches}
     view_rows = [
         AdminMonthlyPayrollRow(
             coach_id=r.coach_id,
@@ -151,6 +149,23 @@ async def get_monthly_payroll(
             warning_status=r.warning_status,
         )
         for r in rows
+    ]
+    # D-04: every active coach appears; one who taught nothing is a read-only
+    # row (no payslip is created, the UI offers no Generate).
+    listed = {r.coach_id for r in view_rows}
+    currency = view_rows[0].currency if view_rows else "USD"
+    view_rows += [
+        AdminMonthlyPayrollRow(
+            coach_id=user.user_id,
+            coach_name=user.display_name,
+            session_count=0,
+            total_amount_cents=0,
+            currency=currency,
+            status="not_generated",
+            generatable=False,
+        )
+        for user in coaches
+        if user.status == "active" and user.user_id not in listed
     ]
     return AdminMonthlyPayrollView(
         month=month,

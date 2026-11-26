@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefundCommand
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentEventRepository,
+    EnrollmentLevelPlacement,
     EnrollmentWelcomeNotifier,
     EnrollmentWriter,
     RosterChangeNotifier,
@@ -19,6 +20,7 @@ from backend.v2.contexts.enrollment.application.ports import (
     StudentWriter,
     WaitlistRepository,
 )
+from backend.v2.contexts.enrollment.application.pricing_state import is_unpriced
 from backend.v2.contexts.enrollment.application.seat_broker import SeatAcquisition, SeatBroker
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentLifecycleEvent,
@@ -34,6 +36,9 @@ from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
 from backend.v2.contexts.onboarding.application.ports import ApplicationRepository
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
     AdminWaiverTemplateRecord,
+)
+from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
+    ALREADY_IN_THIS_CLASS,
 )
 from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
     WaiverSignedNotifier,
@@ -91,6 +96,7 @@ class StudentRegistrationQuery(Protocol):
         student_id: str,
         *,
         exclude_enrollment_id: str | None = None,
+        session_id: str | None = None,
     ) -> bool: ...
 
     async def claim_registration(
@@ -253,6 +259,8 @@ class ApproveRegistrationCommand(BaseModel):
     session_id: str | None = None
     waiver_override_reason: str | None = None
     effective_at: datetime | None = None
+    #: D-10 "Start at level"; None places a new child on the first level.
+    start_level_id: str | None = None
 
 
 class WaitlistRegistrationCommand(BaseModel):
@@ -323,10 +331,15 @@ class AdminRegistrationReview:
         # working unwired; production wiring injects this from main.py via
         # `set_seat_broker`, the same pattern as EditRosterAdd et al.
         self._seat_broker = seat_broker
+        self._placement: EnrollmentLevelPlacement | None = None
         self._now = clock
 
     def set_seat_broker(self, seat_broker: SeatBroker) -> None:
         self._seat_broker = seat_broker
+
+    def set_level_placement(self, placement: EnrollmentLevelPlacement) -> None:
+        """D-10, attached from ``main.py`` like ``set_seat_broker``."""
+        self._placement = placement
 
     def set_lead_conversion(self, lead_conversion: LeadConversionLinker) -> None:
         """Attached from ``main.py`` like ``set_seat_broker``: the crm use case
@@ -408,6 +421,15 @@ class AdminRegistrationReview:
         # detail show it) and never blocks enrollment, so approval does not look
         # at it. The optional reason is still recorded on the decision.
 
+        # S42 / D-01: a family's own registration never lands in an unpriced
+        # class; refuse before any claim or seat side effect.
+        target = await self._sessions.get(session_id)
+        if target is not None and is_unpriced(target.amount_cents):
+            raise ApplicationNotEditable(
+                f"{target.title} has no price yet. The owner must set a price or mark it "
+                "Free before this registration can be approved."
+            )
+
         now = self._now()
         app = await self._claim_review(app, "APPROVING", now)
         student_id: str | None = None
@@ -428,7 +450,9 @@ class AdminRegistrationReview:
             expected_enrollment_id = app.enrollment_id or self._registration_enrollment_id(
                 app.application_id, student_id, session_id
             )
-            await self._assert_no_other_active_enrollment(student_id, expected_enrollment_id)
+            await self._assert_no_other_active_enrollment(
+                student_id, expected_enrollment_id, session_id
+            )
             existing = await self._enrollments.find_for_session_student(session_id, student_id)
             # Issue #651: a cancelled or withdrawn row from an earlier stint in
             # the same session is history and must not permanently block a
@@ -448,9 +472,7 @@ class AdminRegistrationReview:
                 existing.enrollment_id != expected_enrollment_id
                 or existing.registration_application_id != app.application_id
             ):
-                raise ApplicationNotEditable(
-                    "This child is already enrolled. Manage their existing classes instead."
-                )
+                raise ApplicationNotEditable(ALREADY_IN_THIS_CLASS)
             acquisition: SeatAcquisition | None = None
             if existing is None:
                 if self._seat_broker is not None:
@@ -471,7 +493,9 @@ class AdminRegistrationReview:
                 enrolled_at=app.created_at,
                 created_at=now,
                 registration_application_id=app.application_id,
-                registration_student_lock=student_id,
+                # S48: one live registration enrollment per child AND class; the
+                # unique index (0185) is the race backstop for the same class only.
+                registration_student_lock=f"{student_id}|{session_id}",
             )
             if existing is None:
                 try:
@@ -543,6 +567,7 @@ class AdminRegistrationReview:
                 }
             )
             await self._complete_review(decided, app)
+            await self._place_on_level(student_id, command)
             try:
                 await self._link_trial_conversion(decided)
             except Exception:
@@ -577,6 +602,19 @@ class AdminRegistrationReview:
                 updated_at=self._now(),
             )
             raise
+
+    async def _place_on_level(self, student_id: str, command: ApproveRegistrationCommand) -> None:
+        """D-10: an approved child starts on a level; never fails the approval."""
+        if self._placement is None:
+            return
+        try:
+            await self._placement.place_new_enrollee(
+                student_id, level_id=command.start_level_id, actor_id=command.actor_id
+            )
+        except Exception:
+            logger.exception(
+                "registration.placement_failed", extra={"application_id": command.application_id}
+            )
 
     async def _release_quietly(self, session_id: str, acquisition: SeatAcquisition | None) -> None:
         """Give a just-acquired seat back without masking the error being
@@ -664,7 +702,7 @@ class AdminRegistrationReview:
         app = await self._claim_review(app, "WAITLISTING", now)
         student_id: str | None = None
         try:
-            student_id = await self._available_student_id(app)
+            student_id = await self._available_student_id(app, session_id=session_id)
             await self._students.upsert(
                 await self._merged_student(app, student_id, self._student_name(app))
             )
@@ -1084,9 +1122,11 @@ class AdminRegistrationReview:
             if app.selected_session_id
             else None
         )
+        # S48: a child enrolled in ANOTHER class still shows in the queue.
         if await self._student_registrations.has_active_enrollment(
             student_id,
             exclude_enrollment_id=expected_enrollment_id,
+            session_id=app.selected_session_id,
         ):
             return student_id
         return None
@@ -1095,7 +1135,7 @@ class AdminRegistrationReview:
         self,
         app: Application,
         *,
-        session_id: str | None = None,
+        session_id: str,
         allow_current_enrollment: bool = False,
     ) -> str:
         existing_student_id = await self._registration_student_id(app)
@@ -1109,14 +1149,13 @@ class AdminRegistrationReview:
                     or self._registration_enrollment_id(
                         app.application_id, existing_student_id, session_id
                     )
-                    if allow_current_enrollment and session_id
+                    if allow_current_enrollment
                     else None
                 ),
+                session_id=session_id,
             )
         ):
-            raise ApplicationNotEditable(
-                "This child is already enrolled. Manage their existing classes instead."
-            )
+            raise ApplicationNotEditable(ALREADY_IN_THIS_CLASS)
         return (
             existing_student_id
             or (app.student_id if self._student_registrations is None else None)
@@ -1216,16 +1255,14 @@ class AdminRegistrationReview:
             )
 
     async def _assert_no_other_active_enrollment(
-        self, student_id: str, expected_enrollment_id: str
+        self, student_id: str, expected_enrollment_id: str, session_id: str
     ) -> None:
         if self._student_registrations is None:
             return
         if await self._student_registrations.has_active_enrollment(
-            student_id, exclude_enrollment_id=expected_enrollment_id
+            student_id, exclude_enrollment_id=expected_enrollment_id, session_id=session_id
         ):
-            raise ApplicationNotEditable(
-                "This child is already enrolled. Manage their existing classes instead."
-            )
+            raise ApplicationNotEditable(ALREADY_IN_THIS_CLASS)
 
     async def _renew_review_claim(self, app: Application) -> None:
         if not await self._apps.renew_review_claim(

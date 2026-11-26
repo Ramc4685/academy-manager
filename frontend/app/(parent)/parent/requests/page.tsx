@@ -11,7 +11,16 @@ import { EmptyState } from "@/components/ds/empty-state";
 import { WaitlistOffers } from "@/components/parent/waitlist-offers";
 import { AssignedClassDetails } from "@/components/parent/one-time-class";
 import { AbsenceMakeupStatus } from "@/components/parent/absence-makeup-status";
+import {
+  absenceReportedToast,
+  canUndoAbsence,
+  invalidateAbsenceReaders,
+  useWithdrawAbsence,
+} from "@/components/parent/absence-undo";
+import { useToast } from "@/components/ds/toast";
 import { queryKeys } from "@/lib/query/keys";
+import { TRIAL_SUCCESS, trialMissingField } from "@/lib/parent/trial-form";
+import { formatPlainDateRange } from "@/lib/format/plain-date";
 import {
   makeupCandidateKey,
   makeupCandidateLabel,
@@ -19,6 +28,7 @@ import {
   requestStatusChipVariant,
 } from "@/lib/parent-requests";
 import { ALREADY_REPORTED_LABEL } from "@/lib/parent/schedule-events";
+import { ABSENCE_HELP, MAKEUP_HELP } from "@/components/parent/absence-confirm-dialog";
 import {
   formatAcademyDate,
   formatAcademyDateTime,
@@ -49,7 +59,7 @@ type RequestTab = "absences" | "makeups" | "trials";
 
 const ALL_TABS: { id: RequestTab; label: string }[] = [
   { id: "absences", label: "Absences" },
-  { id: "makeups", label: "Makeups" },
+  { id: "makeups", label: "Make-ups" },
   { id: "trials", label: "Trials" },
 ];
 
@@ -155,6 +165,7 @@ function WaitlistOffersFromLink() {
 
 function AbsencesPanel() {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [studentId, setStudentId] = useState<string>("");
   const [occurrenceId, setOccurrenceId] = useState<string>("");
   const [lastWarning, setLastWarning] = useState<boolean | null>(null);
@@ -177,13 +188,21 @@ function AbsencesPanel() {
     enabled: Boolean(studentId),
   });
 
+  const withdrawMutation = useWithdrawAbsence(() => setLastWarning(null));
   const submitMutation = useMutation({
     mutationFn: submitAbsenceNotice,
     onSuccess: (notice) => {
       setLastWarning(notice.notice_window_met === false);
       setOccurrenceId("");
-      void queryClient.invalidateQueries({ queryKey: queryKeys.parent.absences() });
-      void queryClient.invalidateQueries({ queryKey: ["parent", "child-schedule", studentId] });
+      toast(
+        absenceReportedToast(() =>
+          withdrawMutation.mutate({
+            student_id: notice.student_id,
+            occurrence_id: notice.occurrence_id,
+          }),
+        ),
+      );
+      invalidateAbsenceReaders(queryClient);
     },
   });
 
@@ -200,7 +219,8 @@ function AbsencesPanel() {
   return (
     <div className="space-y-4">
       <Card p={16}>
-        <h2 className="text-sm font-bold mb-3 text-rally-ink">Report an absence</h2>
+        <h2 className="text-sm font-bold mb-1 text-rally-ink">Report an absence</h2>
+        <p className="mb-3 text-xs text-rally-muted">{ABSENCE_HELP}</p>
 
         {submitMutation.isError ? (
           <p role="alert" className="mb-3 rounded-md bg-status-red-50 p-3 text-sm text-status-red-800">
@@ -337,6 +357,21 @@ function AbsencesPanel() {
                     </div>
                     <Chip variant={n.notice_window_met ? "approved" : "pending"} label={n.notice_window_met ? "ON TIME" : "LATE"} />
                   </div>
+                  {canUndoAbsence(n.missed_class?.start_at) && (
+                    <button
+                      type="button"
+                      className="mt-1 min-h-touch text-xs font-semibold text-rally-cobalt-700 underline"
+                      disabled={withdrawMutation.isPending}
+                      onClick={() =>
+                        withdrawMutation.mutate({
+                          student_id: n.student_id,
+                          occurrence_id: n.occurrence_id,
+                        })
+                      }
+                    >
+                      Undo this absence
+                    </button>
+                  )}
                 </Card>
               </li>
             ))}
@@ -412,7 +447,8 @@ function MakeupsPanel({ initialKey = "" }: { initialKey?: string }) {
   return (
     <div className="space-y-4">
       <Card p={16}>
-        <h2 className="text-sm font-bold mb-3 text-rally-ink">Request a makeup</h2>
+        <h2 className="text-sm font-bold mb-1 text-rally-ink">Request a makeup</h2>
+        <p className="mb-3 text-xs text-rally-muted">{MAKEUP_HELP}</p>
 
         {submitMutation.isError ? (
           <p role="alert" className="mb-3 rounded-md bg-status-red-50 p-3 text-sm text-status-red-800">
@@ -598,6 +634,7 @@ function TrialsPanel() {
 
   const submitMutation = useMutation({
     mutationFn: submitTrialRequest,
+    meta: { success: TRIAL_SUCCESS },
     onSuccess: () => {
       setStudentId("");
       setProspectiveName("");
@@ -615,16 +652,25 @@ function TrialsPanel() {
   const trials = trialsQuery.data?.trials ?? [];
   const trialNameById = new Map(children.map((c: ParentChild) => [c.student_id, c.full_name]));
 
-  const canSubmit = useMemo(() => {
-    if (!sessionId || !preferredStart || !preferredEnd) return false;
-    if (studentRef === "existing_student") return Boolean(studentId);
-    return Boolean(prospectiveName.trim());
-  }, [sessionId, preferredStart, preferredEnd, studentRef, studentId, prospectiveName]);
+  const missing = trialMissingField({
+    studentRef,
+    studentId,
+    prospectiveName,
+    sessionId,
+    preferredStart,
+    preferredEnd,
+  });
+  const canSubmit = missing === null;
 
   return (
     <div className="space-y-4">
       <Card p={16}>
-        <h2 className="text-sm font-bold mb-3 text-rally-ink">Request a trial class</h2>
+        <h2 className="text-sm font-bold mb-1 text-rally-ink">Request a trial class</h2>
+        <p className="mb-3 text-xs text-rally-muted">
+          A trial is one class to try before you register, so your child can meet the coach and
+          see the level. A regular class is the full term you register and pay for. Fields marked *
+          are required.
+        </p>
 
         {submitMutation.isError ? (
           <p role="alert" className="mb-3 rounded-md bg-status-red-50 p-3 text-sm text-status-red-800">
@@ -674,8 +720,9 @@ function TrialsPanel() {
 
           {studentRef === "existing_student" ? (
             <label className="block text-xs font-semibold text-rally-muted">
-              Child
+              Child *
               <select
+                required
                 className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
                 value={studentId}
                 onChange={(e) => setStudentId(e.target.value)}
@@ -691,8 +738,9 @@ function TrialsPanel() {
           ) : (
             <div className="space-y-3">
               <label className="block text-xs font-semibold text-rally-muted">
-                Child&apos;s name
+                Child&apos;s name *
                 <input
+                  required
                   type="text"
                   className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
                   value={prospectiveName}
@@ -713,15 +761,16 @@ function TrialsPanel() {
           )}
 
           <label className="block text-xs font-semibold text-rally-muted">
-            Session
+            Class *
             <select
+              required
               className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
               value={sessionId}
               onChange={(e) => setSessionId(e.target.value)}
               disabled={sessionsQuery.isLoading}
             >
               <option value="">
-                {sessionsQuery.isLoading ? "Loading sessions…" : "Select a session"}
+                {sessionsQuery.isLoading ? "Loading classes…" : "Select a class"}
               </option>
               {sessions.map((s) => (
                 <option key={s.session_id} value={s.session_id}>
@@ -733,8 +782,9 @@ function TrialsPanel() {
 
           <div className="grid grid-cols-2 gap-3">
             <label className="block text-xs font-semibold text-rally-muted">
-              Preferred start
+              First day that suits you *
               <input
+                required
                 type="date"
                 className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
                 value={preferredStart}
@@ -742,8 +792,10 @@ function TrialsPanel() {
               />
             </label>
             <label className="block text-xs font-semibold text-rally-muted">
-              Preferred end
+              Last day that suits you *
               <input
+                required
+                min={preferredStart || undefined}
                 type="date"
                 className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
                 value={preferredEnd}
@@ -751,7 +803,15 @@ function TrialsPanel() {
               />
             </label>
           </div>
+          <p className="text-xs text-rally-muted">
+            The academy picks one trial date between these two days and confirms it with you.
+          </p>
 
+          {missing && (
+            <p data-testid="trial-missing-field" aria-live="polite" className="text-xs font-semibold text-status-amber-800">
+              {missing}
+            </p>
+          )}
           <Button type="submit" variant="primary" full disabled={!canSubmit || submitMutation.isPending}>
             {submitMutation.isPending ? "Submitting…" : "Request trial"}
           </Button>
@@ -781,7 +841,7 @@ function TrialsPanel() {
                           "Existing child"}
                       </p>
                       <p className="mt-1 text-xs text-rally-muted">
-                        Requested {formatAcademyDate(t.created_at, academyTimezone)} · {t.preferred_start} – {t.preferred_end}
+                        Requested {formatAcademyDate(t.created_at, academyTimezone)} · {formatPlainDateRange(t.preferred_start, t.preferred_end)}
                       </p>
                       {t.status === "denied" && t.denial_reason && (
                         <p className="mt-1 text-xs text-status-red-600">{t.denial_reason}</p>

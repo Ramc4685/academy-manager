@@ -70,6 +70,7 @@ from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences
     ListCoachUpcomingOccurrences,
 )
 from backend.v2.contexts.enrollment.domain.models import (
+    SEAT_HOLDING,
     Enrollment,
     Session,
     SessionOccurrence,
@@ -140,6 +141,14 @@ class FakeEnrollmentQuery:
             e.session_id == session_id and e.student_id == student_id and e.status == "active"
             for e in self._enrollments
         )
+
+    async def seat_holding_counts(self, session_ids) -> dict[str, int]:
+        """Mirrors the real ``$group``: sessions with no seat-holders are absent."""
+        counts: dict[str, int] = {}
+        for e in self._enrollments:
+            if e.session_id in session_ids and e.status in SEAT_HOLDING:
+                counts[e.session_id] = counts.get(e.session_id, 0) + 1
+        return counts
 
     async def active_or_paused_for_student(self, student_id: str) -> list[Enrollment]:
         return [
@@ -496,6 +505,7 @@ def seed():
             capacity=8,
             status="scheduled",
             timezone="America/Chicago",
+            level="Beginner",
         ),
         Session(
             session_id="s-today-2",
@@ -839,6 +849,9 @@ def _build_use_cases(seed_data) -> CoachUseCases:
 
     _overdue_cents_by_student.seed = _overdue_seed  # type: ignore[attr-defined]
 
+    async def _student_names(ids):
+        return {s.student_id: s.full_name for s in await students.by_ids(list(ids))}
+
     use_cases = CoachUseCases(
         list_today=ListCoachOccurrencesForDate(occurrences=occurrences, sessions=sessions),
         get_roster=_get_roster,
@@ -927,6 +940,8 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         update_profile=_async_none,
         list_messages=_coach_messages_visible.list_messages,
         mark_message_read=_coach_messages_visible.mark_message_read,
+        enrolled_counts=enrollments.seat_holding_counts,
+        student_names=_student_names,
     )
     use_cases._messages_repo = _coach_messages_repo  # type: ignore[attr-defined]
     return use_cases
@@ -1940,8 +1955,9 @@ class FakeMessageRepo:
             return False
         if m.recipient_id == recipient_id:
             return True
-        if m.kind != "announcement":
-            return False
+        if m.kind == "dm":
+            # D-18: what the viewer sent to the academy inbox.
+            return m.sender_id == recipient_id and m.inbox_thread_id == recipient_id
         if m.scope_type != "session":
             return True
         return m.scope_id in set(visible_session_ids)
@@ -1963,12 +1979,33 @@ class FakeMessageRepo:
                 and (
                     m.recipient_id == user_id
                     or (m.kind == "dm" and m.sender_id == user_id)
+                    or (m.kind == "dm" and m.inbox_thread_id is not None)
                     or m.kind == "announcement"
                 )
             ),
             key=lambda m: m.created_at,
             reverse=True,
         )
+
+    async def count_academy_inbox_sent(self, sender_id, *, since):
+        return sum(
+            1
+            for m in self.rows.values()
+            if m.kind == "dm"
+            and m.sender_id == sender_id
+            and m.inbox_thread_id == sender_id
+            and m.created_at >= since
+        )
+
+    async def mark_read_by_staff(self, message_id, user_id):
+        """Mirrors MongoMessageRepository.mark_read_by_staff (_staff_dm_filter)."""
+        m = self.rows.get(message_id)
+        if m is None or m.deleted_at is not None:
+            return
+        if not (m.recipient_id == user_id or (m.kind == "dm" and m.inbox_thread_id)):
+            return
+        if user_id not in m.read_by:
+            m.read_by.append(user_id)
 
     async def for_session(self, session_id):
         return sorted(
@@ -2426,6 +2463,15 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         academy_id=lambda: "acad",
         clock=lambda: datetime(2026, 6, 20, 10, 35, tzinfo=UTC),
     )
+
+    async def _named_attendance(occurrence_id: str) -> list[Any]:
+        # The real composition returns NamedAttendance; mirror it so the
+        # route's ``row.student_name`` read is exercised.
+        from backend.v2.composition.attendance_corrections import NamedAttendance
+
+        rows = await _student_attendance.list_for_occurrence(occurrence_id)
+        return [NamedAttendance(**r.model_dump(), student_name="Sam Student") for r in rows]
+
     void_attendance = VoidAttendance(
         attendance_repo=_student_attendance,
         outbox=outbox,
@@ -2457,9 +2503,6 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             calculated_at=datetime(2026, 5, 16, tzinfo=UTC),
             calculated_by="admin",
         )
-
-    async def list_audit_logs(actor_type=None):
-        return []
 
     async def list_dues_followup():
         return []
@@ -2864,10 +2907,9 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         mark_coach_attendance=mark_coach_attendance,
         correct_attendance=correct_attendance,
         void_attendance=void_attendance,
-        list_occurrence_attendance=_student_attendance.list_for_occurrence,
+        list_occurrence_attendance=_named_attendance,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
-        list_audit_logs=list_audit_logs,
         list_dues_followup=list_dues_followup,
         list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,
@@ -2918,6 +2960,13 @@ def _claims(role: str) -> AuthClaims:
     )
 
 
+class _NoUnbilledStudents:
+    """Default "no invoice for the month" reader: everyone is billed."""
+
+    async def count(self, period: str) -> int:
+        return 0
+
+
 class _NoOverdueFamilies:
     """Default cross-period overdue reader: nobody owes (main.py wires the real one)."""
 
@@ -2934,6 +2983,7 @@ def _make_admin_app(claims: AuthClaims | None, use_cases: AdminUseCases) -> Fast
     app.dependency_overrides[get_auth_claims] = lambda: claims
     app.dependency_overrides[get_admin_use_cases] = lambda: use_cases
     app.state.admin_overdue_families = _NoOverdueFamilies()
+    app.state.admin_unbilled_students = _NoUnbilledStudents()
     return app
 
 

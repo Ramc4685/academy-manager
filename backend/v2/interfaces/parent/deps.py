@@ -16,6 +16,7 @@ from backend.v2.contexts.billing.application.use_cases.start_checkout import Sta
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
     ListParentAbsences,
     SubmitAbsenceNotice,
+    WithdrawAbsenceNotice,
 )
 from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
     ListParentAvailableSessions,
@@ -121,6 +122,8 @@ class ParentUseCases:
     # predate it; real parent composition always sets both.
     list_messages: Callable[[str], Awaitable[list[Message]]] | None = None
     mark_message_read: Callable[[str, str], Awaitable[None]] | None = None
+    # D-18: callable(*, parent_id, body) -> Message; raises AcademyInboxRateLimited.
+    send_academy_message: Callable[..., Awaitable[Message]] | None = None
     # Self-service profile (issue #380)
     get_parent_profile: object | None = None  # callable
     update_parent_profile: object | None = None  # callable
@@ -132,6 +135,7 @@ class ParentUseCases:
     confirm_waitlist_offer: ConfirmWaitlistOffer | None = None
     decline_waitlist_offer: DeclineWaitlistOffer | None = None
     list_parent_waitlist: object | None = None  # callable(parent_id)
+    list_parent_registrations: object | None = None  # callable(parent_id), S02
     # Home aggregate (kid-first Home, slice 4). Defaulted so fixtures that
     # predate it keep constructing; real parent composition always sets it.
     get_parent_home: object | None = None  # callable
@@ -144,6 +148,12 @@ class ParentUseCases:
     # Phone-calendar subscription (composition/calendar_feed.py): the parent's
     # link and the public .ics it serves. Defaulted for old fixtures.
     calendar_feed: Any | None = None
+    # S21: callable(parent_id, display_name, phone); fills blanks only.
+    fill_parent_profile_blanks: Any | None = None
+    # S43: undo a reported absence before class starts. Defaulted for old fixtures.
+    withdraw_absence_notice: WithdrawAbsenceNotice | None = None
+    # S57: money summary + invoice/payment labels (composition.parent_money_summary.ParentMoney).
+    parent_money: Any | None = None
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

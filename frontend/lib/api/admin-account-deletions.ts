@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 /** One self-service account deletion in this academy (mobile M5, D4). */
 export interface AccountDeletion {
@@ -29,7 +30,7 @@ export function deletionForFamily(
 }
 
 const day = (iso: string) =>
-  new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  formatInAcademyZone(iso, undefined, { month: "short", day: "numeric", year: "numeric" });
 
 /** One-line status an admin reads on the family page and in the list. */
 export function deletionSummary(row: AccountDeletion): string {

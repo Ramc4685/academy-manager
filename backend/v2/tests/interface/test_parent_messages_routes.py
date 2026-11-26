@@ -1,11 +1,11 @@
-"""Interface tests for GET /parent/messages and POST /parent/messages/{id}/read."""
+"""Interface tests for GET/POST /parent/messages and POST /parent/messages/{id}/read."""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from backend.v2.interfaces.parent.deps import get_parent_use_cases
 from backend.v2.interfaces.parent.router import router as parent_router
 from backend.v2.shared.auth.claims import AuthClaims, get_auth_claims
-from backend.v2.shared.comms import Message
+from backend.v2.shared.comms import CommsService, Message
 from backend.v2.shared.http import register_exception_handlers
 
 
@@ -52,11 +52,25 @@ class _FakeMessageRepo:
             return False
         if m.recipient_id == recipient_id:
             return True
-        if m.kind != "announcement":
-            return False
+        if m.kind == "dm":
+            # D-18: what the viewer sent to the academy inbox.
+            return m.sender_id == recipient_id and m.inbox_thread_id == recipient_id
         if m.scope_type != "session":
             return True
         return m.scope_id in set(visible_session_ids)
+
+    async def insert(self, m: Message) -> None:
+        self.rows[m.message_id] = m
+
+    async def count_academy_inbox_sent(self, sender_id: str, *, since: datetime) -> int:
+        return sum(
+            1
+            for m in self.rows.values()
+            if m.kind == "dm"
+            and m.sender_id == sender_id
+            and m.inbox_thread_id == sender_id
+            and m.created_at >= since
+        )
 
     async def for_recipient(self, recipient_id: str, *, visible_session_ids) -> list[Message]:
         return sorted(
@@ -90,6 +104,11 @@ class _FakeParentUseCases:
 
     async def mark_message_read(self, message_id: str, user_id: str) -> None:
         await self._repo.mark_read(message_id, user_id, visible_session_ids=self._visible)
+
+    async def send_academy_message(self, *, parent_id: str, body: str) -> Message:
+        return await CommsService(messages=self._repo, academy_id="acad").send_to_academy(  # type: ignore[arg-type]
+            parent_id=parent_id, body=body
+        )
 
 
 @contextmanager
@@ -296,3 +315,126 @@ def test_enrolled_parent_can_mark_the_session_announcement_read():
 
     assert r.status_code == 200, r.text
     assert repo.rows["ann-1"].read_by == ["p1"]
+
+
+# --- D-18 academy inbox (S61) -----------------------------------------
+
+
+def test_parent_message_opens_their_own_thread_with_the_academy():
+    repo = _FakeMessageRepo()
+    with _make_client(repo) as client:
+        r = client.post(
+            "/api/v2/parent/messages",
+            # A thread or recipient id in the body is ignored: the thread is
+            # always the caller's own.
+            json={"body": "  Sam will be 10 minutes late.  ", "inbox_thread_id": "p2"},
+        )
+        assert r.status_code == 201, r.text
+        view = r.json()
+        assert view["body"] == "Sam will be 10 minutes late."
+        assert view["mine"] is True
+        assert view["kind"] == "dm"
+        assert view["sender_persona"] == "parent"
+
+        listed = client.get("/api/v2/parent/messages").json()["messages"]
+    assert [(m["body"], m["mine"]) for m in listed] == [("Sam will be 10 minutes late.", True)]
+    assert listed[0]["read"] is True
+    [stored] = repo.rows.values()
+    assert stored.inbox_thread_id == "p1"
+    assert stored.sender_id == "p1"
+    assert stored.recipient_id is None
+
+
+def test_another_family_cannot_read_the_thread():
+    repo = _FakeMessageRepo()
+    with _make_client(repo) as client:
+        assert client.post("/api/v2/parent/messages", json={"body": "Private"}).status_code == 201
+    with _make_client(repo, user_id="p2") as client:
+        assert client.get("/api/v2/parent/messages").json()["messages"] == []
+
+
+def test_staff_reply_reaches_the_parent_under_the_academy_name_only():
+    repo = _FakeMessageRepo(
+        rows={
+            "r-1": _message(
+                message_id="r-1",
+                recipient_id="p1",
+                inbox_thread_id="p1",
+                author_display_name="Marcus (front desk)",
+                body="Thanks, we'll tell the coach.",
+            )
+        }
+    )
+    with _make_client(repo) as client:
+        [view] = client.get("/api/v2/parent/messages").json()["messages"]
+    assert view["mine"] is False
+    assert view["author_display_name"] is None
+
+
+def test_message_length_is_capped_and_blank_is_refused():
+    with _make_client() as client:
+        assert client.post("/api/v2/parent/messages", json={"body": "   "}).status_code == 422
+        assert client.post("/api/v2/parent/messages", json={"body": "x" * 1001}).status_code == 422
+        assert client.post("/api/v2/parent/messages", json={"body": "x" * 1000}).status_code == 201
+
+
+def test_eleventh_message_in_an_hour_is_rate_limited():
+    repo = _FakeMessageRepo()
+    with _make_client(repo) as client:
+        for i in range(10):
+            assert client.post("/api/v2/parent/messages", json={"body": f"m{i}"}).status_code == 201
+        r = client.post("/api/v2/parent/messages", json={"body": "one too many"})
+    assert r.status_code == 429, r.text
+    assert r.headers["Retry-After"] == "3600"
+    assert len(repo.rows) == 10
+
+
+def test_daily_limit_counts_older_messages_in_the_day():
+    old = datetime.now(UTC) - timedelta(hours=3)
+    repo = _FakeMessageRepo(
+        rows={
+            f"o{i}": _message(
+                message_id=f"o{i}",
+                sender_id="p1",
+                sender_persona="parent",
+                recipient_id=None,
+                inbox_thread_id="p1",
+                created_at=old,
+            )
+            for i in range(30)
+        }
+    )
+    with _make_client(repo) as client:
+        r = client.post("/api/v2/parent/messages", json={"body": "hello"})
+    assert r.status_code == 429, r.text
+    assert r.headers["Retry-After"] == "86400"
+
+
+def test_another_familys_messages_do_not_count_against_the_limit():
+    repo = _FakeMessageRepo(
+        rows={
+            f"o{i}": _message(
+                message_id=f"o{i}",
+                sender_id="p2",
+                sender_persona="parent",
+                recipient_id=None,
+                inbox_thread_id="p2",
+                created_at=datetime.now(UTC),
+            )
+            for i in range(10)
+        }
+    )
+    with _make_client(repo) as client:
+        assert client.post("/api/v2/parent/messages", json={"body": "hi"}).status_code == 201
+
+
+def test_send_message_wrong_persona_404():
+    for role in ("coach", "admin"):
+        with _make_client(role=role, user_id="x") as client:
+            r = client.post("/api/v2/parent/messages", json={"body": "hi"})
+        assert r.status_code == 404, (role, r.text)
+
+
+def test_send_message_requires_auth():
+    with _anon_client() as client:
+        assert client.post("/api/v2/parent/messages", json={"body": "hi"}).status_code == 401

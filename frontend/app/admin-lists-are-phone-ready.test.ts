@@ -35,7 +35,28 @@ const CONVERTED: { name: string; src: () => string }[] = [
   { name: "Families", src: () => appSource("(admin)/admin/families/page.tsx") },
   { name: "Users", src: () => source("components/admin/AdminUsersDirectory.tsx") },
   { name: "Sessions", src: () => appSource("(admin)/admin/sessions/page.tsx") },
+  // S09: the dashboard's Recent payments table clipped status and date at 375px.
+  { name: "Dashboard recent payments", src: () => appSource("(admin)/admin/page.tsx") },
 ];
+
+/**
+ * S64: the Today roster sheet is phone-first on every width: one PhoneListRow
+ * per child, no screen table (its only <table> is the print-only roster).
+ */
+describe("Today roster sheet is phone-ready (S64)", () => {
+  const src = source("components/admin/today/roster-sheet.tsx");
+
+  it("lists children as PhoneListRow, with no sideways scroll", () => {
+    expect(src).toContain("PhoneListRow");
+    expect(src).not.toContain("overflow-x-auto");
+    expect(src).not.toContain("md:hidden");
+  });
+
+  it("keeps its one table print-only", () => {
+    expect(src.match(/<table/g)).toHaveLength(1);
+    expect(src).toContain('className="roster-print hidden"');
+  });
+});
 
 /**
  * Issue #857 finishes the rollout #856 started. The approval queues, the money
@@ -56,7 +77,8 @@ const CONVERTED_857: { name: string; src: () => string }[] = [
     src: () => source("components/admin/requests/request-queues.tsx"),
   },
   { name: "All invoices", src: () => appSource("(admin)/admin/payments/AllInvoicesTab.tsx") },
-  { name: "Payroll", src: () => appSource("(admin)/admin/payouts/page.tsx") },
+  // The coach rows moved out of the page into PayrollRows (muted no-class rows).
+  { name: "Payroll", src: () => appSource("(admin)/admin/payouts/_components/PayrollRows.tsx") },
   {
     name: "Payslips",
     src: () => appSource("(admin)/admin/payouts/_components/PayslipsPanel.tsx"),
@@ -249,7 +271,7 @@ describe("the desktop fixes that ship with the phone rows (#847)", () => {
     expect(src).toContain("function sessionDayLabel");
     // Read in the session's own timezone, or the class moves a day for an
     // admin in another zone.
-    expect(src).toContain("resolveAcademyTimeZone(session.timezone)");
+    expect(src).toContain("formatInAcademyZone(session.start_at, session.timezone");
   });
 
   it("All invoices: the actions column is sticky, so it survives 1280", () => {

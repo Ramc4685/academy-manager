@@ -23,6 +23,7 @@ import {
 import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
 import { confirmFailureMessage, dropoffRefetchInterval } from "@/lib/dropoff/checkin";
 import { ClassRecapPanel } from "@/components/coach/ClassRecapPanel";
+import { useUnsavedChanges } from "@/components/admin/unsaved-changes-guard";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
 import { SessionDetailTabs, SessionNextStep } from "@/components/coach/SessionDetailTabs";
 import { TrialOutcomeControl } from "@/components/coach/trial-outcome-control";
@@ -35,26 +36,30 @@ import {
   type QueuedMark,
 } from "@/lib/offline/attendance-queue";
 import { CLASS_SYNC_LABELS, classSyncStatus } from "@/lib/offline/sync-status";
+import { ageBandLabel, rosterRowMeta, venueLines } from "@/lib/coach/class-facts";
+import { CantMakeIt } from "@/components/coach/cant-make-it";
 import { isBulkMarkEligible } from "@/lib/coach/bulk-eligibility";
 import { BulkMarkUndoWindow } from "@/lib/coach/bulk-mark-undo";
 import {
   correctionWindowClosed,
+  dateFromOccurrenceId,
+  emptyRosterCopy,
   isRecordedMark,
+  marksSummary,
   MARK_LEAD_TIME_MS,
   markingNotOpenYet,
   withoutUnconfirmedMark,
   markProgress,
+  todayISO,
 } from "@/lib/coach/marking";
 import { useCoachSurface } from "@/components/coach/coach-surface-context";
 import { onSync, syncNow } from "@/lib/offline/sync";
 import { lifecycleLabel } from "@/lib/format/lifecycle-copy";
 import { queryKeys } from "@/lib/query/keys";
 import { useOnline } from "@/lib/pwa/online";
-import {
-  formatAcademyClock,
-  formatAcademyTimeRange,
-  parseAcademyInstant,
-} from "@/lib/format/academy-time";
+import { HealthMarker, HealthStrip, useCoachRosterHealth } from "@/components/coach/health-alert";
+import type { CoachChildHealth } from "@/lib/api/coach";
+import { formatAcademyClock, formatAcademyTimeRange, formatInAcademyZone, parseAcademyInstant } from "@/lib/format/academy-time";
 
 import { formatBulkAttendanceError } from "./bulk-attendance-error";
 
@@ -62,13 +67,6 @@ const CLIENT_APP_VERSION = "v2-w1b";
 
 const NO_STUDENTS: ReadonlySet<string> = new Set();
 
-function todayISO(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -105,12 +103,12 @@ const ATTENDANCE_ERROR_MESSAGES: Record<string, string> = {
   "Coaching.ConflictAttendanceExists":
     "Attendance for this student was already recorded (maybe from another device). Refresh to see it.",
   "Coaching.StudentNotEnrolled":
-    "This student isn't actively enrolled in this session and has no approved make-up or trial for today, so attendance can't be saved. Ask the admin to check their roster status.",
+    "This student isn't actively enrolled in this class and has no approved make-up or trial for today, so attendance can't be saved. Ask the admin to check their roster status.",
   "Coaching.BulkStudentNotEnrolled":
     "Nothing was saved: someone on this roster isn't eligible for attendance today. Refresh the roster and mark the class again.",
   "Coaching.SessionNotAssigned":
-    "This session isn't assigned to your coach account for today.",
-  "Coaching.SessionCancelled": "This session occurrence was cancelled.",
+    "This class isn't assigned to your coach account for today.",
+  "Coaching.SessionCancelled": "This class date was cancelled.",
   "Coaching.CorrectionWindowExpired":
     "This mark is older than 48 hours, so it can only be changed by an admin.",
   "Coaching.MarkVoided": "An admin voided this mark, so only an admin can change it.",
@@ -130,7 +128,7 @@ function formatApiError(err: unknown): string {
     return ATTENDANCE_ERROR_MESSAGES[apiError.code];
   }
   if (apiError.status === 404) {
-    return "This session or student is not available to your coach account.";
+    return "This class or student is not available to your coach account.";
   }
   if (apiError.status === 409) {
     return apiError.message || "Attendance could not be saved because of a conflict. Refresh and retry.";
@@ -161,15 +159,11 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   // Admins covering a class have no correction window (#632).
   const { supervisor } = useCoachSurface();
 
-  const date = dateParam ?? todayISO();
+  const date = dateParam ?? dateFromOccurrenceId(decodedId) ?? todayISO();
   const { data: today, isLoading, isError, dataUpdatedAt } = useQuery({
     queryKey: queryKeys.coach.today(date),
     queryFn: () => getCoachToday(date),
-    staleTime: 5 * 60 * 1000,
     // While this class's drop-off window is open, pick up new parent reports.
-    // shortcut: the service worker answers coach/today stale-while-revalidate
-    // (kept for the offline roster), so a report shows on the second poll
-    // (<= 60 s), not the first; bypass the SW cache if that proves too slow.
     refetchInterval: (query) =>
       dropoffRefetchInterval(
         (query.state.data?.sessions ?? [])
@@ -192,11 +186,12 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   const roster: CoachRosterEntry[] = session?.roster ?? [];
   const sessionId = session?.session_id ?? decodedId;
   const occurrenceId = session?.occurrence_id ?? decodedId;
+  // S50: health notes ride on their own never-cached read, not on the roster.
+  const health = useCoachRosterHealth(session?.occurrence_id);
 
   // Write saved marks into the cached Today so a trip back to Today (or a
   // reopen of this class) shows them at once, instead of the 5-minute-fresh
-  // copy from before the save (#1039). No refetch: the service worker's
-  // stale-while-revalidate would hand back that same stale copy.
+  // copy from before the save (#1039), without waiting on a refetch.
   const patchTodayMarks = useCallback(
     (marks: { student_id: string; status: AttendanceStatus }[]) => {
       const byStudent = new Map(marks.map((m) => [m.student_id, m.status]));
@@ -298,6 +293,8 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   // `recap=open` (Today's shortcut, the skills screen's next step) lands on
   // the recap already open and scrolled into view.
   const [recapOpen, setRecapOpen] = useState(recapParam === "open");
+  // Collapsing unmounts the recap and its draft, so it asks first like leaving does.
+  const { requestLeave } = useUnsavedChanges();
   const recapRef = useRef<HTMLElement>(null);
   const recapScrolled = useRef(false);
   useEffect(() => {
@@ -311,9 +308,8 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     queryKey: progressNotesKey,
     queryFn: () => listProgressNotes(sessionId),
     // Existing notes only render inside an open note box, so don't spend a
-    // request on every session-detail load. The staleTime keeps re-opens free.
+    // request on every session-detail load.
     enabled: online && Boolean(session) && noteOpen !== null,
-    staleTime: 60 * 1000,
   });
   const notesByStudent = useMemo(() => {
     const out: Record<string, ProgressNote[]> = {};
@@ -415,6 +411,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   }, [sessionOccurrenceId, date, queryClient, hydrateQueued, patchTodayMarks]);
 
   const noteMutation = useMutation({
+    meta: { success: "Note saved" },
     mutationFn: ({
       studentId,
       body,
@@ -743,6 +740,16 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     ]),
   );
 
+  // The same precedence RosterRow draws a mark with, so the line matches the buttons.
+  const summary = marksSummary(
+    roster.map(
+      (student) =>
+        localMarks[student.student_id]?.status ??
+        queuedMarks[student.student_id]?.status ??
+        recordedMark(student),
+    ),
+  );
+
   // Save a first mark on this phone (offline, or while an earlier queued mark
   // for the same student is still waiting — one queued mark per student).
   async function queueLocally(student_id: string, status: AttendanceStatus): Promise<void> {
@@ -852,14 +859,14 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   }
 
   if (isLoading)
-    return <div className="text-neutral-500">Loading session…</div>;
+    return <div className="text-neutral-500">Loading class…</div>;
 
   if (isError) {
     return (
       <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-        Could not load session.{" "}
+        Could not load class.{" "}
         <Link className="underline" href="/coach/sessions">
-          Back to sessions
+          Back to classes
         </Link>
       </div>
     );
@@ -868,9 +875,9 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   if (!session) {
     return (
       <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-        Session not found.{" "}
+        Class not found.{" "}
         <Link className="underline" href="/coach/sessions">
-          Back to sessions
+          Back to classes
         </Link>
       </div>
     );
@@ -927,7 +934,17 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               {formatAcademyTimeRange(session.start_at, session.end_at, session.timezone)}
             </span>{" "}
             · {session.location}
+            {ageBandLabel(session.age_band) && (
+              <span data-testid="session-age-band"> · {ageBandLabel(session.age_band)}</span>
+            )}
           </p>
+          {venueLines(session).length > 0 && (
+            <ul data-testid="session-venue" className="mt-1 text-sm" style={{ color: "var(--rally-muted)" }}>
+              {venueLines(session).map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          )}
           {session.coach_name && (
             <p
               className="text-sm"
@@ -937,6 +954,13 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               Coach: {session.coach_name}
             </p>
           )}
+          <CantMakeIt
+            occurrenceId={session.occurrence_id}
+            title={session.title}
+            startAt={session.start_at}
+            status={session.status}
+            timezone={session.timezone}
+          />
         </div>
       </header>
 
@@ -987,6 +1011,11 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             >
               Attendance · <span data-testid="marked-count">{progress.label}</span>
             </h2>
+            {notOpenYet && roster.length > 0 && (
+              <span data-testid="roster-read-only" className="text-xs" style={{ color: "var(--rally-muted)" }}>
+                Read only until {opensAt}
+              </span>
+            )}
             {!progress.complete && (
               <span
                 data-testid="needs-marks-badge"
@@ -1005,6 +1034,20 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             )}
           </div>
         </div>
+        {!supervisor && (
+          <p data-testid="attendance-window-help" className="mb-2 text-xs" style={{ color: "var(--rally-muted)" }}>
+            Attendance opens an hour before class starts. You can change a mark for 48 hours
+            after you make it; after that, ask an admin.
+          </p>
+        )}
+        <div className="mb-2">
+          <HealthStrip state={health} />
+        </div>
+        {summary && (
+          <p data-testid="marks-summary" className="mb-2 text-sm" style={{ color: "var(--rally-muted)" }}>
+            {summary}
+          </p>
+        )}
         {bulkError && (
           <p
             data-testid="bulk-attendance-error"
@@ -1016,7 +1059,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
         )}
         {roster.length === 0 ? (
           <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
-            No students enrolled.
+            {emptyRosterCopy(notOpenYet)}
           </p>
         ) : (
           <ul className="space-y-2" data-testid="roster">
@@ -1024,6 +1067,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               <RosterRow
                 key={student.student_id}
                 student={student}
+                health={health.kind === "ready" ? health.byId.get(student.student_id) : undefined}
                 sessionId={session.session_id}
                 local={localMarks[student.student_id]}
                 queued={queuedMarks[student.student_id]}
@@ -1120,7 +1164,9 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               data-testid="class-recap-toggle"
               aria-expanded={recapOpen}
               aria-controls="coach-class-recap"
-              onClick={() => setRecapOpen((open) => !open)}
+              onClick={() =>
+                recapOpen ? requestLeave(() => setRecapOpen(false)) : setRecapOpen(true)
+              }
               className="min-h-touch w-full rounded-lg border px-3 text-left text-sm font-semibold uppercase tracking-wide"
               style={{ color: "var(--rally-muted)", borderColor: "var(--rally-line)" }}
             >
@@ -1280,7 +1326,7 @@ function lifecycleChip(
     const day = new Date(student.pending_cancellation_at);
     const label = Number.isNaN(day.getTime())
       ? "ENDING"
-      : `ENDS ${day.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+      : `ENDS ${formatInAcademyZone(day, undefined, { month: "short", day: "numeric" })}`;
     return { variant: "closing", label };
   }
   if (student.enrollment_status === "held" || student.enrollment_status === "reclaim_pending") {
@@ -1294,6 +1340,7 @@ function lifecycleChip(
 
 function RosterRow({
   student,
+  health,
   sessionId,
   local,
   queued,
@@ -1321,6 +1368,8 @@ function RosterRow({
   dropoffError,
 }: {
   student: CoachRosterEntry;
+  /** S50: this child's health note, from the never-cached read. */
+  health?: CoachChildHealth;
   sessionId: string;
   local?: OptimisticEntry;
   queued?: QueuedMark;
@@ -1380,11 +1429,8 @@ function RosterRow({
     voided ||
     windowClosed ||
     notOpenYet;
-  const passportParams = new URLSearchParams({
-    from_session: sessionId,
-    student_name: student.full_name,
-  });
-  const passportHref = `/coach/students/${encodeURIComponent(student.student_id)}/passport?${passportParams.toString()}`;
+  // The name comes from the passport API, never the URL (it would land in history and logs).
+  const passportHref = `/coach/students/${encodeURIComponent(student.student_id)}/passport`;
   const noteBody = noteText.trim();
   // A parent said "I've arrived": staff confirm with one tap. Manual marks still work.
   const dropoffState = student.checkin?.state;
@@ -1407,6 +1453,16 @@ function RosterRow({
           <p className="text-sm font-medium" style={{ color: "var(--rally-ink)" }}>
             {student.full_name}
           </p>
+          <HealthMarker child={health} />
+          {rosterRowMeta(student) && (
+            <span
+              data-testid={`roster-meta-${student.student_id}`}
+              className="text-xs"
+              style={{ color: "var(--rally-muted)" }}
+            >
+              {rosterRowMeta(student)}
+            </span>
+          )}
           {student.expected_absence && <Chip variant="pending" label="EXPECTED ABSENCE" />}
           {voided && <Chip variant="closing" label="VOIDED" />}
           {student.entry_source === "makeup" && <Chip variant="makeup" label="MAKE-UP" />}

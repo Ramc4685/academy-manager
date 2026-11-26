@@ -3,15 +3,13 @@ import type { ChipVariant } from "@/components/ds/chip";
 import { INVOICE_STATUS_FILTER_OPTIONS, invoiceStatusChip } from "@/lib/billing-status";
 
 import { formatCents } from "@/lib/money";
+import { monthLabel } from "@/lib/format/academy-time";
+import { formatPlainDate } from "@/lib/format/plain-date";
 
 export { formatCents };
 
 export function formatDate(value: string): string {
-  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  return formatPlainDate(value, { month: "short", day: "numeric", year: "numeric" });
 }
 
 /**
@@ -27,11 +25,7 @@ export function formatPeriodLabel(value: string | null | undefined): string | nu
   const year = Number(match[1]);
   const month = Number(match[2]);
   if (month < 1 || month > 12) return value;
-  return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString(undefined, {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
+  return monthLabel(`${match[1]}-${match[2]}`);
 }
 
 /**
@@ -158,8 +152,8 @@ const RECONCILIATION_LABELS: Readonly<Record<string, string | null>> = {
   stripe_synced: null,
   stripe_linked_pending: "Waiting for Stripe to confirm this payment",
   payment_failed: "The last payment attempt failed",
-  missing_allocation: "Payment received but not matched to this invoice. Check Billing Health.",
-  orphan_charge: "Stripe took a payment that is not matched to an invoice. Check Billing Health.",
+  missing_allocation: "Payment received but not matched to this invoice. Check Payment system status.",
+  orphan_charge: "Stripe took a payment that is not matched to an invoice. Check Payment system status.",
   card_declined: "The last payment attempt failed: card declined",
   insufficient_funds: "The last payment attempt failed: not enough funds",
   expired_card: "The last payment attempt failed: card expired",
@@ -209,8 +203,17 @@ export function sessionFilterKey(payment: AdminPaymentView): string {
   return payment.session_id || "__none__";
 }
 
-export function sessionFilterLabel(value: string): string {
-  return value === "__none__" ? "No session" : value;
+/**
+ * S19: the filter showed raw ids ("demo_session_sat"). `titles` maps session
+ * id to title from the sessions list; an id the list does not know (a deleted
+ * class) still shows its id rather than vanishing.
+ */
+export function sessionFilterLabel(
+  value: string,
+  titles: ReadonlyMap<string, string> = new Map(),
+): string {
+  if (value === "__none__") return "No class";
+  return titles.get(value) || value;
 }
 
 export const PAGE_SIZE = 50;

@@ -85,6 +85,7 @@ class _Fake:
             charged_cents=12_000,
             fee_set=True,
             students=3,
+            paying_students=3,
             plan_id=plan_id,
             matching_plan_ids=["group"],
             stale_link=False,

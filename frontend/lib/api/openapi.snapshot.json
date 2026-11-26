@@ -1102,7 +1102,11 @@
               "billing_deferrals",
               "waivers",
               "session_pressure",
-              "missing_attendance"
+              "missing_attendance",
+              "unpriced_classes",
+              "unbilled_students",
+              "cover_requests",
+              "messages_waiting"
             ],
             "title": "Kind",
             "type": "string"
@@ -1183,6 +1187,17 @@
             },
             "title": "Logs",
             "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
           }
         },
         "required": [
@@ -1196,6 +1211,17 @@
           "action": {
             "title": "Action",
             "type": "string"
+          },
+          "action_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Label"
           },
           "actor_id": {
             "anyOf": [
@@ -1271,6 +1297,17 @@
               }
             ],
             "title": "Entity Type"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
           }
         },
         "required": [
@@ -1279,6 +1316,63 @@
           "created_at"
         ],
         "title": "AdminAuditLogView",
+        "type": "object"
+      },
+      "AdminChildHealthView": {
+        "additionalProperties": false,
+        "properties": {
+          "emergency_contact_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emergency Contact Name"
+          },
+          "emergency_contact_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emergency Contact Phone"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "status": {
+            "enum": [
+              "declared",
+              "none_declared",
+              "not_answered"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "status"
+        ],
+        "title": "AdminChildHealthView",
         "type": "object"
       },
       "AdminCoachAttendanceView": {
@@ -3511,6 +3605,17 @@
       },
       "AdminMessageView": {
         "properties": {
+          "author_display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Display Name"
+          },
           "body": {
             "title": "Body",
             "type": "string"
@@ -3580,6 +3685,17 @@
               }
             ],
             "title": "Recipient Id"
+          },
+          "scope_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Id"
           },
           "scope_label": {
             "anyOf": [
@@ -4052,6 +4168,11 @@
           "currency": {
             "title": "Currency",
             "type": "string"
+          },
+          "generatable": {
+            "default": true,
+            "title": "Generatable",
+            "type": "boolean"
           },
           "period_id": {
             "anyOf": [
@@ -5559,6 +5680,11 @@
       },
       "AdminProjectedIncomeSessionRow": {
         "properties": {
+          "enrolled_count": {
+            "default": 0,
+            "title": "Enrolled Count",
+            "type": "integer"
+          },
           "enrollment_count": {
             "default": 0,
             "title": "Enrollment Count",
@@ -5748,6 +5874,17 @@
               }
             ],
             "title": "Session Id"
+          },
+          "start_level_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Level Id"
           },
           "waiver_override_reason": {
             "anyOf": [
@@ -6542,6 +6679,11 @@
             "title": "Enrolled Seats",
             "type": "integer"
           },
+          "paying_seats": {
+            "default": 0,
+            "title": "Paying Seats",
+            "type": "integer"
+          },
           "scheduled_count": {
             "default": 0,
             "title": "Scheduled Count",
@@ -6631,6 +6773,33 @@
         "title": "AdminRevenueResponse",
         "type": "object"
       },
+      "AdminRosterHealthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/AdminChildHealthView"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "declared_count": {
+            "title": "Declared Count",
+            "type": "integer"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "declared_count",
+          "children"
+        ],
+        "title": "AdminRosterHealthResponse",
+        "type": "object"
+      },
       "AdminSessionEconomicsResponse": {
         "properties": {
           "empty_states": {
@@ -6687,9 +6856,15 @@
             "type": "integer"
           },
           "expected_profit_cents": {
-            "default": 0,
-            "title": "Expected Profit Cents",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Profit Cents"
           },
           "expected_revenue_cents": {
             "default": 0,
@@ -6730,6 +6905,15 @@
             "default": 0,
             "title": "Payable Occurrence Count",
             "type": "integer"
+          },
+          "payroll_status": {
+            "default": "needs_payroll",
+            "enum": [
+              "complete",
+              "needs_payroll"
+            ],
+            "title": "Payroll Status",
+            "type": "string"
           },
           "profit_margin": {
             "anyOf": [
@@ -6781,9 +6965,15 @@
             "type": "integer"
           },
           "expected_profit_cents": {
-            "default": 0,
-            "title": "Expected Profit Cents",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Profit Cents"
           },
           "expected_revenue_cents": {
             "default": 0,
@@ -6799,6 +6989,26 @@
             "default": 0,
             "title": "Paid Cents",
             "type": "integer"
+          },
+          "payroll_blocked_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payroll Blocked By"
+          },
+          "payroll_status": {
+            "default": "needs_payroll",
+            "enum": [
+              "complete",
+              "needs_payroll"
+            ],
+            "title": "Payroll Status",
+            "type": "string"
           },
           "profit_margin": {
             "anyOf": [
@@ -7165,6 +7375,12 @@
             "title": "Title",
             "type": "string"
           },
+          "unpriced": {
+            "description": "S10: no fee was ever set (``None``); a free class (``0``) is priced.",
+            "readOnly": true,
+            "title": "Unpriced",
+            "type": "boolean"
+          },
           "venue_address": {
             "anyOf": [
               {
@@ -7212,7 +7428,8 @@
           "start_at",
           "end_at",
           "capacity",
-          "status"
+          "status",
+          "unpriced"
         ],
         "title": "AdminSessionView",
         "type": "object"
@@ -7485,6 +7702,17 @@
           "student_id": {
             "title": "Student Id",
             "type": "string"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
           }
         },
         "required": [
@@ -8369,6 +8597,13 @@
             ],
             "title": "Cancelled By"
           },
+          "days_of_week": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Days Of Week",
+            "type": "array"
+          },
           "discount": {
             "anyOf": [
               {
@@ -8390,6 +8625,17 @@
               }
             ],
             "title": "End At"
+          },
+          "end_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Time"
           },
           "ended_at": {
             "anyOf": [
@@ -8498,6 +8744,17 @@
               }
             ],
             "title": "Start At"
+          },
+          "start_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Time"
           },
           "status": {
             "title": "Status",
@@ -8761,6 +9018,47 @@
           "student_id"
         ],
         "title": "AdminStudentWaiverStatusView",
+        "type": "object"
+      },
+      "AdminToday": {
+        "properties": {
+          "classes": {
+            "items": {
+              "$ref": "#/components/schemas/TodayClass"
+            },
+            "title": "Classes",
+            "type": "array"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "health_enabled": {
+            "default": true,
+            "title": "Health Enabled",
+            "type": "boolean"
+          },
+          "messages_waiting": {
+            "default": 0,
+            "title": "Messages Waiting",
+            "type": "integer"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "tomorrow": {
+            "$ref": "#/components/schemas/TodayTomorrow"
+          }
+        },
+        "required": [
+          "date",
+          "timezone",
+          "classes",
+          "tomorrow"
+        ],
+        "title": "AdminToday",
         "type": "object"
       },
       "AdminTuitionDiscountCategorySummary": {
@@ -10755,6 +11053,11 @@
             "default": false,
             "title": "Waiver Class First",
             "type": "boolean"
+          },
+          "waiver_to_sign": {
+            "default": true,
+            "title": "Waiver To Sign",
+            "type": "boolean"
           }
         },
         "required": [
@@ -10933,6 +11236,65 @@
         "title": "AssignClassProgramRequest",
         "type": "object"
       },
+      "AssignCoverRequest": {
+        "properties": {
+          "notify_families": {
+            "default": false,
+            "title": "Notify Families",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "replacement_coach_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Replacement Coach Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "replacement_coach_id"
+        ],
+        "title": "AssignCoverRequest",
+        "type": "object"
+      },
+      "AssignCoverResponse": {
+        "properties": {
+          "announcement_posted": {
+            "default": false,
+            "title": "Announcement Posted",
+            "type": "boolean"
+          },
+          "email_failed": {
+            "default": 0,
+            "title": "Email Failed",
+            "type": "integer"
+          },
+          "families_notified": {
+            "default": 0,
+            "title": "Families Notified",
+            "type": "integer"
+          },
+          "occurrence": {
+            "$ref": "#/components/schemas/AdminSessionOccurrenceView"
+          }
+        },
+        "required": [
+          "occurrence"
+        ],
+        "title": "AssignCoverResponse",
+        "type": "object"
+      },
       "AssignedClassView": {
         "description": "The class an approved make-up / trial puts the child in (issue #1038).\n\nResolved facts, not raw ids: what, when (UTC instant + the academy's IANA\ntimezone so the client renders academy-local time) and where. ``status``\nis the occurrence's own status, so a called-off class reads \"cancelled\".",
         "properties": {
@@ -11017,6 +11379,11 @@
       },
       "AttendancePeriodPointView": {
         "properties": {
+          "cancelled_count": {
+            "default": 0,
+            "title": "Cancelled Count",
+            "type": "integer"
+          },
           "completed_count": {
             "title": "Completed Count",
             "type": "integer"
@@ -14031,6 +14398,11 @@
             ],
             "title": "Coach Name"
           },
+          "not_billed": {
+            "default": 0,
+            "title": "Not Billed",
+            "type": "integer"
+          },
           "session_id": {
             "title": "Session Id",
             "type": "string"
@@ -14216,6 +14588,41 @@
         "title": "ClosureDateView",
         "type": "object"
       },
+      "CoachAcademyContactView": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CoachAcademyContactView",
+        "type": "object"
+      },
       "CoachAcademyView": {
         "description": "Row 14: the coach shell's academy mark. Deliberately minimal \u2014 a coach\nnever sees the rest of the academy profile, so this is not\n``ParentAcademyView``/``AdminAcademyView`` with fields dropped, it is its\nown narrow DTO.",
         "properties": {
@@ -14229,6 +14636,28 @@
               }
             ],
             "title": "Brand Color"
+          },
+          "contact_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Email"
+          },
+          "contact_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Phone"
           },
           "logo_url": {
             "anyOf": [
@@ -14244,12 +14673,136 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
           }
         },
         "required": [
           "name"
         ],
         "title": "CoachAcademyView",
+        "type": "object"
+      },
+      "CoachAgeBand": {
+        "description": "A class's age span; ``max_age`` None means \"and up\".",
+        "properties": {
+          "max_age": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Age"
+          },
+          "min_age": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Age"
+          }
+        },
+        "title": "CoachAgeBand",
+        "type": "object"
+      },
+      "CoachChildHealthView": {
+        "additionalProperties": false,
+        "properties": {
+          "emergency_contact_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emergency Contact Name"
+          },
+          "emergency_contact_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emergency Contact Phone"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "parent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Name"
+          },
+          "parent_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Phone"
+          },
+          "status": {
+            "enum": [
+              "declared",
+              "none_declared",
+              "not_answered"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "full_name",
+          "status"
+        ],
+        "title": "CoachChildHealthView",
         "type": "object"
       },
       "CoachDashboardResponse": {
@@ -14594,6 +15147,354 @@
         "title": "CoachMessagesResponse",
         "type": "object"
       },
+      "CoachPathwayLessonView": {
+        "description": "A lesson card's teaching content only: citation fields stay admin-side.",
+        "properties": {
+          "activity_summary": {
+            "default": "",
+            "title": "Activity Summary",
+            "type": "string"
+          },
+          "card_id": {
+            "title": "Card Id",
+            "type": "string"
+          },
+          "equipment": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Equipment",
+            "type": "array"
+          },
+          "goal_summary": {
+            "default": "",
+            "title": "Goal Summary",
+            "type": "string"
+          },
+          "lesson_number": {
+            "title": "Lesson Number",
+            "type": "integer"
+          },
+          "safety_notes": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Safety Notes",
+            "type": "array"
+          },
+          "teaching_points": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Teaching Points",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "video_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Video Url"
+          }
+        },
+        "required": [
+          "card_id",
+          "lesson_number",
+          "title"
+        ],
+        "title": "CoachPathwayLessonView",
+        "type": "object"
+      },
+      "CoachPathwayLevelView": {
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "lessons": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CoachPathwayLessonView"
+            },
+            "title": "Lessons",
+            "type": "array"
+          },
+          "level_id": {
+            "title": "Level Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "skills": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CoachPathwaySkillView"
+            },
+            "title": "Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "level_id",
+          "sequence",
+          "name"
+        ],
+        "title": "CoachPathwayLevelView",
+        "type": "object"
+      },
+      "CoachPathwayProgramView": {
+        "properties": {
+          "levels": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CoachPathwayLevelView"
+            },
+            "title": "Levels",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "program_id": {
+            "title": "Program Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "program_id",
+          "name"
+        ],
+        "title": "CoachPathwayProgramView",
+        "type": "object"
+      },
+      "CoachPathwayResponse": {
+        "description": "S68: what the academy teaches, as reference reading for a coach.",
+        "properties": {
+          "programs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CoachPathwayProgramView"
+            },
+            "title": "Programs",
+            "type": "array"
+          }
+        },
+        "title": "CoachPathwayResponse",
+        "type": "object"
+      },
+      "CoachPathwaySkillView": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_id",
+          "name"
+        ],
+        "title": "CoachPathwaySkillView",
+        "type": "object"
+      },
+      "CoachPayClassView": {
+        "properties": {
+          "class_name": {
+            "title": "Class Name",
+            "type": "string"
+          },
+          "minutes": {
+            "title": "Minutes",
+            "type": "integer"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "lead",
+              "cover",
+              "assistant"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "start_at",
+          "class_name",
+          "minutes",
+          "role"
+        ],
+        "title": "CoachPayClassView",
+        "type": "object"
+      },
+      "CoachPayResponse": {
+        "description": "S59: the signed-in coach's own classes taught and released payslip.",
+        "properties": {
+          "academy_contact": {
+            "$ref": "#/components/schemas/CoachAcademyContactView"
+          },
+          "classes": {
+            "items": {
+              "$ref": "#/components/schemas/CoachPayClassView"
+            },
+            "title": "Classes",
+            "type": "array"
+          },
+          "classes_taught": {
+            "title": "Classes Taught",
+            "type": "integer"
+          },
+          "minutes_taught": {
+            "title": "Minutes Taught",
+            "type": "integer"
+          },
+          "month": {
+            "title": "Month",
+            "type": "string"
+          },
+          "month_label": {
+            "title": "Month Label",
+            "type": "string"
+          },
+          "payslip": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoachPayslipView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "month",
+          "month_label",
+          "classes_taught",
+          "minutes_taught",
+          "classes",
+          "academy_contact"
+        ],
+        "title": "CoachPayResponse",
+        "type": "object"
+      },
+      "CoachPayslipView": {
+        "description": "An approved or paid payslip: its total only. No lines, no rate.",
+        "properties": {
+          "approved_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved On"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "paid_amount_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Amount Cents"
+          },
+          "paid_method_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Method Label"
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On"
+          },
+          "period_end": {
+            "format": "date",
+            "title": "Period End",
+            "type": "string"
+          },
+          "period_start": {
+            "format": "date",
+            "title": "Period Start",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "approved",
+              "paid"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total_cents": {
+            "title": "Total Cents",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "period_start",
+          "period_end",
+          "status",
+          "total_cents",
+          "currency"
+        ],
+        "title": "CoachPayslipView",
+        "type": "object"
+      },
       "CoachProfileBody": {
         "additionalProperties": false,
         "properties": {
@@ -14728,6 +15629,17 @@
       },
       "CoachRosterEntry": {
         "properties": {
+          "age_years": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age Years"
+          },
           "attendance_marked_at": {
             "anyOf": [
               {
@@ -14816,6 +15728,17 @@
             ],
             "title": "Hold Return On"
           },
+          "level_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Name"
+          },
           "payment_due_cents": {
             "anyOf": [
               {
@@ -14877,8 +15800,45 @@
         "title": "CoachRosterEntry",
         "type": "object"
       },
+      "CoachRosterHealthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/CoachChildHealthView"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "declared_count": {
+            "title": "Declared Count",
+            "type": "integer"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "declared_count",
+          "children"
+        ],
+        "title": "CoachRosterHealthResponse",
+        "type": "object"
+      },
       "CoachScheduleEntry": {
         "properties": {
+          "age_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoachAgeBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "coach_id": {
             "anyOf": [
               {
@@ -14905,6 +15865,28 @@
             "format": "date-time",
             "title": "End At",
             "type": "string"
+          },
+          "enrolled_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enrolled Count"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
           },
           "location": {
             "title": "Location",
@@ -14968,6 +15950,27 @@
       },
       "CoachSession": {
         "properties": {
+          "age_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoachAgeBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "arrival_minutes_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arrival Minutes Before"
+          },
           "cancellation_reason": {
             "anyOf": [
               {
@@ -15038,6 +16041,17 @@
             "title": "Occurrence Id",
             "type": "string"
           },
+          "parking_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parking Notes"
+          },
           "recap_saved": {
             "default": false,
             "title": "Recap Saved",
@@ -15091,6 +16105,17 @@
             },
             "title": "Trial Guests",
             "type": "array"
+          },
+          "venue_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Venue Address"
           }
         },
         "required": [
@@ -16133,15 +17158,8 @@
       "CorrectStudentAttendanceRequest": {
         "properties": {
           "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
+            "title": "Reason",
+            "type": "string"
           },
           "status": {
             "enum": [
@@ -16154,9 +17172,266 @@
           }
         },
         "required": [
-          "status"
+          "status",
+          "reason"
         ],
         "title": "CorrectStudentAttendanceRequest",
+        "type": "object"
+      },
+      "CoverBusyView": {
+        "properties": {
+          "class_title": {
+            "title": "Class Title",
+            "type": "string"
+          },
+          "coach_id": {
+            "title": "Coach Id",
+            "type": "string"
+          },
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coach_id",
+          "name",
+          "class_title",
+          "start_at",
+          "end_at"
+        ],
+        "title": "CoverBusyView",
+        "type": "object"
+      },
+      "CoverCoachView": {
+        "properties": {
+          "coach_id": {
+            "title": "Coach Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coach_id",
+          "name"
+        ],
+        "title": "CoverCoachView",
+        "type": "object"
+      },
+      "CoverDateView": {
+        "properties": {
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
+            "type": "string"
+          },
+          "enrolled_count": {
+            "title": "Enrolled Count",
+            "type": "integer"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "session_id",
+          "title",
+          "start_at",
+          "end_at",
+          "enrolled_count"
+        ],
+        "title": "CoverDateView",
+        "type": "object"
+      },
+      "CoverFamilyView": {
+        "properties": {
+          "family_name": {
+            "title": "Family Name",
+            "type": "string"
+          },
+          "has_email": {
+            "title": "Has Email",
+            "type": "boolean"
+          },
+          "parent_id": {
+            "title": "Parent Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent_id",
+          "family_name",
+          "has_email"
+        ],
+        "title": "CoverFamilyView",
+        "type": "object"
+      },
+      "CoverOptionsResponse": {
+        "properties": {
+          "dates": {
+            "items": {
+              "$ref": "#/components/schemas/CoverDateView"
+            },
+            "title": "Dates",
+            "type": "array"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/CoverOptionsView"
+            },
+            "title": "Options",
+            "type": "array"
+          }
+        },
+        "title": "CoverOptionsResponse",
+        "type": "object"
+      },
+      "CoverOptionsView": {
+        "properties": {
+          "busy": {
+            "items": {
+              "$ref": "#/components/schemas/CoverBusyView"
+            },
+            "title": "Busy",
+            "type": "array"
+          },
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
+            "type": "string"
+          },
+          "enrolled_count": {
+            "title": "Enrolled Count",
+            "type": "integer"
+          },
+          "families": {
+            "items": {
+              "$ref": "#/components/schemas/CoverFamilyView"
+            },
+            "title": "Families",
+            "type": "array"
+          },
+          "free": {
+            "items": {
+              "$ref": "#/components/schemas/CoverCoachView"
+            },
+            "title": "Free",
+            "type": "array"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "scheduled_coach": {
+            "$ref": "#/components/schemas/CoverCoachView"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "session_id",
+          "title",
+          "start_at",
+          "end_at",
+          "status",
+          "scheduled_coach",
+          "enrolled_count",
+          "families",
+          "free",
+          "busy"
+        ],
+        "title": "CoverOptionsView",
+        "type": "object"
+      },
+      "CoverRequestBody": {
+        "additionalProperties": false,
+        "properties": {
+          "occurrence_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "occurrence_id"
+        ],
+        "title": "CoverRequestBody",
+        "type": "object"
+      },
+      "CoverRequestView": {
+        "additionalProperties": false,
+        "properties": {
+          "requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested At"
+          }
+        },
+        "title": "CoverRequestView",
         "type": "object"
       },
       "CreateAbsenceNoticeRequest": {
@@ -17863,6 +19138,17 @@
           "session_id": {
             "title": "Session Id",
             "type": "string"
+          },
+          "start_level_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Level Id"
           },
           "student_id": {
             "title": "Student Id",
@@ -25580,6 +26866,11 @@
           "attendance_this_month": {
             "$ref": "#/components/schemas/ParentHomeAttendanceView"
           },
+          "first_class_pending": {
+            "default": false,
+            "title": "First Class Pending",
+            "type": "boolean"
+          },
           "full_name": {
             "title": "Full Name",
             "type": "string"
@@ -25627,7 +26918,8 @@
           "kind": {
             "enum": [
               "note",
-              "skill"
+              "skill",
+              "working_on"
             ],
             "title": "Kind",
             "type": "string"
@@ -25646,8 +26938,24 @@
         "type": "object"
       },
       "ParentHomeNextSessionView": {
-        "description": "The child's next upcoming occurrence.\n\n``coach_name`` is always ``None`` today \u2014 ``GetChildSchedule.execute``\nhardcodes it. The field is kept for shape parity with\n``ParentScheduleEntryView`` so the card can render a coach line the day\nthe use case starts populating it.",
+        "description": "The child's next upcoming occurrence.\n\nS45: ``coach_name`` is who coaches that date (substitute, else actual,\nelse scheduled coach), and the family-info fields come from the class as\nstored (address falls back to the academy's).",
         "properties": {
+          "absence_reported": {
+            "default": false,
+            "title": "Absence Reported",
+            "type": "boolean"
+          },
+          "arrival_minutes_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arrival Minutes Before"
+          },
           "coach_name": {
             "anyOf": [
               {
@@ -25679,6 +26987,17 @@
             "title": "Occurrence Id",
             "type": "string"
           },
+          "parking_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parking Notes"
+          },
           "session_id": {
             "title": "Session Id",
             "type": "string"
@@ -25701,6 +27020,28 @@
             "format": "date-time",
             "title": "Start At",
             "type": "string"
+          },
+          "venue_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Venue Address"
+          },
+          "what_to_bring": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "What To Bring"
           }
         },
         "required": [
@@ -25749,6 +27090,17 @@
             "title": "Balance Due Cents",
             "type": "integer"
           },
+          "class_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Name"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -25774,6 +27126,11 @@
             ],
             "title": "Enrollment Id"
           },
+          "has_receipt": {
+            "default": false,
+            "title": "Has Receipt",
+            "type": "boolean"
+          },
           "invoice_id": {
             "title": "Invoice Id",
             "type": "string"
@@ -25796,6 +27153,29 @@
             "title": "Lines",
             "type": "array"
           },
+          "method_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method Label"
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On"
+          },
           "pdf_url": {
             "anyOf": [
               {
@@ -25814,6 +27194,17 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
           },
           "total_cents": {
             "title": "Total Cents",
@@ -25890,6 +27281,17 @@
             "title": "Balance Due Cents",
             "type": "integer"
           },
+          "class_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Name"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -25915,6 +27317,11 @@
             ],
             "title": "Enrollment Id"
           },
+          "has_receipt": {
+            "default": false,
+            "title": "Has Receipt",
+            "type": "boolean"
+          },
           "invoice_id": {
             "title": "Invoice Id",
             "type": "string"
@@ -25929,6 +27336,29 @@
               }
             ],
             "title": "Invoice Number"
+          },
+          "method_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method Label"
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On"
           },
           "pdf_url": {
             "anyOf": [
@@ -25948,6 +27378,17 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
           },
           "total_cents": {
             "title": "Total Cents",
@@ -25992,6 +27433,36 @@
           "invoices"
         ],
         "title": "ParentInvoicesResponse",
+        "type": "object"
+      },
+      "ParentLastPaymentView": {
+        "properties": {
+          "amount_cents": {
+            "title": "Amount Cents",
+            "type": "integer"
+          },
+          "method_label": {
+            "title": "Method Label",
+            "type": "string"
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On"
+          }
+        },
+        "required": [
+          "amount_cents",
+          "method_label"
+        ],
+        "title": "ParentLastPaymentView",
         "type": "object"
       },
       "ParentMarkMessageReadResponse": {
@@ -26039,6 +27510,11 @@
           "message_id": {
             "title": "Message Id",
             "type": "string"
+          },
+          "mine": {
+            "default": false,
+            "title": "Mine",
+            "type": "boolean"
           },
           "read": {
             "title": "Read",
@@ -26101,6 +27577,165 @@
         "title": "ParentMessagesResponse",
         "type": "object"
       },
+      "ParentMoneyLineView": {
+        "properties": {
+          "amount_cents": {
+            "title": "Amount Cents",
+            "type": "integer"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "kind": {
+            "enum": [
+              "child",
+              "discount",
+              "paid"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "student_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Id"
+          }
+        },
+        "required": [
+          "kind",
+          "label",
+          "amount_cents"
+        ],
+        "title": "ParentMoneyLineView",
+        "type": "object"
+      },
+      "ParentMoneyPeriodView": {
+        "properties": {
+          "billed_cents": {
+            "title": "Billed Cents",
+            "type": "integer"
+          },
+          "due_cents": {
+            "title": "Due Cents",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "paid_cents": {
+            "title": "Paid Cents",
+            "type": "integer"
+          },
+          "period": {
+            "title": "Period",
+            "type": "string"
+          }
+        },
+        "required": [
+          "period",
+          "label",
+          "billed_cents",
+          "paid_cents",
+          "due_cents"
+        ],
+        "title": "ParentMoneyPeriodView",
+        "type": "object"
+      },
+      "ParentMoneySummaryView": {
+        "properties": {
+          "amount_due_cents": {
+            "title": "Amount Due Cents",
+            "type": "integer"
+          },
+          "can_pay_online": {
+            "title": "Can Pay Online",
+            "type": "boolean"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "days_overdue": {
+            "title": "Days Overdue",
+            "type": "integer"
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Date"
+          },
+          "last_payment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParentLastPaymentView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/ParentMoneyLineView"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "multiple_due_dates": {
+            "title": "Multiple Due Dates",
+            "type": "boolean"
+          },
+          "overdue": {
+            "title": "Overdue",
+            "type": "boolean"
+          },
+          "periods": {
+            "items": {
+              "$ref": "#/components/schemas/ParentMoneyPeriodView"
+            },
+            "title": "Periods",
+            "type": "array"
+          }
+        },
+        "required": [
+          "currency",
+          "amount_due_cents",
+          "overdue",
+          "days_overdue",
+          "multiple_due_dates",
+          "can_pay_online",
+          "lines",
+          "periods"
+        ],
+        "title": "ParentMoneySummaryView",
+        "type": "object"
+      },
       "ParentPaymentHistoryResponse": {
         "properties": {
           "payments": {
@@ -26154,6 +27789,17 @@
             ],
             "title": "Invoice Period"
           },
+          "method_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method Label"
+          },
           "payment_id": {
             "title": "Payment Id",
             "type": "string"
@@ -26198,6 +27844,13 @@
               }
             ],
             "title": "Stripe Payment Intent Id"
+          },
+          "student_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Student Names",
+            "type": "array"
           }
         },
         "required": [
@@ -26400,6 +28053,215 @@
         "title": "ParentProgressResponse",
         "type": "object"
       },
+      "ParentReceiptAcademyView": {
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "logo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Url"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ParentReceiptAcademyView",
+        "type": "object"
+      },
+      "ParentReceiptLineView": {
+        "properties": {
+          "amount_cents": {
+            "title": "Amount Cents",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "amount_cents"
+        ],
+        "title": "ParentReceiptLineView",
+        "type": "object"
+      },
+      "ParentReceiptPaymentView": {
+        "properties": {
+          "amount_cents": {
+            "title": "Amount Cents",
+            "type": "integer"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On"
+          }
+        },
+        "required": [
+          "method",
+          "amount_cents"
+        ],
+        "title": "ParentReceiptPaymentView",
+        "type": "object"
+      },
+      "ParentReceiptView": {
+        "description": "S58: a paid invoice as a printable receipt.",
+        "properties": {
+          "academy": {
+            "$ref": "#/components/schemas/ParentReceiptAcademyView"
+          },
+          "balance_cents": {
+            "title": "Balance Cents",
+            "type": "integer"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "invoice_id": {
+            "title": "Invoice Id",
+            "type": "string"
+          },
+          "invoice_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Number"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/ParentReceiptLineView"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "paid_in_full_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid In Full On"
+          },
+          "payer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payer Name"
+          },
+          "payments": {
+            "items": {
+              "$ref": "#/components/schemas/ParentReceiptPaymentView"
+            },
+            "title": "Payments",
+            "type": "array"
+          },
+          "period_label": {
+            "title": "Period Label",
+            "type": "string"
+          },
+          "refunded_cents": {
+            "default": 0,
+            "title": "Refunded Cents",
+            "type": "integer"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
+          },
+          "total_cents": {
+            "title": "Total Cents",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "academy",
+          "invoice_id",
+          "period_label",
+          "lines",
+          "total_cents",
+          "currency",
+          "payments",
+          "balance_cents"
+        ],
+        "title": "ParentReceiptView",
+        "type": "object"
+      },
       "ParentReferralResponse": {
         "properties": {
           "enabled": {
@@ -26462,6 +28324,97 @@
         "title": "ParentReferralResponse",
         "type": "object"
       },
+      "ParentRegistrationList": {
+        "properties": {
+          "registrations": {
+            "items": {
+              "$ref": "#/components/schemas/ParentRegistrationView"
+            },
+            "title": "Registrations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "registrations"
+        ],
+        "title": "ParentRegistrationList",
+        "type": "object"
+      },
+      "ParentRegistrationView": {
+        "description": "One registration that is not finished or not yet confirmed (S02).\n\n``state``: ``finish`` (back into the wizard), ``waiting`` (the academy\nconfirms), ``waitlisted`` or ``declined``.",
+        "properties": {
+          "application_id": {
+            "title": "Application Id",
+            "type": "string"
+          },
+          "child_first_name": {
+            "title": "Child First Name",
+            "type": "string"
+          },
+          "schedule_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Label"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "session_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Title"
+          },
+          "state": {
+            "enum": [
+              "finish",
+              "paying",
+              "waiting",
+              "waitlisted",
+              "declined"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application_id",
+          "child_first_name",
+          "status",
+          "state",
+          "submitted_at"
+        ],
+        "title": "ParentRegistrationView",
+        "type": "object"
+      },
       "ParentScheduleEntryView": {
         "properties": {
           "absence_makeup": {
@@ -26477,6 +28430,11 @@
           "absence_reported": {
             "default": false,
             "title": "Absence Reported",
+            "type": "boolean"
+          },
+          "absence_undoable": {
+            "default": false,
+            "title": "Absence Undoable",
             "type": "boolean"
           },
           "can_report_arrival": {
@@ -26764,6 +28722,19 @@
           }
         },
         "title": "ParentSelfServiceSwitchesView",
+        "type": "object"
+      },
+      "ParentSendMessageRequest": {
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "title": "ParentSendMessageRequest",
         "type": "object"
       },
       "ParentSignedWaiverView": {
@@ -27935,6 +29906,59 @@
         "title": "PayrollSettingsView",
         "type": "object"
       },
+      "PhoneMatch": {
+        "properties": {
+          "children": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "parent_id": {
+            "title": "Parent Id",
+            "type": "string"
+          },
+          "phone": {
+            "title": "Phone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent_id",
+          "phone",
+          "children"
+        ],
+        "title": "PhoneMatch",
+        "type": "object"
+      },
+      "PhoneSearchResponse": {
+        "properties": {
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/PhoneMatch"
+            },
+            "title": "Matches",
+            "type": "array"
+          }
+        },
+        "required": [
+          "matches"
+        ],
+        "title": "PhoneSearchResponse",
+        "type": "object"
+      },
       "PipelineBoardCardView": {
         "properties": {
           "card_id": {
@@ -28222,6 +30246,24 @@
           "set_at"
         ],
         "title": "PipelineOverrideView",
+        "type": "object"
+      },
+      "PlaceBacklogBody": {
+        "properties": {
+          "student_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5000,
+            "minItems": 1,
+            "title": "Student Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "student_ids"
+        ],
+        "title": "PlaceBacklogBody",
         "type": "object"
       },
       "PlaceStudentBody": {
@@ -28851,6 +30893,10 @@
             "title": "Matching Plan Ids",
             "type": "array"
           },
+          "paying_students": {
+            "title": "Paying Students",
+            "type": "integer"
+          },
           "plan_id": {
             "anyOf": [
               {
@@ -28923,6 +30969,7 @@
           "charged_cents",
           "fee_set",
           "students",
+          "paying_students",
           "plan_id",
           "matching_plan_ids",
           "stale_link"
@@ -29856,6 +31903,17 @@
               }
             ],
             "title": "Venue Address"
+          },
+          "what_to_bring": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "What To Bring"
           }
         },
         "required": [
@@ -33982,6 +36040,24 @@
         "title": "StaffDropoffCheckinView",
         "type": "object"
       },
+      "StartApplicationRequest": {
+        "properties": {
+          "application_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application Id"
+          }
+        },
+        "title": "StartApplicationRequest",
+        "type": "object"
+      },
       "StartAutopayRequest": {
         "properties": {
           "cancel_url": {
@@ -35905,6 +37981,266 @@
           "updated_at"
         ],
         "title": "TenantSubscriptionResponse",
+        "type": "object"
+      },
+      "TodayClass": {
+        "properties": {
+          "absent_count": {
+            "title": "Absent Count",
+            "type": "integer"
+          },
+          "cancellation_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Reason"
+          },
+          "coach_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coach Id"
+          },
+          "coach_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coach Name"
+          },
+          "cover_coach_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Coach Name"
+          },
+          "cover_requested": {
+            "default": false,
+            "title": "Cover Requested",
+            "type": "boolean"
+          },
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
+            "type": "string"
+          },
+          "enrolled_count": {
+            "title": "Enrolled Count",
+            "type": "integer"
+          },
+          "here_count": {
+            "title": "Here Count",
+            "type": "integer"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "marked_count": {
+            "title": "Marked Count",
+            "type": "integer"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "phase": {
+            "enum": [
+              "now",
+              "next",
+              "later",
+              "finished",
+              "cancelled"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "roster": {
+            "items": {
+              "$ref": "#/components/schemas/TodayRosterRow"
+            },
+            "title": "Roster",
+            "type": "array"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "staff_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Staff Ids",
+            "type": "array"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "starts_in_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starts In Minutes"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "session_id",
+          "title",
+          "location",
+          "start_at",
+          "end_at",
+          "status",
+          "phase",
+          "enrolled_count",
+          "here_count",
+          "absent_count",
+          "marked_count",
+          "roster"
+        ],
+        "title": "TodayClass",
+        "type": "object"
+      },
+      "TodayRosterRow": {
+        "properties": {
+          "attendance": {
+            "anyOf": [
+              {
+                "enum": [
+                  "present",
+                  "late",
+                  "absent"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attendance"
+          },
+          "expected_absent": {
+            "default": false,
+            "title": "Expected Absent",
+            "type": "boolean"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "enrolled",
+              "makeup",
+              "trial"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "parent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Name"
+          },
+          "parent_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Phone"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "full_name",
+          "kind"
+        ],
+        "title": "TodayRosterRow",
+        "type": "object"
+      },
+      "TodayTomorrow": {
+        "properties": {
+          "class_count": {
+            "title": "Class Count",
+            "type": "integer"
+          },
+          "first_start_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Start At"
+          }
+        },
+        "required": [
+          "class_count"
+        ],
+        "title": "TodayTomorrow",
         "type": "object"
       },
       "TransferEnrollmentRequest": {
@@ -39690,6 +42026,36 @@
               "description": "Narrow the trail to one kind of actor: admin, owner, coach, parent, system.",
               "title": "Actor Type"
             }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "`next_cursor` from the previous page, for older rows.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`next_cursor` from the previous page, for older rows.",
+              "title": "Cursor"
+            }
           }
         ],
         "responses": {
@@ -41801,6 +44167,127 @@
         ]
       }
     },
+    "/api/v2/admin/coach-cover/options": {
+      "get": {
+        "operationId": "get_cover_options_api_v2_admin_coach_cover_options_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "coach_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Coach Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "occurrence_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1400,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Occurrence Ids"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverOptionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "A coach's class dates, or who is free to cover given class dates",
+        "tags": [
+          "admin.coach-cover"
+        ]
+      }
+    },
+    "/api/v2/admin/coach-cover/{occurrence_id}/assign": {
+      "post": {
+        "operationId": "assign_cover_api_v2_admin_coach_cover__occurrence_id__assign_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignCoverRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignCoverResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put a free coach on one class date and, if asked, tell the families",
+        "tags": [
+          "admin.coach-cover"
+        ]
+      }
+    },
     "/api/v2/admin/coaches/{coach_id}/pay-rates": {
       "get": {
         "operationId": "list_coach_pay_rates_api_v2_admin_coaches__coach_id__pay_rates_get",
@@ -43578,6 +46065,18 @@
               "title": "Page Size",
               "type": "integer"
             }
+          },
+          {
+            "description": "Skip the 60s cache (after a write).",
+            "in": "query",
+            "name": "fresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Skip the 60s cache (after a write).",
+              "title": "Fresh",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -43612,6 +46111,20 @@
       "get": {
         "description": "Scope tiles (Active, Leaving, Left) over the unfiltered family index.",
         "operationId": "family_index_summary_api_v2_admin_families_summary_get",
+        "parameters": [
+          {
+            "description": "Skip the 60s cache (after a write).",
+            "in": "query",
+            "name": "fresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Skip the 60s cache (after a write).",
+              "title": "Fresh",
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -43622,6 +46135,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Family Index Summary",
@@ -45746,6 +48269,70 @@
         ]
       }
     },
+    "/api/v2/admin/pathway/unplaced": {
+      "get": {
+        "description": "Active students with no level: the list the owner sees before placing them.",
+        "operationId": "list_unplaced_students_api_v2_admin_pathway_unplaced_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response List Unplaced Students Api V2 Admin Pathway Unplaced Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Unplaced Students",
+        "tags": [
+          "admin-progress"
+        ]
+      }
+    },
+    "/api/v2/admin/pathway/unplaced/place": {
+      "post": {
+        "description": "Owner only (D-10): put the listed unplaced students on the first level.\n\nRe-checked here, so a student placed since the list was shown, or no longer\nactive, is skipped rather than moved. Running it twice places nobody twice.",
+        "operationId": "place_unplaced_backlog_api_v2_admin_pathway_unplaced_place_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaceBacklogBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Place Unplaced Backlog Api V2 Admin Pathway Unplaced Place Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Place Unplaced Backlog",
+        "tags": [
+          "admin-progress"
+        ]
+      }
+    },
     "/api/v2/admin/pause-requests": {
       "get": {
         "operationId": "list_pause_requests_api_v2_admin_pause_requests_get",
@@ -47225,6 +49812,50 @@
         "tags": [
           "admin.families",
           "admin.people"
+        ]
+      }
+    },
+    "/api/v2/admin/phone-search": {
+      "get": {
+        "operationId": "phone_search_api_v2_admin_phone_search_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "phone",
+            "required": true,
+            "schema": {
+              "maxLength": 40,
+              "minLength": 1,
+              "title": "Phone",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhoneSearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "This academy's parents by part of a phone number",
+        "tags": [
+          "admin.today"
         ]
       }
     },
@@ -50014,6 +52645,48 @@
         ]
       }
     },
+    "/api/v2/admin/session-occurrences/{occurrence_id}/cancel-preview": {
+      "get": {
+        "operationId": "get_cancel_preview_api_v2_admin_session_occurrences__occurrence_id__cancel_preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditMissedClassResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Each family's credit if this class date were cancelled (writes nothing)",
+        "tags": [
+          "admin.coach-cover"
+        ]
+      }
+    },
     "/api/v2/admin/session-occurrences/{occurrence_id}/checkins/{student_id}/confirm": {
       "post": {
         "operationId": "confirm_dropoff_api_v2_admin_session_occurrences__occurrence_id__checkins__student_id__confirm_post",
@@ -52555,6 +55228,100 @@
         ]
       }
     },
+    "/api/v2/admin/today": {
+      "get": {
+        "operationId": "get_today_api_v2_admin_today_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminToday"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Today's classes with rosters",
+        "tags": [
+          "admin.today"
+        ]
+      }
+    },
+    "/api/v2/admin/today/roster-health": {
+      "get": {
+        "operationId": "get_today_roster_health_api_v2_admin_today_roster_health_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminRosterHealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Health notes for one class date (never cached)",
+        "tags": [
+          "admin.today"
+        ]
+      }
+    },
     "/api/v2/admin/users": {
       "get": {
         "operationId": "list_users_api_v2_admin_users_get",
@@ -53680,6 +56447,89 @@
         ]
       }
     },
+    "/api/v2/coach/cover-requests": {
+      "get": {
+        "operationId": "get_cover_request_api_v2_coach_cover_requests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverRequestView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "When I asked for cover on a class date, if I did",
+        "tags": [
+          "coach.cover-requests"
+        ]
+      },
+      "post": {
+        "operationId": "request_cover_api_v2_coach_cover_requests_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoverRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverRequestView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tell the academy I can't make a class date (inbox message only)",
+        "tags": [
+          "coach.cover-requests"
+        ]
+      }
+    },
     "/api/v2/coach/dashboard": {
       "get": {
         "operationId": "get_dashboard_api_v2_coach_dashboard_get",
@@ -54277,6 +57127,28 @@
         ]
       }
     },
+    "/api/v2/coach/pathway": {
+      "get": {
+        "description": "S68 \"What we teach\". Academy reference content for the request\nacademy; no student or progress data. Retired levels, skills and cards are\nleft out, and so are a card's citation fields.",
+        "operationId": "get_pathway_api_v2_coach_pathway_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoachPathwayResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "The academy's levels, skills and lesson plans (reference only)",
+        "tags": [
+          "coach.academy"
+        ]
+      }
+    },
     "/api/v2/coach/profile": {
       "get": {
         "operationId": "get_profile_api_v2_coach_profile_get",
@@ -54334,6 +57206,101 @@
         "summary": "Update the current coach's display name, phone, or email",
         "tags": [
           "coach"
+        ]
+      }
+    },
+    "/api/v2/coach/profile/pay": {
+      "get": {
+        "description": "Self only (D-05). The coach is always ``claims.user_id``: there is no\nparameter naming a coach, so no URL can return someone else's pay.",
+        "operationId": "get_my_pay_api_v2_coach_profile_pay_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoachPayResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The current coach's classes taught and approved or paid payslip",
+        "tags": [
+          "coach"
+        ]
+      }
+    },
+    "/api/v2/coach/roster-health": {
+      "get": {
+        "operationId": "get_roster_health_api_v2_coach_roster_health_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoachRosterHealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Health notes and emergency contacts for an assigned class date (never cached)",
+        "tags": [
+          "coach.roster-health"
         ]
       }
     },
@@ -55299,6 +58266,58 @@
           }
         },
         "summary": "Get Session Students Progress",
+        "tags": [
+          "coach-skills"
+        ]
+      }
+    },
+    "/api/v2/coach/sessions/{session_id}/students/{student_id}/pathway-placement": {
+      "post": {
+        "description": "D-10: start an unplaced child on this roster at the first level.\n\nOnly a child on a roster this coach runs (404 otherwise), and only one with\nno level: a placed child is the owner's to move.",
+        "operationId": "place_unplaced_student_api_v2_coach_sessions__session_id__students__student_id__pathway_placement_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Place Unplaced Student Api V2 Coach Sessions  Session Id  Students  Student Id  Pathway Placement Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Place Unplaced Student",
         "tags": [
           "coach-skills"
         ]
@@ -56567,6 +59586,51 @@
         ]
       }
     },
+    "/api/v2/parent/absences/{student_id}/{occurrence_id}": {
+      "delete": {
+        "description": "S43 / D-12: undo a reported absence until the class starts.",
+        "operationId": "withdraw_absence_notice_api_v2_parent_absences__student_id___occurrence_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Withdraw Absence Notice",
+        "tags": [
+          "parent.absence_notices"
+        ]
+      }
+    },
     "/api/v2/parent/academy": {
       "get": {
         "operationId": "get_academy_info_api_v2_parent_academy_get",
@@ -57571,6 +60635,48 @@
         ]
       }
     },
+    "/api/v2/parent/invoices/{invoice_id}/receipt": {
+      "get": {
+        "operationId": "get_invoice_receipt_api_v2_parent_invoices__invoice_id__receipt_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invoice_id",
+            "required": true,
+            "schema": {
+              "title": "Invoice Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentReceiptView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Printable receipt for one of the parent's own paid invoices",
+        "tags": [
+          "parent.invoices"
+        ]
+      }
+    },
     "/api/v2/parent/makeups": {
       "get": {
         "operationId": "list_makeups_api_v2_parent_makeups_get",
@@ -57723,6 +60829,46 @@
         "tags": [
           "parent.messages"
         ]
+      },
+      "post": {
+        "description": "Open or continue this family's thread with the academy (D-18).\n\nAdmins get one email per family per hour, without the message text.",
+        "operationId": "send_message_to_academy_api_v2_parent_messages_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParentSendMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentMessageView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Send Message To Academy",
+        "tags": [
+          "parent.messages"
+        ]
       }
     },
     "/api/v2/parent/messages/{message_id}/read": {
@@ -57767,9 +60913,47 @@
         ]
       }
     },
+    "/api/v2/parent/money-summary": {
+      "get": {
+        "operationId": "get_money_summary_api_v2_parent_money_summary_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentMoneySummaryView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "What the family owes now, by child, with one due date",
+        "tags": [
+          "parent.invoices"
+        ]
+      }
+    },
     "/api/v2/parent/onboarding/start": {
       "post": {
         "operationId": "start_api_v2_parent_onboarding_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/StartApplicationRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -57780,6 +60964,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Start (or return existing draft) onboarding application for the signed-in parent",
@@ -58237,6 +61431,27 @@
         ]
       }
     },
+    "/api/v2/parent/registrations": {
+      "get": {
+        "operationId": "list_registrations_api_v2_parent_registrations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentRegistrationList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "The family's registrations that are not finished or not yet confirmed",
+        "tags": [
+          "parent.onboarding"
+        ]
+      }
+    },
     "/api/v2/parent/sessions/available": {
       "get": {
         "operationId": "list_available_sessions_api_v2_parent_sessions_available_get",
@@ -58509,6 +61724,49 @@
         "summary": "List Child Class Recaps",
         "tags": [
           "parent-class-recap"
+        ]
+      }
+    },
+    "/api/v2/parent/students/{student_id}/coach-notes": {
+      "get": {
+        "description": "Skill notes a coach shared with this family (D-15). Private notes, and\nnotes ticked shared before parents could see them, never appear.",
+        "operationId": "get_coach_notes_api_v2_parent_students__student_id__coach_notes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Get Coach Notes Api V2 Parent Students  Student Id  Coach Notes Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Coach Notes",
+        "tags": [
+          "parent-progress"
         ]
       }
     },

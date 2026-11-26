@@ -15,6 +15,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import OperationFailure
 
 from backend.v2.composition.absence_notifications import compose_absence_notifier
+from backend.v2.composition.academy_inbox import compose_send_academy_message
 from backend.v2.composition.ai_video_consent import compose_parent_ai_video_consent
 from backend.v2.composition.calendar_feed import compose_calendar_feed
 from backend.v2.composition.families import compose_system_family_autopay_pause
@@ -24,6 +25,10 @@ from backend.v2.composition.lifecycle_billing import (
     compose_enrollment_billing_sync,
 )
 from backend.v2.composition.occurrence_cancellation import StudentPresenceAdapter
+from backend.v2.composition.parent_money_summary import ParentMoney, compose_parent_money
+from backend.v2.composition.parent_registrations import (
+    compose_list_parent_registrations,
+)
 from backend.v2.composition.pathway import (
     CurriculumComposition,
     StudentProgressComposition,
@@ -41,10 +46,8 @@ from backend.v2.composition.waitlist_offers import (
     compose_list_parent_waitlist,
 )
 from backend.v2.composition.waiver_receipt_email import compose_waiver_receipt_notifier
-from backend.v2.contexts.billing.application.autopay_eligibility import (
-    CHARGEABLE_INVOICE_STATUSES,
-)
 from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
+from backend.v2.contexts.billing.application.parent_money import invoice_is_due
 from backend.v2.contexts.billing.application.ports import (
     ConnectedAccountDirectory,
     StripeCheckoutSessionNotExpirable,
@@ -168,6 +171,7 @@ from backend.v2.contexts.coaching.infrastructure.mongo_attendance_repo import (
 from backend.v2.contexts.enrollment.application.use_cases.absence_notices import (
     ListParentAbsences,
     SubmitAbsenceNotice,
+    WithdrawAbsenceNotice,
 )
 from backend.v2.contexts.enrollment.application.use_cases.admin_directory import (
     UpdateAdminStudentCommand,
@@ -280,6 +284,7 @@ from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     UpdateAdminUserCommand,
 )
 from backend.v2.contexts.identity.domain.public_page import PUBLIC_PAGE_FIELD, PublicPageSettings
+from backend.v2.contexts.identity.infrastructure.mongo_audit_trail import MongoAuditTrail
 from backend.v2.contexts.identity.infrastructure.mongo_user_repo import MongoUserRepository
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     GetApplicationStatus,
@@ -297,7 +302,7 @@ from backend.v2.contexts.onboarding.domain.errors import (
     IncompleteApplication,
     MissingSelectedSession,
 )
-from backend.v2.contexts.onboarding.domain.models import Waiver
+from backend.v2.contexts.onboarding.domain.models import ParentProfile, Waiver
 from backend.v2.contexts.onboarding.infrastructure.mongo_application_repo import (
     MongoApplicationRepository,
 )
@@ -307,7 +312,7 @@ from backend.v2.contexts.onboarding.infrastructure.mongo_parent_waiver_repo impo
 from backend.v2.contexts.onboarding.infrastructure.mongo_registration_waiver_repo import (
     MongoRegistrationWaiverRepository,
 )
-from backend.v2.shared.comms import Message, MongoMessageRepository
+from backend.v2.shared.comms import CommsService, Message, MongoMessageRepository
 from backend.v2.shared.config import get_settings
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
@@ -395,6 +400,7 @@ class ParentComposition:
     list_parent_pause_requests: ListParentPauseRequests
     submit_absence_notice: SubmitAbsenceNotice
     list_parent_absences: ListParentAbsences
+    withdraw_absence_notice: WithdrawAbsenceNotice
     submit_makeup_request: SubmitMakeupRequest
     list_parent_makeups: ListParentMakeups
     list_eligible_makeup_targets: ListEligibleMakeupTargets
@@ -415,6 +421,8 @@ class ParentComposition:
     # X2: the family's own offers (the email's landing page) and "no thanks".
     decline_waitlist_offer: DeclineWaitlistOffer
     list_parent_waitlist: object  # callable(parent_id)
+    list_parent_registrations: object  # callable(parent_id), S02
+    parent_money: ParentMoney  # S57: money summary + invoice/payment labels
     enroll_child: object
     cancel_billing_enrollment: object
     get_parent_waiver_requirement: GetParentWaiverRequirement
@@ -433,6 +441,7 @@ class ParentComposition:
     # cannot place a non-default field after a defaulted one.
     list_messages: object = None  # Callable[[str], Awaitable[list[Message]]]
     mark_message_read: object = None  # Callable[[str, str], Awaitable[None]]
+    send_academy_message: object = None  # CommsService.send_to_academy (D-18)
     #: callable(parent_id) -> bool: the Stripe portal can open for this parent.
     billing_portal_available: object = None
     # Waivers to sign for a chosen class + whether any is program-scoped
@@ -450,6 +459,9 @@ class ParentComposition:
     list_makeup_candidates: ListMakeupCandidates | None = None
     # Makeup state of each reported absence (Reported / eligible / booked ...).
     describe_absence_makeups: DescribeAbsenceMakeups | None = None
+    # S21: the sign-up wizard's parent step fills a blank name/phone on the
+    # account; callable(parent_id, display_name, phone) -> None.
+    fill_parent_profile_blanks: object = None
 
 
 class _MongoTransactionRunner:
@@ -967,6 +979,13 @@ def compose_parent(
         notifier=compose_absence_notifier(db, settings),
     )
     list_parent_absences = ListParentAbsences(notices=absence_notices_repo)
+    withdraw_absence_notice = WithdrawAbsenceNotice(
+        students=students_query,
+        occurrences=occurrences_query,
+        notices=absence_notices_repo,
+        policies=self_service_policies_repo,
+        audit=MongoAuditTrail(db),
+    )
 
     student_presence = StudentPresenceAdapter(MongoAttendanceRepository(db))
     submit_makeup_request = SubmitMakeupRequest(
@@ -1214,11 +1233,27 @@ def compose_parent(
         unretired=MongoUnretiredCheckoutSessionRepository(db),
         stripe_account=_checkout_stripe_account,
     )
+
+    async def _account_parent_profile(parent_id: str) -> ParentProfile | None:
+        """S21 persona follow-up: the account's name and phone for a new
+        application. A name that is only the signup fallback (the email) is blank."""
+        user = await users_query.get_by_id(parent_id)
+        if user is None:
+            return None
+        name = (user.display_name or "").strip()
+        if name.lower() == str(user.email).lower():
+            name = ""
+        first, _, last = name.partition(" ")
+        return ParentProfile(
+            first_name=first, last_name=last.strip(), phone=(user.phone or "").strip()
+        )
+
     start_app = StartApplication(
         apps=apps_repo,
         academy_id=request_academy_id,
         clock=clock,
         checkout_retirement=checkout_retirement,
+        account_profile=_account_parent_profile,
     )
     patch_app = PatchApplication(
         apps=apps_repo,
@@ -1529,6 +1564,32 @@ def compose_parent(
         if result is None:
             return None
         return await get_parent_profile(parent_id)
+
+    async def fill_parent_profile_blanks(
+        parent_id: str, display_name: str | None, phone: str | None
+    ) -> None:
+        """Copy the wizard's parent name and phone onto the account where the
+        account has none. Never overwrites: a name that is only the signup
+        fallback (the email address) counts as blank."""
+        user = await users_query.get_by_id(parent_id)
+        if user is None:
+            return
+        current_name = (user.display_name or "").strip()
+        name_blank = not current_name or current_name.lower() == str(user.email).lower()
+        new_name = (display_name or "").strip()[:120] if name_blank else ""
+        new_phone = (phone or "").strip()[:40] if not (user.phone or "").strip() else ""
+        if not new_name and not new_phone:
+            return
+        await users_query.update_admin_user(
+            parent_id,
+            UpdateAdminUserCommand(
+                display_name=new_name or None,
+                phone=new_phone or None,
+                actor_id=parent_id,
+                reason="parent sign-up details",
+            ),
+            academy_id=current_academy_id(),
+        )
 
     async def confirm_parent_email(parent_id: str) -> dict[str, Any] | None:
         user = await users_query.confirm_email(parent_id)
@@ -2006,6 +2067,10 @@ def compose_parent(
     # per-field alias lookup), inside the tenant-scoped ledger.
     _list_parent_invoices = ListParentInvoices(identity=users_query, ledger=billing_ledger_repo)
     _get_parent_invoice = GetParentInvoice(identity=users_query, ledger=billing_ledger_repo)
+
+    async def _parent_display_name(parent_id: str) -> str | None:
+        user = await users_query.get_by_id(parent_id)
+        return ((user.display_name or "").strip() or None) if user else None
 
     async def list_invoices_for_parent(parent_id: str):
         return await _list_parent_invoices.execute(parent_id)
@@ -2819,8 +2884,38 @@ def compose_parent(
                     # Always None today — see ParentHomeNextSessionView.
                     "coach_name": entry.coach_name,
                     "source": entry.source,
+                    # S17: Home shows "Absent (reported)" on the next class.
+                    "absence_reported": entry.absence_reported,
+                    **await _next_class_family_info(entry.session_id, entry.occurrence_id),
                 }
             return None
+
+        async def _next_class_family_info(session_id: str, occurrence_id: str) -> dict[str, Any]:
+            """S45: where to go, what to bring and who coaches, from the class as stored.
+
+            Only reached for an entry ``get_child_schedule`` already proved is
+            this parent's child; both reads are tenant-scoped.
+            """
+            session = await sessions_query.get(session_id)
+            occurrence = await occurrences_query.get(occurrence_id)
+            coach_id: str | None
+            if occurrence is not None:
+                coach_id = (
+                    occurrence.substitute_coach_id
+                    or occurrence.actual_coach_id
+                    or occurrence.scheduled_coach_id
+                )
+            else:
+                coach_id = getattr(session, "coach_id", None)
+            return {
+                "coach_name": await _resolve_coach_name(coach_id),
+                "venue_address": getattr(session, "venue_address", None)
+                or academy.get("address")
+                or None,
+                "parking_notes": getattr(session, "parking_notes", None),
+                "what_to_bring": getattr(session, "what_to_bring", None),
+                "arrival_minutes_before": getattr(session, "arrival_minutes_before", None),
+            }
 
         schedule_results = await asyncio.gather(
             *(_next_session(student_id) for student_id in student_ids),
@@ -2871,6 +2966,17 @@ def compose_parent(
                 }
 
         milestone_by_student = await _parent_home_milestones(parent_id, student_ids)
+        # S45: "Before your first class" shows until a child is first marked in class.
+        attended = set(
+            await db["attendance"].distinct(
+                "student_id",
+                {
+                    "academy_id": academy_id,
+                    "student_id": {"$in": student_ids},
+                    "status": {"$in": ["present", "late"]},
+                },
+            )
+        )
 
         return {
             "children": [
@@ -2880,6 +2986,7 @@ def compose_parent(
                     "next_session": next_session_by_student.get(student_id),
                     "attendance_this_month": attendance_by_student[student_id],
                     "latest_milestone": milestone_by_student.get(student_id),
+                    "first_class_pending": student_id not in attended,
                 }
                 for child, student_id in zip(children, student_ids, strict=True)
             ],
@@ -2891,8 +2998,12 @@ def compose_parent(
     async def _parent_home_milestones(
         parent_id: str, student_ids: list[str]
     ) -> dict[str, dict[str, Any] | None]:
-        """Latest parent-visible milestone per child: the newer of the newest
-        shared note/feedback and the newest skill status change (decision 4)."""
+        """Latest parent-visible milestone per child (decision 4, S18).
+
+        Only a PASSED skill is a milestone, and it wins. Without one, the newer
+        of the newest shared note and the skill being worked on, labelled as
+        such ("note" / "working_on") so Home never calls practice a milestone.
+        """
         newest_note: dict[str, dict[str, Any]] = {}
 
         def _absorb(rows: list[dict[str, Any]]) -> None:
@@ -2932,10 +3043,12 @@ def compose_parent(
             updates = await sp_composition.get_recent_skill_updates.execute(student_id)
             for update in updates:
                 at = _as_utc(update.updated_at)
-                if at is None:
+                if at is None or update.status == "NOT_STARTED":
                     continue
+                # Only a pass is a milestone; anything newer reads "Working on".
+                kind = "skill" if update.status == "PASSED" else "working_on"
                 return {
-                    "kind": "skill",
+                    "kind": kind,
                     "label": _milestone_label(str(update.skill_name or "")),
                     "at": at,
                 }
@@ -2983,11 +3096,7 @@ def compose_parent(
         # both gate on {open, partially_paid} AND a positive balance). A
         # `not in {paid, void}` negation would count `draft` invoices, and the
         # banner would then offer a Pay button for money no surface can take.
-        unpaid = [
-            inv
-            for inv in invoices
-            if str(inv.status) in CHARGEABLE_INVOICE_STATUSES and int(inv.balance_due_cents) > 0
-        ]
+        unpaid = [inv for inv in invoices if invoice_is_due(inv)]  # S57: shared with Payments
         amount_due_cents = sum(int(inv.balance_due_cents) for inv in unpaid)
         due_dates = [inv.due_date for inv in unpaid if inv.due_date]
         currency = next((str(inv.currency) for inv in unpaid if inv.currency), None)
@@ -3135,6 +3244,7 @@ def compose_parent(
         list_parent_pause_requests=list_parent_pause_requests,
         submit_absence_notice=submit_absence_notice,
         list_parent_absences=list_parent_absences,
+        withdraw_absence_notice=withdraw_absence_notice,
         submit_makeup_request=submit_makeup_request,
         list_parent_makeups=list_parent_makeups,
         list_eligible_makeup_targets=list_eligible_makeup_targets,
@@ -3172,6 +3282,18 @@ def compose_parent(
         confirm_waitlist_offer=compose_confirm_waitlist_offer(db, settings),
         decline_waitlist_offer=compose_decline_waitlist_offer(db, promote=promote),
         list_parent_waitlist=compose_list_parent_waitlist(db),
+        list_parent_registrations=compose_list_parent_registrations(db),
+        parent_money=compose_parent_money(
+            db,
+            list_invoices=list_invoices_for_parent,
+            get_invoice=get_invoice_for_parent,
+            get_lines=billing_ledger_repo.get_lines_for_invoice,
+            list_children=list_children_for_parent,
+            list_enrollments=list_enrollments_for_parent,
+            get_academy_info=get_academy_info,
+            payer_name=_parent_display_name,
+            clock=clock,
+        ),
         enroll_child=enroll_child_uc.execute,
         cancel_billing_enrollment=cancel_billing_enrollment_uc.execute,
         get_parent_waiver_requirement=get_waiver_req,
@@ -3184,10 +3306,16 @@ def compose_parent(
         curriculum=curriculum_composition,
         list_messages=list_messages,
         mark_message_read=mark_message_read,
+        send_academy_message=compose_send_academy_message(
+            db,
+            settings,
+            CommsService(messages=messages_repo, academy_id=current_academy_id).send_to_academy,
+        ),
         get_parent_profile=get_parent_profile,
         update_parent_profile=update_parent_profile,
         confirm_parent_email=confirm_parent_email,
         update_parent_child=update_parent_child,
+        fill_parent_profile_blanks=fill_parent_profile_blanks,
     )
 
 

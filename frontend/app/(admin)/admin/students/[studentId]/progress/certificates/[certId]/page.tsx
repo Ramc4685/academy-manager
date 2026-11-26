@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { Button } from "@/components/ds/button";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { Skeleton } from "@/components/ds/skeleton";
@@ -15,9 +15,12 @@ import { getAdminAcademy } from "@/lib/api/admin";
 import { getAdminCertificateDetail, revokeCertificate } from "@/lib/api/curriculum";
 import { queryKeys } from "@/lib/query/keys";
 import { useIsNativeApp } from "@/lib/use-native-app";
+import { useAcademyZone } from "@/lib/format/academy-zone";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 /** The same certificate a parent sees, for the front desk to print. */
 export default function AdminCertificatePage() {
+  const academyTimezone = useAcademyZone();
   const { studentId, certId } = useParams<{
     studentId: string;
     certId: string;
@@ -88,7 +91,7 @@ export default function AdminCertificatePage() {
               className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"
             >
               Revoked
-              {cert?.revoked_at ? ` on ${new Date(cert.revoked_at).toLocaleDateString()}` : ""}
+              {cert?.revoked_at ? ` on ${formatInAcademyZone(cert.revoked_at, academyTimezone)}` : ""}
               {cert?.revoke_reason ? `: ${cert.revoke_reason}` : ""}. The family no longer sees this
               certificate.
             </p>

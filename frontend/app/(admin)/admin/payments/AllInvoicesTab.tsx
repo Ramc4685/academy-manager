@@ -15,7 +15,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
-  listBillingWebhookEvents,
+  exportAdminReportCsv,
+  listAdminSessions,
   listAdminPayments,
   undoPaymentPaid,
   type AdminPaymentListFilters,
@@ -32,9 +33,7 @@ import { Chip } from "@/components/ds/chip";
 import { Field, Th } from "@/components/ds/dialog-chrome";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { TableSkeleton } from "@/components/ds/skeleton";
-import { Overline } from "@/components/ds/typography";
 import { useIsPhone } from "@/lib/use-is-phone";
-import { webhookEventLabel } from "@/lib/billing-health";
 
 import {
   disputeLabel,
@@ -64,11 +63,14 @@ import {
   SyncStripeDialog,
   VoidPaymentDialog,
 } from "./dialogs";
+import { useAcademyZone } from "@/lib/format/academy-zone";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 /** Server cap on one list request; used when the status filter runs client-side. */
 const STATUS_FILTER_WINDOW = 200;
 
 export function AllInvoicesTab() {
+  const academyTimezone = useAcademyZone();
   const isOwner = useIsOwner();
   const isPhone = useIsPhone();
   const [refundTarget, setRefundTarget] = useState<AdminPaymentView | null>(null);
@@ -90,6 +92,19 @@ export function AllInvoicesTab() {
   const [showVoided, setShowVoided] = useState(false);
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
+  // S41: owner-only CSV of one billing month, the same rows as Month close.
+  const [exportPeriod, setExportPeriod] = useState(() => new Date().toISOString().slice(0, 7));
+  const exportMutation = useMutation({
+    mutationFn: () => exportAdminReportCsv("invoices", exportPeriod),
+    onSuccess: (csv) => {
+      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `invoices-${exportPeriod}.csv`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    },
+  });
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -122,14 +137,6 @@ export function AllInvoicesTab() {
     queryKey: [...queryKeys.admin.payments(), serverFilters],
     queryFn: () => listAdminPayments(serverFilters),
   });
-  const webhookQueueQuery = useQuery({
-    queryKey: ["admin", "billing-webhooks", "failed-quarantined"],
-    queryFn: () => listBillingWebhookEvents({ limit: 5 }),
-    // The webhook queue became owner-only with Billing Health (spec
-    // 2026-09-07 §5.2), so for a plain admin this request can only 404.
-    enabled: isOwner,
-  });
-
   const undoMutation = useMutation({
     mutationFn: (paymentId: string) => undoPaymentPaid(paymentId),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() }),
@@ -149,12 +156,20 @@ export function AllInvoicesTab() {
       ).sort(),
     [payments, methodFilter],
   );
+  const sessionsQuery = useQuery({
+    queryKey: queryKeys.admin.sessions("window-all"),
+    queryFn: () => listAdminSessions(undefined, { window: "all" }),
+  });
+  const sessionTitles = useMemo(
+    () => new Map((sessionsQuery.data?.sessions ?? []).map((s) => [s.session_id, s.title])),
+    [sessionsQuery.data?.sessions],
+  );
   const sessionOptions = useMemo(
     () =>
       Array.from(new Set(payments.map((payment) => sessionFilterKey(payment)))).sort((a, b) =>
-        sessionFilterLabel(a).localeCompare(sessionFilterLabel(b)),
+        sessionFilterLabel(a, sessionTitles).localeCompare(sessionFilterLabel(b, sessionTitles)),
       ),
-    [payments],
+    [payments, sessionTitles],
   );
   const filteredPayments = useMemo(
     () =>
@@ -167,11 +182,31 @@ export function AllInvoicesTab() {
       }),
     [payments, sessionFilter, statusFilter],
   );
-  const webhookEvents = webhookQueueQuery.data?.events ?? [];
 
   return (
     <div className="space-y-5" data-testid="payments-all-invoices">
       <div className="flex flex-wrap items-center justify-end gap-2">
+        {isOwner && (
+          <>
+            <input
+              type="month"
+              aria-label="Month to export"
+              value={exportPeriod}
+              onChange={(event) => setExportPeriod(event.target.value || exportPeriod)}
+              className="h-8 rounded-md border border-rally-line bg-white px-2 text-sm text-rally-ink dark:bg-neutral-950"
+              data-testid="invoices-export-period"
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => exportMutation.mutate()}
+              disabled={exportMutation.isPending}
+              data-testid="invoices-export"
+            >
+              {exportMutation.isPending ? "Exporting..." : "Export CSV"}
+            </Button>
+          </>
+        )}
         <Button
           variant="secondary"
           size="sm"
@@ -187,74 +222,21 @@ export function AllInvoicesTab() {
         </Button>
       </div>
 
-      {isOwner && (
-        <Card p={16}>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <Overline>Recovery</Overline>
-              <h2 className="mt-1 font-display text-lg font-semibold text-rally-ink">
-                Failed webhook queue
-              </h2>
-            </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void webhookQueueQuery.refetch()}
-              disabled={webhookQueueQuery.isFetching}
-            >
-              Refresh
-            </Button>
-          </div>
-          {webhookQueueQuery.isError ? (
-            <p className="mt-3 text-sm text-red-700">Could not load webhook recovery queue.</p>
-          ) : webhookEvents.length === 0 ? (
-            <p className="mt-3 text-sm text-rally-subtle">No failed or quarantined webhooks.</p>
-          ) : (
-            <div className="mt-4 divide-y divide-rally-line">
-              {webhookEvents.map((event) => (
-                <div key={event.event_id} className="grid gap-2 py-3 text-sm sm:grid-cols-[1fr_auto]">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {/* #892: Stripe's own event name is a key, not a sentence.
-                          The queue says what happened; the raw type and ids stay
-                          one disclosure away for support. */}
-                      <span className="font-medium text-rally-ink" title={event.event_type}>
-                        {webhookEventLabel(event.event_type)}
-                      </span>
-                      <Chip
-                        variant={event.status === "quarantined" ? "failed" : "pending"}
-                        label={event.status.toUpperCase()}
-                      />
-                    </div>
-                    <p className="mt-1 max-w-2xl text-rally-subtle">
-                      {event.error_message || "No error detail recorded."}
-                    </p>
-                  </div>
-                  <div className="text-xs text-rally-subtle sm:text-right">
-                    <details data-testid={`webhook-ids-${event.event_id}`}>
-                      <summary className="cursor-pointer">Stripe details</summary>
-                      <div className="mt-1 break-all font-mono">
-                        <div>{event.event_type}</div>
-                        <div>{event.event_id}</div>
-                        {event.object_id && <div>{event.object_id}</div>}
-                      </div>
-                    </details>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
+      {exportMutation.isError && (
+        <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+          Could not export that month.
+        </p>
       )}
 
       {isOwner && (
         <p className="text-sm text-rally-subtle" data-testid="billing-health-pointer">
-          Stripe not behaving — a charge in Stripe that never reached an invoice, a
-          stuck webhook, a connected account that cannot take money?{" "}
+          Stripe not behaving: a payment that never reached an invoice, a stuck payment
+          update, or parents who cannot pay?{" "}
           <Link href="/admin/billing-health" className="underline">
-            Billing Health
+            Payment system status
           </Link>{" "}
-          has the reconciliation lookup and the recovery actions.
+          (Settings, Integrations) has the stuck-update queue, the lookup and the recovery
+          actions.
         </p>
       )}
 
@@ -327,16 +309,16 @@ export function AllInvoicesTab() {
               ))}
             </select>
           </Field>
-          <Field label="Session">
+          <Field label="Class">
             <select
               value={sessionFilter}
               onChange={(event) => setSessionFilter(event.target.value)}
               className={inputClass}
             >
-              <option value="all">All sessions</option>
+              <option value="all">All classes</option>
               {sessionOptions.map((session) => (
                 <option key={session} value={session}>
-                  {sessionFilterLabel(session)}
+                  {sessionFilterLabel(session, sessionTitles)}
                 </option>
               ))}
             </select>
@@ -476,7 +458,7 @@ export function AllInvoicesTab() {
                       {p.status === "voided" && (
                         <div data-testid={`payment-void-note-${p.payment_id}`}>
                           {p.void_reason || "Voided"}
-                          {p.voided_at ? ` · ${new Date(p.voided_at).toLocaleDateString()}` : ""}
+                          {p.voided_at ? ` · ${formatInAcademyZone(p.voided_at, academyTimezone)}` : ""}
                         </div>
                       )}
                       <DisputeNote payment={p} />
@@ -547,7 +529,7 @@ export function AllInvoicesTab() {
                           {paymentRowTitle(p)}
                         </div>
                         <div className="mt-0.5 text-xs text-rally-subtle">
-                          Created {new Date(p.created_at).toLocaleDateString()}
+                          Created {formatInAcademyZone(p.created_at, academyTimezone)}
                         </div>
                         {(stripeSummary || reconciliation) && (
                           <div className="mt-1 max-w-[280px] space-y-0.5 text-xs text-rally-subtle">
@@ -589,7 +571,7 @@ export function AllInvoicesTab() {
                           >
                             {p.void_reason || "Voided"}
                             {p.voided_at
-                              ? ` · ${new Date(p.voided_at).toLocaleDateString()}`
+                              ? ` · ${formatInAcademyZone(p.voided_at, academyTimezone)}`
                               : ""}
                           </div>
                         )}
@@ -599,7 +581,7 @@ export function AllInvoicesTab() {
                         {method ? <Chip variant={method.variant} label={method.label} /> : <span className="text-rally-subtle">—</span>}
                       </td>
                       <td className="px-4 py-3 text-rally-muted">
-                        {p.paid_at ? new Date(p.paid_at).toLocaleDateString() : "—"}
+                        {p.paid_at ? formatInAcademyZone(p.paid_at, academyTimezone) : "—"}
                       </td>
                       <td className={`${actionCellClass} w-[232px] bg-white`}>
                         <PaymentActions
@@ -653,7 +635,11 @@ export function AllInvoicesTab() {
       <GenerateDialog
         open={generateOpen}
         onOpenChange={setGenerateOpen}
-        onGenerated={() => void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() })}
+        onGenerated={() => {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.payments() });
+          // S34: the dashboard's "no invoice for <month>" item clears after a run.
+          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.attention() });
+        }}
       />
       <DiscountDialog
         payment={discountTarget}

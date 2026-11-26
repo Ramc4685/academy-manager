@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import { sanitizeReturnPath } from "@/lib/auth/persona-route-guard";
 
 export type UserRole =
   | "admin"
@@ -52,7 +53,7 @@ export function hasPlatformAccess(user: CurrentUser): boolean {
 export type RoleHome =
   | "/admin"
   | "/coach/today"
-  | "/parent/payments"
+  | "/parent/dashboard"
   | "/student/dashboard"
   | "/owner"
   | "/login";
@@ -71,7 +72,7 @@ export function homeForRoles(roles: UserRole[]): RoleHome {
   // Assistants land on the same shell as coaches; the shell scopes what they
   // see to the sessions they are listed on.
   if (roles.includes("assistant_coach")) return "/coach/today";
-  if (roles.includes("parent")) return "/parent/payments";
+  if (roles.includes("parent")) return "/parent/dashboard";
   // A user can hold both "parent" and "student" (UIM12 allows this by
   // design — persona routing follows the requested BFF, not an exclusive
   // account type). Parent wins when both are present since it's the richer,
@@ -95,4 +96,9 @@ export async function requestAccountDeletion(): Promise<AccountDeletion> {
     method: "POST",
     body: JSON.stringify({ confirm: "DELETE" }),
   });
+}
+
+/** Where login lands: a safe deep link (an emailed pay link) wins over the persona's home. */
+export function postLoginDestination(returnTo: string | null, roles: UserRole[]): string {
+  return sanitizeReturnPath(returnTo) ?? homeForRoles(roles);
 }

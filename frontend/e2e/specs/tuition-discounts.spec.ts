@@ -19,6 +19,7 @@ import {
   stubParentAcademy,
   stubParentMessages,
   stubParentProfile,
+  stubParentMoneySummary,
 } from "../fixtures/saas-stubs";
 
 type StudentDetail = Record<string, unknown> & {
@@ -329,6 +330,7 @@ async function stubAdminStudentDiscounts(page: Page, student: StudentDetail) {
 }
 
 async function stubParentInvoiceDiscounts(page: Page) {
+  await stubParentMoneySummary(page);
   await page.route("**/api/v2/parent/payments", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { payments: [] });
@@ -471,7 +473,7 @@ test.describe("tuition discounts", () => {
     });
 
     await page.goto("/admin/students/student-discounts");
-    await page.getByRole("tab", { name: "Sessions" }).click();
+    await page.getByRole("tab", { name: "Classes" }).click();
     await expect(page.getByTestId("admin-student-enrolled-sessions")).toBeVisible();
     // #865: the Sessions tab is a table on desktop and PhoneListRows below
     // `md:`, so rows are named by id and the action is reached through the
@@ -583,7 +585,7 @@ test.describe("tuition discounts", () => {
     });
 
     await page.goto("/admin/students/student-discounts");
-    await page.getByRole("tab", { name: "Sessions" }).click();
+    await page.getByRole("tab", { name: "Classes" }).click();
     await expect(page.getByTestId("admin-student-enrolled-sessions")).toBeVisible();
     const openNotBilled = async () =>
       (

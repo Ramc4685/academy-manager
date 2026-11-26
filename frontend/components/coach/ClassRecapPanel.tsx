@@ -9,6 +9,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 
+import { useReportUnsavedChanges } from "@/components/admin/unsaved-changes-guard";
 import { Button } from "@/components/ds/button";
 import type { ApiError } from "@/lib/api/client";
 import {
@@ -138,6 +139,12 @@ export function ClassRecapPanel({
   return <ClassRecapEditor view={query.data} skillsHref={skillsHref} />;
 }
 
+/** The line under Save recap: testers could not tell an added skill was not saved yet. */
+export function recapSaveState(dirty: boolean, revision: number): string {
+  if (dirty) return "Unsaved. Press Save recap to keep these changes.";
+  return revision > 0 ? "Recap saved." : "No recap saved yet.";
+}
+
 export function ClassRecapEditor({
   view,
   skillsHref,
@@ -146,6 +153,8 @@ export function ClassRecapEditor({
   skillsHref?: string;
 }) {
   const [recapDirty, setRecapDirty] = useState(false);
+  // A recap draft lives only in this page: leaving it unsaved loses it.
+  useReportUnsavedChanges(`class-recap-${view.occurrence_id}`, recapDirty);
   return (
     <div className="space-y-5">
       {/* Keyed by revision: a save or a report that changed the recap resets the draft. */}
@@ -474,7 +483,7 @@ export function ClassRecapBody({
       {/* Testers could not tell whether a recap had saved (usability study). */}
       {view.can_edit && !save.isPending && (
         <p role="status" data-testid="recap-save-state" className="text-xs text-rally-subtle">
-          {dirty ? "Unsaved changes." : view.revision > 0 ? "Recap saved." : "No recap saved yet."}
+          {recapSaveState(dirty, view.revision)}
         </p>
       )}
       {!view.can_edit && (
@@ -710,7 +719,7 @@ export function ClassReportForm({
       className="rounded-lg border border-rally-line p-3"
     >
       <h3 id={`${id}-title`} className="text-sm font-semibold text-rally-ink">
-        After-class report
+        Report to the owner (parents do not see this)
       </h3>
       <p className="mt-1 text-xs text-rally-subtle">
         Describe what the class worked on and who practised what. Name the

@@ -49,7 +49,7 @@ describe("stuckDraft", () => {
     const draft = stuckDraft(row, NOW);
     expect(draft).toContain("Ethan has passed 2 of 6 skills in Level 2 (Net & Movement)");
     expect(draft).toContain("the last new skill was 7 weeks ago.");
-    expect(draft).toContain("offer Ethan a 1-on-1 session");
+    expect(draft).toContain("offer Ethan a 1-on-1 class");
   });
 
   it("counts from placement when the child has no win yet", () => {

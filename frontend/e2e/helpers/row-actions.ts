@@ -7,15 +7,15 @@ import { expect, type Locator, type Page } from "@playwright/test";
  * direct buttons. The desktop table keeps the direct button.
  *
  * Specs written against the direct button (`getByRole("button", { name:
- * "Cancel session Cancelable Session" })`) still pass on chromium-desktop,
+ * "Cancel class Cancelable Session" })`) still pass on chromium-desktop,
  * but time out on chromium-mobile because that button never renders there.
  * This helper branches on what is actually visible — like
  * `e2e/helpers/nav.ts` does for the admin nav — so the same spec exercises
  * both layouts instead of being pinned to one viewport.
  *
  * `directLabel` is the desktop button's accessible name (e.g. "Cancel
- * session Cancelable Session"); `menuItemLabel` is the same action's label
- * inside the phone row's actions menu (e.g. "Cancel session" or "Edit"),
+ * class Cancelable Session"); `menuItemLabel` is the same action's label
+ * inside the phone row's actions menu (e.g. "Cancel class" or "Edit"),
  * which the phone row renders without the row's title mixed in.
  *
  * Waits for whichever of the two layouts is mounted, rather than an

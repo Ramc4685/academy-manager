@@ -101,3 +101,18 @@ export function peopleSearchGroups({
       .map((group) => ({ ...group, label: GROUP_LABEL[group.id] }))
   );
 }
+
+/** S65: at least this many digits before the header search also matches phones. */
+export const PHONE_SEARCH_MIN_DIGITS = 4;
+
+/**
+ * The digits to look up by phone, or null when the input is not a phone:
+ * any letter means a name or email, and fewer than four digits is too vague.
+ * Spaces, dashes, brackets and a leading `+1` are ignored, as on the server.
+ */
+export function phoneSearchDigits(input: string): string | null {
+  if (/[a-z@]/i.test(input)) return null;
+  let digits = input.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) digits = digits.slice(1);
+  return digits.length >= PHONE_SEARCH_MIN_DIGITS ? digits : null;
+}

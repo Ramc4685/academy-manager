@@ -1,4 +1,5 @@
 import type { TuitionDiscountKind } from "@/lib/api/v2/students";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 function formatCurrencyCents(cents: number) {
   return new Intl.NumberFormat("en-US", {
@@ -30,11 +31,12 @@ function getErrorMessage(error: unknown) {
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const NUMERIC_DATE: Intl.DateTimeFormatOptions = { month: "numeric", day: "numeric", year: "numeric" };
 
-// Real instants (e.g. "last attended at") render in the viewer's local timezone.
+// Real instants (e.g. "last attended at") render in the academy's timezone (S05).
 function formatDate(value: string | null | undefined) {
   if (!value) return "—";
-  return new Date(value).toLocaleDateString();
+  return formatInAcademyZone(value, undefined, NUMERIC_DATE) || "—";
 }
 
 // Calendar-date values render in UTC. Date-only strings ("2026-06-01") and
@@ -43,14 +45,14 @@ function formatDate(value: string | null | undefined) {
 // a day, not a moment.
 function formatDateUtc(value: string | null | undefined) {
   if (!value) return "—";
-  return new Date(value).toLocaleDateString(undefined, { timeZone: "UTC" });
+  return formatInAcademyZone(value, "UTC", NUMERIC_DATE) || "—";
 }
 
 // Invoice created_at is a real datetime on the wire, but the values are mixed:
 // invoices corrected in the ledger sit at exactly UTC midnight and mean a
 // calendar day, while generated and manually recorded ones carry a real
 // time-of-day. Render midnight-UTC values as the day they encode, and anything
-// with a time component in the viewer's own timezone, so a payment recorded at
+// with a time component in the academy's timezone, so a payment recorded at
 // 8pm local does not display as tomorrow.
 function formatInvoiceDate(value: string | null | undefined) {
   if (!value) return "—";
@@ -58,16 +60,17 @@ function formatInvoiceDate(value: string | null | undefined) {
   if (Number.isNaN(parsed.getTime())) return "—";
   return parsed.getTime() % MS_PER_DAY === 0
     ? formatDateUtc(value)
-    : parsed.toLocaleDateString();
+    : formatInAcademyZone(parsed, undefined, NUMERIC_DATE);
 }
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "—";
-  return new Date(value).toLocaleString([], {
+  return formatInAcademyZone(value, undefined, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZoneName: "short",
   });
 }
 

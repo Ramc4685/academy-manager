@@ -102,6 +102,27 @@ export function markProgress(
   };
 }
 
+/**
+ * What an empty roster says. A class that has not opened yet is locked by
+ * time, not by its roster, so say both instead of a bare "No students
+ * enrolled" that read as the lock's cause.
+ */
+export function emptyRosterCopy(notOpenYet: boolean): string {
+  return notOpenYet
+    ? "No students on this class yet. Children added before it starts will show here."
+    : "No students were on this class.";
+}
+
+/** "3 present, 1 late, 1 absent" for the marks on screen; empty when none. */
+export function marksSummary(statuses: readonly (string | null | undefined)[]): string {
+  const order = ["present", "late", "absent"] as const;
+  return order
+    .map((status) => [status, statuses.filter((s) => s === status).length] as const)
+    .filter(([, n]) => n > 0)
+    .map(([status, n]) => `${n} ${status}`)
+    .join(", ");
+}
+
 /** True when this dated class was called off (#777 — it still shows, struck through). */
 export function isCancelled(session: { status?: string | null }): boolean {
   return session.status === "cancelled";
@@ -120,7 +141,39 @@ export function coachSessionHref(
   dateISO?: string | null,
 ): string {
   const path = `/coach/sessions/${encodeURIComponent(occurrenceId)}`;
-  return dateISO ? `${path}?date=${dateISO}` : path;
+  const date = dateISO || dateFromOccurrenceId(occurrenceId);
+  return date ? `${path}?date=${date}` : path;
+}
+
+/** The device's local calendar date, `offset` days from now, as YYYY-MM-DD. */
+export function todayISO(offset = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return localDateKey(d);
+}
+
+function localDateKey(d: Date): string {
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${month}-${day}`;
+}
+
+/**
+ * The class date an occurrence id carries, so a link without `?date=` still
+ * resolves. Every writer uses `<session>:YYYY-MM-DD:HH:MM`, already the
+ * academy-local date. Null for a bare session id or any other shape.
+ */
+export function dateFromOccurrenceId(occurrenceId: string): string | null {
+  const sep = occurrenceId.indexOf(":");
+  if (sep < 0) return null;
+  const rest = occurrenceId.slice(sep + 1);
+  return /^(\d{4}-\d{2}-\d{2})(?::|$)/.exec(rest)?.[1] ?? null;
+}
+
+/** The session id half of an occurrence id (a bare session id comes back as is). */
+export function sessionIdFromOccurrenceId(occurrenceId: string): string {
+  const sep = occurrenceId.indexOf(":");
+  return sep < 0 ? occurrenceId : occurrenceId.slice(0, sep);
 }
 
 /** How far back "recent, not fully marked" looks. */

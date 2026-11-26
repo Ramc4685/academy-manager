@@ -13,6 +13,7 @@ import {
 } from "@/lib/api/coach";
 import { updateSkillStatus, type SkillStatus } from "@/lib/api/curriculum";
 import { formatPlainDate } from "@/lib/format/plain-date";
+import { dateFromOccurrenceId, sessionIdFromOccurrenceId, todayISO } from "@/lib/coach/marking";
 import { queryKeys } from "@/lib/query/keys";
 import { SessionDetailTabs, SessionNextStep } from "@/components/coach/SessionDetailTabs";
 import { SKILL_STATUS_LABELS } from "@/components/skills/SkillStatusChip";
@@ -33,12 +34,6 @@ const STATUS_OPTIONS: SkillStatus[] = [
   "NEEDS_REVIEW",
 ];
 
-function todayISO(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
-    now.getDate(),
-  ).padStart(2, "0")}`;
-}
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -49,7 +44,7 @@ export default function CoachSessionSkillsPage({ params, searchParams }: PagePro
   const { id } = use(params);
   const { date: dateParam, program_id: programId } = use(searchParams);
   const occurrenceId = decodeURIComponent(id);
-  const date = dateParam ?? todayISO();
+  const date = dateParam ?? dateFromOccurrenceId(occurrenceId) ?? todayISO();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<"tap" | "skill" | "student">("tap");
 
@@ -57,14 +52,13 @@ export default function CoachSessionSkillsPage({ params, searchParams }: PagePro
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey,
     queryFn: () => getCoachSessionSkills(occurrenceId, { date, programId }),
-    staleTime: 2 * 60 * 1000,
   });
 
   return (
     <section data-testid="coach-session-skills" className="space-y-4">
       <SessionDetailTabs
         attendanceSkillsId={occurrenceId}
-        progressSessionId={data?.session_id ?? occurrenceId}
+        progressSessionId={data?.session_id ?? sessionIdFromOccurrenceId(occurrenceId)}
         date={date}
         active="skills"
       />
@@ -76,7 +70,7 @@ export default function CoachSessionSkillsPage({ params, searchParams }: PagePro
           >[0]["href"]}
           className="text-sm font-medium text-blue-600"
         >
-          Back to session
+          Back to class
         </Link>
         <div>
           <h1 className="text-xl font-semibold">Skill updates</h1>
@@ -206,7 +200,7 @@ function BySkillWorkspace({
   });
 
   if (!group) {
-    return <p className="text-sm text-neutral-500">No grouped skill gaps for this session.</p>;
+    return <p className="text-sm text-neutral-500">No grouped skill gaps for this class.</p>;
   }
 
   return (

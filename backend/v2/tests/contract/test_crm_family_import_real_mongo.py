@@ -417,3 +417,48 @@ async def test_the_batch_lookup_is_served_by_its_index(real_db: Any) -> None:
         .explain()
     )
     assert "import_batches_academy_batch_unique" in repr(plan["queryPlanner"]["winningPlan"])
+
+
+async def test_a_name_match_does_not_say_separate_when_the_email_picks_a_family(
+    real_db: Any,
+) -> None:
+    """Wave A follow-up (F7): the check said "kept as a separate family" for the
+    same-named family and then "will be added to the existing" contact match."""
+    await _seed(real_db)
+    await real_db["users"].insert_one(
+        {
+            "user_id": "a-rosa",
+            "academy_id": A,
+            "display_name": "Rosa Testname",
+            "email": "rosa.other@example.test",
+            "normalized_email": "rosa.other@example.test",
+            "roles": ["parent"],
+        }
+    )
+    await real_db["academy_memberships"].insert_one(
+        {
+            "academy_id": A,
+            "membership_id": "m4",
+            "user_id": "a-rosa",
+            "roles": ["parent"],
+            "status": "active",
+        }
+    )
+    await real_db["students"].insert_one(
+        {
+            "academy_id": A,
+            "student_id": "a-rosa-kid",
+            "parent_id": "a-rosa",
+            "full_name": "Rosa Kiddo",
+        }
+    )
+
+    batch = await _preview(
+        real_db, A, HEADER + "Rosa Testname,alpha.parent@example.test,,Luz Kiddo,\n"
+    )
+
+    row = batch.rows[0]
+    assert (row.status, row.family_action, row.family_id) == ("create", "existing", "a-parent")
+    said = " ".join(row.warnings)
+    assert "separate family" not in said
+    assert "matches Alpha Testparent, so the child goes to that family" in said

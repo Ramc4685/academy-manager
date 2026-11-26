@@ -43,7 +43,7 @@ from backend.v2.contexts.student_progress.application.use_cases.update_skill_sta
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
-from backend.v2.shared.http import is_assistant_only, require_persona
+from backend.v2.shared.http import is_assistant_only, require_owner, require_persona
 from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.time.academy_timezone import (
     LEGACY_FALLBACK_TIMEZONE,
@@ -51,6 +51,7 @@ from backend.v2.shared.time.academy_timezone import (
 )
 
 if TYPE_CHECKING:
+    from backend.v2.composition.pathway import StudentProgressComposition
     from backend.v2.contexts.student_progress.application.use_cases.get_level_up_queue import (
         LevelUpQueueEntry,
     )
@@ -81,6 +82,15 @@ class BulkPlacementBody(BaseModel):
     #: Off by default: credits are old wins, not news for tonight's email.
     notify_parents: bool = False
     reason: str | None = Field(default=None, max_length=500)
+
+
+class PlaceBacklogBody(BaseModel):
+    #: The unplaced students the owner was shown (``GET /pathway/unplaced``).
+    student_ids: list[str] = Field(min_length=1, max_length=_PATHWAY_PROGRESS_MAX_STUDENTS)
+
+
+#: Audit reason for the owner's one-off backlog placement (D-10).
+OWNER_BACKLOG_PLACEMENT_REASON = "owner_backlog_placement"
 
 
 class RejectLevelUpBody(BaseModel):
@@ -262,6 +272,70 @@ async def place_students_in_bulk(
         results.append(
             {"student_id": student_id, "outcome": "placed", "progress_id": progress.progress_id}
         )
+    return {"results": results}
+
+
+async def _unplaced_active_students(
+    use_cases: AdminUseCases, progress: StudentProgressComposition, program_id: str
+) -> list[dict[str, str]]:
+    students = await _list_active_admin_students(use_cases)
+    placed = await progress.get_active_level_names.execute(
+        [s.student_id for s in students],  # type: ignore[attr-defined]
+        program_id,
+    )
+    return [
+        {"student_id": s.student_id, "student_name": s.full_name}  # type: ignore[attr-defined]
+        for s in students
+        if s.student_id not in placed  # type: ignore[attr-defined]
+    ]
+
+
+@router.get("/pathway/unplaced")
+async def list_unplaced_students(
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    """Active students with no level: the list the owner sees before placing them."""
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    program_id = await _resolve_program_id(use_cases, None)
+    students = await _unplaced_active_students(use_cases, use_cases.student_progress, program_id)
+    return {"program_id": program_id, "students": students}
+
+
+@router.post("/pathway/unplaced/place")
+async def place_unplaced_backlog(
+    body: PlaceBacklogBody,
+    claims: AuthClaims = Depends(require_owner()),
+    use_cases: AdminUseCases = Depends(get_admin_use_cases),
+) -> object:
+    """Owner only (D-10): put the listed unplaced students on the first level.
+
+    Re-checked here, so a student placed since the list was shown, or no longer
+    active, is skipped rather than moved. Running it twice places nobody twice.
+    """
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    program_id = await _resolve_program_id(use_cases, None)
+    progress = use_cases.student_progress
+    still_unplaced = {
+        s["student_id"] for s in await _unplaced_active_students(use_cases, progress, program_id)
+    }
+    results: list[dict[str, object]] = []
+    for student_id in dict.fromkeys(body.student_ids):
+        level_id = None
+        if student_id in still_unplaced:
+            try:
+                level_id = await progress.place_on_enrollment.place_new_enrollee(
+                    student_id, actor_id=claims.user_id, reason=OWNER_BACKLOG_PLACEMENT_REASON
+                )
+            except DomainError as exc:
+                results.append({"student_id": student_id, "outcome": "refused", "code": exc.code})
+                continue
+        row: dict[str, object] = {"student_id": student_id, "outcome": "skipped"}
+        if level_id:
+            row.update(outcome="placed", level_id=level_id)
+        results.append(row)
     return {"results": results}
 
 

@@ -97,5 +97,15 @@ describe("calendarSubscribeLinks", () => {
     expect(links.apple).toBe("webcal://blno.example.com/api/v2/calendar-feed/p1.sig.ics");
     expect(links.google).toContain(encodeURIComponent("webcal://blno.example.com/api/v2/calendar-feed/p1.sig.ics"));
     expect(links.outlook).toContain("name=BLNO%20classes");
+    // S19: the same feed as a one-time .ics download.
+    expect(links.ics).toBe("https://blno.example.com/api/v2/calendar-feed/p1.sig.ics");
+  });
+});
+
+describe("ScheduleList reported absence (S17)", () => {
+  it("shows the Absent (reported) chip instead of Class", () => {
+    const out = html([entry({ occurrence_id: "abs", absence_reported: true })], null);
+    expect(out).toContain("Absent (reported)");
+    expect(out).toContain("schedule-absent-abs");
   });
 });

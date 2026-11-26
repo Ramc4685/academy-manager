@@ -2593,6 +2593,72 @@
       ]
     },
     {
+      "route": "/coach/profile/pay",
+      "role": "coach",
+      "source": "frontend/app/(coach)/coach/profile/pay/page.tsx",
+      "workflows": [
+        "Read classes taught and payslip",
+        "Step between months"
+      ],
+      "controls": {
+        "buttons": [
+          "Previous month",
+          "Next month",
+          "Try again"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error",
+        "offline"
+      ],
+      "risk_edges": [
+        "Another coach's pay or a draft payslip shown",
+        "Pay figures persisted on a shared device"
+      ],
+      "acceptance": [
+        "Only the signed-in coach's classes and approved or paid payslip appear; never a draft, rate or per-class amount",
+        "Workflow evidence: \"Read classes taught and payslip\" completes for the coach route /coach/profile/pay with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Step between months\" completes for the coach route /coach/profile/pay with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Another coach's pay or a draft payslip shown\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Pay figures persisted on a shared device\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
+      "route": "/coach/pathway",
+      "role": "coach",
+      "source": "frontend/app/(coach)/coach/pathway/page.tsx",
+      "workflows": [
+        "Read levels, skills and lesson plans"
+      ],
+      "controls": {
+        "buttons": [
+          "Back",
+          "Try again"
+        ],
+        "inputs": [
+          "Program"
+        ],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "empty",
+        "error"
+      ],
+      "risk_edges": [
+        "Retired levels or citation-only fields shown to a coach"
+      ],
+      "acceptance": [
+        "Level 1 opens with its description, skills and lesson cards; retired levels never appear",
+        "Workflow evidence: \"Read levels, skills and lesson plans\" completes for the coach route /coach/pathway with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Retired levels or citation-only fields shown to a coach\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/coach/sessions",
       "role": "coach",
       "source": "frontend/app/(coach)/coach/sessions/page.tsx",
@@ -2788,7 +2854,8 @@
         "no placement",
         "error state",
         "empty state",
-        "notes unavailable"
+        "notes unavailable",
+        "validation"
       ],
       "risk_edges": [
         "External video unavailable",
@@ -3305,6 +3372,39 @@
       ]
     },
     {
+      "route": "/parent/payments/receipt/[invoiceId]",
+      "role": "parent",
+      "source": "frontend/app/(parent)/parent/payments/receipt/[invoiceId]/page.tsx",
+      "workflows": [
+        "Open receipt",
+        "Print receipt"
+      ],
+      "controls": {
+        "buttons": [
+          "Back to payments",
+          "Print or save as PDF"
+        ],
+        "inputs": [],
+        "modals": []
+      },
+      "states": [
+        "loading",
+        "error",
+        "not found"
+      ],
+      "risk_edges": [
+        "Another family's invoice id",
+        "Unpaid invoice id"
+      ],
+      "acceptance": [
+        "A receipt opens only for the parent's own paid invoice; any other id shows the could-not-open message",
+        "Workflow evidence: \"Open receipt\" completes for the parent route /parent/payments/receipt/[invoiceId] with real-user evidence and no framework or runtime errors.",
+        "Workflow evidence: \"Print receipt\" completes for the parent route /parent/payments/receipt/[invoiceId] with real-user evidence and no framework or runtime errors.",
+        "Risk evidence: \"Another family's invoice id\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist.",
+        "Risk evidence: \"Unpaid invoice id\" has an explicit pass, fail, or blocked result with reproduction context in the real-user checklist."
+      ]
+    },
+    {
       "route": "/parent/progress",
       "role": "parent",
       "source": "frontend/app/(parent)/parent/progress/page.tsx",
@@ -3405,7 +3505,8 @@
         "loading",
         "empty",
         "error state",
-        "late-notice warning"
+        "late-notice warning",
+        "validation"
       ],
       "risk_edges": [
         "Late notice submitted inside window",

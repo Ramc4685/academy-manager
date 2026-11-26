@@ -440,11 +440,11 @@ async def refund(
 @router.post("/payments/generate-monthly", response_model=GenerateMonthlyPaymentsResponse)
 async def generate_monthly_payments(
     body: GenerateMonthlyPaymentsRequest,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> GenerateMonthlyPaymentsResponse:
     result = await use_cases.generate_monthly_payments.execute(
-        GenerateMonthlyPaymentsCommand(period=body.period or "")
+        GenerateMonthlyPaymentsCommand(period=body.period or "", actor_id=claims.user_id)
     )
     return GenerateMonthlyPaymentsResponse(**result.model_dump())
 

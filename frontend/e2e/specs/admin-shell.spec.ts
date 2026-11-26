@@ -191,6 +191,7 @@ const PRICING_E2E = {
       charged_cents: 12000,
       fee_set: true,
       students: 14,
+      paying_students: 14,
       plan_id: "st-e2e",
       matching_plan_ids: ["st-e2e"],
       stale_link: false,
@@ -201,6 +202,7 @@ const PRICING_E2E = {
       charged_cents: 18000,
       fee_set: true,
       students: 6,
+      paying_students: 6,
       plan_id: null,
       matching_plan_ids: [],
       stale_link: false,
@@ -840,23 +842,27 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
     const attention = page.getByTestId("admin-dashboard-attention");
     await expect(attention).toBeVisible();
-    const sessionsTile = page.getByTestId("dashboard-tile-sessions");
-    await expect(sessionsTile).toBeVisible();
+    const owedTile = page.getByTestId("dashboard-tile-owed");
+    await expect(owedTile).toBeVisible();
     const attentionBox = await attention.boundingBox();
-    const sessionsBox = await sessionsTile.boundingBox();
+    const owedBox = await owedTile.boundingBox();
     expect(attentionBox).not.toBeNull();
-    expect(sessionsBox).not.toBeNull();
-    // The attention card must sit above (smaller y) the KPI strip — today the
-    // KPI grid renders first, so this fails on unfixed code.
-    expect(attentionBox!.y).toBeLessThan(sessionsBox!.y);
+    expect(owedBox).not.toBeNull();
+    // The attention card must sit above (smaller y) the KPI strip.
+    expect(attentionBox!.y).toBeLessThan(owedBox!.y);
   });
 
-  test("Sessions today tile links to /admin/sessions", async ({ page }) => {
+  // S64 (D-20): Today leads the dashboard and replaces the "Sessions today" tile.
+  test("dashboard starts with Today, above Needs your attention", async ({ page }) => {
     await stubAdminBff(page);
     await page.goto("/admin");
-    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
-    const link = page.locator('a[data-testid="dashboard-tile-sessions"]');
-    await expect(link).toHaveAttribute("href", "/admin/sessions");
+    const today = page.getByTestId("admin-today");
+    await expect(today).toBeVisible();
+    await expect(page.getByTestId("admin-dashboard-attention")).toBeVisible();
+    const todayBox = await today.boundingBox();
+    const attentionBox = await page.getByTestId("admin-dashboard-attention").boundingBox();
+    expect(todayBox!.y).toBeLessThan(attentionBox!.y);
+    await expect(page.getByTestId("dashboard-tile-sessions")).toHaveCount(0);
   });
 
   test("Inbox nav row shows the pending count from the queue endpoint", async ({
@@ -956,7 +962,7 @@ test.describe("Rally admin shell", () => {
       await expect(page.getByTestId("admin-dashboard")).toBeVisible();
 
       // Dashboard: operations tiles stay, revenue tile and chart are gone.
-      await expect(page.getByText("Sessions today")).toBeVisible();
+      await expect(page.getByTestId("admin-today")).toBeVisible();
       await expect(page.getByTestId("admin-dashboard-revenue")).toHaveCount(0);
       await expect(page.getByTestId("admin-dashboard-revenue-chart")).toHaveCount(0);
       await expect(page.getByText("Revenue (month to date)")).toHaveCount(0);
@@ -1035,7 +1041,9 @@ test.describe("Rally admin shell", () => {
       await expect(nav.getByTestId("admin-nav-month-close")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-coach-payouts")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-audit-logs")).toBeVisible();
-      await expect(nav.getByTestId("admin-nav-billing-health")).toBeVisible();
+      // S29: Billing Health moved under Settings > Integrations, out of the nav.
+      await expect(nav.getByTestId("admin-nav-billing-health")).toHaveCount(0);
+      await expect(nav.getByTestId("admin-nav-settings")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-pricing")).toBeVisible();
 
       await page.goto("/admin/reports");
@@ -2171,9 +2179,9 @@ test.describe("Rally admin shell", () => {
     // price_cents 12000 must render as dollars, not raw cents.
     await expect(plans.getByText("$120.00")).toBeVisible();
     await expect(plans.getByTestId("plan-type")).toHaveText("Monthly · 4 classes, 5th free");
-    await expect(plans.getByTestId("plan-linked-classes")).toHaveText("1");
+    await expect(plans.getByTestId("plan-linked-classes")).toHaveText("Used by 1 class");
 
-    // Where each class's price comes from: the class fee, linked or Custom.
+    // Where each class's price comes from: the class fee, linked or its own price.
     const classes = page.getByTestId("pricing-class-row");
     await expect(classes).toHaveCount(2);
     await expect(classes.nth(0).getByTestId("pricing-class-charged")).toHaveText("$120.00");
@@ -2678,8 +2686,8 @@ test.describe("Rally admin shell", () => {
     // row's actions menu, so `clickRowAction` opens that first.
     await clickRowAction(page, {
       rowTitle: "Cancelable Session",
-      directLabel: "Cancel session Cancelable Session",
-      menuItemLabel: "Cancel session",
+      directLabel: "Cancel class Cancelable Session",
+      menuItemLabel: "Cancel class",
     });
     await page.getByTestId("confirm-action-submit").click();
 
@@ -2689,7 +2697,7 @@ test.describe("Rally admin shell", () => {
     // session" is both the prefix and the generic fallback, so matching only
     // that cannot tell a surfaced reason from a swallowed one.
     await expect(banner.locator("p")).toHaveText(
-      "Could not cancel session: Not allowed to cancel this session.",
+      "Could not cancel class: Not allowed to cancel this session.",
     );
 
     // The cancel FAILED, so the row must still be there. Without this, a future
@@ -2697,8 +2705,8 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByText("Cancelable Session")).toBeVisible();
     await expectRowActionAvailable(page, {
       rowTitle: "Cancelable Session",
-      directLabel: "Cancel session Cancelable Session",
-      menuItemLabel: "Cancel session",
+      directLabel: "Cancel class Cancelable Session",
+      menuItemLabel: "Cancel class",
     });
 
     // Blank-message failure: exactly one "Could not cancel session".
@@ -2707,11 +2715,11 @@ test.describe("Rally admin shell", () => {
     failureMode = "blank";
     await clickRowAction(page, {
       rowTitle: "Cancelable Session",
-      directLabel: "Cancel session Cancelable Session",
-      menuItemLabel: "Cancel session",
+      directLabel: "Cancel class Cancelable Session",
+      menuItemLabel: "Cancel class",
     });
     await page.getByTestId("confirm-action-submit").click();
-    await expect(banner.locator("p")).toHaveText("Could not cancel session.");
+    await expect(banner.locator("p")).toHaveText("Could not cancel class.");
   });
 
   // #467 on the DETAIL page — the primary cancel entry point. Its banner had no
@@ -2742,13 +2750,13 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByTestId("admin-session-detail")).toBeVisible();
     // #838: the page button opens the dialog; its confirm fires the DELETE.
     // The dialog's confirm shares the label, so it is reached by test id.
-    await page.getByRole("button", { name: "Cancel session" }).click();
+    await page.getByRole("button", { name: "Cancel class", exact: true }).click();
     await page.getByTestId("confirm-action-submit").click();
 
     const banner = page.getByTestId("admin-session-cancel-error");
     await expect(banner).toBeVisible();
     await expect(banner.locator("p")).toHaveText(
-      "Could not cancel session: Not allowed to cancel this session.",
+      "Could not cancel class: Not allowed to cancel this session.",
     );
     // A failed cancel must not navigate away to the list.
     await expect(page.getByTestId("admin-session-detail")).toBeVisible();
@@ -2756,9 +2764,9 @@ test.describe("Rally admin shell", () => {
     await banner.getByRole("button", { name: "Dismiss" }).click();
     await expect(banner).toBeHidden();
     failureMode = "blank";
-    await page.getByRole("button", { name: "Cancel session" }).click();
+    await page.getByRole("button", { name: "Cancel class", exact: true }).click();
     await page.getByTestId("confirm-action-submit").click();
-    await expect(banner.locator("p")).toHaveText("Could not cancel session.");
+    await expect(banner.locator("p")).toHaveText("Could not cancel class.");
   });
 
   // #503-class: a session payload with NO `days_of_week` key must not crash the
@@ -2773,10 +2781,10 @@ test.describe("Rally admin shell", () => {
 
     await page.goto("/admin/sessions/no-days-session-id");
     await expect(page.getByTestId("admin-session-detail")).toBeVisible();
-    await page.getByRole("button", { name: "Edit session" }).click();
+    await page.getByRole("button", { name: "Edit class" }).click();
 
     await expect(page.getByRole("dialog")).toBeVisible();
-    await expect(page.getByRole("dialog").getByText("Edit session")).toBeVisible();
+    await expect(page.getByRole("dialog").getByText("Edit class")).toBeVisible();
     await expect(page.getByTestId("admin-session-detail")).toBeVisible();
     await expect(page.getByText("Something went wrong")).toHaveCount(0);
   });
@@ -2794,12 +2802,12 @@ test.describe("Rally admin shell", () => {
     // #847: on phone Edit lives behind the row's actions menu.
     await clickRowAction(page, {
       rowTitle: "Legacy No Days",
-      directLabel: "Edit session Legacy No Days",
+      directLabel: "Edit class Legacy No Days",
       menuItemLabel: "Edit",
     });
 
     await expect(page.getByRole("dialog")).toBeVisible();
-    await expect(page.getByRole("dialog").getByText("Edit session")).toBeVisible();
+    await expect(page.getByRole("dialog").getByText("Edit class")).toBeVisible();
     await expect(page.getByTestId("admin-sessions")).toBeVisible();
     await expect(page.getByText("Something went wrong")).toHaveCount(0);
   });
@@ -2870,7 +2878,7 @@ test.describe("Rally admin shell", () => {
     await page.evaluate((url) => window.location.replace(url), target);
     await page.waitForURL(target);
     expect(await page.evaluate(() => window.history.length)).toBe(1);
-    await expect(page.getByText("Session not found.")).toBeVisible();
+    await expect(page.getByText("Class not found.")).toBeVisible();
     const back = page.getByTestId("shell-back-button");
     await expect(back).toBeVisible();
     await back.click();

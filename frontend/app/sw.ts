@@ -3,7 +3,8 @@
  * Service worker entry, compiled by @serwist/next.
  *
  * Wave 1A cache strategies:
- * - `GET /api/v2/coach/today*` → stale-while-revalidate (24h)
+ * - `GET /api/v2/coach/today*` and `/sessions*` → network-first, the 24h
+ *   cache only as the offline fallback (a stale roster hid transfers)
  * - `POST /api/v2/coach/attendance` → network-only (Wave 1A: no queueing)
  * - other `/api/*` calls → network-only; auth-scoped responses must not be cached
  * - static / icons / manifest → cache-first
@@ -16,7 +17,7 @@
 import { defaultCache } from "@serwist/next/worker";
 import {
   Serwist,
-  StaleWhileRevalidate,
+  NetworkFirst,
   NetworkOnly,
   CacheFirst,
   ExpirationPlugin,
@@ -88,7 +89,7 @@ const serwist = new Serwist({
         request.method === "GET" &&
         COACH_API.test(url.pathname) &&
         !COACH_PRIVATE.test(url.pathname),
-      handler: new StaleWhileRevalidate({
+      handler: new NetworkFirst({
         cacheName: "coach-api-v1",
         plugins: [
           new ExpirationPlugin({

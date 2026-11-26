@@ -18,14 +18,17 @@ export interface ParentHomeNextSession {
   /** ISO-8601 UTC instant — render in the academy timezone, never the device's. */
   start_at: string;
   end_at: string;
-  /**
-   * Always null today: the child-schedule use case hardcodes it. The field is
-   * kept for shape parity with the schedule view model, and the card renders
-   * the coach line only when it is non-null.
-   */
+  /** S45: who coaches this date (substitute, else the class coach); null when unknown. */
   coach_name: string | null;
   /** #1038: "makeup" / "trial" for a one-time approved class; optional for older payloads. */
   source?: "regular" | "makeup" | "trial";
+  /** S17: the family reported this class as an absence. */
+  absence_reported?: boolean;
+  /** S45: family info stored on the class (address falls back to the academy's). */
+  venue_address?: string | null;
+  parking_notes?: string | null;
+  what_to_bring?: string | null;
+  arrival_minutes_before?: number | null;
 }
 
 export interface ParentHomeAttendance {
@@ -36,7 +39,8 @@ export interface ParentHomeAttendance {
 }
 
 export interface ParentHomeMilestone {
-  kind: "note" | "skill";
+  /** S18: "skill" is a passed skill (a milestone); "working_on" is still in progress. */
+  kind: "note" | "skill" | "working_on";
   label: string;
   /** ISO-8601 UTC instant. */
   at: string;
@@ -48,6 +52,8 @@ export interface ParentHomeChild {
   next_session: ParentHomeNextSession | null;
   attendance_this_month: ParentHomeAttendance;
   latest_milestone: ParentHomeMilestone | null;
+  /** S45: never marked present or late yet; Home shows "Before your first class". */
+  first_class_pending?: boolean;
 }
 
 export interface ParentHomeBalance {

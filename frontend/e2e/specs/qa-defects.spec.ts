@@ -7,6 +7,7 @@ import {
   stubMemberships,
   stubParentMessages,
   stubParentProfile,
+  stubParentMoneySummary,
 } from "../fixtures/saas-stubs";
 
 const draftApplication = {
@@ -39,6 +40,7 @@ function futureDateInput(daysAhead: number): string {
 }
 
 async function stubParentShell(page: Parameters<typeof stubMe>[0]) {
+  await stubParentMoneySummary(page);
   await stubMe(page, {
     user_id: "user-parent-qa",
     email: "parent@example.com",
@@ -100,7 +102,7 @@ test.describe("QA defect regressions", () => {
 
     await expect(page.getByRole("heading", { name: "Child added" })).toBeVisible();
     await expect(page.getByTestId("status-text")).toHaveText(
-      "Kavan has been added. An admin will confirm the enrollment shortly.",
+      "Kavan is on your Home page as waiting for the academy to confirm. We will email you when the academy confirms, and the class then shows on your Calendar.",
     );
     await expect(page.getByText("Payment received", { exact: true })).toHaveCount(0);
   });
@@ -142,7 +144,7 @@ test.describe("QA defect regressions", () => {
       .click();
 
     const dob = page.getByLabel("Date of birth");
-    await expect(dob).toHaveAttribute("type", "text");
+    await expect(dob).toHaveAttribute("type", "date");
     await dob.fill("2014-02-03");
     await expect(dob).toHaveValue("2014-02-03");
     await page.getByRole("radio", { name: "Beginner" }).click();
@@ -241,7 +243,7 @@ test.describe("QA defect regressions", () => {
     await page.getByLabel("I agree to sign electronically.").check();
     await page.getByRole("button", { name: "Sign and continue" }).click();
 
-    await expect(page.getByRole("heading", { name: "Pick a session" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Pick a class" })).toBeVisible();
     await expect(page.getByRole("button", { name: /Thursday Beginner/ })).toBeVisible();
     expect(acceptedWaiver).toBe(true);
   });
@@ -540,7 +542,7 @@ test.describe("QA defect regressions", () => {
     // Same 15s budget as the coach case below: the redirect lands after the
     // parent shell's own layout queries settle, which the default 5s expect
     // timeout can miss on a cold dev-server compile.
-    await expect(page).toHaveURL(/\/parent\/payments\?access_denied=admin/, {
+    await expect(page).toHaveURL(/\/parent\/dashboard\?access_denied=admin/, {
       timeout: 15000,
     });
     await expect(page.getByTestId("persona-access-denied")).toContainText(
@@ -562,7 +564,7 @@ test.describe("QA defect regressions", () => {
     await page.goto("/coach/sessions", { waitUntil: "domcontentloaded" });
     await meResponse;
 
-    await expect(page).toHaveURL(/\/parent\/payments\?access_denied=coach/, {
+    await expect(page).toHaveURL(/\/parent\/dashboard\?access_denied=coach/, {
       timeout: 15000,
     });
     await expect(page.getByTestId("persona-access-denied")).toContainText(

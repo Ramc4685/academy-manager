@@ -29,14 +29,20 @@ import {
 import { queryKeys } from "@/lib/query/keys";
 
 import { Button } from "@/components/ds/button";
+import { ConfirmActionDialog, useConfirmTarget } from "@/components/ds/confirm-action-dialog";
+import { formatAcademyStamp } from "@/lib/format/academy-time";
 
 const MAX_BODY = 2000;
 
 const NO_EDIT_HELP =
   "Announcements can't be edited. Delete and repost instead — an email that has already gone out can't be recalled.";
 
-const DELETE_CONFIRM =
-  "Delete this announcement? It disappears from every family's inbox, but an email that has already gone out can't be recalled.";
+const DELETE_CONSEQUENCE =
+  "It disappears from every family's inbox, but an email that has already gone out can't be recalled.";
+
+function truncate(text: string, max = 140): string {
+  return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text;
+}
 
 function emailSummary(
   status: AnnouncementEmailStatus,
@@ -49,7 +55,7 @@ function emailSummary(
         ? `Posted. Emailed ${sent} of ${sent + failed} families — ${failed} could not be reached.`
         : `Posted and emailed ${sent} ${sent === 1 ? "family" : "families"}.`;
     case "no_recipients":
-      return "Posted. Nobody is enrolled in this session yet, so no email was sent.";
+      return "Posted. Nobody is enrolled in this class yet, so no email was sent.";
     case "failed":
       return "Posted, but the email could not be sent. Delete and repost to try again.";
     default:
@@ -114,6 +120,7 @@ export function AnnouncementsPanel({
     onError: () => setError("Could not delete the announcement."),
   });
 
+  const confirmDelete = useConfirmTarget<SessionAnnouncement>();
   const announcements = announcementsQuery.data?.announcements ?? [];
   const trimmed = body.trim();
   const canPost = trimmed.length > 0 && !postMutation.isPending;
@@ -143,6 +150,11 @@ export function AnnouncementsPanel({
           />
           Urgent — email families now
         </label>
+        <p data-testid="announcement-audience" className="text-xs text-rally-subtle">
+          Goes to the app inbox of every family with a child on this class, including children on
+          hold. Urgent also emails them straight away. Either way, families who turned on phone
+          notifications get one.
+        </p>
         <p className="text-xs text-rally-subtle">{NO_EDIT_HELP}</p>
         <div className="flex items-center gap-3">
           <Button
@@ -193,15 +205,28 @@ export function AnnouncementsPanel({
                 deleteMutation.isPending &&
                 deleteMutation.variables === a.message_id
               }
-              onDelete={() => {
-                if (confirm(DELETE_CONFIRM)) {
-                  deleteMutation.mutate(a.message_id);
-                }
-              }}
+              onDelete={() => confirmDelete.open(a)}
             />
           ))}
         </ul>
       )}
+
+      <ConfirmActionDialog
+        open={confirmDelete.target !== null}
+        onOpenChange={confirmDelete.onOpenChange}
+        overline="Announcement"
+        title="Delete this announcement?"
+        subject={confirmDelete.target && truncate(confirmDelete.target.body)}
+        consequence={DELETE_CONSEQUENCE}
+        confirmLabel="Delete"
+        pending={deleteMutation.isPending}
+        onConfirm={() => {
+          if (!confirmDelete.target) return;
+          deleteMutation.mutate(confirmDelete.target.message_id, {
+            onSettled: confirmDelete.close,
+          });
+        }}
+      />
     </div>
   );
 }
@@ -229,7 +254,7 @@ function AnnouncementRow({
               {announcement.author_display_name ?? "Staff"}
             </span>
             <span className="text-[11px] text-rally-subtle">
-              {new Date(announcement.created_at).toLocaleString()}
+              {formatAcademyStamp(announcement.created_at)}
             </span>
             {announcement.urgency === "urgent" && (
               <span

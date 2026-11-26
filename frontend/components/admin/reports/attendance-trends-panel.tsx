@@ -23,7 +23,7 @@ export function AttendanceTrendsPanel({ periods }: { periods: string[] }) {
         <div>
           <Overline>Attendance trends</Overline>
           <p className="mt-1 text-sm text-rally-subtle">
-            Session completion vs no-shows over the last {periods.length} months.
+            Class dates held, and absent marks on them, over the last {periods.length} months.
           </p>
         </div>
         {data ? (
@@ -44,8 +44,8 @@ export function AttendanceTrendsPanel({ periods }: { periods: string[] }) {
       ) : rows.length === 0 ? (
         <EmptyState
           className="mt-4"
-          title="No attendance recorded"
-          description="Completion rates will appear here once sessions are marked."
+          title="No classes yet"
+          description="Held class dates will appear here once classes are scheduled."
         />
       ) : (
         <div className="mt-4 overflow-x-auto">
@@ -54,9 +54,10 @@ export function AttendanceTrendsPanel({ periods }: { periods: string[] }) {
               <tr>
                 <th className="px-2 py-2">Period</th>
                 <th className="px-2 py-2">Scheduled</th>
-                <th className="px-2 py-2">Completed</th>
-                <th className="px-2 py-2">No-shows</th>
-                <th className="px-2 py-2">Completion rate</th>
+                <th className="px-2 py-2">Held</th>
+                <th className="px-2 py-2">Cancelled</th>
+                <th className="px-2 py-2">Absent marks</th>
+                <th className="px-2 py-2">Held rate</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-rally-line">
@@ -65,6 +66,7 @@ export function AttendanceTrendsPanel({ periods }: { periods: string[] }) {
                   <td className="px-2 py-2 font-medium text-rally-ink">{row.period}</td>
                   <td className="px-2 py-2 text-rally-muted">{formatInteger(row.scheduled_count)}</td>
                   <td className="px-2 py-2 text-rally-muted">{formatInteger(row.completed_count)}</td>
+                  <td className="px-2 py-2 text-rally-muted">{formatInteger(row.cancelled_count)}</td>
                   <td className="px-2 py-2 text-rally-muted">{formatInteger(row.no_show_count)}</td>
                   <td className="px-2 py-2 text-rally-muted">{formatPercent(row.completion_rate)}</td>
                 </tr>

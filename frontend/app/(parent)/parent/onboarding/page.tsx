@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { WaiverSignBlock } from "@/components/parent/waiver-sign-block";
 import { WaiverText } from "@/components/waivers/waiver-text";
@@ -30,6 +30,7 @@ import {
   type RegistrationWaiver,
 } from "@/lib/api/parent";
 import type { ApiError } from "@/lib/api/client";
+import { toCheckoutStartMessage } from "@/lib/api/payment-error";
 import {
   formatAcademyMoment,
   formatSessionOccurrence,
@@ -43,6 +44,24 @@ import {
   NO_MEDICAL_CONDITIONS_SENTINEL,
   reEnrollChildId,
 } from "@/lib/parent/re-enroll";
+import {
+  nextStep,
+  onboardingOrder,
+  onboardingSearch,
+  resumeStep,
+  type OnboardingStep,
+} from "@/lib/parent/onboarding-steps";
+import {
+  classLevelNote,
+  dateOfBirthError,
+  localIsoDate,
+  monthlyPriceLabel,
+  reviewPriceLines,
+  skillLevelLabel,
+  SKILL_LEVEL_HINTS,
+  waiverPerChildNote,
+} from "@/lib/parent/onboarding-copy";
+import { listPhrase } from "@/lib/parent/profile-gaps";
 
 /**
  * Parent onboarding stepper.
@@ -53,14 +72,7 @@ import {
  * the parent can resume after a tab close.
  */
 
-type Step = "parent" | "child" | "waiver" | "session" | "review";
-const ORDER: Step[] = ["parent", "child", "waiver", "session", "review"];
-/**
- * When the academy assigns a waiver to a program, the right set of waivers is
- * only known once the family has chosen a class, so the class comes first.
- * With one waiver for everyone (the usual case) the order above is unchanged.
- */
-const CLASS_FIRST_ORDER: Step[] = ["parent", "child", "session", "waiver", "review"];
+type Step = OnboardingStep;
 
 /**
  * Server-side completeness guard (issue #380): checkout refuses an
@@ -70,6 +82,9 @@ const CLASS_FIRST_ORDER: Step[] = ["parent", "child", "session", "waiver", "revi
  * the field instead of stranding them on the review screen with a raw
  * machine-readable field name.
  */
+const CHECKOUT_START_FAILED =
+  "We couldn't start the payment. Please try again, or contact the academy.";
+
 const MISSING_FIELD_HELP: Record<string, { step: Step; label: string }> = {
   parent_phone: { step: "parent", label: "your phone number" },
   date_of_birth: { step: "child", label: "your child's date of birth" },
@@ -82,6 +97,7 @@ export default function OnboardingStepperPage() {
   const [step, setStep] = useState<Step>("parent");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const queryClient = useQueryClient();
   const sessionsQuery = useQuery({
     queryKey: ["parent", "sessions", "available"],
     queryFn: listAvailableParentSessions,
@@ -128,13 +144,34 @@ export default function OnboardingStepperPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const fresh = await startOnboarding();
+        // S02: "Finish registration" links here with the application to resume.
+        const params = new URLSearchParams(window.location.search);
+        let fresh = await startOnboarding(params.get("application"));
+        const first = resumeStep(fresh, params.get("step"));
+        // The details step is the only place a stored ?ref= code is attached;
+        // when S21 skips it, attach the code here so a known parent keeps it.
+        const code = storedReferralCode();
+        if (first !== "parent" && code && !fresh.parent_profile.referral_code) {
+          fresh = await patchOnboarding(fresh.application_id, {
+            parent_profile: { ...fresh.parent_profile, referral_code: code },
+          });
+          clearReferralCode();
+        }
         setApp(fresh);
+        // S21: a reload stays on its step; a new or second child skips what is already done.
+        setStep(first);
       } catch (e) {
         setError((e as Error).message);
       }
     })();
   }, []);
+
+  const applicationId = app?.application_id;
+  useEffect(() => {
+    if (!applicationId) return;
+    const search = onboardingSearch(window.location.search, applicationId, step);
+    if (search !== window.location.search) window.history.replaceState(null, "", search);
+  }, [applicationId, step]);
 
   if (error && !app) {
     return (
@@ -180,11 +217,12 @@ export default function OnboardingStepperPage() {
     }
   }
 
-  const order = app.waiver_class_first ? CLASS_FIRST_ORDER : ORDER;
+  const order = onboardingOrder(app);
 
   function advance() {
-    const i = order.indexOf(step);
-    if (i < order.length - 1) setStep(order[i + 1]);
+    if (!app) return;
+    const next = nextStep(app, step);
+    if (next) setStep(next);
   }
 
   async function goToCheckout() {
@@ -220,10 +258,11 @@ export default function OnboardingStepperPage() {
         // checkout must never substitute a figure they never saw (#731).
         void quoteQuery.refetch();
         setError(
-          "This quote expired while you were filling things in. Please check the updated amount below and continue.",
+          "The price we were holding ran out while you were filling things in. Please check the updated amount below and continue.",
         );
       } else {
-        setError(err.message);
+        // S24: never show gateway detail ("Stripe connected account...") to a parent.
+        setError(toCheckoutStartMessage(err, CHECKOUT_START_FAILED));
       }
       setSaving(false);
     }
@@ -261,6 +300,8 @@ export default function OnboardingStepperPage() {
               if (await save({ parent_profile: profile })) {
                 // Saved on the registration now (L9 C2); stop carrying it.
                 clearReferralCode();
+                // S21: the backend copied name and phone onto a blank profile.
+                void queryClient.invalidateQueries({ queryKey: queryKeys.parent.profile() });
                 advance();
               }
             }}
@@ -284,6 +325,13 @@ export default function OnboardingStepperPage() {
             // class; otherwise the request is exactly what it always was.
             sessionId={app.waiver_class_first ? app.selected_session_id : null}
             birthDate={app.child_profile?.date_of_birth ?? null}
+            // S21: a family adding another child gets their signer name back.
+            defaultSignerName={
+              existingChildren.length > 0
+                ? `${app.parent_profile.first_name} ${app.parent_profile.last_name}`.trim()
+                : ""
+            }
+            childFirstName={app.child_profile.first_name}
             saving={saving}
             onAccept={async (signerName, initials) => {
               if (
@@ -304,6 +352,7 @@ export default function OnboardingStepperPage() {
             error={sessionsQuery.isError}
             onRetry={() => void sessionsQuery.refetch()}
             saving={saving}
+            childLevel={app.child_profile.skill_level}
             onSelect={async (id) => {
               if (await save({ selected_session_id: id })) advance();
             }}
@@ -324,12 +373,6 @@ export default function OnboardingStepperPage() {
       </div>
     </section>
   );
-}
-
-/** "a", "a and b", "a, b and c" */
-function listPhrase(items: string[]): string {
-  if (items.length <= 1) return items[0] ?? "";
-  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
 /**
@@ -375,7 +418,7 @@ function Progress({
               >
                 {done ? "✓" : idx + 1}
               </span>
-              <span className={`capitalize ${active ? "font-semibold" : "font-medium"}`}>{s}</span>
+              <span className={`capitalize ${active ? "font-semibold" : "font-medium"}`}>{s === "session" ? "class" : s}</span>
             </button>
           </li>
         );
@@ -416,7 +459,10 @@ function ParentStep({
       }}
       className="space-y-3"
     >
-      <StepHeading>Your details</StepHeading>
+      <StepHeading>Your details (parent or guardian)</StepHeading>
+      <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
+        Your own name and phone. Your child&apos;s details come next.
+      </p>
       {v.referral_code ? (
         <p className="flex items-center justify-between gap-3 text-sm" data-testid="onboarding-referral-code">
           <span>
@@ -435,10 +481,10 @@ function ParentStep({
           </Button>
         </p>
       ) : null}
-      <Field label="First name">
+      <Field label="Your first name">
         <input value={v.first_name} onChange={(e) => setV({ ...v, first_name: e.target.value })} required />
       </Field>
-      <Field label="Last name">
+      <Field label="Your last name">
         <input value={v.last_name} onChange={(e) => setV({ ...v, last_name: e.target.value })} required />
       </Field>
       {/*
@@ -447,7 +493,7 @@ function ParentStep({
         payment step and be bounced with nothing to click. The form and the
         server-side completeness guard must agree.
       */}
-      <Field label="Phone">
+      <Field label="Your phone">
         <input
           type="tel"
           value={v.phone}
@@ -509,11 +555,14 @@ function ChildStep({
   }, [existingChildren, preselectedStudentId]);
 
   const existingSelected = selection !== NEW_CHILD_SELECTION;
+  const today = localIsoDate(new Date());
+  const dobError = dateOfBirthError(v.date_of_birth, today);
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
+        if (dobError) return;
         onSave(v);
       }}
       className="space-y-3"
@@ -602,18 +651,22 @@ function ChildStep({
       </Field>
       <Field label="Date of birth">
         <input
-          type="text"
-          inputMode="text"
+          type="date"
           autoComplete="bday"
-          placeholder="YYYY-MM-DD"
-          pattern="\d{4}-\d{2}-\d{2}"
-          maxLength={10}
+          max={today}
           value={v.date_of_birth}
           onChange={(e) => setV({ ...v, date_of_birth: e.target.value })}
           readOnly={existingSelected}
+          aria-invalid={dobError ? true : undefined}
+          aria-describedby={dobError ? "onboarding-dob-error" : undefined}
           required
         />
       </Field>
+      {dobError && (
+        <p id="onboarding-dob-error" role="alert" className="text-sm text-red-700" data-testid="onboarding-dob-error">
+          {dobError}
+        </p>
+      )}
       <fieldset className="space-y-2">
         <legend className="text-sm font-medium" style={{ color: "var(--rally-ink)" }}>Skill level</legend>
         <div className="grid grid-cols-3 gap-2 stagger-children" role="radiogroup" aria-label="Skill level">
@@ -622,7 +675,7 @@ function ChildStep({
             return (
               <label
                 key={level}
-                className="relative flex min-h-11 items-center justify-center rounded-xl border px-2 text-center text-sm capitalize transition-colors"
+                className="relative flex min-h-11 flex-col items-center justify-center rounded-xl border px-2 py-1.5 text-center text-sm transition-colors"
                 style={{
                   borderColor: selected ? "#facc15" : "var(--rally-line)",
                   background: selected ? "#fffbe9" : "white",
@@ -638,7 +691,10 @@ function ChildStep({
                   onChange={() => setV({ ...v, skill_level: level })}
                   className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                 />
-                {level}
+                <span className="capitalize">{level}</span>
+                <span className="mt-0.5 text-[11px] font-normal leading-tight" style={{ color: "var(--rally-muted)" }}>
+                  {SKILL_LEVEL_HINTS[level]}
+                </span>
               </label>
             );
           })}
@@ -663,9 +719,13 @@ function ChildStep({
         <textarea
           rows={2}
           placeholder="Allergies, conditions, or anything a coach should know"
-          disabled={noMedicalConditions}
           value={noMedicalConditions ? "" : (v.medical_notes ?? "")}
-          onChange={(e) => setV({ ...v, medical_notes: e.target.value })}
+          onChange={(e) => {
+            // Writing a note answers the question, so "none" no longer applies.
+            setNoMedicalConditions(false);
+            setV({ ...v, medical_notes: e.target.value });
+          }}
+          data-testid="onboarding-medical-notes"
         />
       </Field>
       <label className="flex items-center gap-2 text-sm" style={{ color: "var(--rally-ink)" }}>
@@ -695,10 +755,14 @@ function WaiverStep({
   onAccept,
   onContinue,
   saving,
+  defaultSignerName,
+  childFirstName,
 }: {
   accepted: boolean;
   sessionId: string | null;
   birthDate: string | null;
+  defaultSignerName: string;
+  childFirstName: string;
   onAccept: (signerName: string, initials: Record<string, Record<string, string>>) => void;
   onContinue: () => void;
   saving: boolean;
@@ -741,13 +805,18 @@ function WaiverStep({
 
   const waiver = waiverQuery.data;
   if (!waiver?.configured) {
+    // S47 / D-11: no waiver to sign yet (none published, or only the starter
+    // placeholder). The family continues; the academy collects it later.
     return (
       <div className="space-y-4">
         <StepHeading>Waiver</StepHeading>
-        <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
-          Waiver not configured yet — an academy admin must publish a waiver template and
-          assign it to registration.
+        <p className="text-sm" style={{ color: "var(--rally-muted)" }} data-testid="onboarding-waiver-later">
+          There is no waiver to sign right now. The academy will ask you to sign one later from
+          your Waivers page.
         </p>
+        <Button onClick={onContinue} disabled={saving} variant="primary" full>
+          Continue →
+        </Button>
       </div>
     );
   }
@@ -769,6 +838,11 @@ function WaiverStep({
   return (
     <div className="space-y-4">
       <StepHeading>{several ? "Waivers" : "Waiver"}</StepHeading>
+      {defaultSignerName && !accepted ? (
+        <p className="text-sm" style={{ color: "var(--rally-muted)" }} data-testid="onboarding-waiver-per-child">
+          {waiverPerChildNote(childFirstName)}
+        </p>
+      ) : null}
       <div className="space-y-4" data-testid={several ? "onboarding-waivers" : undefined}>
         {sectioned.map(({ item, needed }) => (
           <div key={item.waiver_template_id} className="space-y-2">
@@ -819,6 +893,7 @@ function WaiverStep({
                 : "Initial each marked section above to sign."
           }
           label={() => (several ? "Sign waivers and continue" : "Sign and continue")}
+          defaultSignerName={defaultSignerName}
           onSign={({ signerName }) => onAccept(signerName, initials)}
         />
       )}
@@ -835,9 +910,12 @@ function SessionStep({
   onRetry,
   onSelect,
   saving,
+  childLevel,
 }: {
   selected: string | null;
   sessions: ParentAvailableSession[];
+  /** The level chosen on the child step, for the level-mismatch note. */
+  childLevel: string;
   academyTimezone: string | null;
   loading: boolean;
   error: boolean;
@@ -845,12 +923,13 @@ function SessionStep({
   onSelect: (id: string) => void;
   saving: boolean;
 }) {
+  const levelNote = (session: ParentAvailableSession) => classLevelNote(session.title, childLevel);
   return (
     <div className="space-y-3">
-      <StepHeading>Pick a session</StepHeading>
+      <StepHeading>Pick a class</StepHeading>
 
       {loading && (
-        <div className="space-y-2" aria-label="Loading sessions">
+        <div className="space-y-2" aria-label="Loading classes">
           {[0, 1, 2].map((i) => (
             <div key={i} className="h-24 rounded-2xl shimmer" />
           ))}
@@ -862,7 +941,7 @@ function SessionStep({
           role="alert"
           className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800"
         >
-          <p>Could not load sessions.</p>
+          <p>Could not load classes.</p>
           <button type="button" onClick={onRetry} className="secondary mt-3">
             Retry
           </button>
@@ -874,12 +953,12 @@ function SessionStep({
           className="rounded-2xl border p-4 text-sm"
           style={{ borderColor: "var(--rally-line)", color: "var(--rally-muted)" }}
         >
-          No sessions are available right now.
+          No classes are available right now.
         </p>
       )}
 
       {!loading && !error && sessions.length > 0 && (
-        <ul className="space-y-2 stagger-children" aria-label="Available sessions">
+        <ul className="space-y-2 stagger-children" aria-label="Available classes">
           {sessions.map((session) => {
             const isSelected = selected === session.session_id;
             const hasSeats = session.available_seats > 0;
@@ -908,12 +987,17 @@ function SessionStep({
                       </span>
                     </span>
                     <span className="shrink-0 text-sm font-semibold" style={{ color: "var(--rally-ink)" }}>
-                      {formatCents(session.amount_cents)}
+                      {monthlyPriceLabel(session.amount_cents)}
                     </span>
                   </span>
                   <span className="mt-2 block text-xs" style={{ color: "var(--rally-muted)" }}>
                     {session.available_seats} of {session.capacity} seats open
                   </span>
+                  {levelNote(session) && (
+                    <span className="mt-2 block text-xs" style={{ color: "#854f0b" }} data-testid="onboarding-level-note">
+                      {levelNote(session)}
+                    </span>
+                  )}
                 </button>
               </li>
             );
@@ -950,27 +1034,35 @@ function ReviewStep({
         className="space-y-1 rounded-2xl border p-4 text-sm"
         style={{ borderColor: "var(--rally-line)", background: "white", color: "var(--rally-ink)" }}
       >
-        <li>Parent: {app.parent_profile.first_name} {app.parent_profile.last_name}</li>
-        <li>Child: {app.child_profile.first_name} {app.child_profile.last_name} ({app.child_profile.skill_level || "—"})</li>
+        <li>Parent or guardian: {app.parent_profile.first_name} {app.parent_profile.last_name}</li>
+        <li>Child: {app.child_profile.first_name} {app.child_profile.last_name} ({skillLevelLabel(app.child_profile.skill_level)})</li>
         <li>
           Session:{" "}
           {selectedSession
             ? `${selectedSession.title} · ${formatSessionTime(selectedSession, academyTimezone)}`
             : app.selected_session_id ?? "—"}
         </li>
-        <li>
-          First month:{" "}
-          {quote
-            ? `${formatCents(quote.amount_due_cents)} · ${quote.message}`
-            : quoteLoading
+        {selectedSession && classLevelNote(selectedSession.title, app.child_profile.skill_level) && (
+          <li style={{ color: "#854f0b" }} data-testid="onboarding-review-level-note">
+            {classLevelNote(selectedSession.title, app.child_profile.skill_level)}
+          </li>
+        )}
+        {quote ? (
+          reviewPriceLines(quote).map((line) => <li key={line}>{line}</li>)
+        ) : (
+          <li>
+            First month:{" "}
+            {quoteLoading
               ? "Calculating..."
               : selectedSession
-                ? formatCents(selectedSession.amount_cents)
+                ? monthlyPriceLabel(selectedSession.amount_cents)
                 : "—"}
-        </li>
-        {quote && <li>Starting next month: {formatCents(quote.next_billing_amount_cents)}</li>}
+          </li>
+        )}
         {quote?.quote_expires_at && (
-          <li>Quote expires: {formatShortDateTime(quote.quote_expires_at, academyTimezone)}</li>
+          <li data-testid="onboarding-price-held">
+            Price held until {formatShortDateTime(quote.quote_expires_at, academyTimezone)}
+          </li>
         )}
         <li>Waiver: {app.waiver_accepted ? "Accepted" : "Not accepted"}</li>
       </ul>
@@ -1018,13 +1110,6 @@ function formatSessionTime(
 
 function formatShortDateTime(value: string, academyTimezone: string | null): string {
   return formatAcademyMoment(value, academyTimezone);
-}
-
-function formatCents(cents: number): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: "USD",
-  }).format(cents / 100);
 }
 
 function OnboardingStyles() {

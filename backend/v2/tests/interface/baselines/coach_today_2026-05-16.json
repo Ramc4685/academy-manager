@@ -13,6 +13,8 @@
         {
           "student_id": "st1",
           "full_name": "Alice",
+          "age_years": null,
+          "level_name": null,
           "enrollment_status": "active",
           "attendance_status": null,
           "attendance_marked_at": null,
@@ -28,6 +30,8 @@
         {
           "student_id": "st2",
           "full_name": "Bob",
+          "age_years": null,
+          "level_name": null,
           "enrollment_status": "active",
           "attendance_status": null,
           "attendance_marked_at": null,
@@ -48,7 +52,11 @@
       "trial_guests": [],
       "recap_saved": false,
       "dropoff_window_opens_at": null,
-      "dropoff_window_closes_at": null
+      "dropoff_window_closes_at": null,
+      "age_band": null,
+      "venue_address": null,
+      "parking_notes": null,
+      "arrival_minutes_before": null
     },
     {
       "session_id": "s-today-2",
@@ -66,7 +74,11 @@
       "trial_guests": [],
       "recap_saved": false,
       "dropoff_window_opens_at": null,
-      "dropoff_window_closes_at": null
+      "dropoff_window_closes_at": null,
+      "age_band": null,
+      "venue_address": null,
+      "parking_notes": null,
+      "arrival_minutes_before": null
     }
   ]
 }

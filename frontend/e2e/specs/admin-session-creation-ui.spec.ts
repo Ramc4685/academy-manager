@@ -157,7 +157,7 @@ test.describe("admin session creation and billing-rules settings UI", () => {
     await page.goto("/admin/sessions");
     await page.getByTestId("admin-sessions-create").click();
 
-    await expect(page.getByRole("heading", { name: "Create session" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Create class" })).toBeVisible();
 
     // The coach field renders a placeholder <input> until the admin/users query
     // resolves, then swaps to a <select>. Wait for the option itself so we never
@@ -228,6 +228,7 @@ test.describe("admin session creation and billing-rules settings UI", () => {
         charged_cents: 6000,
         fee_set: true,
         students: 0,
+        paying_students: 0,
         plan_id: "plan-group",
         matching_plan_ids: ["plan-group"],
         stale_link: false,
@@ -250,7 +251,7 @@ test.describe("admin session creation and billing-rules settings UI", () => {
     await page.goto("/admin/sessions");
     await page.getByTestId("admin-sessions-create").click();
     const dialog = page.getByRole("dialog");
-    await expect(dialog.getByRole("heading", { name: "Create session" })).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "Create class" })).toBeVisible();
 
     await expect(dialog.getByLabel("Coach").locator("option[value='coach-e2e']")).toBeAttached();
     await dialog.getByLabel("Coach").selectOption("coach-e2e");
@@ -265,7 +266,7 @@ test.describe("admin session creation and billing-rules settings UI", () => {
     // A plan sets the fee, so there is no fee box to type in.
     await expect(dialog.getByTestId("create-session-monthly-fee")).toHaveCount(0);
 
-    await dialog.getByRole("button", { name: "Welcome email (optional)" }).click();
+    await dialog.getByRole("button", { name: "What families need to know (optional)" }).click();
     // The academy's absence default shows as a placeholder, not a value.
     const absence = dialog.getByLabel("Absence & make-up policy");
     await expect(absence).toHaveAttribute(
@@ -348,6 +349,8 @@ test.describe("admin session creation and billing-rules settings UI", () => {
 
     await page.getByTestId("billing-rules-input-late_fee_cents").fill("17.50");
     await page.getByTestId("billing-rules-input-invoice_due_days").fill("10");
+    // S31: a new late-fee amount needs the acknowledgement tick before Save.
+    await page.getByTestId("billing-rules-late-fee-ack").check();
     await page.getByTestId("billing-rules-save").click();
 
     await expect.poll(() => rulesPut).toEqual({ invoice_due_days: 10, late_fee_cents: 1750 });

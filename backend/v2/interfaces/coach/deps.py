@@ -125,6 +125,8 @@ class CoachUseCases:
     # Row 14: {name, logo_url, brand_color} for GET /coach/academy. Optional
     # for fixtures that predate it; real coach composition always sets it.
     get_academy_info: object | None = None  # Callable(*, academy_id: str) -> Awaitable[dict]
+    # S59: GetCoachPaySummary for GET /coach/profile/pay (own pay only).
+    get_coach_pay: object | None = None
     # Issue #774: overdue balance in cents per student, so the roster row can
     # carry ONE "PAYMENT DUE $X" chip. The owner's decision was that this is
     # the only thing about money a coach ever sees; the billing drawer and the
@@ -157,6 +159,11 @@ class CoachUseCases:
     # Occurrence ids (of those given) whose class recap names a taught skill,
     # for ``recap_saved`` on /coach/today. Optional for fixtures that predate it.
     recapped_occurrence_ids: Callable[[Sequence[str]], Awaitable[set[str]]] | None = None
+    # Seat-holding enrollment count per class id, in one query, for the
+    # Sessions list headcount. Missing ids mean 0. Optional for fixtures.
+    enrolled_counts: Callable[[Sequence[str]], Awaitable[dict[str, int]]] | None = None
+    # Child display names by student id (the passport header). Optional for fixtures.
+    student_names: Callable[[Sequence[str]], Awaitable[dict[str, str]]] | None = None
 
 
 log = logging.getLogger(__name__)

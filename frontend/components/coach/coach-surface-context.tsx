@@ -94,7 +94,7 @@ export function AssistantCoachDeniedNotice({ surface }: { surface: string }) {
       }}
     >
       <span className="font-semibold">Assistant coach.</span> {surface} is for the lead coach.
-      You can mark attendance, update skills and add notes on the sessions you&apos;re assigned
+      You can mark attendance, update skills and add notes on the classes you&apos;re assigned
       to.
     </div>
   );

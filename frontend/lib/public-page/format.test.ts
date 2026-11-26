@@ -6,6 +6,7 @@ import {
   formatAmount,
   formatClassDate,
   formatDays,
+  formatLevel,
   formatPrice,
   formatPricePeriod,
   formatSeatBand,
@@ -222,5 +223,21 @@ describe("seat band with the academy's threshold", () => {
   it("0 disables the few-seats chip but never hides a full class", () => {
     expect(formatSeatBand({ band: "few", seats_left: 1 }, 0)?.text).toBe("Open");
     expect(formatSeatBand({ band: "waitlist", seats_left: null }, 0)?.full).toBe(true);
+  });
+});
+
+describe("formatLevel (S46)", () => {
+  it("adds one plain sentence to a standard level", () => {
+    expect(formatLevel("Beginner")).toBe("Beginner: new, or played only a few times");
+    expect(formatLevel("intermediate")).toBe("intermediate: can rally and knows the rules");
+    expect(formatLevel("Advanced")).toBe("Advanced: plays matches or competes");
+  });
+
+  it("leaves a level the academy named itself as written", () => {
+    expect(formatLevel("Squad")).toBe("Squad");
+    expect(formatLevel("Beginner/Intermediate")).toBe("Beginner/Intermediate");
+    expect(formatLevel("Junior Beginner")).toBe("Junior Beginner");
+    expect(formatLevel("  ")).toBeNull();
+    expect(formatLevel(null)).toBeNull();
   });
 });

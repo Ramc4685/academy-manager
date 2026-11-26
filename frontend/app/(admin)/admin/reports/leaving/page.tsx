@@ -115,7 +115,8 @@ export default function AdminLeavingReportPage() {
                   <tr key={row.event_id}>
                     <td className="px-2 py-2 text-rally-muted">{formatDate(row.occurred_at)}</td>
                     <td className="px-2 py-2 font-medium text-rally-ink">
-                      {row.student_name ?? row.student_id}
+                      {/* S19: never a raw id; the row has no name only when the student record is gone. */}
+                      {row.student_name ?? "Removed student"}
                     </td>
                     <td className="px-2 py-2 text-rally-muted">{row.session_title ?? "—"}</td>
                     <td className="px-2 py-2 text-rally-ink">
@@ -129,7 +130,7 @@ export default function AdminLeavingReportPage() {
                     </td>
                     <td className="px-2 py-2 text-rally-muted">{row.reason ?? "—"}</td>
                     <td className="px-2 py-2 text-rally-muted">
-                      {row.is_system_action ? "System" : (row.actor_id ?? "—")}
+                      {row.is_system_action ? "System" : row.actor_id ? "Staff or family" : "—"}
                     </td>
                     <td className="px-2 py-2 font-medium text-rally-ink">
                       {row.monthly_revenue_effect_cents != null

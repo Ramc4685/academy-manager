@@ -634,6 +634,21 @@ async def test_build_is_cached_per_academy_for_the_ttl(db, acad) -> None:
 
 
 @pytest.mark.asyncio
+async def test_composed_fresh_reader_sees_a_family_the_cache_has_not(db, acad) -> None:
+    # S26: the cached build is 60s; the fresh reader shares no cache with it.
+    await _seed(db, acad)
+    services = compose_admin_family_index(db)
+    assert services.fresh is not None
+    cached = await services.index.build(acad)
+    await db["students"].insert_one(
+        {"academy_id": acad, "student_id": "s-new", "parent_id": "u-four", "full_name": "Kiddo New"}
+    )
+    assert await services.index.build(acad) is cached
+    fresh = await services.fresh.build(acad)
+    assert [c.student_id for c in _by_id(fresh)["u-four"].children] == ["s-new"]
+
+
+@pytest.mark.asyncio
 async def test_composed_index_serves_search_class_filter_and_summary(db, acad) -> None:
     await _seed(db, acad)
     services = compose_admin_family_index(db)

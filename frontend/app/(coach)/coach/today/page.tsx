@@ -17,25 +17,22 @@ import {
   isCancelled,
   latestUnfinishedRecap,
   markProgress,
-  nextUpcomingClass,
   recentUnmarkedSessions,
+  todayISO,
 } from "@/lib/coach/marking";
 import { coachScheduleEntryHref } from "@/lib/coach/schedule-links";
+import { coachPlanHref } from "@/lib/coach/class-facts";
 import { queryKeys } from "@/lib/query/keys";
 import { reportVitals } from "@/lib/pwa/vitals";
 import { formatSessionTimeRange, sessionDateKey } from "@/lib/time/session-time";
+import { formatPlainDate } from "@/lib/format/plain-date";
 import { RetryButton } from "@/components/coach/RetryButton";
+import { LaterThisWeek, MyWeek } from "@/components/coach/my-week";
+import { WelcomeCard } from "@/components/coach/welcome-card";
 import { useQueuedMarkCount } from "@/lib/offline/use-needs-review-count";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
+import { ClassHealthStrip } from "@/components/coach/health-alert";
 
-function todayISO(offset = 0): string {
-  const d = new Date();
-  d.setDate(d.getDate() + offset);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
 
 export default function CoachTodayPage() {
   const [date, setDate] = useState<string>(() => todayISO());
@@ -43,7 +40,6 @@ export default function CoachTodayPage() {
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: queryKeys.coach.today(date),
     queryFn: () => getCoachToday(date),
-    staleTime: 5 * 60 * 1000,
   });
   const sessions = useMemo(
     () => (Array.isArray(data?.sessions) ? data.sessions : []),
@@ -62,7 +58,6 @@ export default function CoachTodayPage() {
     queries: lookbackDates.map((d) => ({
       queryKey: queryKeys.coach.today(d),
       queryFn: () => getCoachToday(d),
-      staleTime: 5 * 60 * 1000,
     })),
   });
   const lookbackSessions = lookbackQueries.flatMap((q) => q.data?.sessions ?? []);
@@ -70,15 +65,14 @@ export default function CoachTodayPage() {
   // badge in the list below, and repeating them here would be noise.
   const recentUnmarked: CoachSession[] = recentUnmarkedSessions(lookbackSessions);
 
-  // Empty day: point the coach at the next class and the recap left open.
+  // Empty day: My week, who to call and what we teach (S68); a day with
+  // classes gets a quiet "Later this week" under them.
   const emptyToday = viewingToday && !isError && !!data && sessions.length === 0;
   const schedule = useQuery({
     queryKey: queryKeys.coach.schedule(),
     queryFn: getCoachSchedule,
-    enabled: emptyToday,
-    staleTime: 5 * 60 * 1000,
+    enabled: viewingToday && !!data,
   });
-  const nextClass = emptyToday ? nextUpcomingClass(schedule.data?.sessions ?? []) : null;
   // Assistants read recaps but cannot write them, so no shortcut for them.
   const assistant = useIsAssistantCoach();
   const unfinishedRecap =
@@ -89,7 +83,6 @@ export default function CoachTodayPage() {
     queryKey: AI_STATUS_KEY,
     queryFn: getCoachAiStatus,
     retry: false,
-    staleTime: 5 * 60 * 1000,
   });
   const pendingNotes = useQuery({
     // Same key as the tap workspace's note, so its invalidation reaches this count.
@@ -106,28 +99,27 @@ export default function CoachTodayPage() {
     <section data-testid="coach-today">
       <header className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Today</h1>
-          <p className="text-sm text-neutral-500">{date}</p>
+          <h1 tabIndex={-1} className="text-2xl font-semibold focus:outline-none">{viewingToday ? "Today" : formatPlainDate(date)}</h1>
+          {viewingToday && <p className="text-sm text-neutral-500">{formatPlainDate(date)}</p>}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {/*
-           * UI-7 (critique run 4, leftover 9): the plan page is scoped to the
-           * date, not the session, so one link per day replaces the identical
-           * "View teaching plan" button that sat under every session card
-           * (its border class named a colour that is not a token, so it rendered none).
-           */}
-          {sessions.some((s) => !isCancelled(s)) && (
-            <Link
-              href={`/coach/today/plan?date=${date}` as Parameters<typeof Link>[0]["href"]}
-              data-testid="view-teaching-plan"
-              className="inline-flex min-h-touch items-center rounded-lg border border-rally-cobalt-600 px-4 text-sm font-semibold text-rally-cobalt-700 hover:bg-rally-cobalt-50 dark:text-rally-cobalt-100 dark:hover:bg-rally-night-panel"
-            >
-              View teaching plan
-            </Link>
-          )}
-          <DatePicker date={date} onChange={setDate} />
-        </div>
+        <DatePicker date={date} onChange={setDate} />
       </header>
+
+      {viewingToday && <WelcomeCard />}
+
+      {/*
+       * UI-7: the plan page is scoped to the date, not the session, so one
+       * full-width button per day (testers missed the small header link).
+       */}
+      {sessions.some((s) => !isCancelled(s)) && (
+        <Link
+          href={coachPlanHref(date) as Parameters<typeof Link>[0]["href"]}
+          data-testid="view-teaching-plan"
+          className="mb-4 flex min-h-touch w-full items-center justify-center rounded-lg border border-rally-cobalt-600 px-4 text-sm font-semibold text-rally-cobalt-700 hover:bg-rally-cobalt-50 dark:text-rally-cobalt-100 dark:hover:bg-rally-night-panel"
+        >
+          View teaching plan
+        </Link>
+      )}
 
       {waitingMarks > 0 && (
         <p
@@ -163,27 +155,9 @@ export default function CoachTodayPage() {
       )}
 
       {!isError && data && sessions.length === 0 && (
-        <p className="text-neutral-500" data-testid="empty-state">
-          No sessions today.
+        <p className="text-[15px] text-rally-ink" data-testid="empty-state">
+          {viewingToday ? "No class today." : "No classes on this day."}
         </p>
-      )}
-
-      {nextClass && (
-        <Link
-          href={coachScheduleEntryHref(nextClass) as Parameters<typeof Link>[0]["href"]}
-          data-testid="next-class"
-          className="mt-3 block rounded-lg border border-rally-line bg-white p-3 hover:border-rally-cobalt-600 dark:bg-neutral-900"
-        >
-          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            Your next class
-          </p>
-          <p className="mt-1 font-semibold">{nextClass.title}</p>
-          <p className="text-sm text-neutral-600 dark:text-neutral-300">
-            {sessionDateKey(nextClass.start_at, nextClass.timezone)} ·{" "}
-            {formatSessionTimeRange(nextClass.start_at, nextClass.end_at, nextClass.timezone)}
-            {nextClass.location ? ` · ${nextClass.location}` : ""}
-          </p>
-        </Link>
       )}
 
       {unfinishedRecap && (
@@ -210,6 +184,16 @@ export default function CoachTodayPage() {
           </p>
         </Link>
       )}
+
+      {emptyToday &&
+        (schedule.isError ? (
+          <div role="alert" className="mt-4 text-sm text-red-800 dark:text-red-200">
+            <p>We could not load your classes.</p>
+            <RetryButton onClick={() => void schedule.refetch()} className="mt-2" />
+          </div>
+        ) : (
+          <MyWeek sessions={schedule.data?.sessions ?? []} loading={schedule.isPending} />
+        ))}
 
       {recentUnmarked.length > 0 && (
         <section className="mb-4" data-testid="recent-unmarked">
@@ -288,6 +272,7 @@ export default function CoachTodayPage() {
                 </p>
               ) : (
                 <p className="mt-2 flex flex-wrap items-center gap-2 text-sm text-neutral-500">
+                  <ClassHealthStrip occurrenceId={s.occurrence_id} testId={`health-strip-${s.occurrence_id}`} retry={false} />
                   <span data-testid={`session-marked-${s.occurrence_id}`}>
                     {progress.label}
                   </span>
@@ -306,6 +291,8 @@ export default function CoachTodayPage() {
           );
         })}
       </ul>
+
+      {viewingToday && sessions.length > 0 && <LaterThisWeek sessions={schedule.data?.sessions ?? []} />}
 
       {isFetching && !isLoading && (
         <p className="mt-3 text-xs text-neutral-400">Refreshing…</p>

@@ -442,7 +442,7 @@ test.describe("admin email campaign audience (#1029, #1030, #1031)", () => {
 
     await page.goto("/admin/messages#campaign");
     const card = page.locator("#campaign");
-    await card.getByLabel("By session").check();
+    await card.getByLabel("By class").check();
     await card.getByLabel("Beginners Tuesday").check();
     // 8 students but 7 families: the label is the resolved audience.
     await expect(card.getByText("Audience: 7 email recipients on Beginners Tuesday (7 families).")).toBeVisible();
@@ -451,7 +451,7 @@ test.describe("admin email campaign audience (#1029, #1030, #1031)", () => {
     await expect(card.getByTestId("campaign-selected-sessions")).toHaveText(
       "Selected: Beginners Tuesday, Juniors Thursday",
     );
-    await expect(card.getByText(/10 email recipients across 2 sessions/)).toBeVisible();
+    await expect(card.getByText(/10 email recipients across 2 classes/)).toBeVisible();
 
     await card.getByLabel("Email subject").fill("Court change");
     await card.getByLabel("Email body").fill("Court 3 on Tuesday.");

@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ds/button";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
+import type { ApiError } from "@/lib/api/client";
 import { getCalendarFeedLink, resetCalendarFeedLink } from "@/lib/api/parent";
 import { nativePlatform } from "@/lib/auth/native-sign-in";
 import { queryKeys } from "@/lib/query/keys";
@@ -12,6 +14,8 @@ import { queryKeys } from "@/lib/query/keys";
 export function calendarSubscribeLinks(feedUrl: string, calendarName: string) {
   const webcal = feedUrl.replace(/^https?:\/\//, "webcal://");
   return {
+    // The same feed as a one-time file, for calendars that cannot subscribe.
+    ics: feedUrl,
     apple: webcal,
     google: `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`,
     outlook: `https://outlook.live.com/calendar/0/addfromweb?url=${encodeURIComponent(
@@ -20,18 +24,30 @@ export function calendarSubscribeLinks(feedUrl: string, calendarName: string) {
   };
 }
 
+/** The feed link, or ``null`` when the deployment has none (the API 404s).
+ * A 404 resolves rather than errors so it is cached and not re-requested. */
+async function feedLinkOrNull(): Promise<{ url: string } | null> {
+  try {
+    return await getCalendarFeedLink();
+  } catch (error) {
+    if ((error as ApiError).status === 404) return null;
+    throw error;
+  }
+}
+
 /**
  * "Add to my calendar": a live subscription, not a one-time download, so a
  * class the academy calls off later is crossed out on the parent's phone by
- * itself. Hidden when the deployment has no calendar link (the API 404s).
+ * itself. When the deployment has no calendar link it says so plainly.
  */
 export function AddToCalendar({ academyName }: { academyName: string }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [confirmingReset, setConfirmingReset] = useState(false);
   const link = useQuery({
     queryKey: [...queryKeys.parent.calendar(), "feed-link"],
-    queryFn: getCalendarFeedLink,
+    queryFn: feedLinkOrNull,
     retry: false,
     staleTime: Infinity,
   });
@@ -40,10 +56,19 @@ export function AddToCalendar({ academyName }: { academyName: string }) {
     onSuccess: (data) => {
       queryClient.setQueryData([...queryKeys.parent.calendar(), "feed-link"], data);
       setCopied(false);
+      setConfirmingReset(false);
     },
   });
 
-  if (!link.data?.url) return null;
+  if (link.isPending) return null;
+  if (!link.data?.url) {
+    return (
+      <p className="text-sm text-rally-muted" data-testid="add-to-calendar-unavailable">
+        Adding classes to your phone calendar is not available yet. Class dates are listed on this
+        page.
+      </p>
+    );
+  }
   const url = link.data.url;
   const links = calendarSubscribeLinks(url, `${academyName} classes`);
 
@@ -53,16 +78,6 @@ export function AddToCalendar({ academyName }: { academyName: string }) {
       setCopied(true);
     } catch {
       setCopied(false);
-    }
-  }
-
-  function confirmReset() {
-    if (
-      window.confirm(
-        "Make a new link? Calendars using the old link stop updating, so add the new one again.",
-      )
-    ) {
-      reset.mutate();
     }
   }
 
@@ -99,11 +114,18 @@ export function AddToCalendar({ academyName }: { academyName: string }) {
           Outlook
         </a>
       </div>
+      <p className="mt-2 text-sm text-rally-muted">
+        Other calendar?{" "}
+        <a className="font-semibold text-rally-ink underline" href={links.ics} download>
+          Download the .ics file
+        </a>{" "}
+        (a one-time copy that does not update).
+      </p>
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <Button type="button" variant="secondary" size="sm" onClick={copy}>
           {copied ? "Copied" : "Copy link"}
         </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={confirmReset} disabled={reset.isPending}>
+        <Button type="button" variant="ghost" size="sm" onClick={() => setConfirmingReset(true)} disabled={reset.isPending}>
           Reset link
         </Button>
         <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)}>
@@ -113,6 +135,17 @@ export function AddToCalendar({ academyName }: { academyName: string }) {
       <p className="mt-2 text-xs text-rally-subtle">
         This link is private to your family. Reset it if you shared it by mistake.
       </p>
+      <ConfirmActionDialog
+        open={confirmingReset}
+        onOpenChange={setConfirmingReset}
+        overline="Calendar link"
+        title="Make a new link?"
+        consequence="Calendars using the old link stop updating, so add the new one again."
+        confirmLabel="Make a new link"
+        cancelLabel="Keep the old link"
+        pending={reset.isPending}
+        onConfirm={() => reset.mutate()}
+      />
     </div>
   );
 }

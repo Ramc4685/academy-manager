@@ -8,6 +8,7 @@
  */
 
 import type { PlatformTenant, TenantFeeModel } from "./api/platform";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 const FEE_MODEL_LABELS: Record<TenantFeeModel, string> = {
   flat_monthly: "Flat monthly fee",
@@ -39,11 +40,10 @@ export function formatAcceptedAt(iso: string | null): string {
   if (!iso) return "—";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString("en-US", {
+  return formatInAcademyZone(date, "UTC", {
     year: "numeric",
     month: "short",
     day: "numeric",
-    timeZone: "UTC",
   });
 }
 

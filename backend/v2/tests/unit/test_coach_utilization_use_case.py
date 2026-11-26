@@ -1,16 +1,13 @@
 """Unit tests for GetCoachUtilization use case.
 
-All tests use a simple stub ``CoachPayoutSnapshotReader`` — no Mongo
-required.
-
-Note: ``CoachPayoutSnapshot`` stores ``payout_minor`` (not ``payout_cents``)
-and ``hours`` (Decimal).  The use case derives utilization_rate as
-``hours / max_hours`` (default max_hours=40), capped at 1.0, 4dp.
+All tests use a simple stub ``HeldClassReader`` — no Mongo required.
+The use case derives utilization_rate as ``hours / max_hours`` (default
+max_hours=40), capped at 1.0, 4dp.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from dataclasses import dataclass
 from decimal import Decimal
 
 import pytest
@@ -19,47 +16,36 @@ from backend.v2.contexts.finance.application.use_cases.coach_utilization import 
     CoachUtilizationResult,
     GetCoachUtilization,
 )
-from backend.v2.contexts.finance.domain.reporting_snapshots import CoachPayoutSnapshot
-
-_NOW = datetime(2026, 5, 1, 0, 0, tzinfo=UTC)
 
 
-def _snap(
-    coach_id: str,
-    period: str,
-    hours: str,
-    payout_minor: int,
-    academy_id: str = "test-academy",
-) -> CoachPayoutSnapshot:
-    return CoachPayoutSnapshot(
-        academy_id=academy_id,
-        coach_id=coach_id,
-        period=period,
-        hours=Decimal(hours),
-        payout_minor=payout_minor,
-        currency="USD",
-        computed_at=_NOW,
-    )
+@dataclass(frozen=True)
+class _Hours:
+    coach_id: str
+    period: str
+    hours: Decimal
+    payout_minor: int
 
 
-class StubSnapshotReader:
-    """Stub implementation of CoachPayoutSnapshotReader for unit tests."""
-
-    def __init__(self, snapshots: list[CoachPayoutSnapshot]) -> None:
-        self._snapshots = snapshots
-
-    async def list_snapshots_for_periods(
-        self, *, academy_id: str, periods: list[str]
-    ) -> list[CoachPayoutSnapshot]:
-        return [s for s in self._snapshots if s.period in periods]
+def _snap(coach_id: str, period: str, hours: str, payout_minor: int) -> _Hours:
+    return _Hours(coach_id=coach_id, period=period, hours=Decimal(hours), payout_minor=payout_minor)
 
 
-def _use_case(
-    snapshots: list[CoachPayoutSnapshot],
-    max_hours: int = 40,
-) -> GetCoachUtilization:
+class StubHeldClassReader:
+    """Stub ``HeldClassReader`` returning fixed coach-hour rows."""
+
+    def __init__(self, rows: list[_Hours]) -> None:
+        self._rows = rows
+
+    async def coach_hours_for_periods(self, *, academy_id: str, periods: list[str]) -> list[_Hours]:
+        return [r for r in self._rows if r.period in periods]
+
+    async def class_counts_for_periods(self, *, academy_id: str, periods: list[str]) -> list:
+        return []
+
+
+def _use_case(rows: list[_Hours], max_hours: int = 40) -> GetCoachUtilization:
     return GetCoachUtilization(
-        snapshot_repo=StubSnapshotReader(snapshots),
+        classes=StubHeldClassReader(rows),
         academy_id="test-academy",
         max_hours=max_hours,
     )
@@ -144,7 +130,7 @@ class StubComplianceReader:
 async def test_compliance_within_24h_rate_from_reader():
     """compliance_within_24h_rate = marked_within_24h_count / total_marked_count, 4dp."""
     uc = GetCoachUtilization(
-        snapshot_repo=StubSnapshotReader(
+        classes=StubHeldClassReader(
             [_snap("coach-1", "2026-05", hours="20.0", payout_minor=80000)]
         ),
         compliance_reader=StubComplianceReader([_ComplianceRow("coach-1", 3, 4)]),
@@ -169,7 +155,7 @@ async def test_compliance_within_24h_rate_none_without_reader():
 async def test_compliance_within_24h_rate_none_when_no_marks_yet():
     """A coach with zero marked occurrences yet has no rate to report (avoid 0/0)."""
     uc = GetCoachUtilization(
-        snapshot_repo=StubSnapshotReader(
+        classes=StubHeldClassReader(
             [_snap("coach-1", "2026-05", hours="20.0", payout_minor=80000)]
         ),
         compliance_reader=StubComplianceReader([_ComplianceRow("coach-1", 0, 0)]),

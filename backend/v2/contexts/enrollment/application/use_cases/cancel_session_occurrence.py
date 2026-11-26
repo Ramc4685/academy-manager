@@ -266,8 +266,13 @@ class CancelSessionOccurrence:
 
     async def preview_missed(self, occurrence_id: str) -> MissedClassPreview:
         """Price crediting a missed date for every family, writing nothing (#1207)."""
+        return await self.preview(occurrence_id, missed=True)
+
+    async def preview(self, occurrence_id: str, *, missed: bool = False) -> MissedClassPreview:
+        """Price cancelling a date (or crediting a missed one) for every family,
+        writing nothing. The cover flow's review step (S66) reads this."""
         occurrence, _, session_id, payroll_flag = await self._precheck(
-            occurrence_id, self._now(), missed=True
+            occurrence_id, self._now(), missed=missed
         )
         quote = await self._quote(occurrence, session_id)
         return MissedClassPreview(

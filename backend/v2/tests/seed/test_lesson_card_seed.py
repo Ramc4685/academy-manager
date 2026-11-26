@@ -173,6 +173,88 @@ def test_content_json_parses_and_covers_22_lessons() -> None:
     assert "ORIGINAL" in content["_license_note"]
 
 
+_CARD_KEYS = {"slug", "lesson_number", "level_sequence", "skill_names", "title", "resource_links"}
+
+
+def test_lesson_card_json_schema_names_real_template_skills() -> None:
+    """S56: cards and skill videos name template skills; nothing points by position."""
+    from backend.v2.contexts.curriculum.application.use_cases.seed_curriculum import _LEVELS
+
+    content = load_content()
+    template = {s["name"] for level in _LEVELS for s in level["skills"]}
+    level_seqs = {level["sequence"] for level in _LEVELS}
+    for card in content["cards"]:
+        assert _CARD_KEYS <= card.keys(), card["slug"]
+        assert "skill_sequences" not in card
+        assert card["level_sequence"] in level_seqs
+        assert card["skill_names"] and set(card["skill_names"]) <= template, card["slug"]
+        for link in card["resource_links"]:
+            assert link["kind"] in {"PDF_REFERENCE", "YOUTUBE"}
+            assert link["kind"] != "PDF_REFERENCE" or link["url"] is None
+    for video in content["skill_videos"]:
+        assert set(video) == {"skill_name", "title", "url", "display_order"}
+        assert video["skill_name"] in template
+    for video in content["level_videos"]:
+        assert video["level_sequence"] in level_seqs
+
+
+async def test_cards_for_a_renamed_or_moved_skill_skip_instead_of_mislinking(tmp_path) -> None:
+    """An academy's own pathway may have renamed a skill: that link is dropped."""
+    programs, levels, skills = await _seed_pathway()
+    content = {
+        "source": "BWF_SHUTTLE_TIME",
+        "cards": [
+            {
+                "slug": "c1",
+                "lesson_number": 1,
+                "level_sequence": 2,
+                "skill_names": ["Split step", "No such skill"],
+                "title": "Card",
+                "resource_links": [],
+            }
+        ],
+        "level_videos": [],
+        "skill_videos": [
+            {"skill_name": "No such skill", "title": "t", "url": "https://youtu.be/x"}
+        ],
+    }
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps(content), encoding="utf-8")
+    result, cards, videos = await _seed_cards(programs, levels, skills, content_path=path)
+    split_step = next(s for s in skills.saved if s.name == "Split step")
+    (card,) = cards.saved.values()
+    assert card.skill_ids == [split_step.skill_id]
+    assert result.video_refs_created == 0 and videos.saved == []
+
+
+async def test_cards_keep_their_link_on_a_pathway_seeded_before_the_renames(tmp_path) -> None:
+    programs, levels, skills = await _seed_pathway()
+    old = next(s for s in skills.saved if s.name == "Backhand low serve")
+    skills.saved = [
+        s.model_copy(update={"name": "Backhand serve"}) if s is old else s for s in skills.saved
+    ]
+    content = {
+        "source": "BWF_SHUTTLE_TIME",
+        "cards": [
+            {
+                "slug": "c1",
+                "lesson_number": 1,
+                "level_sequence": 3,
+                "skill_names": ["Backhand low serve"],
+                "title": "Card",
+                "resource_links": [],
+            }
+        ],
+        "level_videos": [],
+        "skill_videos": [],
+    }
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps(content), encoding="utf-8")
+    _result, cards, _videos = await _seed_cards(programs, levels, skills, content_path=path)
+    (card,) = cards.saved.values()
+    assert card.skill_ids == [old.skill_id]
+
+
 async def test_seed_creates_all_cards_and_level_videos() -> None:
     programs, levels, skills = await _seed_pathway()
     result, cards, videos = await _seed_cards(programs, levels, skills)
@@ -354,7 +436,7 @@ async def test_unresolvable_sequence_raises(tmp_path) -> None:
                 "slug": "bad-card",
                 "lesson_number": 1,
                 "level_sequence": 99,
-                "skill_sequences": [1],
+                "skill_names": ["Thumb grip"],
                 "title": "Bad",
                 "resource_links": [],
             }

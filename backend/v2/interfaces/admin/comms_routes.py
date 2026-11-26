@@ -102,11 +102,20 @@ async def dm(
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminMessageView:
+    # D-18: a DM to a parent joins that family's academy-inbox thread, which
+    # every admin sees; it names its author because any admin can answer.
+    thread_id = author = None
+    if (inbox := getattr(request.app.state, "academy_inbox", None)) is not None:
+        thread_id = await inbox.thread_for(claims.academy_id, body.recipient_id)
+        if thread_id is not None:
+            author = await inbox.staff_name(claims.user_id)
     m = await use_cases.comms.send_dm(
         sender_id=claims.user_id,
         sender_persona="admin",
         recipient_id=body.recipient_id,
         body=body.body,
+        inbox_thread_id=thread_id,
+        author_display_name=author,
     )
     if (push := getattr(request.app.state, "message_push", None)) is not None:
         await push.direct_message(m)
@@ -312,7 +321,16 @@ def _message_view(m: Message, viewer_id: str) -> AdminMessageView:
     # An inbound DM is one this admin did not send. It is the only thing that
     # can be unread, and the only thing whose `recipient_id` is the admin
     # themselves — so the thread it belongs to is keyed by its *sender*.
-    inbound = m.kind == "dm" and m.sender_id != viewer_id
+    # An academy-inbox thread (D-18) is keyed by the family; only what the
+    # family sent is inbound, so another admin's reply is never "unread".
+    if m.inbox_thread_id:
+        inbound = m.sender_id == m.inbox_thread_id
+        counterparty: str | None = m.inbox_thread_id
+    else:
+        inbound = m.kind == "dm" and m.sender_id != viewer_id
+        counterparty = (
+            None if m.kind == "announcement" else (m.sender_id if inbound else m.recipient_id)
+        )
     return AdminMessageView(
         message_id=m.message_id,
         kind=m.kind,
@@ -327,10 +345,10 @@ def _message_view(m: Message, viewer_id: str) -> AdminMessageView:
             m.scope_label
             or ("Whole academy announcement" if m.kind == "announcement" else "Direct message")
         ),
+        scope_id=m.scope_id if m.scope_type == "cover_request" else None,
         recipient_count=m.recipient_count,
         delivery_status=m.delivery_status or "recorded",
-        counterparty_id=(
-            None if m.kind == "announcement" else (m.sender_id if inbound else m.recipient_id)
-        ),
+        counterparty_id=counterparty,
         is_read=(not inbound) or viewer_id in m.read_by,
+        author_display_name=m.author_display_name if m.kind == "dm" else None,
     )

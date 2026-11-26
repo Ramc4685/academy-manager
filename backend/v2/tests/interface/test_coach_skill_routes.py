@@ -578,6 +578,28 @@ class _PassportByStudentUseCase:
         return result
 
 
+class _RecordingPlacement:
+    """Like PlaceOnEnrollment: a child already placed is left alone (None)."""
+
+    def __init__(self) -> None:
+        self.placed: dict[str, str] = {}
+        self.calls: list[tuple[str, str | None, str]] = []
+
+    async def place_new_enrollee(
+        self,
+        student_id: str,
+        *,
+        level_id: str | None = None,
+        actor_id: str | None = None,
+        reason: str = "",
+    ) -> str | None:
+        self.calls.append((student_id, actor_id, reason))
+        if student_id in self.placed:
+            return None
+        self.placed[student_id] = "lvl-1"
+        return "lvl-1"
+
+
 class _AssignedSessions:
     def __init__(
         self,
@@ -630,6 +652,9 @@ def _build_real_router_app(
         assigned_sessions=assigned_sessions,
         list_today=_SpyUseCase([today_session]),
         get_passport=_SpyUseCase([_Dumpable(skill_id=SKILL_ID)]),
+        get_pathway_placement=_SpyUseCase(
+            SimpleNamespace(level_name="Grip & Control", level_sequence=2)
+        ),
         update_skill_status=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
         record_test_attempt=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
         recommend_level_up=_SpyUseCase(_Dumpable(student_id=STUDENT_ID)),
@@ -660,9 +685,11 @@ def _build_real_router_app(
         resolve_default_program=_SpyUseCase(
             _Dumpable(program_id=PROGRAM_ID, name="Badminton Skill Pathway")
         ),
+        place_on_enrollment=_RecordingPlacement(),
     )
     student_progress = SimpleNamespace(
         get_passport=spies.get_passport,
+        get_pathway_placement=spies.get_pathway_placement,
         update_skill_status=spies.update_skill_status,
         record_test_attempt=spies.record_test_attempt,
         recommend_level_up=spies.recommend_level_up,
@@ -670,6 +697,7 @@ def _build_real_router_app(
         mark_skill_mastered=spies.mark_skill_mastered,
         unmark_skill_mastered=spies.unmark_skill_mastered,
         set_mastery_note=spies.set_mastery_note,
+        place_on_enrollment=spies.place_on_enrollment,
     )
     curriculum = SimpleNamespace(
         get_program=spies.get_program,
@@ -692,6 +720,9 @@ def _build_real_router_app(
         if student_id != STUDENT_ID:
             return []
         return [SimpleNamespace(session_id=session_id) for session_id in student_session_ids]
+
+    async def _student_names(ids: object) -> dict[str, str]:
+        return {STUDENT_ID: "Student One"} if STUDENT_ID in ids else {}  # type: ignore[operator]
 
     use_cases = CoachUseCases(
         list_today=spies.list_today,  # type: ignore[arg-type]
@@ -721,6 +752,7 @@ def _build_real_router_app(
         create_skill_note=spies.create_skill_note,
         list_skill_notes=spies.list_skill_notes,
         set_skill_note_visibility=spies.set_skill_note_visibility,
+        student_names=_student_names,
     )
     use_cases.curriculum = curriculum
 
@@ -793,7 +825,17 @@ _ASSIGNED_SKILL_ENDPOINTS = [
         None,
         200,
         "get_passport",
-        {"passport": [{"skill_id": SKILL_ID}]},
+        {
+            "student_id": STUDENT_ID,
+            "student_name": "Student One",
+            "placed": True,
+            "level_name": "Grip & Control",
+            "level_sequence": 2,
+            "passed_count": 0,
+            "total_count": 1,
+            "required_remaining": 1,
+            "passport": [{"skill_id": SKILL_ID}],
+        },
     ),
     (
         "POST",
@@ -1090,10 +1132,14 @@ class _InMemorySkillNoteRepo:
     async def get(self, student_id: str, note_id: str) -> object | None:
         return next((n for n in self.saved if getattr(n, "note_id", None) == note_id), None)
 
-    async def set_visibility(self, student_id: str, note_id: str, visibility: str) -> object:
+    async def set_visibility(
+        self, student_id: str, note_id: str, visibility: str, shared_at: object = None
+    ) -> object:
         note = await self.get(student_id, note_id)
         assert note is not None
-        updated = note.model_copy(update={"visibility": visibility})  # type: ignore[attr-defined]
+        updated = note.model_copy(  # type: ignore[attr-defined]
+            update={"visibility": visibility, "shared_at": shared_at}
+        )
         self.saved = [updated if n is note else n for n in self.saved]
         return updated
 
@@ -1201,6 +1247,8 @@ def test_supervisor_can_share_another_coachs_skill_note_via_real_use_case() -> N
     assert body["note_id"] == "note-stranger"
     assert body["coach_id"] == "coach-someone-else"
     assert body["visibility"] == "shared"
+    # The coach list carries the stamp the "See what the parent sees" preview reads.
+    assert body["shared_at"] is not None
     assert repo.saved[0].visibility == "shared"
 
 
@@ -2233,3 +2281,116 @@ def test_bulk_status_and_test_bodies_are_validated_at_the_edge(
 
     assert response.status_code == 422, response.text
     assert spies.update_skill_status.calls == 0
+
+
+def test_passport_for_an_unplaced_child_is_200_placed_false_with_the_name() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    spies.get_passport.result = None
+
+    async def not_placed(*_args: object, **_kwargs: object) -> object:
+        raise StudentNotPlaced("student has no active level", student_id=STUDENT_ID)
+
+    spies.get_passport.execute = not_placed
+    client = TestClient(app)
+
+    response = client.get(f"/api/v2/coach/students/{STUDENT_ID}/passport?program_id={PROGRAM_ID}")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["placed"] is False
+    assert body["student_name"] == "Student One"
+    assert body["level_name"] is None
+    assert body["passport"] == []
+    assert spies.get_pathway_placement.calls == 0
+
+
+def test_passport_counts_passed_total_and_required_remaining() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    spies.get_passport.result = [
+        _Dumpable(skill_id="a", status="PASSED", is_required=True),
+        _Dumpable(skill_id="b", status="PRACTICING", is_required=True),
+        _Dumpable(skill_id="c", status="NOT_STARTED", is_required=False),
+    ]
+    client = TestClient(app)
+
+    body = client.get(
+        f"/api/v2/coach/students/{STUDENT_ID}/passport?program_id={PROGRAM_ID}"
+    ).json()
+
+    assert (body["level_name"], body["level_sequence"]) == ("Grip & Control", 2)
+    assert (body["passed_count"], body["total_count"]) == (1, 3)
+    assert body["required_remaining"] == 1
+
+
+def test_passport_unassigned_coach_gets_the_same_404_as_an_unknown_id() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids=set(),
+    )
+    client = TestClient(app)
+
+    other_coachs_child = client.get(
+        f"/api/v2/coach/students/{STUDENT_ID}/passport?program_id={PROGRAM_ID}"
+    )
+    unknown = client.get(f"/api/v2/coach/students/no-such-child/passport?program_id={PROGRAM_ID}")
+
+    assert other_coachs_child.status_code == unknown.status_code == 404
+    assert other_coachs_child.json() == unknown.json()
+    # Nothing about the child is read before the assignment check fails.
+    assert spies.get_roster.calls == 0
+    assert spies.get_passport.calls == 0
+
+
+def test_passport_names_a_paused_child_the_roster_hides() -> None:
+    # The assignment check admits active or paused; the roster lists active and held only.
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    spies.get_roster.result = []
+    body = (
+        TestClient(app)
+        .get(f"/api/v2/coach/students/{STUDENT_ID}/passport?program_id={PROGRAM_ID}")
+        .json()
+    )
+    assert body["student_name"] == "Student One"
+
+
+def test_coach_places_an_unplaced_child_on_their_own_roster_once() -> None:
+    """D-10 (S52): the coach starts a roster child at level one; a placed child is not moved."""
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID], assigned_session_ids={SESSION_ID}
+    )
+    client = TestClient(app)
+    url = f"/api/v2/coach/sessions/{SESSION_ID}/students/{STUDENT_ID}/pathway-placement"
+
+    first = client.post(url)
+    again = client.post(url)
+
+    assert first.status_code == 201, first.text
+    assert first.json() == {"student_id": STUDENT_ID, "level_id": "lvl-1"}
+    assert again.status_code == 409
+    assert spies.place_on_enrollment.calls[0] == (STUDENT_ID, COACH_ID, "coach_board_placement")
+
+
+@pytest.mark.parametrize(
+    ("student_id", "assigned"),
+    [("other-student", {SESSION_ID}), (STUDENT_ID, set())],
+)
+def test_coach_cannot_place_a_child_off_their_roster(student_id: str, assigned: set[str]) -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID], assigned_session_ids=assigned
+    )
+
+    response = TestClient(app).post(
+        f"/api/v2/coach/sessions/{SESSION_ID}/students/{student_id}/pathway-placement"
+    )
+
+    assert response.status_code == 404
+    assert spies.place_on_enrollment.calls == []

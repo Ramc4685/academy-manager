@@ -10,6 +10,7 @@ import {
   type PricingClass,
   type PricingPlan,
 } from "@/lib/api/v2/pricing";
+import { headcountLabel } from "@/components/admin/not-billed";
 import { formatCents } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -23,9 +24,9 @@ function saveError(error: unknown): string {
 }
 
 const STALE_MESSAGE: Record<NonNullable<PricingClass["stale_reason"]>, string> = {
-  archived: "Its plan was archived, so it shows as Custom.",
-  price_changed: "Its plan's price changed, so it shows as Custom.",
-  plan_removed: "Its plan was removed, so it shows as Custom.",
+  archived: "Its plan was archived, so it now uses its own price.",
+  price_changed: "Its plan's price changed, so it now uses its own price.",
+  plan_removed: "Its plan was removed, so it now uses its own price.",
 };
 
 /**
@@ -87,12 +88,12 @@ export function ClassPricesCard({
         {matchMutation.isSuccess
           ? `Linked ${matchMutation.data.linked} ${
               matchMutation.data.linked === 1 ? "class" : "classes"
-            }. Classes with no plan, or more than one plan, at their fee stay Custom.`
+            }. Classes with no plan, or more than one plan, at their fee keep their own price.`
           : autoLinkable > 0
             ? `${autoLinkable} ${
                 autoLinkable === 1 ? "class has" : "classes have"
               } exactly one plan at the same price and can be linked.`
-            : "Links a class only when exactly one plan has its price. Others stay Custom."}
+            : "Links a class only when exactly one plan has its price. Others keep their own price."}
       </p>
       {matchMutation.isError && (
         <p role="alert" className="px-5 pb-3 text-sm text-status-red-800">
@@ -104,7 +105,7 @@ export function ClassPricesCard({
         <EmptyState
           data-testid="pricing-classes-empty"
           title="No classes yet"
-          description="Classes you add on Sessions show here with the fee they are charged."
+          description="Classes you add on the Classes page show here with the fee they are charged."
         />
       ) : (
         <div className="overflow-x-auto border-t border-rally-line">
@@ -147,7 +148,7 @@ export function ClassPricesCard({
                         }
                         className="h-9 w-full max-w-[16rem] rounded-md border border-rally-line bg-white px-2 text-sm outline-none focus:border-blue-500"
                       >
-                        <option value={CUSTOM}>Custom</option>
+                        <option value={CUSTOM}>Own price</option>
                         {options.map((plan) => (
                           <option key={plan.plan_id} value={plan.plan_id}>
                             {plan.name}
@@ -184,7 +185,7 @@ export function ClassPricesCard({
                       )}
                     </td>
                     <td className="px-4 py-3 text-right font-mono tabular-nums">
-                      {cls.students}
+                      {headcountLabel(cls.paying_students, cls.students)}
                     </td>
                   </tr>
                 );

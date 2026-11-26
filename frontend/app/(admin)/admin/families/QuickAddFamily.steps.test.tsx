@@ -59,6 +59,17 @@ describe("quick add steps after the commit (L12)", () => {
     expect(out).toContain("Saved the family, but: Mail is down.");
   });
 
+  it("sends the chosen start level with the enrollment, and none by default (D-10)", async () => {
+    commitReturns(row());
+    const enroll = vi.spyOn(adminApi, "createEnrollment").mockResolvedValue({} as never);
+
+    await runQuickAdd({ batchId: "b1", sessionId: "sess-1", startLevelId: "lvl-2", invite: false });
+    await runQuickAdd({ batchId: "b1", sessionId: "sess-1", invite: false });
+
+    expect(enroll.mock.calls[0]?.[0]).toMatchObject({ start_level_id: "lvl-2" });
+    expect(enroll.mock.calls[1]?.[0]).not.toHaveProperty("start_level_id");
+  });
+
   it("stops when the child already existed: no enroll, no invite, no 'Added'", async () => {
     commitReturns(row({ status: "skip", student_id: null }));
     const enroll = vi.spyOn(adminApi, "createEnrollment");

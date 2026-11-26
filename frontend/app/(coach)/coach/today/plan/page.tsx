@@ -15,18 +15,13 @@ import { queryKeys } from "@/lib/query/keys";
 import { reportVitals } from "@/lib/pwa/vitals";
 import { formatSessionTimeRange } from "@/lib/time/session-time";
 import { formatPlainDate } from "@/lib/format/plain-date";
+import { todayISO } from "@/lib/coach/marking";
 import { AssignmentSummary } from "@/components/teaching/assignment-summary";
 import { LessonCardView } from "@/components/teaching/lesson-card";
 import { StudentFocusRow } from "@/components/teaching/student-focus-row";
 import { RetryButton } from "@/components/coach/RetryButton";
+import { ClassHealthStrip } from "@/components/coach/health-alert";
 
-function todayISO(): string {
-  const d = new Date();
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
 
 export default function CoachTeachingPlanPage() {
   const searchParams = useSearchParams();
@@ -37,7 +32,6 @@ export default function CoachTeachingPlanPage() {
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: queryKeys.coach.todayPlan(date),
     queryFn: () => getCoachTodayPlan(date),
-    staleTime: 5 * 60 * 1000,
   });
   const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
 
@@ -88,7 +82,7 @@ export default function CoachTeachingPlanPage() {
 
       {!isError && data && sessions.length === 0 && (
         <p className="text-neutral-500" data-testid="plan-empty-state">
-          {date === todayISO() ? "No sessions today." : `No sessions on ${formatPlainDate(date)}.`}
+          {date === todayISO() ? "No classes today." : `No classes on ${formatPlainDate(date)}.`}
         </p>
       )}
 
@@ -129,7 +123,7 @@ function SessionPlan({
       <header className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
         <div className="min-w-0">
           <h2 className="text-lg font-semibold">
-            {session.title || "Session"}
+            {session.title || "Class"}
           </h2>
           {session.location && (
             <p className="text-sm text-neutral-500">{session.location}</p>
@@ -141,6 +135,10 @@ function SessionPlan({
           </p>
         )}
       </header>
+
+      <div className="mb-2">
+        <ClassHealthStrip occurrenceId={session.occurrence_id} testId={`health-strip-${session.session_id}`} />
+      </div>
 
       {session.groups.length === 0 && session.unplaced.length === 0 && (
         <p className="text-sm text-neutral-500">No students on this roster.</p>
@@ -164,6 +162,14 @@ function SessionPlan({
           <p className="mb-2 text-sm font-semibold text-neutral-600">
             Not placed in a level
           </p>
+          {/* S15 persona follow-up: with nobody placed, the page looked like an
+              empty shell. Say what the plan holds and who unlocks it. */}
+          {session.groups.length === 0 && (
+            <p data-testid="plan-all-unplaced" className="mb-2 text-sm text-neutral-600 dark:text-neutral-300">
+              The plan lists the skills to work on for each level. Nobody in this class is placed
+              on a level yet, so there is nothing to plan. Start them on the first level from the Progress tab.
+            </p>
+          )}
           <ul className="space-y-1 text-sm text-neutral-600 dark:text-neutral-300">
             {session.unplaced.map((u) => (
               <li key={u.student_id}>{u.student_name}</li>

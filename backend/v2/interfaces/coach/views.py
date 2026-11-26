@@ -45,9 +45,20 @@ class CoachSessionTeachingPlanResponse(BaseModel):
     unplaced: list[UnplacedStudent] = []
 
 
+class CoachAgeBand(BaseModel):
+    """A class's age span; ``max_age`` None means "and up"."""
+
+    min_age: int | None = None
+    max_age: int | None = None
+
+
 class CoachRosterEntry(BaseModel):
     student_id: str
     full_name: str
+    # Whole years and the active level's name: quiet row metadata. Never the
+    # date of birth, and nothing health-related (this read is cached offline).
+    age_years: int | None = None
+    level_name: str | None = None
     # "held" (#697) is a live roster status: GetSessionRoster deliberately
     # keeps held rows visible, so this Literal must accept it — one rejected
     # row fails response validation for the coach's entire day (#732).
@@ -133,6 +144,11 @@ class CoachSession(BaseModel):
     # has it off. The roster refreshes itself while it is open.
     dropoff_window_opens_at: datetime | None = None
     dropoff_window_closes_at: datetime | None = None
+    age_band: CoachAgeBand | None = None
+    # Venue facts the class already stores for families (#613); None when unset.
+    venue_address: str | None = None
+    parking_notes: str | None = None
+    arrival_minutes_before: int | None = None
 
 
 class CoachTodayResponse(BaseModel):
@@ -342,6 +358,10 @@ class CoachScheduleEntry(BaseModel):
     end_at: datetime
     coach_id: str | None = None
     coach_name: str | None = None
+    # Children on the class's roster today, the class's age span and level.
+    enrolled_count: int | None = None
+    age_band: CoachAgeBand | None = None
+    level: str | None = None
 
 
 class CoachScheduleResponse(BaseModel):
@@ -439,3 +459,88 @@ class CoachAcademyView(BaseModel):
     name: str
     logo_url: str | None = None
     brand_color: str | None = None
+    # Who a coach calls: the academy's public contact pair, as parents see it.
+    contact_email: str | None = None
+    contact_phone: str | None = None
+    # S05: coach screens render instants in the academy's zone.
+    timezone: str | None = None
+
+
+class CoachPayClassView(BaseModel):
+    occurrence_id: str
+    start_at: datetime
+    class_name: str
+    minutes: int
+    role: Literal["lead", "cover", "assistant"]
+
+
+class CoachPayslipView(BaseModel):
+    """An approved or paid payslip: its total only. No lines, no rate."""
+
+    period_start: date
+    period_end: date
+    status: Literal["approved", "paid"]
+    total_cents: int
+    currency: str
+    approved_on: date | None = None
+    paid_on: date | None = None
+    paid_method_label: str | None = None
+    paid_amount_cents: int | None = None
+
+
+class CoachAcademyContactView(BaseModel):
+    name: str
+    phone: str | None = None
+    email: str | None = None
+
+
+class CoachPayResponse(BaseModel):
+    """S59: the signed-in coach's own classes taught and released payslip."""
+
+    month: str
+    month_label: str
+    classes_taught: int
+    minutes_taught: int
+    classes: list[CoachPayClassView]
+    payslip: CoachPayslipView | None = None
+    academy_contact: CoachAcademyContactView
+
+
+class CoachPathwaySkillView(BaseModel):
+    skill_id: str
+    name: str
+
+
+class CoachPathwayLessonView(BaseModel):
+    """A lesson card's teaching content only: citation fields stay admin-side."""
+
+    card_id: str
+    lesson_number: int
+    title: str
+    goal_summary: str = ""
+    teaching_points: list[str] = []
+    equipment: list[str] = []
+    safety_notes: list[str] = []
+    activity_summary: str = ""
+    video_url: str | None = None
+
+
+class CoachPathwayLevelView(BaseModel):
+    level_id: str
+    sequence: int
+    name: str
+    description: str = ""
+    skills: list[CoachPathwaySkillView] = []
+    lessons: list[CoachPathwayLessonView] = []
+
+
+class CoachPathwayProgramView(BaseModel):
+    program_id: str
+    name: str
+    levels: list[CoachPathwayLevelView] = []
+
+
+class CoachPathwayResponse(BaseModel):
+    """S68: what the academy teaches, as reference reading for a coach."""
+
+    programs: list[CoachPathwayProgramView] = []

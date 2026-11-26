@@ -4,12 +4,14 @@
   or creates a new application.
 - PatchApplication — merges parent/child profile, waiver acceptance, selected session.
 - GetApplicationStatus — polling endpoint for the checkout-return page.
+- ListParentRegistrations — the family's unfinished and not-yet-confirmed
+  registrations (S02), so a child never vanishes between wizard and roster.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
 
@@ -45,6 +47,7 @@ from backend.v2.contexts.onboarding.domain.waiver_sections import (
     signing_path_for,
 )
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.time.mongo import ensure_utc
 
 _EDITABLE = {"DRAFT"}
 APPLICATION_TTL_DAYS = 7
@@ -55,6 +58,74 @@ _RESUME_TO = "DRAFT"
 
 
 logger = logging.getLogger(__name__)
+
+#: S02: the plain state a family sees for each application that is not yet an
+#: enrolled child. "finish" goes back into the wizard; nothing new is stored.
+REGISTRATION_STATES: dict[str, str] = {
+    "DRAFT": "finish",
+    "CHECKOUT_PENDING": "finish",
+    "CHECKOUT_EXPIRED": "finish",
+    "PENDING_APPROVAL": "waiting",
+    "APPROVING": "waiting",
+    "WAITLISTING": "waitlisted",
+    "WAITLISTED": "waitlisted",
+    "DECLINING": "declined",
+    "DECLINED": "declined",
+}
+#: An application here already asks the academy for a seat: a second one for
+#: the same child and class is a duplicate (S02).
+_SUBMITTED = ["CHECKOUT_PENDING", "PENDING_APPROVAL", "APPROVING", "WAITLISTING", "WAITLISTED"]
+DECLINED_VISIBLE_FOR = timedelta(days=30)
+#: A checkout this fresh may already be paid while Stripe's webhook is in
+#: flight, so the family is not invited to pay it again.
+CHECKOUT_IN_FLIGHT_FOR = timedelta(minutes=15)
+#: Payment statuses that mean money for a CHECKOUT_PENDING application arrived.
+_PAID = {"succeeded", "partially_paid"}
+
+
+def _child_key(app: Application) -> str:
+    child = app.child_profile
+    return " ".join(f"{child.first_name} {child.last_name}".lower().split())
+
+
+def same_child(a: Application, b: Application) -> bool:
+    """The student record when both carry one, otherwise the normalised name.
+
+    Twins have different first names, so they never match each other.
+    """
+    if a.student_id and b.student_id:
+        return a.student_id == b.student_id
+    key = _child_key(a)
+    return bool(key) and key == _child_key(b)
+
+
+async def _open_duplicate(
+    apps: ApplicationRepository, app: Application, now: datetime
+) -> Application | None:
+    """S02: another open registration for the same child and class, if any.
+
+    A second class for the same child, or a twin in the same class, is a
+    different child-and-class pair and is not a duplicate.
+    """
+    if not app.selected_session_id:
+        return None
+    for other in await apps.list_open_for_parent(app.parent_user_id, _SUBMITTED):
+        if (
+            other.application_id != app.application_id
+            and other.selected_session_id == app.selected_session_id
+            and same_child(other, app)
+            # An unpaid checkout whose expiry webhook never came must not block forever.
+            and not other.is_expired(now)
+        ):
+            return other
+    return None
+
+
+#: S48: the refusal when the child is already enrolled, held or pending in the class.
+ALREADY_IN_THIS_CLASS = (
+    "This child is already enrolled in this class. Choose another class, "
+    "or manage their classes from your Home page."
+)
 
 
 class SupersededCheckoutRetirement(Protocol):
@@ -77,6 +148,8 @@ class StartApplicationCommand(BaseModel):
     model_config = {"frozen": True}
     parent_user_id: str
     parent_email: str
+    #: S02: "Finish registration" on a card that is not the latest application.
+    application_id: str | None = None
 
 
 class StartApplication:
@@ -85,16 +158,21 @@ class StartApplication:
         *,
         apps: ApplicationRepository,
         academy_id: Callable[[], str],
-        clock=lambda: datetime.now(UTC),
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         checkout_retirement: SupersededCheckoutRetirement | None = None,
+        account_profile: Callable[[str], Awaitable[ParentProfile | None]] | None = None,
     ) -> None:
         self._apps = apps
         self._academy_id = academy_id
         self._now = clock
         self._checkout_retirement = checkout_retirement
+        # S21 persona follow-up: the account's own name and phone, so a parent
+        # with no earlier application does not retype them on the parent step.
+        self._account_profile = account_profile
 
     async def execute(self, cmd: StartApplicationCommand) -> Application:
-        existing = await self._apps.latest_for_parent(cmd.parent_user_id)
+        requested = await self._requested(cmd)
+        existing = requested or await self._apps.latest_for_parent(cmd.parent_user_id)
         if existing is not None and existing.is_expired(self._now()):
             # The TTL passed with nobody finishing the wizard or Stripe.
             # Retire it (issue #537) rather than handing it back below, or a
@@ -104,8 +182,27 @@ class StartApplication:
                 existing.model_copy(update={"status": "ABANDONED", "updated_at": self._now()})
             )
             existing = None
+        refused: Application | None = None
         if existing and existing.status in _EDITABLE:
-            return existing
+            if (
+                requested is not None
+                or await _open_duplicate(self._apps, existing, self._now()) is None
+            ):
+                # Wave A follow-up: a draft started before the account had a
+                # name and phone (or by an older build) came back blank, so
+                # "Add a child" opened on an empty parent step.
+                filled = await self._fill_from_account(existing)
+                if filled is not existing:
+                    filled = filled.model_copy(update={"updated_at": self._now()})
+                    await self._apps.save(filled)
+                return filled
+            # S02 persona follow-up: checkout already refused this draft as a
+            # duplicate of an open registration, so "Add a child" handing it back
+            # is a dead end. Retire it; the family's details carry over below.
+            await self._apps.save(
+                existing.model_copy(update={"status": "ABANDONED", "updated_at": self._now()})
+            )
+            refused, existing = existing, None
         if existing is not None and _RESUME_TO in _TRANSITIONS.get(existing.status, set()):
             # The parent hit Cancel on Stripe and landed back on the wizard,
             # which calls this on mount. Minting a SECOND application here
@@ -133,13 +230,53 @@ class StartApplication:
             created_at=now,
             updated_at=now,
         )
-        if existing is not None:
+        previous = existing or requested or refused
+        if previous is not None:
             # Returning parent adding another child: carry their own details
             # over from the previous application so they never retype them.
             # The child profile intentionally starts blank.
-            app = app.model_copy(update={"parent_profile": existing.parent_profile})
+            app = app.model_copy(update={"parent_profile": previous.parent_profile})
+        app = await self._fill_from_account(app)
+        if requested is not None and existing is not None:
+            # Re-read after a missed resume: paid in another tab means no copy.
+            requested = existing if existing.application_id == requested.application_id else None
+        if requested is not None and REGISTRATION_STATES.get(requested.status) == "finish":
+            # An expired checkout the family asked to finish: start again with
+            # the same child and class, never the old payment or waiver.
+            app = app.model_copy(
+                update={
+                    "child_profile": requested.child_profile,
+                    "student_id": requested.student_id,
+                    "selected_session_id": requested.selected_session_id,
+                }
+            )
         await self._apps.save(app)
         return app
+
+    async def _fill_from_account(self, app: Application) -> Application:
+        """Blank parent name and phone come from the account; typed values win."""
+        profile = app.parent_profile
+        fields = ("first_name", "last_name", "phone")
+        if self._account_profile is None or all(getattr(profile, f).strip() for f in fields):
+            return app
+        account = await self._account_profile(app.parent_user_id)
+        if account is None:
+            return app
+        blanks = {
+            f: getattr(account, f).strip()
+            for f in fields
+            if not getattr(profile, f).strip() and getattr(account, f).strip()
+        }
+        if not blanks:
+            return app
+        return app.model_copy(update={"parent_profile": profile.model_copy(update=blanks)})
+
+    async def _requested(self, cmd: StartApplicationCommand) -> Application | None:
+        if not cmd.application_id:
+            return None
+        app = await self._apps.get(cmd.application_id)
+        # Someone else's id is ignored, never an error a parent could probe with.
+        return app if app is not None and app.parent_user_id == cmd.parent_user_id else None
 
     async def _resume(self, app: Application) -> Application | None:
         """Hand an abandoned checkout attempt back to the wizard.
@@ -217,6 +354,7 @@ class StudentRegistrationQuery(Protocol):
         student_id: str,
         *,
         exclude_enrollment_id: str | None = None,
+        session_id: str | None = None,
     ) -> bool: ...
 
 
@@ -343,11 +481,20 @@ class PatchApplication:
                 date_of_birth=child_profile.date_of_birth or None,
             )
             if existing_student_id is not None:
-                if await self._student_registrations.has_active_enrollment(existing_student_id):
-                    raise ApplicationNotEditable(
-                        "This child is already enrolled. Manage their existing classes instead."
-                    )
                 student_id = existing_student_id
+        # S48 / D-24: only the same class is refused; a second class for an
+        # enrolled child goes through approval. Checked once both are known.
+        session_id = cmd.selected_session_id or app.selected_session_id
+        if (
+            student_id
+            and session_id
+            and (cmd.child_profile or cmd.selected_session_id)
+            and self._student_registrations is not None
+            and await self._student_registrations.has_active_enrollment(
+                student_id, session_id=session_id
+            )
+        ):
+            raise ApplicationNotEditable(ALREADY_IN_THIS_CLASS)
 
         updated = app.model_copy(
             update={
@@ -379,6 +526,68 @@ class PatchApplication:
             raise ApplicationNotEditable(
                 "We found more than one possible child record. Contact the academy to continue."
             )
+
+
+class ListParentRegistrations:
+    """S02: the family's applications that are not finished or not confirmed.
+
+    One row per child and class. A submitted (or approved) application wins
+    over any unfinished attempt for the same pair, whatever their order; among
+    equals the newest wins. Unfinished rows past the 7-day TTL are dropped so
+    old abandoned wizards never resurface. Applications with no child named
+    yet are wizard scratch, not a child.
+    """
+
+    def __init__(
+        self,
+        apps: ApplicationRepository,
+        clock=lambda: datetime.now(UTC),
+        payment_status: Callable[[str], Awaitable[str | None]] | None = None,
+    ) -> None:
+        self._apps = apps
+        self._now = clock
+        self._payment_status = payment_status
+
+    async def execute(self, parent_user_id: str) -> list[tuple[Application, str]]:
+        now = self._now()
+        fetched = await self._apps.list_open_for_parent(
+            parent_user_id, [*REGISTRATION_STATES, "APPROVED"]
+        )
+        rows: list[tuple[Application, str]] = []
+        # Stable sort: submitted rows claim their child-and-class pair first.
+        for app in sorted(fetched, key=lambda a: REGISTRATION_STATES.get(a.status) == "finish"):
+            state = "done" if app.status == "APPROVED" else REGISTRATION_STATES.get(app.status)
+            if state is None or app.parent_user_id != parent_user_id:
+                continue
+            if not app.child_profile.first_name.strip():
+                continue
+            if state == "finish" and (
+                app.is_expired(now)
+                or ensure_utc(app.updated_at) < now - timedelta(days=APPLICATION_TTL_DAYS)
+            ):
+                continue
+            if state == "declined" and (
+                ensure_utc(app.decided_at or app.updated_at) < now - DECLINED_VISIBLE_FOR
+            ):
+                continue
+            if app.status == "CHECKOUT_PENDING" and await self._checkout_in_flight(app, now):
+                state = "paying"
+            if any(
+                seen.selected_session_id == app.selected_session_id and same_child(seen, app)
+                for seen, _ in rows
+            ):
+                continue
+            rows.append((app, state))
+        rows.sort(key=lambda r: r[0].created_at, reverse=True)
+        return [(a, state) for a, state in rows if state != "done"]
+
+    async def _checkout_in_flight(self, app: Application, now: datetime) -> bool:
+        """Paid, or so fresh the payment webhook may still be on its way."""
+        if ensure_utc(app.updated_at) > now - CHECKOUT_IN_FLIGHT_FOR:
+            return True
+        if self._payment_status is None or not app.payment_id:
+            return False
+        return await self._payment_status(app.payment_id) in _PAID
 
 
 class GetApplicationStatus:
@@ -532,6 +741,7 @@ class TransitionApplication:
             )
         if to == "CHECKOUT_PENDING":
             await self._assert_child_not_enrolled(app)
+            await self._assert_no_open_duplicate(app)
             # The ENTRY transition needs the same CAS as the re-stamp below.
             # This used to be a blind save, so two concurrent starts from one
             # DRAFT application both wrote — leaving two live payable Stripe
@@ -660,6 +870,26 @@ class TransitionApplication:
             payment_id=payment_id,
         )
 
+    async def _assert_no_open_duplicate(self, app: Application) -> None:
+        """S02: one open registration per child and class.
+
+        A second class for the same child, or a twin in the same class, is a
+        different child-and-class pair and goes through.
+        """
+        other = await _open_duplicate(self._apps, app, self._now())
+        if other is None:
+            return
+        name = app.child_profile.first_name.strip() or "This child"
+        if other.status == "CHECKOUT_PENDING":
+            raise ApplicationNotEditable(
+                f"{name} has an unfinished registration for this class. "
+                "Use Finish registration on your Home page."
+            )
+        raise ApplicationNotEditable(
+            f"{name} is already registered for this class. "
+            "You can see it on your Home page; we will email you when the academy confirms."
+        )
+
     async def _assert_child_not_enrolled(self, app: Application) -> None:
         if self._student_registrations is None:
             return
@@ -678,10 +908,10 @@ class TransitionApplication:
             full_name=full_name,
             date_of_birth=date_of_birth,
         )
-        if student_id and await self._student_registrations.has_active_enrollment(student_id):
-            raise ApplicationNotEditable(
-                "This child is already enrolled. Manage their existing classes instead."
-            )
+        if student_id and await self._student_registrations.has_active_enrollment(
+            student_id, session_id=app.selected_session_id
+        ):
+            raise ApplicationNotEditable(ALREADY_IN_THIS_CLASS)
 
 
 def _registration_paths(

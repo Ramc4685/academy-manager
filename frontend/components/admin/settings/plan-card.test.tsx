@@ -28,7 +28,8 @@ describe("PlanCard", () => {
     const out = html({ plan: null, subscription: null, growth: GROWTH, checkout_available: true });
     expect(out).toContain("Free (core operations)");
     expect(out).toContain("Growth · $99 a month");
-    expect(out).toContain("0 bps processing markup");
+    expect(out).toContain("No CourtMastr processing fee on card and bank payments");
+    expect(out).not.toContain("bps");
     expect(out).toContain("AI features");
     expect(out).toContain("Upgrade to Growth");
   });

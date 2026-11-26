@@ -542,6 +542,14 @@ export const test = base.extend<{
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
+          student_id: "st1",
+          student_name: "Alice",
+          placed: true,
+          level_name: "Foundations",
+          level_sequence: 1,
+          passed_count: 0,
+          total_count: 1,
+          required_remaining: 1,
           passport: [
             {
               skill_id: "skill-backhand",

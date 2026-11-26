@@ -113,7 +113,6 @@ def _minimal_admin_use_cases(
         mark_coach_attendance=mock,  # type: ignore[arg-type]
         list_admin_enrollments_for_session=mock,
         list_waitlist_for_session=mock,
-        list_audit_logs=mock,
         list_dues_followup=mock,
         list_billing_deferral_warnings=mock,
         send_dues_reminders=mock,  # type: ignore[arg-type]
@@ -307,3 +306,53 @@ def test_bulk_recompute_returns_result(payroll_client) -> None:
     assert body["month"] == "2026-06"
     assert body["recomputed"] == 2
     assert body["skipped"] == 0
+
+
+def test_get_monthly_payroll_lists_active_coaches_with_no_classes_as_not_generatable() -> None:
+    """D-04 / S32: a new active coach shows up muted; an inactive one does not."""
+
+    def coach(user_id: str, name: str, status: str) -> AdminUserSummary:
+        return AdminUserSummary(
+            user_id=user_id,
+            email=f"{user_id}@example.com",
+            display_name=name,
+            role="coach",
+            status=status,
+        )
+
+    taught = MonthlyPayrollRow(
+        coach_id="coach-1",
+        session_count=4,
+        total_minor=20000,
+        currency="USD",
+        status="not_generated",
+        period_id=None,
+        warning_count=0,
+        warning_status="clear",
+    )
+    uc = _minimal_admin_use_cases(
+        list_admin_users=AsyncMock(
+            execute=AsyncMock(
+                return_value=[
+                    coach("coach-1", "Demo Coach", "active"),
+                    coach("coach-new", "Casey Newcoach", "active"),
+                    coach("coach-gone", "Former Coach", "inactive"),
+                ]
+            )
+        ),
+        list_monthly_payroll=_FakeListMonthlyPayroll([taught]),
+    )
+    with TestClient(_make_app(uc)) as client:
+        resp = client.get("/api/v2/admin/payroll/2026-06")
+    assert resp.status_code == 200
+    body = resp.json()
+    rows = {row["coach_id"]: row for row in body["rows"]}
+    assert set(rows) == {"coach-1", "coach-new"}
+    assert rows["coach-1"]["generatable"] is True
+    casey = rows["coach-new"]
+    assert casey["coach_name"] == "Casey Newcoach"
+    assert casey["generatable"] is False
+    assert casey["session_count"] == 0
+    assert casey["total_amount_cents"] == 0
+    assert casey["period_id"] is None
+    assert body["total_amount_cents"] == 20000

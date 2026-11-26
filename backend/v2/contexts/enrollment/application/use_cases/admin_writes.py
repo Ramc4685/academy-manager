@@ -22,6 +22,7 @@ from pymongo.errors import DuplicateKeyError
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentBillingSync,
     EnrollmentEventRepository,
+    EnrollmentLevelPlacement,
     EnrollmentMoveBillingSync,
     EnrollmentQuery,
     EnrollmentWelcomeNotifier,
@@ -102,6 +103,7 @@ from backend.v2.contexts.enrollment.domain.models import (
     canonical_status,
 )
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
+from backend.v2.shared.audit import AuditTrail, record_best_effort
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
@@ -322,6 +324,8 @@ class CreateSessionCommand(BaseModel):
     arrival_minutes_before: int | None = Field(default=None, ge=0, le=120)
     coach_contact_policy: str | None = None
     absence_policy: str | None = None
+    # S40: who created the class, for the audit trail. Set by the route, never the body.
+    actor_id: str | None = None
 
 
 class CreateSession:
@@ -331,12 +335,23 @@ class CreateSession:
         sessions: SessionWriter,
         academy_id: AcademyIdSource,
         get_academy_timezone: AcademyTimezoneReader,
+        audit: AuditTrail | None = None,
+        staff_eligibility: AssistantEligibilityCheck | None = None,
     ) -> None:
         self._sessions = sessions
         self._academy_id = academy_id
         self._get_academy_timezone = get_academy_timezone
+        self._audit = audit
+        # Same membership vetting EditSession runs: a new class must not name a
+        # coach or assistant who is not on this academy's staff.
+        self._staff_eligibility = staff_eligibility
 
     async def execute(self, cmd: CreateSessionCommand) -> Session:
+        assistants = _normalize_assistant_ids(cmd.assistant_coach_ids)
+        if self._staff_eligibility is not None:
+            await self._staff_eligibility(
+                session_id="new", assistant_coach_ids=assistants, coach_id=cmd.coach_id
+            )
         start_at = cmd.start_at
         end_at = cmd.end_at
         # Resolve ONCE: the duplicate check, the instant arithmetic and the
@@ -379,7 +394,7 @@ class CreateSession:
             days_of_week=cmd.days_of_week,
             start_time=cmd.start_time,
             end_time=cmd.end_time,
-            assistant_coach_ids=_normalize_assistant_ids(cmd.assistant_coach_ids),
+            assistant_coach_ids=assistants,
             # Persist the EFFECTIVE zone, never None. `start_at`/`end_at` above
             # were already computed with this zone, and every downstream reader
             # (occurrence synthesis, monthly billing, payroll) re-derives
@@ -389,6 +404,14 @@ class CreateSession:
             **{field: getattr(cmd, field) for field in COMMUNICATION_PACK_FIELDS},
         )
         await self._sessions.create(session)
+        await record_best_effort(
+            self._audit,
+            actor_id=cmd.actor_id,
+            action="class_created",
+            entity_type="session",
+            entity_id=session.session_id,
+            metadata={"title": session.title},
+        )
         return session
 
     async def _ensure_no_duplicate_series(
@@ -449,7 +472,8 @@ _CLEARABLE_SESSION_FIELDS: frozenset[str] = frozenset({"amount_cents", *COMMUNIC
 
 
 class AssistantEligibilityCheck(Protocol):
-    """Raises when an id may not be listed as a session assistant.
+    """Raises when an id may not be listed as a session assistant (or, given
+    ``coach_id``, as its primary coach).
 
     Implemented in composition (``admin_session_staff``), because deciding it
     means reading academy memberships — identity state this context is not
@@ -457,7 +481,13 @@ class AssistantEligibilityCheck(Protocol):
     all-or-nothing: a partially-vetted list must never reach the write.
     """
 
-    async def __call__(self, *, session_id: str, assistant_coach_ids: tuple[str, ...]) -> None: ...
+    async def __call__(
+        self,
+        *,
+        session_id: str,
+        assistant_coach_ids: tuple[str, ...],
+        coach_id: str | None = None,
+    ) -> None: ...
 
 
 class EditSession:
@@ -534,6 +564,17 @@ class EditSession:
                     session_id=cmd.session_id, assistant_coach_ids=assistants
                 )
             update["assistant_coach_ids"] = assistants
+        # A new primary coach gets the same vetting; an unchanged one is not
+        # re-checked, so the editor's full-form resubmit still saves.
+        new_coach = update.get("coach_id")
+        if (
+            self._assistant_eligibility is not None
+            and new_coach is not None
+            and new_coach != current.coach_id
+        ):
+            await self._assistant_eligibility(
+                session_id=cmd.session_id, assistant_coach_ids=(), coach_id=str(new_coach)
+            )
 
         recurring_values = {
             "days_of_week": update.get("days_of_week", current.days_of_week),
@@ -813,6 +854,8 @@ class EditRosterAddCommand(BaseModel):
     full_name: str
     actor_id: str | None = None
     reason: str | None = None
+    #: D-10 "Start at level"; None places a new child on the first level.
+    start_level_id: str | None = None
 
 
 class EditRosterAdd:
@@ -879,10 +922,14 @@ class EditRosterAdd:
         # (composition/admin.py is at its line-budget cap, and SeatBroker is
         # composed later in main.py — see composition/enrollment_holds.py).
         self._seat_broker = seat_broker
+        self._placement: EnrollmentLevelPlacement | None = None
         self._now = clock
 
     def set_seat_broker(self, seat_broker: SeatBroker) -> None:
         self._seat_broker = seat_broker
+
+    def set_level_placement(self, placement: EnrollmentLevelPlacement) -> None:
+        self._placement = placement
 
     def _resolve_academy_id(self) -> str:
         return self._academy_id() if callable(self._academy_id) else self._academy_id
@@ -981,6 +1028,7 @@ class EditRosterAdd:
             await self._release_quietly(cmd.session_id, acquisition)
             raise
         await self._record_created_event(cmd, enrollment, academy_id=academy_id)
+        await self._place_on_level(cmd)
         await self._notify_welcome(cmd)
         await _notify_roster_change(
             self._roster_notifier,
@@ -1035,6 +1083,20 @@ class EditRosterAdd:
                     "student_id": cmd.student_id,
                     "enrollment_id": enrollment.enrollment_id,
                 },
+            )
+
+    async def _place_on_level(self, cmd: EditRosterAddCommand) -> None:
+        """D-10: the child starts on a level. Best-effort, like the email."""
+        if self._placement is None:
+            return
+        try:
+            await self._placement.place_new_enrollee(
+                cmd.student_id, level_id=cmd.start_level_id, actor_id=cmd.actor_id
+            )
+        except Exception:
+            log.exception(
+                "enrollment.roster_add_placement_failed",
+                extra={"session_id": cmd.session_id, "student_id": cmd.student_id},
             )
 
     async def _notify_welcome(self, cmd: EditRosterAddCommand) -> None:

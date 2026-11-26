@@ -130,7 +130,7 @@ export function WelcomeEmailTab({ session }: { session: AdminSessionView }) {
     <Card p={20} className="min-w-0" data-testid="session-welcome-email">
       <LaneHeader
         index="01"
-        title="Welcome email"
+        title="What families need to know"
         action={
           <Button
             variant="secondary"
@@ -143,7 +143,7 @@ export function WelcomeEmailTab({ session }: { session: AdminSessionView }) {
         }
       />
       <p className="mb-4 text-sm text-rally-muted" data-testid="welcome-email-helper">
-        What new families get when they join this class. Grey lines use your academy defaults from
+        What new families get in the welcome email when they join this class. Grey lines use your academy defaults from
         Settings and update when you change them there.
       </p>
       {loading ? (

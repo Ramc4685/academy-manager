@@ -93,7 +93,7 @@ export function CorrectionDrawer({
         <div className="flex items-start justify-between gap-4 border-b border-rally-line px-5 pb-4 pt-[calc(1rem+env(safe-area-inset-top,0px))]">
           <div>
             <h3 id="correction-drawer-title" className="text-base font-semibold text-rally-ink">
-              Correct occurrence
+              Correct class date
             </h3>
             <p className="mt-1 font-mono text-[11px] text-rally-muted">
               {occurrenceId}

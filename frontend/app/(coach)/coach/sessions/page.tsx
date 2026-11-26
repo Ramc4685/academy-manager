@@ -5,15 +5,17 @@ import { useQuery } from "@tanstack/react-query";
 
 import { getCoachSchedule, type CoachScheduleEntry } from "@/lib/api/coach";
 import { coachScheduleEntryHref } from "@/lib/coach/schedule-links";
+import { classFacts, coachPlanHref } from "@/lib/coach/class-facts";
 import { queryKeys } from "@/lib/query/keys";
 import { formatSessionTimeRange, sessionDateKey } from "@/lib/time/session-time";
 import { RetryButton } from "@/components/coach/RetryButton";
+import { CoachEmptyState } from "@/components/coach/CoachEmptyState";
+import { formatPlainDate } from "@/lib/format/plain-date";
 
 export default function CoachSessionsPage() {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.coach.schedule(),
     queryFn: getCoachSchedule,
-    staleTime: 5 * 60 * 1000,
   });
 
   const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
@@ -22,24 +24,24 @@ export default function CoachSessionsPage() {
   return (
     <section data-testid="coach-sessions">
       <header className="mb-4">
-        <h1 className="text-2xl font-semibold">Sessions</h1>
+        <h1 className="text-2xl font-semibold">Classes</h1>
         <p className="text-sm text-neutral-500">Your upcoming schedule</p>
       </header>
 
-      {isLoading && <p className="text-neutral-500">Loading sessions...</p>}
+      {isLoading && <p className="text-neutral-500">Loading classes...</p>}
 
       {isError && (
         <div
           role="alert"
           className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
         >
-          <p>Couldn&apos;t load sessions.</p>
+          <p>Couldn&apos;t load classes.</p>
           <RetryButton onClick={() => void refetch()} className="mt-2" />
         </div>
       )}
 
       {!isLoading && !isError && sessions.length === 0 && (
-        <p className="text-neutral-500">No upcoming sessions.</p>
+        <CoachEmptyState />
       )}
 
       <div className="space-y-6">
@@ -75,6 +77,25 @@ export default function CoachSessionsPage() {
                         {formatSessionTimeRange(session.start_at, session.end_at, session.timezone)}
                       </p>
                     </div>
+                    {classFacts(session) && (
+                      <p
+                        className="mt-1 text-sm text-neutral-600 dark:text-neutral-300"
+                        data-testid={`session-facts-${session.occurrence_id}`}
+                      >
+                        {classFacts(session)}
+                      </p>
+                    )}
+                  </Link>
+                  <Link
+                    href={
+                      coachPlanHref(
+                        sessionDateKey(session.start_at, session.timezone),
+                      ) as Parameters<typeof Link>[0]["href"]
+                    }
+                    data-testid={`session-plan-${session.occurrence_id}`}
+                    className="mt-1 inline-flex min-h-touch items-center px-1 text-sm font-semibold text-rally-cobalt-700 hover:underline dark:text-rally-cobalt-100"
+                  >
+                    Teaching plan
                   </Link>
                 </li>
               ))}
@@ -87,12 +108,7 @@ export default function CoachSessionsPage() {
 }
 
 function formatDateLabel(key: string): string {
-  const [year, month, day] = key.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
-    weekday: "long",
-    month: "short",
-    day: "numeric",
-  });
+  return formatPlainDate(key, { weekday: "long", month: "short", day: "numeric" });
 }
 
 function groupByDate(

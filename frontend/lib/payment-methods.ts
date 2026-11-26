@@ -28,6 +28,14 @@ export const MANUAL_PAYMENT_METHOD_LABELS: Record<ManualPaymentMethod, string> =
   other: "Other",
 };
 
+/** S19: a stored method as words ("bank_transfer" or "BANK_TRANSFER" → "Bank transfer"). */
+export function manualMethodLabel(value: string): string {
+  const key = value.trim().toLowerCase();
+  if (isManualPaymentMethod(key)) return MANUAL_PAYMENT_METHOD_LABELS[key];
+  const words = key.replaceAll("_", " ");
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : value;
+}
+
 export interface ManualMethodOption {
   value: ManualPaymentMethod;
   label: string;

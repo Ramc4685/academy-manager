@@ -18,7 +18,6 @@ import { describe, expect, it } from "vitest";
  */
 
 const FRONTEND = path.resolve(__dirname, "..");
-const ADMIN = path.join(FRONTEND, "app", "(admin)");
 
 function source(rel: string): string {
   return readFileSync(path.join(FRONTEND, rel), "utf8");
@@ -40,11 +39,14 @@ function sourceFiles(dir: string): string[] {
  */
 const NATIVE_CONFIRM = /(?<![A-Za-z0-9_$.])(?:window\.)?confirm\s*\(/;
 
-describe("no native confirm under app/(admin) (#838)", () => {
-  const files = sourceFiles(ADMIN);
+describe("no native confirm under app/ or components/ (#838, S04)", () => {
+  const files = [
+    ...sourceFiles(path.join(FRONTEND, "app")),
+    ...sourceFiles(path.join(FRONTEND, "components")),
+  ].filter((file) => !/\.test\.tsx?$/.test(file));
 
-  it("scans a non-trivial number of admin files", () => {
-    expect(files.length).toBeGreaterThan(20);
+  it("scans a non-trivial number of files", () => {
+    expect(files.length).toBeGreaterThan(200);
   });
 
   it.each(files.map((file) => ({ rel: path.relative(FRONTEND, file), file })))(
@@ -81,7 +83,27 @@ describe("high-impact admin actions confirm first (#838)", () => {
   it.each(SURFACES)("$name routes its action through ConfirmActionDialog", ({ file }) => {
     const src = source(file);
     expect(src).toContain("ConfirmActionDialog");
-    expect(src).toContain("@/components/admin/confirm-action-dialog");
+    expect(src).toContain("@/components/ds/confirm-action-dialog");
+  });
+});
+
+/**
+ * S27: a transfer changes the class and maybe the price. Both move dialogs
+ * state from/to, price, seats and who is emailed, and hold the submit behind a
+ * tick when the price changes, through one shared block.
+ */
+const TRANSFER_SURFACES: Array<{ name: string; file: string }> = [
+  { name: "roster transfer", file: "app/(admin)/admin/sessions/[id]/dialogs.tsx" },
+  { name: "student move", file: "app/(admin)/admin/students/[studentId]/SessionsPanel.tsx" },
+];
+
+describe("transfers state their consequences first (S27)", () => {
+  it.each(TRANSFER_SURFACES)("$name shows TransferConsequences and gates on the tick", ({ file }) => {
+    const src = source(file);
+    expect(src).toContain("@/components/admin/enrollment/transfer-consequences");
+    expect(src).toContain("<TransferConsequences");
+    expect(src).toContain("transferNeedsAcknowledgement");
+    expect(src).toContain("RallyModal");
   });
 });
 
@@ -110,7 +132,7 @@ describe("mass sends state their audience before sending (#838)", () => {
 });
 
 describe("the shared confirm dialog (#838)", () => {
-  const src = source("components/admin/confirm-action-dialog.tsx");
+  const src = source("components/ds/confirm-action-dialog.tsx");
 
   it("is built on the Rally modal so focus trap and Escape come for free", () => {
     expect(src).toContain("RallyModal");
@@ -125,5 +147,28 @@ describe("the shared confirm dialog (#838)", () => {
   it("can require a typed reason before the confirm button enables", () => {
     expect(src).toContain("reason");
     expect(src).toMatch(/disabled=\{/);
+  });
+});
+
+/**
+ * S66: "Coach is sick" reaches families (emails, credits), so its own review
+ * step is the confirmation: every consequence is listed, and Confirm stays
+ * off until each cancelled date is priced and has a reason.
+ */
+describe("the Coach is sick flow reviews before it changes anything (S66)", () => {
+  const src = source("components/admin/sessions/cover-flow.tsx");
+
+  it("lists who is emailed and each family's credit before Confirm", () => {
+    expect(src).toContain("coverReviewLines(");
+    expect(src).toContain("creditRows(");
+    expect(src).toContain("Check before you confirm");
+  });
+
+  it("gates Confirm on the review being complete", () => {
+    expect(src).toMatch(/!readyToConfirm\(/);
+  });
+
+  it("only the Confirm button writes", () => {
+    expect(src.match(/void applyAll\(/g)).toHaveLength(2); // Confirm, and Retry for a failed date
   });
 });

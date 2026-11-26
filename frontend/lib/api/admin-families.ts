@@ -567,13 +567,32 @@ export function familyIndexQueryString(params: FamilyIndexParams): string {
   return search.toString();
 }
 
+// S26: the families index is cached 60s per server machine. For 60s after this
+// client changes a family (add, enroll, hold, move) its reads skip that cache.
+export const FAMILY_WRITE_FRESH_MS = 60_000;
+let lastFamilyWriteAt = Number.NEGATIVE_INFINITY;
+
+export function markFamilyWrite(now: number = Date.now()): void {
+  lastFamilyWriteAt = now;
+}
+
+export function familyReadsAreFresh(now: number = Date.now()): boolean {
+  return now - lastFamilyWriteAt < FAMILY_WRITE_FRESH_MS;
+}
+
+function withFresh(path: string, qs: string): string {
+  const query = familyReadsAreFresh() ? (qs ? `${qs}&fresh=true` : "fresh=true") : qs;
+  return query ? `${path}?${query}` : path;
+}
+
 export function fetchFamilyIndex(params: FamilyIndexParams = {}): Promise<FamilyIndexPage> {
-  const qs = familyIndexQueryString(params);
-  return apiFetch<FamilyIndexPage>(`/admin/families${qs ? `?${qs}` : ""}`, { method: "GET" });
+  return apiFetch<FamilyIndexPage>(withFresh("/admin/families", familyIndexQueryString(params)), {
+    method: "GET",
+  });
 }
 
 export function fetchFamilyIndexSummary(): Promise<FamilyIndexSummary> {
-  return apiFetch<FamilyIndexSummary>("/admin/families/summary", { method: "GET" });
+  return apiFetch<FamilyIndexSummary>(withFresh("/admin/families/summary", ""), { method: "GET" });
 }
 
 // ---------------------------------------------------------------------------
@@ -644,7 +663,7 @@ export interface CorrectedAttendance {
 export function correctStudentAttendance(
   occurrenceId: string,
   studentId: string,
-  payload: { status: CorrectableAttendanceStatus; reason: string | null },
+  payload: { status: CorrectableAttendanceStatus; reason: string },
 ): Promise<CorrectedAttendance> {
   return apiFetch<CorrectedAttendance>(
     `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/attendance/${encodeURIComponent(studentId)}`,

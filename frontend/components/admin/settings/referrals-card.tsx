@@ -15,6 +15,7 @@ import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { Overline } from "@/components/ds/typography";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 const REASONS: Record<NonNullable<ReferralRow["reason"]>, string> = {
   unknown_code: "Code not recognised",
@@ -24,7 +25,7 @@ const REASONS: Record<NonNullable<ReferralRow["reason"]>, string> = {
 };
 
 function day(iso: string | null | undefined): string {
-  return iso ? new Date(iso).toLocaleDateString() : "";
+  return iso ? formatInAcademyZone(iso) : "";
 }
 
 /** Where the code came from and when, plus any other code seen for the

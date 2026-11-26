@@ -39,6 +39,8 @@ export interface PublicClass {
   starts_on: string | null;
   location: string | null;
   venue_address: string | null;
+  /** The class's own "what to bring" line; absent or null when it has none. */
+  what_to_bring?: string | null;
   /** Already resolved server-side from the class's coach display setting. */
   coach_name: string | null;
   /** Null when the academy hides prices or the class has no price. */

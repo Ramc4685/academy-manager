@@ -9,8 +9,16 @@ from datetime import UTC, date, datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    EmailStr,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
+from backend.v2.contexts.enrollment.application.pricing_state import is_unpriced
 from backend.v2.contexts.enrollment.application.use_cases.departure_reasons import (
     DepartureReasonCode,
 )
@@ -130,6 +138,10 @@ class AdminStudentSessionSummaryView(BaseModel):
     location: str | None = None
     start_at: datetime | None = None
     end_at: datetime | None = None
+    #: S27: the weekly pattern; ``start_at`` alone is the class's first date.
+    days_of_week: list[str] = Field(default_factory=list)
+    start_time: str | None = None
+    end_time: str | None = None
     status: str
     pending_cancellation_at: datetime | None = None
     payment_mode: str | None = None
@@ -440,6 +452,12 @@ class AdminSessionView(BaseModel):
     # Set only by the all-classes list (``window=all``), on the academy's clock.
     phase: Literal["active", "upcoming", "ended"] | None = None
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def unpriced(self) -> bool:
+        """S10: no fee was ever set (``None``); a free class (``0``) is priced."""
+        return is_unpriced(self.amount_cents)
+
 
 class AdminSessionList(BaseModel):
     sessions: list[AdminSessionView]
@@ -500,7 +518,17 @@ class UpdateOccurrenceCoachAttendanceRequest(BaseModel):
 
 class CorrectStudentAttendanceRequest(BaseModel):
     status: Literal["present", "absent", "late"]
-    reason: str | None = None
+    #: S25: required. A correction changes the class record families and
+    #: reports read; the reason is the audit trail's only explanation.
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("a reason is required to correct an attendance mark")
+        return cleaned
 
 
 class VoidStudentAttendanceRequest(BaseModel):
@@ -524,6 +552,8 @@ class AdminStudentAttendanceView(BaseModel):
     occurrence_id: str
     session_id: str
     student_id: str
+    #: S25: resolved inside the tenant; "Former student" when it no longer is.
+    student_name: str | None = None
     # "voided" (#554) is a read-only outcome of the void route; the correct
     # route still only accepts the three real marks.
     status: Literal["present", "absent", "late", "voided"]
@@ -805,6 +835,8 @@ class EditRosterAddRequest(BaseModel):
     student_id: str
     parent_id: str
     full_name: str
+    #: D-10: optional pathway level; omitted means the first level.
+    start_level_id: str | None = None
 
 
 class TransferEnrollmentRequest(BaseModel):
@@ -1499,6 +1531,9 @@ class AdminMonthlyPayrollRow(BaseModel):
     unresolved_unpaid_count: int = 0
     warning_count: int = 0
     warning_status: Literal["clear", "unresolved"] = "clear"
+    #: False for an active coach who taught nothing this month (D-04): listed
+    #: muted so the owner sees them, never offered Generate.
+    generatable: bool = True
 
 
 class AdminMonthlyPayrollView(BaseModel):
@@ -1680,6 +1715,10 @@ class AdminAuditLogView(BaseModel):
     actor_role: str | None = None
     actor_name: str | None = None
     action: str
+    # S39: plain words for `action`, and which trail the row came from
+    # (audit_logs, billing_audit_log, payout_audit_log, coach_rate_audit_log).
+    action_label: str | None = None
+    source: str | None = None
     entity_type: str | None = None
     entity_id: str | None = None
     created_at: datetime
@@ -1687,6 +1726,8 @@ class AdminAuditLogView(BaseModel):
 
 class AdminAuditLogList(BaseModel):
     logs: list[AdminAuditLogView]
+    # Pass back as `cursor` for the next, older page; None when there is none.
+    next_cursor: str | None = None
 
 
 class SendDuesRemindersResponse(BaseModel):
@@ -1715,6 +1756,8 @@ class AdminMessageView(BaseModel):
     is_broadcast: bool
     scope_type: str | None = None
     scope_label: str | None = None
+    #: S67: a coach's cover request carries its class date, for "Find cover".
+    scope_id: str | None = None
     recipient_count: int | None = None
     delivery_status: str | None = None
     #: The other party in a DM, from the reading admin's point of view (#864).
@@ -1726,6 +1769,9 @@ class AdminMessageView(BaseModel):
     #: opened yet. Broadcasts and the admin's own sends are never unread, so
     #: the default is the safe one for any view that does not compute it.
     is_read: bool = True
+    #: Who on staff wrote a reply in an academy-inbox thread (D-18), since any
+    #: admin can answer. ``None`` on everything else.
+    author_display_name: str | None = None
 
 
 class AdminMessageList(BaseModel):
@@ -1933,6 +1979,8 @@ class AdminRegistrationDetailView(AdminRegistrationRowView):
 class AdminRegistrationApproveRequest(BaseModel):
     session_id: str | None = None
     waiver_override_reason: str | None = None
+    #: D-10: optional pathway level; omitted means the first level.
+    start_level_id: str | None = None
 
 
 class AdminRegistrationWaitlistRequest(BaseModel):
@@ -1984,6 +2032,13 @@ AdminAttentionKind = Literal[
     "session_pressure",
     # A past class date with students on the roster and no marks at all.
     "missing_attendance",
+    "unpriced_classes",
+    # S34: enrollments the monthly run would invoice that have no invoice yet.
+    "unbilled_students",
+    # S67: a coach said they can't make a class date that has no cover yet.
+    "cover_requests",
+    # S67: academy-inbox threads whose newest message is from a family or coach.
+    "messages_waiting",
 ]
 
 
@@ -2389,10 +2444,13 @@ class AdminReportsAttendanceSummary(BaseModel):
 
 
 class AdminReportsSessionsSummary(BaseModel):
+    #: Class dates held plus still to come (cancelled ones left out).
     scheduled_count: int = 0
     completed_count: int = 0
     cancelled_count: int = 0
+    #: Active enrollments; ``paying_seats`` leaves out the not-billed ones.
     enrolled_seats: int = 0
+    paying_seats: int = 0
     capacity: int = 0
     capacity_utilization: float | None = None
     waitlist_count: int = 0
@@ -2469,7 +2527,10 @@ class AdminProjectedIncomeSessionRow(BaseModel):
     session_id: str
     title: str = ""
     monthly_fee_cents: int = 0
+    #: Paying enrollments (the ones this income comes from).
     enrollment_count: int = 0
+    #: Every active enrollment, paying or not billed.
+    enrolled_count: int = 0
     expected_cents: int = 0
 
 
@@ -2485,46 +2546,6 @@ class AdminProjectedIncomeResponse(BaseModel):
     not_billed_enrollment_count: int = 0
     by_session: list[AdminProjectedIncomeSessionRow] = []
     empty: bool = True
-
-
-class AdminSessionEconomicsSummary(BaseModel):
-    expected_revenue_cents: int = 0
-    paid_cents: int = 0
-    unpaid_cents: int = 0
-    coach_payroll_cents: int = 0
-    rent_cents: int = 0
-    other_expenses_cents: int = 0
-    expected_profit_cents: int = 0
-    profit_margin: float | None = None
-
-
-class AdminSessionEconomicsRow(BaseModel):
-    session_id: str
-    title: str
-    coach_name: str | None = None
-    active_enrollment_count: int = 0
-    #: Active enrollments left out of the count and expected total: not billed.
-    not_billed_enrollment_count: int = 0
-    paid_student_count: int = 0
-    unpaid_student_count: int = 0
-    monthly_fee_cents: int = 0
-    payable_occurrence_count: int = 0
-    expected_revenue_per_occurrence_cents: int = 0
-    expected_revenue_cents: int = 0
-    paid_cents: int = 0
-    unpaid_cents: int = 0
-    coach_payroll_cents: int = 0
-    rent_cents: int = 0
-    other_expenses_cents: int = 0
-    expected_profit_cents: int = 0
-    profit_margin: float | None = None
-
-
-class AdminSessionEconomicsResponse(BaseModel):
-    period: str
-    summary: AdminSessionEconomicsSummary = Field(default_factory=AdminSessionEconomicsSummary)
-    sessions: list[AdminSessionEconomicsRow] = []
-    empty_states: list[str] = []
 
 
 # --- Analytics ---
@@ -2546,6 +2567,7 @@ class AttendancePeriodPointView(BaseModel):
     scheduled_count: int
     completed_count: int
     no_show_count: int
+    cancelled_count: int = 0
     completion_rate: float
 
 

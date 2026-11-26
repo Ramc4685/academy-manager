@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import { headcountLabel } from "@/components/admin/not-billed";
 import { Card } from "@/components/ds/card";
 import { BigNum, Overline } from "@/components/ds/typography";
 import { getAdminSessionEconomics } from "@/lib/api/admin";
@@ -23,7 +24,7 @@ export default function AdminSessionEconomicsPage() {
         <div>
           <Overline>Owner finance</Overline>
           <p className="mt-1 text-sm text-rally-subtle">
-            Session revenue, collections, coach cost, expenses, and expected profit.
+            Class revenue, collections, coach cost, expenses, and expected profit.
           </p>
         </div>
         <label className="flex flex-col gap-1 text-sm font-medium text-rally-ink">
@@ -39,7 +40,7 @@ export default function AdminSessionEconomicsPage() {
 
       {economicsQuery.isError ? (
         <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-          Could not load session economics.
+          Could not load class economics.
         </p>
       ) : null}
 
@@ -52,7 +53,7 @@ export default function AdminSessionEconomicsPage() {
         <KpiCard
           label="Paid"
           value={report ? formatCurrency(report.summary.paid_cents) : loadingValue(economicsQuery.isLoading)}
-          detail="Attributable collected tuition for these sessions."
+          detail="Attributable collected tuition for these classes."
         />
         <KpiCard
           label="Yet to pay"
@@ -61,8 +62,18 @@ export default function AdminSessionEconomicsPage() {
         />
         <KpiCard
           label="Expected profit"
-          value={report ? formatCurrency(report.summary.expected_profit_cents) : loadingValue(economicsQuery.isLoading)}
-          detail={`Margin ${report ? formatNullablePercent(report.summary.profit_margin) : "pending"}.`}
+          value={
+            report
+              ? report.summary.expected_profit_cents == null
+                ? "Needs payroll"
+                : formatCurrency(report.summary.expected_profit_cents)
+              : loadingValue(economicsQuery.isLoading)
+          }
+          detail={
+            report?.summary.payroll_status === "needs_payroll"
+              ? (report.summary.payroll_blocked_by ?? "Coach payroll for this month is not final yet.")
+              : `Margin ${report ? formatNullablePercent(report.summary.profit_margin) : "pending"}.`
+          }
         />
       </div>
 
@@ -70,7 +81,7 @@ export default function AdminSessionEconomicsPage() {
         <MetricStrip label="Coach payroll" value={report ? formatCurrency(report.summary.coach_payroll_cents) : loadingValue(economicsQuery.isLoading)} />
         <MetricStrip label="Rent" value={report ? formatCurrency(report.summary.rent_cents) : loadingValue(economicsQuery.isLoading)} />
         <MetricStrip label="Other expenses" value={report ? formatCurrency(report.summary.other_expenses_cents) : loadingValue(economicsQuery.isLoading)} />
-        <MetricStrip label="Sessions" value={report ? formatInteger(report.sessions.length) : loadingValue(economicsQuery.isLoading)} />
+        <MetricStrip label="Classes" value={report ? formatInteger(report.sessions.length) : loadingValue(economicsQuery.isLoading)} />
       </div>
 
       {report?.empty_states.length ? (
@@ -86,19 +97,19 @@ export default function AdminSessionEconomicsPage() {
 
       <Card p={0} className="overflow-hidden">
         <div className="border-b border-rally-line px-5 py-4">
-          <Overline>Session economics</Overline>
+          <Overline>Class economics</Overline>
           <p className="mt-1 text-sm text-rally-subtle">
-            {formatMonth(period)} revenue and cost by recurring session.
+            {formatMonth(period)} revenue and cost by class.
           </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1180px] text-left text-sm">
             <thead className="bg-rally-paper text-[11px] uppercase tracking-[0.14em] text-rally-muted">
               <tr>
-                <th className="px-5 py-3">Session</th>
+                <th className="px-5 py-3">Class</th>
                 <th className="px-3 py-3">Students</th>
                 <th className="px-3 py-3">Monthly fee</th>
-                <th className="px-3 py-3">Occurrences</th>
+                <th className="px-3 py-3">Class dates</th>
                 <th className="px-3 py-3">Revenue / session</th>
                 <th className="px-3 py-3">Expected</th>
                 <th className="px-3 py-3">Paid</th>
@@ -113,7 +124,7 @@ export default function AdminSessionEconomicsPage() {
               {economicsQuery.isLoading ? (
                 <tr>
                   <td className="px-5 py-8 text-rally-subtle" colSpan={12}>
-                    Loading session economics...
+                    Loading class economics...
                   </td>
                 </tr>
               ) : report?.sessions.length ? (
@@ -127,13 +138,13 @@ export default function AdminSessionEconomicsPage() {
                     </td>
                     <td className="px-3 py-4">
                       <div className="font-semibold text-rally-ink">
-                        {formatInteger(session.active_enrollment_count)}
+                        {headcountLabel(
+                          session.active_enrollment_count,
+                          session.active_enrollment_count + (session.not_billed_enrollment_count ?? 0),
+                        )}
                       </div>
                       <div className="mt-1 text-xs text-rally-muted">
                         {formatInteger(session.paid_student_count)} paid · {formatInteger(session.unpaid_student_count)} due
-                        {session.not_billed_enrollment_count
-                          ? ` · +${formatInteger(session.not_billed_enrollment_count)} not billed`
-                          : ""}
                       </div>
                     </td>
                     <NumberCell value={formatCurrency(session.monthly_fee_cents)} />
@@ -146,19 +157,25 @@ export default function AdminSessionEconomicsPage() {
                     <NumberCell value={formatCurrency(session.rent_cents)} />
                     <NumberCell value={formatCurrency(session.other_expenses_cents)} />
                     <td className="px-5 py-4">
-                      <div className={session.expected_profit_cents >= 0 ? "font-semibold text-emerald-700" : "font-semibold text-red-700"}>
-                        {formatCurrency(session.expected_profit_cents)}
-                      </div>
-                      <div className="mt-1 text-xs text-rally-muted">
-                        {formatNullablePercent(session.profit_margin)}
-                      </div>
+                      {session.expected_profit_cents == null ? (
+                        <div className="font-semibold text-amber-700">Needs payroll</div>
+                      ) : (
+                        <>
+                          <div className={session.expected_profit_cents >= 0 ? "font-semibold text-emerald-700" : "font-semibold text-red-700"}>
+                            {formatCurrency(session.expected_profit_cents)}
+                          </div>
+                          <div className="mt-1 text-xs text-rally-muted">
+                            {formatNullablePercent(session.profit_margin)}
+                          </div>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
                   <td className="px-5 py-8 text-rally-subtle" colSpan={12}>
-                    No session economics found for this month.
+                    No class economics found for this month.
                   </td>
                 </tr>
               )}

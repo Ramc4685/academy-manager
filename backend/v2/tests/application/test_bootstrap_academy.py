@@ -168,7 +168,9 @@ async def test_duplicate_domain_with_different_slug_is_a_clear_conflict() -> Non
 
 
 def test_bootstrap_source_does_not_reference_default_academy_id() -> None:
-    source = Path("v2/contexts/identity/application/use_cases/bootstrap_academy.py").read_text(
+    # Anchored on this file so the gate passes from the repo root and from backend/.
+    v2 = Path(__file__).resolve().parents[2]
+    source = (v2 / "contexts/identity/application/use_cases/bootstrap_academy.py").read_text(
         encoding="utf-8"
     )
     assert "default_academy_id" not in source

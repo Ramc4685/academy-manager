@@ -15,6 +15,7 @@ import type {
   ParentHomeMilestone,
   ParentHomeNextSession,
 } from "./api/parent-home";
+import { formatInAcademyZone } from "./format/academy-time.ts";
 
 export type ParentHomeActionKind =
   | "register"
@@ -472,9 +473,9 @@ export function balanceBannerCopy(
 
 export function attendanceCopy(attendance: ParentHomeAttendance | null | undefined): string {
   if (!attendance || attendance.total <= 0) {
-    return "No sessions marked yet this month";
+    return "No class dates marked yet this month";
   }
-  return `${attendance.present} of ${attendance.total} sessions this month`;
+  return `Present at ${attendance.present} of ${attendance.total} class dates this month`;
 }
 
 export interface NextSessionCopy {
@@ -497,16 +498,14 @@ export function nextSessionCopy(
   const label = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "short" })
     .formatToParts(instant)
     .find((part) => part.type === "timeZoneName")?.value ?? zone;
-  const day = instant.toLocaleDateString("en-US", {
+  const day = formatInAcademyZone(instant, zone, {
     weekday: "short",
     month: "short",
     day: "numeric",
-    timeZone: zone,
   });
-  const time = instant.toLocaleTimeString("en-US", {
+  const time = formatInAcademyZone(instant, zone, {
     hour: "numeric",
     minute: "2-digit",
-    timeZone: zone,
   });
   return {
     when: `${day} · ${time} ${label}`,
@@ -544,8 +543,15 @@ export function milestoneCopy(
   now: Date = new Date(),
 ): string | null {
   if (!milestone) return null;
+  // S18: only a passed skill reads as a milestone.
+  const label =
+    milestone.kind === "working_on"
+      ? `Working on: ${milestone.label}`
+      : milestone.kind === "note"
+        ? `Coach note: ${milestone.label}`
+        : milestone.label;
   const when = relativeDayLabel(milestone.at, timezone, now);
-  return when ? `${milestone.label} · ${when}` : milestone.label;
+  return when ? `${label} · ${when}` : label;
 }
 
 /** "Sep 12" for a `YYYY-MM-DD` (or ISO instant) due date; "" when unusable. */
@@ -558,10 +564,9 @@ function formatDueDate(value: string | null | undefined): string {
     ? new Date(Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]), 12))
     : new Date(value);
   if (Number.isNaN(instant.getTime())) return "";
-  return instant.toLocaleDateString("en-US", {
+  return formatInAcademyZone(instant, "UTC", {
     month: "short",
     day: "numeric",
-    timeZone: "UTC",
   });
 }
 
@@ -578,10 +583,9 @@ function relativeDayLabel(
   if (days === 0) return "Today";
   if (days === 1) return "Yesterday";
   if (days > 1 && days < 7) return `${days} days ago`;
-  return instant.toLocaleDateString("en-US", {
+  return formatInAcademyZone(instant, timeZone, {
     month: "short",
     day: "numeric",
-    timeZone,
   });
 }
 

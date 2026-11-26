@@ -495,9 +495,9 @@ test("a failed payment outranks an amount due in the banner copy", () => {
 });
 
 test("attendance copy counts marked sessions and never fakes a zero", () => {
-  assert.equal(attendanceCopy({ present: 6, total: 7 }), "6 of 7 sessions this month");
-  assert.equal(attendanceCopy({ present: 0, total: 0 }), "No sessions marked yet this month");
-  assert.equal(attendanceCopy(null), "No sessions marked yet this month");
+  assert.equal(attendanceCopy({ present: 6, total: 7 }), "Present at 6 of 7 class dates this month");
+  assert.equal(attendanceCopy({ present: 0, total: 0 }), "No class dates marked yet this month");
+  assert.equal(attendanceCopy(null), "No class dates marked yet this month");
 });
 
 test("next session renders in the academy timezone with a venue fallback", () => {
@@ -541,7 +541,7 @@ test("milestone copy labels notes and skills with a relative date", () => {
   );
   assert.equal(
     milestoneCopy({ kind: "note", label: "Footwork is sharper", at: "2026-09-05T14:00:00Z" }, "America/Chicago", now),
-    "Footwork is sharper · Yesterday",
+    "Coach note: Footwork is sharper · Yesterday",
   );
   assert.equal(
     milestoneCopy({ kind: "skill", label: "Overhead clear", at: "2026-09-03T14:00:00Z" }, "America/Chicago", now),
@@ -549,7 +549,11 @@ test("milestone copy labels notes and skills with a relative date", () => {
   );
   assert.equal(
     milestoneCopy({ kind: "note", label: "Great serve", at: "2026-08-20T14:00:00Z" }, "America/Chicago", now),
-    "Great serve · Aug 20",
+    "Coach note: Great serve · Aug 20",
+  );
+  assert.equal(
+    milestoneCopy({ kind: "working_on", label: "Split step", at: "2026-09-06T14:00:00Z" }, "America/Chicago", now),
+    "Working on: Split step · Today",
   );
   assert.equal(milestoneCopy(null, "America/Chicago", now), null);
 });

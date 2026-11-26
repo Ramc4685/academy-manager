@@ -14,6 +14,9 @@ test("the class screen unlocks marking at T-60 without a reload", async ({ page,
   await page.goto("/coach/sessions/s-today-1");
   await expect(page.getByTestId("marking-not-open")).toBeVisible();
   await expect(page.getByTestId("mark-st1-present")).toBeDisabled();
+  // The roster is on screen, read only, before attendance opens.
+  await expect(page.getByTestId("roster-st1")).toBeVisible();
+  await expect(page.getByTestId("roster-read-only")).toContainText("Read only until");
   // The banner and the disabled bulk button name the same opening time: T-60
   // in the class's zone, never "when class starts" (usability study).
   const opensAt = await page.getByTestId("marking-not-open").textContent();
@@ -25,5 +28,6 @@ test("the class screen unlocks marking at T-60 without a reload", async ({ page,
   // 31 minutes later the class is 59 minutes away: marking is open.
   await page.clock.fastForward("31:00");
   await expect(page.getByTestId("marking-not-open")).toHaveCount(0);
+  await expect(page.getByTestId("roster-read-only")).toHaveCount(0);
   await expect(page.getByTestId("mark-st1-present")).toBeEnabled();
 });

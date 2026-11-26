@@ -29,7 +29,7 @@ import {
 } from "./format";
 import { Field } from "./StudentEditForm";
 import { useAcademyTimezone } from "@/components/admin/use-academy-today";
-import { academyDateISO } from "@/lib/format/academy-time";
+import { academyDateISO, formatInAcademyZone } from "@/lib/format/academy-time";
 
 type EnrollmentDialog = "move" | "override" | null;
 
@@ -100,7 +100,7 @@ function BillingEnrollmentsPanel({ studentId, active }: { studentId: string; act
         <div className="flex flex-col gap-3 border-b border-neutral-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <Tag className="size-4 text-rally-muted" aria-hidden="true" />
-            <Overline>Session-type billing</Overline>
+            <Overline>Class-type billing</Overline>
           </div>
           <span className="font-mono text-xs tabular-nums text-rally-muted">
             {enrollments.length} {enrollments.length === 1 ? "enrollment" : "enrollments"}
@@ -125,14 +125,14 @@ function BillingEnrollmentsPanel({ studentId, active }: { studentId: string; act
             className="mt-4 text-sm text-rally-muted"
             data-testid="admin-student-no-billing-enrollments"
           >
-            This student has no session-type billing enrollment.
+            This student has no class-type billing enrollment.
           </p>
         ) : (
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-left text-sm">
               <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
                 <tr>
-                  <th className="py-2 pr-4 font-medium">Session type</th>
+                  <th className="py-2 pr-4 font-medium">Class type</th>
                   <th className="py-2 pr-4 font-medium">Status</th>
                   <th className="py-2 pr-4 font-medium">Effective price</th>
                   <th className="py-2 pr-4 font-medium">Billing start</th>
@@ -211,7 +211,7 @@ function EnrollmentRow({
       {/* The catalog lists active types only, so an enrollment sitting on a
           soft-deleted type has no name to show — label it rather than leaking a raw id. */}
       <td className="py-3 pr-4 align-top text-rally-ink">
-        {sessionType?.name ?? "Discontinued session type"}
+        {sessionType?.name ?? "Discontinued class type"}
       </td>
       <td className="py-3 pr-4 align-top text-rally-muted">{enrollment.status}</td>
       <td className="py-3 pr-4 align-top font-mono tabular-nums text-rally-ink">
@@ -284,21 +284,21 @@ function MoveEnrollmentDialog({
   });
 
   return (
-    <BillingDialogFrame title="Move to another session type" onCancel={onCancel}>
+    <BillingDialogFrame title="Move to another class type" onCancel={onCancel}>
       {getErrorMessage(mutation.error) && (
         <BillingDialogError message={getErrorMessage(mutation.error)!} />
       )}
 
       {step === "form" ? (
         <div className="space-y-3">
-          <Field label="Target session type" htmlFor="billing-move-session-type">
+          <Field label="Target class type" htmlFor="billing-move-session-type">
             <select
               id="billing-move-session-type"
               value={toSessionTypeId}
               onChange={(event) => setToSessionTypeId(event.target.value)}
               className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-rally-base outline-none focus:border-rally-cobalt-600 focus:ring-2 focus:ring-rally-cobalt-600/15"
             >
-              <option value="">Select a session type</option>
+              <option value="">Select a class type</option>
               {targets.map((type) => (
                 <option key={type.session_type_id} value={type.session_type_id}>
                   {type.name} — {formatCurrencyCents(type.price_cents)}
@@ -337,11 +337,7 @@ function MoveEnrollmentDialog({
             {formatDateUtc(moveDate)} switches the enrollment and records a prorated
             adjustment against the{" "}
             {period
-              ? new Date(period.periodStart).toLocaleDateString(undefined, {
-                  month: "long",
-                  year: "numeric",
-                  timeZone: "UTC",
-                })
+              ? formatInAcademyZone(period.periodStart, "UTC", { month: "long", year: "numeric" })
               : "selected"}{" "}
             billing period. The adjustment is recorded now; it is applied on the parent&apos;s
             next invoice rather than charged immediately.

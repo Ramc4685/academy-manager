@@ -38,6 +38,19 @@ pnpm generate:api
 
 ---
 
+## Confirm, Feedback, Undo
+
+Pick one tier per action; never stack two.
+
+1. **Confirm first** (`ConfirmActionDialog` from `@/components/ds/confirm-action-dialog`)
+   only when the action cannot be undone or reaches other people: deleting, sending,
+   charging, voiding, cancelling a class, or deleting unsent data. Restate the item and
+   say what happens. Never use the native browser confirm; a source scan fails the build.
+2. **Undo after** (a toast with `action: { label: "Undo", onClick }` from `useToast()`)
+   when the action is reversible and common, such as removing a row or marking a skill.
+3. **Feedback only** (`meta: { success: "..." }` on the mutation) for every other save,
+   so no save is silent. Failures toast on their own unless the mutation has an `onError`.
+
 ## Firebase Frontend Rules
 
 - Use Firebase Web SDK config from environment variables.

@@ -16,7 +16,7 @@ export type StudentDetailTab = StudentDetailTabId | "progress";
 const STATE_TABS: Array<{ id: StudentDetailTabId; label: string }> = [
   { id: "overview", label: "Overview" },
   { id: "training", label: "Training" },
-  { id: "sessions", label: "Sessions" },
+  { id: "sessions", label: "Classes" },
   { id: "billing", label: "Billing" },
   { id: "family", label: "Family & Compliance" },
 ];

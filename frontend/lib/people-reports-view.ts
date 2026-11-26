@@ -151,6 +151,8 @@ export interface RiskRow {
   coach: string;
   classes: number;
   students: number;
+  /** Seated but not billed; by-class rows only (0 on the by-coach table). */
+  notBilled: number;
   atRisk: number;
   share: string;
 }
@@ -187,6 +189,7 @@ export function normalizeAttendanceRisk(raw: unknown): AttendanceRiskView | null
       coach: text(row.coach_name) ?? (text(row.coach_id) ? "Unnamed coach" : NO_COACH),
       classes: 1,
       students: count(row.students),
+      notBilled: count(row.not_billed),
       atRisk: count(row.at_risk),
       share: conversionText(row.at_risk_rate as number | null | undefined),
     };
@@ -199,6 +202,7 @@ export function normalizeAttendanceRisk(raw: unknown): AttendanceRiskView | null
       coach: "",
       classes: count(row.classes),
       students: count(row.students),
+      notBilled: 0,
       atRisk: count(row.at_risk),
       share: conversionText(row.at_risk_rate as number | null | undefined),
     };

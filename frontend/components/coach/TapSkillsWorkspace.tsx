@@ -11,6 +11,7 @@ import {
 } from "@/lib/api/coach";
 import {
   getCoachSessionSkillBoard,
+  type SkillBoard,
   type SkillBoardCell,
   type SkillBoardLevelGroup,
 } from "@/lib/api/curriculum";
@@ -45,6 +46,12 @@ interface LevelUpNotice {
 
 function levelLabel(group: SkillBoardLevelGroup): string {
   return `Level ${group.sequence} · ${group.level_name}`;
+}
+
+/** Which slice of the class the tap list shows: it is one level, not the roster. */
+function levelScopeLine(group: SkillBoardLevelGroup, board: SkillBoard): string {
+  const inClass = board.groups.reduce((n, g) => n + g.students.length, 0) + board.unplaced.length;
+  return `Level ${group.sequence} · ${group.students.length} of ${inClass} in this class`;
 }
 
 /** First skill that someone in the level still needs: today's most likely lesson. */
@@ -91,7 +98,6 @@ export function TapSkillsWorkspace({
     queryKey: AI_STATUS_KEY,
     queryFn: getCoachAiStatus,
     retry: false,
-    staleTime: 5 * 60 * 1000,
   });
   const aiEnabled = aiStatus.data?.enabled === true;
   const [picked, setPicked] = useState<Selection | null>(null);
@@ -183,7 +189,7 @@ export function TapSkillsWorkspace({
   if (!group || !skill) {
     return (
       <p className="rounded-md bg-neutral-50 p-3 text-sm text-neutral-600">
-        No one in this class is placed on a level yet. Place students from the Progress tab first.
+        No one in this class is on a level yet. Start them on the first level from the Progress tab, and their skills show here.
       </p>
     );
   }
@@ -270,6 +276,9 @@ export function TapSkillsWorkspace({
             </button>
           )}
         </div>
+        <p data-testid="coach-tap-level-scope" className="text-xs font-semibold text-status-slate-600">
+          {levelScopeLine(group, board)}
+        </p>
         <div data-testid="coach-tap-skill-rule" className="space-y-1 text-sm text-status-slate-600">
           <p className="font-semibold text-rally-ink">{passRuleLine(skill)}</p>
           {(skill.criteria ?? []).length > 0 && (

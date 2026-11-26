@@ -10,6 +10,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from backend.v2.composition.coach_pay import compose_coach_pay
 from backend.v2.composition.pathway import (
     CurriculumComposition,
     StudentProgressComposition,
@@ -103,6 +104,7 @@ from backend.v2.contexts.enrollment.domain.events import (
     StudentSessionTypeChanged,
     StudentSessionTypeChangedPayload,
 )
+from backend.v2.contexts.enrollment.domain.models import SEAT_HOLDING
 from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
     MongoAbsenceNoticeRepository,
 )
@@ -214,6 +216,8 @@ class CoachComposition:
     # logo_url, brand_color} for GET /coach/academy. Optional default keeps
     # hand-built test compositions working.
     get_academy_info: object = None
+    # S59: GetCoachPaySummary (composition/coach_pay.py) for /coach/profile/pay.
+    get_coach_pay: object = None
     # Issue #774: Callable[[Sequence[str], date], Awaitable[dict[str, int]]] —
     # overdue balance in cents per student, so the roster row can carry ONE
     # "PAYMENT DUE $X" chip. The owner's decision was that this is the only
@@ -234,6 +238,10 @@ class CoachComposition:
     set_skill_note_visibility: SetSkillNoteVisibility | None = None
     # Today flags classes whose recap is saved (coach recap shortcut).
     recapped_occurrence_ids: Callable[[Sequence[str]], Awaitable[set[str]]] | None = None
+    # Sessions list headcount: seat-holding enrollments per class, one query.
+    enrolled_counts: Callable[[Sequence[str]], Awaitable[dict[str, int]]] | None = None
+    # Child display names by student id (the passport header). Optional for fixtures.
+    student_names: Callable[[Sequence[str]], Awaitable[dict[str, str]]] | None = None
 
 
 class CoachAssignedSessionLookup:
@@ -352,12 +360,20 @@ def _overdue_cents_by_student(db: Any) -> Any:
     return resolve
 
 
+def _student_names(students: MongoStudentRepository) -> Any:
+    async def resolve(student_ids: Sequence[str]) -> dict[str, str]:
+        return {s.student_id: s.full_name for s in await students.by_ids(list(student_ids))}
+
+    return resolve
+
+
 def _coach_academy_info(db: Any) -> Any:
-    """Row 14: {name, logo_url, brand_color} for GET /coach/academy.
+    """Row 14: {name, logo_url, brand_color, contact_email, contact_phone} for GET /coach/academy.
 
     Deliberately its own tiny read, scoped to the request academy id the
     caller passes in (never a boot-time tenant) — a coach never gets the rest
-    of the academy profile parent/admin already expose.
+    of the academy profile parent/admin already expose. The contact pair is
+    the same one parents see, so a new coach knows who to call.
     """
 
     async def resolve(*, academy_id: str) -> dict[str, Any]:
@@ -368,6 +384,9 @@ def _coach_academy_info(db: Any) -> Any:
             "name": str(doc.get("display_name") or "Academy"),
             "logo_url": doc.get("logo_url"),
             "brand_color": doc.get("brand_color"),
+            "contact_email": doc.get("contact_email") or None,
+            "contact_phone": doc.get("contact_phone") or None,
+            "timezone": doc.get("timezone") or None,
         }
 
     return resolve
@@ -691,6 +710,11 @@ def compose_coach(
         ),
         get_academy_timezone=academy_timezone_lookup(db),
         get_academy_info=_coach_academy_info(db),
+        get_coach_pay=compose_coach_pay(db),
         overdue_cents_by_student=_overdue_cents_by_student(db),
         recapped_occurrence_ids=_recapped_occurrence_ids(db),
+        enrolled_counts=lambda ids: sessions_repo._enrolled_counts_by_session(
+            list(ids), statuses=SEAT_HOLDING
+        ),
+        student_names=_student_names(students_repo),
     )

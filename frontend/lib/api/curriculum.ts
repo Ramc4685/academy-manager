@@ -384,6 +384,14 @@ export function updateSkillPassRule(
   });
 }
 
+/** Make a skill required for level-up, or optional. */
+export function updateSkillRequired(skillId: string, isRequired: boolean): Promise<Skill> {
+  return apiFetch<Skill>(`/admin/skills/${encodeURIComponent(skillId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ is_required: isRequired }),
+  });
+}
+
 export function createSkill(
   levelId: string,
   body: CreateSkillBody,
@@ -798,17 +806,6 @@ export async function setLevelUpRule(
   }
 }
 
-export function getCoachSessionStudentsProgress(
-  sessionId: string,
-  programId?: string,
-): Promise<StudentProgressOverview[]> {
-  const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
-  return apiFetch<{ rows: StudentProgressOverview[] }>(
-    `/coach/sessions/${encodeURIComponent(sessionId)}/students-progress${q}`,
-    { method: "GET" },
-  ).then((d) => d.rows);
-}
-
 export function getParentProgressSummary(
   programId?: string,
 ): Promise<StudentProgressOverview[]> {
@@ -823,14 +820,26 @@ export function getParentProgressSummary(
 // Coach
 // ---------------------------------------------------------------------------
 
+/** A coach's view of one child's passport; `placed: false` means no level yet. */
+export interface CoachPassport {
+  student_id: string;
+  student_name: string;
+  placed: boolean;
+  level_name: string | null;
+  level_sequence: number | null;
+  passed_count: number;
+  total_count: number;
+  required_remaining: number;
+  passport: SkillPassportEntry[];
+}
+
 export function getStudentPassport(
   studentId: string,
   programId?: string,
-): Promise<SkillPassportEntry[]> {
-  return apiFetch<{ passport: SkillPassportEntry[] }>(
-    coachStudentPassportPath(studentId, programId),
-    { method: "GET" },
-  ).then((d) => d.passport);
+): Promise<CoachPassport> {
+  return apiFetch<CoachPassport>(coachStudentPassportPath(studentId, programId), {
+    method: "GET",
+  });
 }
 
 export function updateSkillStatus(
@@ -1015,6 +1024,40 @@ export function getAdminSessionSkillBoard(
     `/admin/sessions/${encodeURIComponent(sessionId)}/skill-board${q}`,
     { method: "GET" },
   );
+}
+
+/** D-10: start an unplaced child on this coach's roster at the first level. 409 if placed. */
+export function placeCoachUnplacedStudent(
+  sessionId: string,
+  studentId: string,
+): Promise<{ student_id: string; level_id: string }> {
+  return apiFetch(
+    `/coach/sessions/${encodeURIComponent(sessionId)}/students/${encodeURIComponent(studentId)}/pathway-placement`,
+    { method: "POST" },
+  );
+}
+
+export interface UnplacedStudent {
+  student_id: string;
+  student_name: string;
+}
+
+/** Active students with no level (the list the owner sees before placing them). */
+export function listUnplacedStudents(): Promise<{
+  program_id: string;
+  students: UnplacedStudent[];
+}> {
+  return apiFetch("/admin/pathway/unplaced", { method: "GET" });
+}
+
+/** Owner only: place the listed unplaced students on the first level. */
+export function placeUnplacedBacklog(studentIds: string[]): Promise<{
+  results: { student_id: string; outcome: "placed" | "skipped" | "refused"; level_id?: string }[];
+}> {
+  return apiFetch("/admin/pathway/unplaced/place", {
+    method: "POST",
+    body: JSON.stringify({ student_ids: studentIds }),
+  });
 }
 
 export function getCoachSessionSkillBoard(

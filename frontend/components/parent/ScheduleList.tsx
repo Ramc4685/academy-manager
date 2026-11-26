@@ -5,7 +5,11 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { Card } from "@/components/ds/card";
 import type { ParentScheduleEntry } from "@/lib/api/parent";
 import { formatAcademyTimeRange, monthLabel } from "@/lib/format/academy-time";
-import { isMonthPublished, noClassReason } from "@/lib/parent/schedule-events";
+import {
+  ABSENT_REPORTED_CHIP,
+  isMonthPublished,
+  noClassReason,
+} from "@/lib/parent/schedule-events";
 import { sessionDateKey } from "@/lib/time/session-time";
 
 export interface ScheduleListRow {
@@ -95,6 +99,7 @@ export function ScheduleList({
             <ul className={`mt-2 divide-y divide-rally-line ${published ? "" : "opacity-70"}`}>
               {monthRows.map(({ entry, childName }) => {
                 const cancelled = entry.status === "cancelled";
+                const absent = !cancelled && Boolean(entry.absence_reported);
                 return (
                   <ScheduleRow
                     key={`${entry.occurrence_id}:${childName}`}
@@ -115,13 +120,16 @@ export function ScheduleList({
                       )}
                     </div>
                     <span
+                      data-testid={absent ? `schedule-absent-${entry.occurrence_id}` : undefined}
                       className={`shrink-0 rounded px-2 py-0.5 text-xs font-semibold ${
                         cancelled
                           ? "bg-status-red-50 text-status-red-800"
-                          : "bg-status-green-50 text-status-green-800"
+                          : absent
+                            ? "bg-status-amber-50 text-status-amber-800"
+                            : "bg-status-green-50 text-status-green-800"
                       }`}
                     >
-                      {cancelled ? "No class" : "Class"}
+                      {cancelled ? "No class" : absent ? ABSENT_REPORTED_CHIP : "Class"}
                     </span>
                   </ScheduleRow>
                 );

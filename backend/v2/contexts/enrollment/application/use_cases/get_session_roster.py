@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentQuery,
     StudentQuery,
 )
-from backend.v2.contexts.enrollment.domain.models import ROSTER_VISIBLE, RosterEntry
+from backend.v2.contexts.enrollment.domain.models import (
+    ROSTER_VISIBLE,
+    RosterEntry,
+    age_in_years,
+)
 
 
 class GetSessionRoster:
-    def __init__(self, enrollments: EnrollmentQuery, students: StudentQuery) -> None:
+    def __init__(
+        self,
+        enrollments: EnrollmentQuery,
+        students: StudentQuery,
+    ) -> None:
         self._enrollments = enrollments
         self._students = students
 
@@ -25,6 +35,7 @@ class GetSessionRoster:
         students = await self._students.by_ids([e.student_id for e in active])
         by_id = {s.student_id: s for s in students}
         out: list[RosterEntry] = []
+        today = date.today()
         for e in active:
             s = by_id.get(e.student_id)
             if s is None:
@@ -39,6 +50,7 @@ class GetSessionRoster:
                     pending_cancellation_at=e.pending_cancellation_at,
                     hold_return_on=e.hold_return_on,
                     enrolled_at=e.enrolled_at,
+                    age_years=age_in_years(getattr(s, "date_of_birth", None), today),
                 )
             )
         return out

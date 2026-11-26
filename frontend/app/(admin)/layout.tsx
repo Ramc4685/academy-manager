@@ -19,6 +19,7 @@ import { PhoneCountryProvider } from "@/lib/phone-country";
 import { Avatar } from "@/components/ds/avatar";
 import { Icon } from "@/components/ds/icons";
 import { ToastProvider } from "@/components/ds/toast";
+import { AcademyZoneProvider } from "@/lib/format/academy-zone";
 import { AcademyMark } from "@/components/ds/academy-mark";
 import { safeHexColor } from "@/lib/public-page/format";
 import {
@@ -127,7 +128,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <TenantProvider>
       <OwnerProvider isOwner={auth.isOwner}>
-      <ToastProvider>
+      <AcademyZoneProvider timezone={academyQuery.data?.timezone}>
+    <ToastProvider>
       <TenantChangeInvalidator />
       <AdminActionSlotProvider>
       {/* #893: the unsaved-changes guard wraps the SHELL, not one page, so a
@@ -186,6 +188,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       </UnsavedChangesProvider>
       </AdminActionSlotProvider>
       </ToastProvider>
+    </AcademyZoneProvider>
       </OwnerProvider>
     </TenantProvider>
   );

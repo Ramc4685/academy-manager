@@ -38,6 +38,7 @@ import {
 import {
   fetchFamilyIndex,
   fetchFamilyIndexSummary,
+  markFamilyWrite,
   type FamilyIndexChild,
   type FamilyIndexRow,
   type FamilyIndexSort,
@@ -89,7 +90,7 @@ import {
   ToolbarSearch,
 } from "@/components/ds/list-toolbar";
 import { Th } from "@/components/ds/dialog-chrome";
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { PipelineBoard } from "@/components/admin/people/pipeline-board";
 
 import { FamilyImportPanel } from "./FamilyImportPanel";
@@ -260,6 +261,7 @@ function FamiliesView() {
 
   const onSort = (column: FamilyIndexSort) => setState(nextSort(state, column, moneyVisible));
   const refreshAll = () => {
+    markFamilyWrite();
     void queryClient.invalidateQueries({ queryKey: queryKeys.admin.families() });
   };
 

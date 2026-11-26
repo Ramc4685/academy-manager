@@ -9,6 +9,7 @@ import {
   paymentRowTitle,
   reconciliationLabel,
   reconciliationStatusLabel,
+  sessionFilterLabel,
   skipReasonLabel,
 } from "./format";
 
@@ -89,11 +90,11 @@ describe("reconciliationLabel (UI-5)", () => {
     expect(reconciliationLabel(row({ status: "partially_paid" }))).toBe(pending);
   });
 
-  it("points the rows that need a person at Billing Health", () => {
+  it("points the rows that need a person at Payment system status", () => {
     expect(reconciliationStatusLabel("missing_allocation")).toBe(
-      "Payment received but not matched to this invoice. Check Billing Health.",
+      "Payment received but not matched to this invoice. Check Payment system status.",
     );
-    expect(reconciliationStatusLabel("orphan_charge")).toContain("Check Billing Health");
+    expect(reconciliationStatusLabel("orphan_charge")).toContain("Check Payment system status");
   });
 
   it("reads failed attempts and decline codes as sentences", () => {
@@ -170,5 +171,16 @@ describe("disputeLabel (#980)", () => {
         dispute_outcome: "warning_closed",
       }),
     ).toBe("Inquiry closed $130.00 · general");
+  });
+});
+
+describe("sessionFilterLabel (S19)", () => {
+  const titles = new Map([["demo_session_sat", "Saturday Juniors"]]);
+  it("names a session from the sessions list instead of its id", () => {
+    expect(sessionFilterLabel("demo_session_sat", titles)).toBe("Saturday Juniors");
+  });
+  it("keeps the id for a session the list does not know, and names the empty bucket", () => {
+    expect(sessionFilterLabel("gone_session", titles)).toBe("gone_session");
+    expect(sessionFilterLabel("__none__", titles)).toBe("No class");
   });
 });

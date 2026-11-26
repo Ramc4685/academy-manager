@@ -25,20 +25,21 @@ export function shouldShowSetupChecklist(data: SetupChecklist | undefined): bool
 }
 
 /**
- * Open steps first (in the server's order), then done ones. An owner-only
- * step has no link for an admin without the owner scope: its panel would
- * only say "owner only".
+ * The steps still open, in the server's order (S09: the card lists only what
+ * is left). An owner-only step has no link for an admin without the owner
+ * scope: its panel would only say "owner only".
  */
 export function setupChecklistRows(
   data: SetupChecklist,
   isOwner: boolean,
 ): SetupChecklistRow[] {
-  const rows = data.items.map((item) => ({
-    ...item,
-    link: item.owner_only && !isOwner ? null : item.href,
-    statusLabel: STATUS_LABEL[item.status] ?? item.status,
-  }));
-  return [...rows.filter((row) => row.status !== "done"), ...rows.filter((row) => row.status === "done")];
+  return data.items
+    .filter((item) => item.status !== "done")
+    .map((item) => ({
+      ...item,
+      link: item.owner_only && !isOwner ? null : item.href,
+      statusLabel: STATUS_LABEL[item.status] ?? item.status,
+    }));
 }
 
 export function setupChecklistProgress(data: SetupChecklist): string {

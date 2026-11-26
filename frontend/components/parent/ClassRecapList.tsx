@@ -9,7 +9,7 @@ import {
   type ChildRecapSkill,
 } from "@/lib/api/class-recap";
 import { getParentAcademy } from "@/lib/api/parent";
-import { parseAcademyInstant, resolveAcademyTimeZone } from "@/lib/format/academy-time";
+import { formatInAcademyZone, resolveAcademyTimeZone } from "@/lib/format/academy-time";
 import { queryKeys } from "@/lib/query/keys";
 
 const names = (skills: ChildRecapSkill[]) => skills.map((s) => s.name).join(", ");
@@ -29,12 +29,11 @@ export function ClassRecapItems({
       {recaps.map((r) => (
         <li key={r.occurrence_id} className="py-3 text-sm" data-testid="parent-class-recap-item">
           <p className="text-xs font-semibold text-rally-muted">
-            {parseAcademyInstant(r.class_starts_at).toLocaleDateString("en-US", {
+            {formatInAcademyZone(r.class_starts_at, zone, {
               weekday: "short",
               month: "short",
               day: "numeric",
               year: "numeric",
-              timeZone: zone,
             })}
           </p>
           {r.earned_skills.length > 0 && (
@@ -46,15 +45,10 @@ export function ClassRecapItems({
             </p>
           )}
           <p className="mt-1 text-rally-ink">{`Class lesson: ${names(r.taught_skills)}`}</p>
-          <p className="text-rally-ink">
-            {r.practiced_skills.length > 0 ? (
-              `${firstName} practised: ${names(r.practiced_skills)}`
-            ) : (
-              <span className="text-rally-muted">
-                {`The coach did not record which skills ${firstName} practised.`}
-              </span>
-            )}
-          </p>
+          {/* S18: no negative line; an empty list just says nothing. */}
+          {r.practiced_skills.length > 0 && (
+            <p className="text-rally-ink">{`${firstName} practised: ${names(r.practiced_skills)}`}</p>
+          )}
         </li>
       ))}
     </ol>

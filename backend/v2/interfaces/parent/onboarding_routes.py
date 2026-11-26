@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request, status
+import logging
+from typing import Any
+
+from fastapi import APIRouter, Body, Depends, Query, Request, status
 
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     PatchApplicationCommand,
@@ -13,28 +16,47 @@ from backend.v2.interfaces.parent.views import (
     ApplicationView,
     ChildProfileView,
     ParentProfileView,
+    ParentRegistrationList,
+    ParentRegistrationView,
     PatchApplicationRequest,
     RegistrationWaiverItemView,
     RegistrationWaiverView,
+    StartApplicationRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import request_ip, require_persona
 
 router = APIRouter(tags=["parent.onboarding"])
+logger = logging.getLogger(__name__)
 
 
-async def _class_first(use_cases: ParentUseCases) -> bool:
+async def _waiver_flags(use_cases: ParentUseCases, app: Any) -> tuple[bool, bool]:
+    """(class_first, waiver_to_sign) for the stepper.
+
+    S47 / D-11: no required waiver to sign (none published, or only the starter
+    placeholder) means the wizard skips the waiver step. A failed read keeps
+    the step, so a hiccup never silently drops a real waiver.
+    """
     get_waivers = getattr(use_cases, "get_registration_waivers", None)
     if not get_waivers:
-        return False
+        return False, True
     try:
-        _waivers, class_first = await get_waivers(None)
+        waivers, class_first = await get_waivers(None)
+        if class_first and app.selected_session_id:
+            waivers, _ = await get_waivers(app.selected_session_id)
     except Exception:
-        return False
-    return bool(class_first)
+        return False, True
+    # Class-first with no class chosen yet: the set is unknown, keep the step.
+    unknown = class_first and not app.selected_session_id
+    return bool(class_first), bool(waivers) or unknown
 
 
-def _view(app, *, class_first: bool = False) -> ApplicationView:
+async def _app_view(use_cases: ParentUseCases, app: Any) -> ApplicationView:
+    class_first, to_sign = await _waiver_flags(use_cases, app)
+    return _view(app, class_first=class_first, waiver_to_sign=to_sign)
+
+
+def _view(app: Any, *, class_first: bool = False, waiver_to_sign: bool = True) -> ApplicationView:
     return ApplicationView(
         application_id=app.application_id,
         status=app.status,
@@ -43,6 +65,7 @@ def _view(app, *, class_first: bool = False) -> ApplicationView:
         selected_session_id=app.selected_session_id,
         waiver_accepted=app.waiver_acceptance is not None,
         waiver_class_first=class_first,
+        waiver_to_sign=waiver_to_sign,
         expires_at=app.expires_at,
     )
 
@@ -87,6 +110,7 @@ async def get_registration_waiver(
     summary="Start (or return existing draft) onboarding application for the signed-in parent",
 )
 async def start(
+    body: StartApplicationRequest | None = Body(default=None),
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ApplicationView:
@@ -94,9 +118,10 @@ async def start(
         StartApplicationCommand(
             parent_user_id=claims.user_id,
             parent_email=claims.email,
+            application_id=body.application_id if body else None,
         )
     )
-    return _view(app, class_first=await _class_first(use_cases))
+    return await _app_view(use_cases, app)
 
 
 @router.patch(
@@ -126,7 +151,16 @@ async def patch(
             user_agent=request.headers.get("user-agent") if body.accept_waiver else None,
         )
     )
-    return _view(app, class_first=await _class_first(use_cases))
+    fill_blanks = getattr(use_cases, "fill_parent_profile_blanks", None)
+    if body.parent_profile and fill_blanks:
+        parent = body.parent_profile
+        name = f"{parent.first_name.strip()} {parent.last_name.strip()}".strip()
+        try:
+            await fill_blanks(claims.user_id, name or None, parent.phone or None)
+        except Exception:
+            # The application already saved; a profile copy must not fail the step.
+            logger.warning("onboarding: could not copy parent details to profile", exc_info=True)
+    return await _app_view(use_cases, app)
 
 
 @router.get(
@@ -142,4 +176,19 @@ async def status_route(
     app = await use_cases.get_application_status.execute(
         application_id, caller_user_id=claims.user_id
     )
-    return _view(app, class_first=await _class_first(use_cases))
+    return await _app_view(use_cases, app)
+
+
+@router.get(
+    "/registrations",
+    response_model=ParentRegistrationList,
+    summary="The family's registrations that are not finished or not yet confirmed",
+)
+async def list_registrations(
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> ParentRegistrationList:
+    list_rows: Any = use_cases.list_parent_registrations
+    assert list_rows is not None  # wired by compose_parent
+    rows = await list_rows(claims.user_id)
+    return ParentRegistrationList(registrations=[ParentRegistrationView(**r) for r in rows])

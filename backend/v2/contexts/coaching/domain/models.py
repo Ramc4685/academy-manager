@@ -133,3 +133,6 @@ class CoachSkillNote(BaseModel):
     body: str
     created_at: datetime
     visibility: NoteVisibility = "private"
+    #: When it was last shared with the parent (D-15). A note ticked "shared"
+    #: before skill notes reached parents has none, so it stays off their feed.
+    shared_at: datetime | None = None

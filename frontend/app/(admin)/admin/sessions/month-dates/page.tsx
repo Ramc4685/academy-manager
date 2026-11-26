@@ -12,7 +12,7 @@
 import { useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { useAcademyTimezone } from "@/components/admin/use-academy-today";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -207,7 +207,7 @@ export default function AdminMonthDatesPage() {
       }
       if (outcome?.creditNotSynced) {
         problems.push(
-          `Billing did not update for ${outcome.creditNotSynced} date(s), so families were not credited yet. Check Billing Health.`,
+          `Billing did not update for ${outcome.creditNotSynced} date(s), so families were not credited yet. Check Payment system status.`,
         );
       }
       if (problems.length) setError(problems.join(" "));
@@ -231,7 +231,7 @@ export default function AdminMonthDatesPage() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionOccurrences(missed.sessionId) });
       const outcome =
         result.billing_result && NOT_CREDITED.has(result.billing_result)
-          ? "Billing did not update, so families were not credited yet. Check Billing Health."
+          ? "Billing did not update, so families were not credited yet. Check Payment system status."
           : creditOutcome(result.credits_issued, result.credit_total_cents, result.credit_skips);
       setCredits([
         { id: missed.id, label: missed.label, outcome: result.payroll_flag ? `${outcome} ${result.payroll_flag}` : outcome },

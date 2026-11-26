@@ -10,6 +10,7 @@ import {
   type SiblingDiscountEnrollment,
 } from "@/lib/api/admin-families";
 import { queryKeys } from "@/lib/query/keys";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 function percentText(bps: number | null): string {
   return bps == null ? "" : `${Number((bps / 100).toFixed(2))}%`;
@@ -19,9 +20,8 @@ function percentText(bps: number | null): string {
 export function periodMonthName(period: string): string {
   const match = /^(\d{4})-(\d{2})$/.exec(period);
   if (!match) return period;
-  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1)).toLocaleString("en-US", {
+  return formatInAcademyZone(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1), "UTC", {
     month: "long",
-    timeZone: "UTC",
   });
 }
 

@@ -294,6 +294,10 @@ async function stubAdminShell(page: Page): Promise<void> {
   await page.route("**/api/v2/admin/inbox/counts", (route) =>
     fulfillJson(route, { counts: {}, total: 0 }),
   );
+  // The All invoices tab names each class from the all-classes list.
+  await page.route("**/api/v2/admin/sessions?window=all", (route) =>
+    fulfillJson(route, { sessions: [] }),
+  );
 }
 
 const ALL_SIX_METHODS = ["cash", "check", "zelle", "venmo", "bank_transfer", "other"];
@@ -463,6 +467,56 @@ test.describe("admin payments buckets", () => {
     await expect.poll(() => reminderBodies.length).toBe(1);
     expect(reminderBodies[0]).toMatchObject({ parent_ids: ["parent-past-due"] });
     await expect(page.getByTestId("row-status-parent-past-due")).toHaveText("Reminder sent");
+  });
+
+  test("an unsent invoice offers Send invoice, confirms, and posts that invoice id", async ({
+    page,
+  }) => {
+    const fixture = structuredClone(COLLECTIONS_FIXTURE);
+    const pastDue = fixture.buckets
+      .find((bucket) => bucket.key === "past_due")!
+      .families.find((family) => family.parent_id === "parent-past-due")!;
+    pastDue.invoices[0].delivery_status = "not_sent";
+    const sendUrls: string[] = [];
+    let reminderCalls = 0;
+    await stubAdminShell(page);
+    await page.route("**/api/v2/admin/payments/collections*", (route) =>
+      route.request().method() === "GET" ? fulfillJson(route, fixture) : route.fallback(),
+    );
+    await page.route("**/api/v2/admin/dues-reminders", (route) => {
+      reminderCalls += 1;
+      return route.fallback();
+    });
+    await page.route("**/api/v2/admin/billing/invoices/*/send", (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      sendUrls.push(new URL(route.request().url()).pathname);
+      return fulfillJson(route, {
+        invoice_id: "inv-past-due",
+        delivery_status: "sent",
+        sent_at: "2026-09-02T15:00:00Z",
+        last_sent_at: "2026-09-02T15:00:00Z",
+        checkout_url: null,
+        checkout_failure_code: null,
+      });
+    });
+
+    await page.goto("/admin/payments");
+
+    await expect(page.getByTestId("action-send_reminder-parent-past-due")).toHaveCount(0);
+    const send = await rowActionControl(page, {
+      rowTestId: "family-row-parent-past-due",
+      actionsTestId: "family-actions-parent-past-due",
+      directTestId: "action-send_invoice-parent-past-due",
+      label: "Send invoice",
+    });
+    await send.click();
+    // Nothing is emailed until the admin confirms.
+    expect(sendUrls).toHaveLength(0);
+    await page.getByTestId("confirm-action-submit").click();
+
+    await expect.poll(() => sendUrls).toEqual(["/api/v2/admin/billing/invoices/inv-past-due/send"]);
+    await expect(page.getByTestId("row-status-parent-past-due")).toHaveText("Invoice sent");
+    expect(reminderCalls).toBe(0);
   });
 
   test("the WhatsApp action is a link, and only where the backend built one", async ({

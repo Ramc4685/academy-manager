@@ -261,3 +261,104 @@ async def test_soft_deleted_messages_are_invisible_to_everyone(db) -> None:
         assert await repo.for_recipient("user-1", visible_session_ids=[]) == []
         assert await repo.for_admin("adm") == []
         assert await repo.get("gone") is None
+
+
+# --- D-18 academy inbox (S61) -------------------------------------------
+
+
+def _inbox_doc(message_id: str, academy_id: str, parent_id: str, **overrides) -> dict:
+    fields = {
+        "sender_id": parent_id,
+        "sender_persona": "parent",
+        "recipient_id": None,
+        "inbox_thread_id": parent_id,
+        **overrides,
+    }
+    return _message_doc(message_id, academy_id, **fields)
+
+
+@pytest.mark.asyncio
+async def test_parent_reads_back_only_their_own_academy_inbox_messages(db) -> None:
+    await db["messages"].insert_many(
+        [
+            _inbox_doc("mine", "academy-a", "user-1"),
+            _inbox_doc("theirs", "academy-a", "user-2"),
+            # A forged document: sent by user-2 into user-1's thread id.
+            _inbox_doc("forged", "academy-a", "user-2", inbox_thread_id="user-1"),
+            _inbox_doc("other-tenant", "academy-b", "user-1"),
+        ]
+    )
+    repo = MongoMessageRepository(db)
+
+    with tenant_scope("academy-a"):
+        rows = await repo.for_recipient("user-1", visible_session_ids=[])
+    assert [m.message_id for m in rows] == ["mine"]
+    assert rows[0].inbox_thread_id == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_every_admin_sees_academy_inbox_threads_but_not_private_dms(db) -> None:
+    await db["messages"].insert_many(
+        [
+            _inbox_doc("family", "academy-a", "user-1"),
+            _message_doc("reply", "academy-a", sender_id="adm-1", inbox_thread_id="user-1"),
+            _message_doc("private", "academy-a", sender_id="adm-1", recipient_id="coach-1"),
+            _inbox_doc("other-tenant", "academy-b", "user-9"),
+        ]
+    )
+    repo = MongoMessageRepository(db)
+
+    with tenant_scope("academy-a"):
+        rows = await repo.for_admin("adm-2")
+    assert sorted(m.message_id for m in rows) == ["family", "reply"]
+
+    with tenant_scope("academy-b"):
+        rows = await repo.for_admin("adm-2")
+    assert [m.message_id for m in rows] == ["other-tenant"]
+
+
+@pytest.mark.asyncio
+async def test_staff_read_receipts_cover_inbox_threads_only(db) -> None:
+    await db["messages"].insert_many(
+        [
+            _inbox_doc("family", "academy-a", "user-1"),
+            _message_doc("private", "academy-a", sender_id="coach-1", recipient_id="adm-1"),
+            _inbox_doc("other-tenant", "academy-b", "user-1"),
+        ]
+    )
+    repo = MongoMessageRepository(db)
+
+    with tenant_scope("academy-a"):
+        await repo.mark_read_by_staff("family", "adm-2")
+        await repo.mark_read_by_staff("private", "adm-2")
+        await repo.mark_read_by_staff("other-tenant", "adm-2")
+
+    read = {d["message_id"]: d["read_by"] async for d in db["messages"].find({})}
+    assert read == {"family": ["adm-2"], "private": [], "other-tenant": []}
+
+
+@pytest.mark.asyncio
+async def test_academy_inbox_count_is_per_sender_window_and_tenant(db) -> None:
+    await db["messages"].insert_many(
+        [
+            _inbox_doc(
+                "new", "academy-a", "user-1", created_at=datetime(2026, 11, 26, 9, tzinfo=UTC)
+            ),
+            _inbox_doc(
+                "old", "academy-a", "user-1", created_at=datetime(2026, 11, 20, 9, tzinfo=UTC)
+            ),
+            _inbox_doc(
+                "other", "academy-a", "user-2", created_at=datetime(2026, 11, 26, 9, tzinfo=UTC)
+            ),
+            _inbox_doc(
+                "tenant", "academy-b", "user-1", created_at=datetime(2026, 11, 26, 9, tzinfo=UTC)
+            ),
+        ]
+    )
+    repo = MongoMessageRepository(db)
+
+    with tenant_scope("academy-a"):
+        n = await repo.count_academy_inbox_sent(
+            "user-1", since=datetime(2026, 11, 26, 0, tzinfo=UTC)
+        )
+    assert n == 1

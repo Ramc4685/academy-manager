@@ -23,6 +23,8 @@ import { Field } from "@/components/ds/dialog-chrome";
 import { Overline } from "@/components/ds/typography";
 
 import { formatCents } from "@/lib/money";
+import { useAcademyZone } from "@/lib/format/academy-zone";
+import { formatAcademyStamp } from "@/lib/format/academy-time";
 
 export function ReconciliationLookupPanel() {
   const [stripeInvoiceId, setStripeInvoiceId] = useState("");
@@ -93,7 +95,8 @@ export function ReconciliationLookupPanel() {
 }
 
 function ReconciliationReportSummary({ report }: { report: BillingReconciliationReport }) {
-  const checkedAt = new Date(report.checked_at).toLocaleString();
+  const academyTimezone = useAcademyZone();
+  const checkedAt = formatAcademyStamp(report.checked_at, academyTimezone);
   const manualReviewCandidates = Array.isArray(report.manual_review_candidates)
     ? report.manual_review_candidates
     : [];

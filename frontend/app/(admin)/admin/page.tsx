@@ -3,20 +3,21 @@
 /**
  * Admin dashboard landing — Rally restyle.
  *
- * Real data only: sessions today + monthly revenue + collections totals
- * (owed / autopay scheduled / needs action) + recent payments + dashboard
- * attention BFF signals.
+ * Real data only. S64 (D-20): the Today block (today's classes and their
+ * rosters) leads, then dashboard attention signals, then monthly revenue +
+ * collections totals (owed / autopay scheduled / needs action) + recent
+ * payments.
  * Revenue (tile + chart) is owner-only: `/finance/revenue` 404s for admins
  * without the owner scope, so the query is not even issued for them.
  * Recharts is dynamic-imported to keep the admin landing chunk small.
  */
 
+import { Suspense } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import {
-  listAdminSessions,
   getAdminCollections,
   getAdminPaymentFeed,
   getRevenue,
@@ -29,17 +30,20 @@ import { paymentMethodLabel, statusChip } from "@/app/(admin)/admin/payments/for
 import { normalizeCollections } from "@/app/(admin)/admin/payments/buckets/bucket-view";
 
 import { statHint, statText } from "@/lib/ui/load-state";
-import { academyDateISO, academyMonthKey } from "@/lib/format/academy-time";
+import { academyMonthKey, formatInAcademyZone } from "@/lib/format/academy-time";
 
 import { MyFollowUpsCard } from "@/components/admin/my-follow-ups-card";
 import { ClassReportHandoffsCard } from "@/components/admin/ClassReportHandoffsCard";
 import { SetupChecklistCard } from "@/components/admin/setup-checklist-card";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { useAcademyTimezone } from "@/components/admin/use-academy-today";
+import { TodayBlock } from "@/components/admin/today/today-block";
 import { Card } from "@/components/ds/card";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { LaneHeader } from "@/components/ds/lane";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
+import { useIsPhone } from "@/lib/use-is-phone";
 import { BigNum, Overline } from "@/components/ds/typography";
 
 const RevenueChart = dynamic(() => import("@/components/admin/RevenueChart"), {
@@ -50,16 +54,11 @@ const RevenueChart = dynamic(() => import("@/components/admin/RevenueChart"), {
 const RECENT_PAYMENTS_LIMIT = 5;
 
 export default function AdminDashboardPage() {
-  // "Today" and "this month" are the academy's, not UTC's: after ~6 PM in
-  // Chicago the UTC date is already tomorrow (L2 A0-3).
+  // "This month" is the academy's, not UTC's: after ~6 PM in Chicago the
+  // UTC date is already tomorrow (L2 A0-3).
   const timezone = useAcademyTimezone();
-  const today = academyDateISO(timezone);
   const isOwner = useIsOwner();
-
-  const sessionsQuery = useQuery({
-    queryKey: queryKeys.admin.sessions(today),
-    queryFn: () => listAdminSessions(today),
-  });
+  const isPhone = useIsPhone();
 
   // Money tiles read the same six-bucket view as the Payments page, so the
   // dashboard and the bucket list can never disagree about who owes what.
@@ -101,11 +100,9 @@ export default function AdminDashboardPage() {
   // hands back the same zeros, so "Owed this month $0.00 / Needs action 0" read
   // as "all caught up". Every collections tile below therefore goes through
   // `statText`, which shows a dash until the data is really there.
-  const sessions = sessionsQuery.data?.sessions ?? [];
   const collectionsTotals = normalizeCollections(collectionsQuery.data).totals;
   const revenueByMonth = revenueQuery.data?.by_month ?? {};
 
-  const todayCount = sessions.length;
   const monthRevenue = revenueByMonth[academyMonthKey(timezone)] ?? 0;
   const unavailable = attentionQuery.data?.unavailable ?? [];
 
@@ -118,11 +115,14 @@ export default function AdminDashboardPage() {
 
   return (
     <section data-testid="admin-dashboard" className="space-y-6">
-      {/* Roadmap L7: a new academy's setup steps, derived from its settings.
-          Renders nothing once every step is done. */}
-      <SetupChecklistCard />
+      {/* S64 (D-20): today's classes come first, so at 375px the front desk
+          sees them on the first screen. The Today block replaces the old
+          "Sessions today" tile. */}
+      <Suspense fallback={null}>
+        <TodayBlock />
+      </Suspense>
 
-      {/* Issue #842: attention leads the dashboard, above the KPI strip — the
+      {/* Issue #842: attention sits right under Today, above the KPI strip — the
           items that need a decision matter more than the tiles that just
           report a number. */}
       <Card p={20}>
@@ -179,21 +179,16 @@ export default function AdminDashboardPage() {
           are overdue or due today. */}
       <MyFollowUpsCard />
 
+      {/* Roadmap L7: a new academy's setup steps, derived from its settings.
+          S09/S64: below Today, attention and follow-ups, collapsed, so
+          today's work leads on a phone. Renders nothing once every step is
+          done. */}
+      <SetupChecklistCard />
+
       {isOwner && <ClassReportHandoffsCard />}
 
       {/* KPI strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <Link
-          href="/admin/sessions"
-          className="block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-rally-cobalt"
-          data-testid="dashboard-tile-sessions"
-        >
-          <KpiCard
-            label="Sessions today"
-            value={statText(sessionsQuery, () => String(todayCount))}
-            loading={sessionsQuery.isLoading}
-          />
-        </Link>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {isOwner && (
           <KpiCard
             label="Revenue (month to date)"
@@ -244,7 +239,9 @@ export default function AdminDashboardPage() {
           data-testid="dashboard-tile-needs-action"
         >
           <KpiCard
-            label="Needs action"
+            // S09: named for what it counts. "Needs action 0" beside a "Paused
+            // billing needs review" attention card read as a contradiction.
+            label="Failed or past due"
             value={statText(collectionsQuery, () => String(collectionsTotals.needs_action_count))}
             loading={collectionsQuery.isLoading}
             hint={statHint(collectionsQuery, () => "failed autopay · past due")}
@@ -291,6 +288,36 @@ export default function AdminDashboardPage() {
           />
         ) : recentPayments.length === 0 ? (
           <EmptyState message="No payments received yet." />
+        ) : isPhone ? (
+          // S09: one two-line row per payment below md, no sideways scroll.
+          <PhoneList aria-label="Recent payments" data-testid="admin-dashboard-recent-payments">
+            {recentPayments.map((p) => {
+              const chip = statusChip(p.status);
+              const method = paymentMethodLabel(p.payment_method);
+              const netCents = Math.max(p.amount_cents - p.refunded_cents, 0);
+              return (
+                <PhoneListRow
+                  key={p.payment_id}
+                  title={p.parent_name ?? "Family on file"}
+                  primary={
+                    <span className="font-mono font-semibold tabular-nums text-rally-ink">
+                      {formatCents(netCents)}
+                    </span>
+                  }
+                  secondary={
+                    <span className="flex flex-wrap items-center gap-2">
+                      <Chip variant={chip.variant} label={chip.label} />
+                      {method && (
+                        <Chip variant={method === "STRIPE" ? "autopayOn" : "manual"} label={method} />
+                      )}
+                      <span>{formatInAcademyZone(p.paid_at, timezone)}</span>
+                      {p.refunded_cents > 0 && <span>{formatCents(p.refunded_cents)} refunded</span>}
+                    </span>
+                  }
+                />
+              );
+            })}
+          </PhoneList>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm" data-testid="admin-dashboard-recent-payments">
@@ -344,7 +371,7 @@ export default function AdminDashboardPage() {
                         )}
                       </td>
                       <td className="py-2.5 text-rally-muted">
-                        {new Date(p.paid_at).toLocaleDateString()}
+                        {formatInAcademyZone(p.paid_at, timezone)}
                       </td>
                     </tr>
                   );

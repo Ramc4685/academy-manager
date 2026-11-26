@@ -287,6 +287,7 @@ class RegistrationTrackingEnrollments(InMemoryEnrollments):
         await super().create(enrollment)
         self._registrations.active = True
         self._registrations.enrollment_id = enrollment.enrollment_id
+        self._registrations.active_session_id = enrollment.session_id
 
 
 class ExistingStudentRegistrations:
@@ -298,7 +299,11 @@ class ExistingStudentRegistrations:
         ambiguous: bool = False,
         enrollment_id: str = "existing-enrollment",
         existing_student: Student | None = None,
+        active_session_id: str = "sess-1",
     ) -> None:
+        # The class the existing live enrollment is in (S48: only that class
+        # counts as "already enrolled").
+        self.active_session_id = active_session_id
         self.student_id = student_id
         self.active = active
         self.ambiguous = ambiguous
@@ -336,11 +341,13 @@ class ExistingStudentRegistrations:
         student_id: str,
         *,
         exclude_enrollment_id: str | None = None,
+        session_id: str | None = None,
     ) -> bool:
         return (
             self.active
             and student_id == self.student_id
             and self.enrollment_id != exclude_enrollment_id
+            and session_id in (None, self.active_session_id)
         )
 
     async def claim_registration(
@@ -437,6 +444,7 @@ def _session() -> Session:
         start_at=NOW + timedelta(days=1),
         end_at=NOW + timedelta(days=1, hours=1),
         capacity=8,
+        amount_cents=8000,
     )
 
 
@@ -990,9 +998,40 @@ async def test_repeated_approval_is_idempotent_and_reserves_one_seat() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_applications_for_same_child_allow_only_one_enrollment() -> None:
+async def test_a_second_class_for_the_same_child_is_approved_as_its_own_enrollment() -> None:
+    """S48 / D-24: two classes, two enrollments, one student, distinct per-class locks."""
     first_app = _application(application_id="app-1", session_id="sess-1", student_id=None)
     second_app = _application(application_id="app-2", session_id="sess-2", student_id=None)
+    registrations = ExistingStudentRegistrations(student_id="student-1")
+    enrollments = RegistrationTrackingEnrollments(registrations)
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications([first_app, second_app]),
+        sessions=InMemorySessions([_session(), _second_session()]),
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        student_registrations=registrations,
+        clock=lambda: NOW,
+    )
+
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+    await review.approve(ApproveRegistrationCommand(application_id="app-2", actor_id="admin-1"))
+
+    assert [(e.session_id, e.student_id) for e in enrollments.created] == [
+        ("sess-1", "student-1"),
+        ("sess-2", "student-1"),
+    ]
+    assert [e.registration_student_lock for e in enrollments.created] == [
+        "student-1|sess-1",
+        "student-1|sess-2",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_applications_for_same_child_and_class_allow_only_one_enrollment() -> None:
+    first_app = _application(application_id="app-1", session_id="sess-1", student_id=None)
+    second_app = _application(application_id="app-2", session_id="sess-1", student_id=None)
     registrations = ExistingStudentRegistrations(student_id="student-1")
     sessions = InMemorySessions([_session(), _second_session()])
     enrollments = RegistrationTrackingEnrollments(registrations)
@@ -2420,3 +2459,179 @@ async def test_a_failed_registration_receipt_never_fails_approval() -> None:
     await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
 
     assert len(signatures.saved) == 1
+
+
+class _RecordingPlacement:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[tuple[str, str | None, str | None]] = []
+        self.fail = fail
+
+    async def place_new_enrollee(
+        self, student_id: str, *, level_id: str | None = None, actor_id: str | None = None
+    ) -> None:
+        self.calls.append((student_id, level_id, actor_id))
+        if self.fail:
+            raise RuntimeError("pathway unavailable")
+
+
+def _review_with_placement(placement: _RecordingPlacement) -> AdminRegistrationReview:
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(_application(student_id="student-1")),
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+    review.set_level_placement(placement)
+    return review
+
+
+@pytest.mark.asyncio
+async def test_approve_places_the_child_on_a_level_once() -> None:
+    """D-10: approval starts the child on the first level (or the chosen one)."""
+    placement = _RecordingPlacement()
+    review = _review_with_placement(placement)
+
+    await review.approve(
+        ApproveRegistrationCommand(
+            application_id="app-1", actor_id="admin-1", start_level_id="lvl-2"
+        )
+    )
+    # The idempotent replay of a decided application does not place again.
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    assert placement.calls == [("student-1", "lvl-2", "admin-1")]
+
+
+@pytest.mark.asyncio
+async def test_approve_succeeds_when_placement_fails() -> None:
+    detail = await _review_with_placement(_RecordingPlacement(fail=True)).approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert detail.status == "APPROVED"
+
+
+@pytest.mark.asyncio
+async def test_approve_refuses_an_unpriced_class_before_any_side_effect() -> None:
+    """S42 / D-01: a family's registration never lands in a class with no fee."""
+    unpriced = _session().model_copy(update={"amount_cents": None, "title": "Tuesday Intermediate"})
+    sessions = InMemorySessions([unpriced])
+    apps = InMemoryApplications(_application())
+    enrollments = InMemoryEnrollments()
+    review = AdminRegistrationReview(
+        apps=apps,
+        sessions=sessions,
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(ApplicationNotEditable, match="Tuesday Intermediate has no price yet"):
+        await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    assert sessions.reserve_calls == 0
+    assert enrollments.created == []
+    assert apps.saved == []
+
+
+@pytest.mark.asyncio
+async def test_approve_accepts_a_class_marked_free() -> None:
+    free = _session().model_copy(update={"amount_cents": 0})
+    enrollments = InMemoryEnrollments()
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(_application()),
+        sessions=InMemorySessions([free]),
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    detail = await review.approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert detail.enrollment_id is not None
+    assert len(enrollments.created) == 1
+
+
+@pytest.mark.asyncio
+async def test_approve_allows_a_child_enrolled_in_another_class() -> None:
+    """S48 / D-24: enrolled in Saturday does not block the Wednesday clinic."""
+    sessions = InMemorySessions([_session()])
+    enrollments = InMemoryEnrollments()
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(_application(student_id=None)),
+        sessions=sessions,
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+        student_registrations=ExistingStudentRegistrations(
+            student_id="existing-student", active=True, active_session_id="sess-saturday"
+        ),
+    )
+
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    assert [(e.session_id, e.student_id) for e in enrollments.created] == [
+        ("sess-1", "existing-student")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_approve_refuses_a_child_held_in_the_same_class() -> None:
+    """#782 kept for the same class: a held row is "already enrolled here"."""
+    held = Enrollment(
+        enrollment_id="held-enrollment",
+        academy_id=ACADEMY_ID,
+        session_id="sess-1",
+        student_id="existing-student",
+        status="held",
+    )
+    enrollments = InMemoryEnrollments([held])
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(_application(student_id=None)),
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+        student_registrations=ExistingStudentRegistrations(
+            student_id="existing-student",
+            active=True,
+            enrollment_id="held-enrollment",
+            active_session_id="sess-1",
+        ),
+    )
+
+    with pytest.raises(ApplicationNotEditable, match="already enrolled in this class"):
+        await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    assert enrollments.created == []
+
+
+@pytest.mark.asyncio
+async def test_pending_list_keeps_a_second_class_for_an_enrolled_child() -> None:
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(_application(student_id=None)),
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+        student_registrations=ExistingStudentRegistrations(
+            student_id="existing-student", active=True, active_session_id="sess-saturday"
+        ),
+    )
+
+    assert [row.application_id for row in await review.list_pending()] == ["app-1"]

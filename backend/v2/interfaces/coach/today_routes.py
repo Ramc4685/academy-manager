@@ -19,6 +19,10 @@ from fastapi import APIRouter, Depends, Query
 
 from backend.v2.composition.dropoff_checkins import DropoffCheckinComposition
 from backend.v2.contexts.coaching.application.use_cases.dropoff_checkin import OccurrenceRef
+from backend.v2.contexts.curriculum.application.errors import (
+    MultipleActivePrograms,
+    NoActiveProgram,
+)
 from backend.v2.interfaces.coach.deps import (
     CoachUseCases,
     academy_zone_for_sessions,
@@ -26,6 +30,7 @@ from backend.v2.interfaces.coach.deps import (
     get_coach_use_cases,
 )
 from backend.v2.interfaces.coach.views import (
+    CoachAgeBand,
     CoachRosterEntry,
     CoachSession,
     CoachTodayResponse,
@@ -82,6 +87,36 @@ async def _read_overdue_cents(
     except Exception:
         log.warning("coach roster overdue lookup failed; hiding payment chips", exc_info=True)
         return {}
+
+
+async def read_level_names(use_cases: CoachUseCases, student_ids: Sequence[str]) -> dict[str, str]:
+    """Each child's active level name in the default program, never at the cost of the day."""
+    progress, curriculum = use_cases.student_progress, use_cases.curriculum
+    if not student_ids or progress is None or curriculum is None:
+        return {}
+    try:
+        program = await curriculum.resolve_default_program.execute()
+        program_id = str(getattr(program, "program_id", "") or "")
+        if not program_id:
+            return {}
+        names: dict[str, str] = await progress.get_active_level_names.execute(
+            student_ids, program_id
+        )
+        return names
+    except (NoActiveProgram, MultipleActivePrograms):
+        # Ordinary academy states, not faults: no single program means no levels to show.
+        return {}
+    except Exception:
+        log.warning("coach roster level lookup failed; hiding levels", exc_info=True)
+        return {}
+
+
+def age_band_view(band: object) -> CoachAgeBand | None:
+    if band is None:
+        return None
+    return CoachAgeBand(
+        min_age=getattr(band, "min_age", None), max_age=getattr(band, "max_age", None)
+    )
 
 
 @router.get(
@@ -163,6 +198,10 @@ async def get_today(
     if callable(overdue_reader):
         overdue_cents = await _read_overdue_cents(overdue_reader, rosters, target_date)
 
+    level_names = await read_level_names(
+        use_cases, sorted({r.student_id for roster in rosters for r in roster})
+    )
+
     recapped: set[str] = set()
     recapped_reader = use_cases.recapped_occurrence_ids
     if recapped_reader is not None and sessions:
@@ -205,6 +244,8 @@ async def get_today(
                 CoachRosterEntry(
                     student_id=r.student_id,
                     full_name=r.full_name,
+                    age_years=getattr(r, "age_years", None),
+                    level_name=level_names.get(r.student_id),
                     enrollment_status=r.status,
                     attendance_status=getattr(
                         marks_by_occurrence.get(s.occurrence_id, {}).get(r.student_id),
@@ -241,6 +282,10 @@ async def get_today(
                 for g in session_guests
             ],
             recap_saved=s.occurrence_id in recapped,
+            age_band=age_band_view(getattr(s, "age_band", None)),
+            venue_address=getattr(s, "venue_address", None),
+            parking_notes=getattr(s, "parking_notes", None),
+            arrival_minutes_before=getattr(s, "arrival_minutes_before", None),
         )
         for s, roster, session_guests in zip(sessions, rosters, guests, strict=False)
     ]

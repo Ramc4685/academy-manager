@@ -32,6 +32,7 @@ const OUTCOMES: {
   status?: SettableStatus;
   passed?: boolean;
   className: string;
+  activeClassName?: string;
 }[] = [
   {
     key: "introduced",
@@ -51,7 +52,10 @@ const OUTCOMES: {
     key: "passed",
     label: SKILL_STATUS_LABELS.PASSED,
     passed: true,
-    className: "border-green-600 bg-green-600 text-white",
+    // Outlined like its siblings; solid only when it is the current state, or
+    // every row looked already passed (bug-08).
+    className: "border-green-600 text-green-700 dark:border-green-700 dark:text-green-300",
+    activeClassName: "border-green-600 bg-green-600 text-white",
   },
   {
     key: "needs-review",
@@ -237,7 +241,7 @@ export function StudentFocusRow({
                 }
                 applyStatus(o.status!);
               }}
-              className={`min-h-touch rounded-lg border px-2 text-xs font-semibold transition-all active:scale-95 disabled:opacity-50 ${o.className} ${
+              className={`min-h-touch rounded-lg border px-2 text-xs font-semibold transition-all active:scale-95 disabled:opacity-50 ${active ? (o.activeClassName ?? o.className) : o.className} ${
                 active
                   ? "ring-2 ring-neutral-900 ring-offset-1 dark:ring-neutral-100 dark:ring-offset-neutral-900"
                   : ""

@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from functools import partial
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
+from backend.v2.composition.coach_cover import user_facts
+from backend.v2.contexts.enrollment.application.pricing_state import is_unpriced
 from backend.v2.interfaces.admin.academy_clock import academy_today
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.inbox_routes import missing_attendance_count
@@ -21,6 +23,7 @@ from backend.v2.interfaces.admin.views import (
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
+from backend.v2.shared.starter_waiver import is_starter_waiver_body
 
 router = APIRouter(tags=["admin.dashboard"])
 log = logging.getLogger(__name__)
@@ -41,7 +44,28 @@ _SOURCE_LABELS: dict[str, str] = {
     "waivers": "waivers",
     "sessions": "today's classes",
     "missing_attendance": "missing attendance",
+    "unpriced_classes": "unpriced classes",
+    "unbilled_students": "students with no invoice",
+    "cover_requests": "cover requests",
+    "messages_waiting": "messages",
 }
+
+
+def _unpriced_label(session: Any, titles: list[str]) -> str:
+    """The class title, plus its day and start time when another listed class
+    shares the title (two "Tuesday Intermediate" rows read as one otherwise)."""
+    title = str(_field(session, "title", "Class"))
+    if titles.count(title) < 2:
+        return title
+    when = " ".join(
+        part
+        for part in (
+            "/".join(_field(session, "days_of_week", None) or []),
+            str(_field(session, "start_time", "") or ""),
+        )
+        if part
+    )
+    return f"{title}, {when}" if when else title
 
 
 def _oldest_pending_days(rows: list[Any]) -> int:
@@ -100,6 +124,26 @@ async def dashboard_attention(
                 severity="high",
                 href="/admin/inbox?tab=registrations",
                 count=pending_registrations,
+            )
+        )
+
+    # S67: a coach can't make a class date; one line each, into the cover flow.
+    for line in await read("cover_requests", _cover_request_lines, [], request):
+        items.append(line)
+    waiting = await read("messages_waiting", _messages_waiting, 0, request)
+    if waiting:
+        items.append(
+            AdminAttentionItemView(
+                attention_id="messages-waiting",
+                kind="messages_waiting",
+                title="Messages waiting",
+                detail=(
+                    f"{waiting} conversation{'s' if waiting != 1 else ''} "
+                    f"{'are' if waiting != 1 else 'is'} waiting for a reply."
+                ),
+                severity="medium",
+                href="/admin/messages",
+                count=waiting,
             )
         )
 
@@ -373,9 +417,36 @@ async def dashboard_attention(
             )
         )
 
+    # S47 / D-11: while a required live waiver is still the starter, families
+    # are not asked to sign it; say so, and do not count families "pending" on it.
+    live = list(_field(waiver_report, "live_waivers", None) or [])
+    if not live and _field(waiver_report, "active_waiver", None) is not None:
+        live = [_field(waiver_report, "active_waiver")]
+    starter_live = any(
+        is_starter_waiver_body(_field(w, "body", None)) and _field(w, "required", True) is not False
+        for w in live
+    )
+    if starter_live:
+        items.append(
+            AdminAttentionItemView(
+                attention_id="starter-waiver",
+                kind="waivers",
+                title="Your waiver is still the starter template",
+                detail=(
+                    "New families are not asked to sign a waiver until you publish your own. "
+                    "Edit the starter text and publish it; families then sign it from their "
+                    "Waivers page."
+                ),
+                severity="high",
+                href="/admin/settings?panel=family-policies",
+                count=1,
+            )
+        )
+    primary = _field(waiver_report, "active_waiver", None) if waiver_report is not None else None
     waiver_count = (
         waiver_report.summary.pending_count + waiver_report.summary.outdated_count
         if waiver_report is not None
+        and not (primary is not None and is_starter_waiver_body(_field(primary, "body", None)))
         else 0
     )
     if waiver_count:
@@ -384,13 +455,65 @@ async def dashboard_attention(
                 attention_id="waiver-status",
                 kind="waivers",
                 title="Waivers need review",
+                # Name the next step: families sign the current version from
+                # their own Waivers page; the admin sees who is still due here.
                 detail=(
                     f"{waiver_report.summary.pending_count} pending, "
-                    f"{waiver_report.summary.outdated_count} outdated."
+                    f"{waiver_report.summary.outdated_count} outdated. Families sign "
+                    "the current version from their Waivers page; open Family "
+                    "policies to see who is still due."
                 ),
                 severity="medium",
                 href="/admin/settings?panel=family-policies",
                 count=waiver_count,
+            )
+        )
+
+    # S10: a class with children in it and no fee bills nothing, silently.
+    # A free class (fee 0) is a choice and is not listed.
+    unpriced = await read("unpriced_classes", _unpriced_classes_with_students, [], use_cases)
+    if unpriced:
+        titles = [str(_field(s, "title", "Class")) for s in unpriced]
+        names = ", ".join(
+            f"{_unpriced_label(s, titles)} ({int(_field(s, 'enrolled_count', 0) or 0)} "
+            f"student{'s' if int(_field(s, 'enrolled_count', 0) or 0) != 1 else ''})"
+            for s in unpriced[:3]
+        )
+        more = f" and {len(unpriced) - 3} more" if len(unpriced) > 3 else ""
+        items.append(
+            AdminAttentionItemView(
+                attention_id="unpriced-classes",
+                kind="unpriced_classes",
+                title="Classes with students and no price",
+                detail=f"{names}{more}. The owner must set a price before these can be billed.",
+                severity="high",
+                href=(
+                    f"/admin/sessions/{_field(unpriced[0], 'session_id')}"
+                    if len(unpriced) == 1
+                    else "/admin/sessions"
+                ),
+                count=len(unpriced),
+            )
+        )
+
+    # S34: priced, enrolled and not invoiced for this month yet. Same read the
+    # monthly run makes, so it clears once Generate monthly has run.
+    unbilled = await read("unbilled_students", _unbilled_student_count, 0, request, today)
+    if unbilled:
+        month = today.strftime("%B")
+        items.append(
+            AdminAttentionItemView(
+                attention_id="unbilled-students",
+                kind="unbilled_students",
+                title=f"No invoice for {month}",
+                detail=(
+                    f"{unbilled} student{'s' if unbilled != 1 else ''} "
+                    f"{'have' if unbilled != 1 else 'has'} no invoice for {month}. "
+                    "Generate monthly invoices to bill them."
+                ),
+                severity="high",
+                href="/admin/payments?tab=invoices",
+                count=unbilled,
             )
         )
 
@@ -417,6 +540,18 @@ async def dashboard_attention(
     )
 
 
+async def _unpriced_classes_with_students(use_cases: AdminUseCases) -> list[Any]:
+    """Live (not ended) classes with at least one seat taken and no fee set."""
+    rows = await use_cases.list_admin_sessions(None, window="open", coach_id=None)  # type: ignore[operator]
+    return [
+        row
+        for row in rows
+        if _field(row, "status") != "cancelled"
+        and int(_field(row, "enrolled_count", 0) or 0) > 0
+        and is_unpriced(_field(row, "amount_cents"))
+    ]
+
+
 async def _pending_registration_count(use_cases: AdminUseCases) -> int:
     review = use_cases.admin_registration_review
     if review is None:
@@ -437,6 +572,43 @@ async def _past_due_family_count(request: Request) -> int:
     """
     counts = await request.app.state.admin_overdue_families.counts()
     return int(counts["past_due"])
+
+
+async def _unbilled_student_count(request: Request, today: date) -> int:
+    """Enrollments with no invoice for the academy's current month."""
+    return int(await request.app.state.admin_unbilled_students.count(today.strftime("%Y-%m")))
+
+
+async def _cover_request_lines(request: Request) -> list[AdminAttentionItemView]:
+    """ "{Coach} can't make {class}, {date}" per open request on a future date."""
+    cover = getattr(request.app.state, "coach_cover", None)
+    if cover is None:
+        return []
+    occurrences = await cover.upcoming_open_cover_requests(now=datetime.now(UTC))
+    if not occurrences:
+        return []
+    requesters = await cover.open_cover_requests(occurrences)
+    names = await user_facts(cover.db, list(requesters.values()))
+    lines: list[AdminAttentionItemView] = []
+    for occ in occurrences:
+        day, time = await cover.when(occ)
+        coach = (names.get(requesters[occ.occurrence_id]) or {}).get("name") or "A coach"
+        lines.append(
+            AdminAttentionItemView(
+                attention_id=f"cover-request-{occ.occurrence_id}",
+                kind="cover_requests",
+                title=f"{coach} can't make {await cover.title(occ) or 'a class'}, {day}",
+                detail=f"At {time}. Assign cover or cancel the class date.",
+                severity="high",
+                href=f"/admin?cover={occ.occurrence_id}",
+            )
+        )
+    return lines
+
+
+async def _messages_waiting(request: Request) -> int:
+    cover = getattr(request.app.state, "coach_cover", None)
+    return int(await cover.messages_waiting()) if cover is not None else 0
 
 
 async def _read_attention_source(

@@ -138,3 +138,41 @@ describe("academy content (Settings Phase 6)", () => {
     );
   });
 });
+
+describe("faqEntries: what to bring (S46)", () => {
+  const bring = (page: PublicAcademyPage) =>
+    faqEntries(page).find((e) => e.question === "What should the player bring?")?.answer;
+  const withBring = (lines: Array<string | null>): PublicAcademyPage => {
+    let i = 0;
+    const tag = <T extends { what_to_bring?: string | null }>(cls: T): T => ({
+      ...cls,
+      what_to_bring: lines[i++ % lines.length],
+    });
+    return {
+      ...published,
+      faqs: [],
+      programs: published.programs.map((p) => ({ ...p, classes: p.classes.map(tag) })),
+      ungrouped_classes: published.ungrouped_classes.map(tag),
+    };
+  };
+
+  it("is a default question with a plain answer when no class says", () => {
+    expect(bring(published)).toMatch(/^Comfortable sports clothes/);
+  });
+
+  it("uses one shared line as written", () => {
+    expect(bring(withBring(["Racket and water", null]))).toBe("Racket and water");
+  });
+
+  it("names the class when classes differ", () => {
+    const page = withBring(["Racket", "Shoes"]);
+    const [first, second] = [...page.programs.flatMap((p) => p.classes), ...page.ungrouped_classes];
+    expect(bring(page)).toContain(`${first.title}: Racket`);
+    expect(bring(page)).toContain(`${second.title}: Shoes`);
+  });
+
+  it("stays out of the academy's own FAQ list", () => {
+    const own = [{ question: "Parking?", answer: "North lot." }];
+    expect(faqEntries({ ...withBring(["Racket"]), faqs: own })).toEqual(own);
+  });
+});

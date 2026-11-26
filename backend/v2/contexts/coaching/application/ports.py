@@ -129,8 +129,20 @@ class SkillNoteRepository(Protocol):
     async def get(self, student_id: str, note_id: str) -> CoachSkillNote | None: ...
 
     async def set_visibility(
-        self, student_id: str, note_id: str, visibility: NoteVisibility
+        self,
+        student_id: str,
+        note_id: str,
+        visibility: NoteVisibility,
+        shared_at: datetime | None = None,
     ) -> CoachSkillNote | None: ...
+
+    async def list_shared_with_parent(self, student_id: str, limit: int) -> list[CoachSkillNote]:
+        """Shared notes that carry ``shared_at``, newest share first."""
+        ...
+
+
+class SkillNameLookup(Protocol):
+    async def names(self, skill_ids: list[str]) -> dict[str, str]: ...
 
 
 # --- Admin attendance review (Inbox "Attendance" tab) ---

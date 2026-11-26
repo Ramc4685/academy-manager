@@ -59,6 +59,11 @@ test.describe("SaaS v2 — coach attendance is tenant-scoped", () => {
     await stubCoachMessages(page);
     await stubCoachAcademy(page);
 
+    // S49: the attendance roster reads the class's health notes.
+    await page.route("**/api/v2/coach/roster-health*", (route) =>
+      fulfillJson(route, { occurrence_id: "occ-aces-today", declared_count: 0, children: [] }),
+    );
+
     const today = "2026-05-22";
     await page.route("**/api/v2/coach/today*", (route) => {
       if (route.request().method() !== "GET") return route.fallback();

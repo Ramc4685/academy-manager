@@ -663,6 +663,21 @@ class EnrollmentWelcomeNotifier(Protocol):
     ) -> None: ...
 
 
+class EnrollmentLevelPlacement(Protocol):
+    """Puts a newly enrolled child on a pathway level (D-10).
+
+    The adapter lives in ``composition/pathway.py``; enrollment never imports
+    student_progress. ``level_id`` None means the program's first level. A
+    child who already has a level keeps it. Best-effort: call sites must not
+    let a placement failure undo the enrollment. Returns the level placed on,
+    None when nothing changed.
+    """
+
+    async def place_new_enrollee(
+        self, student_id: str, *, level_id: str | None = None, actor_id: str | None = None
+    ) -> str | None: ...
+
+
 #: What changed on a roster (issue #612). One vocabulary for every trigger, so
 #: a new lifecycle path has to pick a value rather than invent an alert.
 RosterChangeKind = Literal[

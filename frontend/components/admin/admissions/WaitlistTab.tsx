@@ -17,13 +17,14 @@ import { LaneHeader } from "@/components/ds/lane";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { useIsPhone } from "@/lib/use-is-phone";
 import { SEATLESS_OFFER_NOTE, offerExpiryLabel } from "@/lib/admin/waitlist-offer";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 function formatDate(isoString: string): string {
-  return new Date(isoString).toLocaleDateString([], { month: "short", day: "numeric" });
+  return formatInAcademyZone(isoString, undefined, { month: "short", day: "numeric" });
 }
 
 function formatTime(isoString: string): string {
-  return new Date(isoString).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return formatInAcademyZone(isoString, undefined, { hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 }
 
 /**
@@ -54,10 +55,10 @@ export function WaitlistTab() {
         <Metric label="Total waitlisted" value={String(total)} />
         {/* X2: a held seat is invisible in "enrolled" and in the queue alike. */}
         <Metric label="Seats offered" value={String(offered)} />
-        <Metric label="Sessions with queue" value={String(sessions.length)} />
+        <Metric label="Classes with a queue" value={String(sessions.length)} />
       </div>
 
-      <LaneHeader index="01" title="By session" />
+      <LaneHeader index="01" title="By class" />
 
       {query.isError ? (
         <Card p={20}>
@@ -104,7 +105,7 @@ function SessionWaitlist({
     <Card p={0}>
       <div className="flex flex-col gap-4 border-b border-rally-line p-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <Overline>Session</Overline>
+          <Overline>Class</Overline>
           <h2 className="mt-1 font-display text-[20px] font-semibold text-rally-ink">
             {session.title}
           </h2>
@@ -120,7 +121,7 @@ function SessionWaitlist({
           href={`/admin/sessions/${session.session_id}`}
           className="inline-flex min-h-touch items-center justify-center rounded-lg bg-rally-cobalt px-3 font-body text-[12px] font-semibold text-white"
         >
-          Manage session
+          Manage class
         </a>
       </div>
       <WaitlistEntries entries={session.entries} timezone={timezone} />

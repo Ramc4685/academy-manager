@@ -42,6 +42,8 @@ export interface AdminSessionView {
   timezone: string | null;
   capacity: number;
   amount_cents?: number | null;
+  /** S10: no fee was ever set (null); a free class (0) is priced. Server-derived. */
+  unpriced?: boolean;
   status: "scheduled" | "cancelled" | "completed";
   enrolled_count: number;
   /** Of enrolled_count: children never invoiced (they still take a seat). */
@@ -103,6 +105,8 @@ export interface AdminStudentAttendanceView {
   attendance_id: string;
   occurrence_id: string;
   session_id: string;
+  /** S25: resolved server-side inside the tenant; "Former student" when gone. */
+  student_name?: string | null;
   student_id: string;
   /** "voided" is an admin annulment: the row stays, but counts as unmarked. */
   status: "present" | "absent" | "late" | "voided";
@@ -250,6 +254,8 @@ export interface CreateEnrollmentRequest {
   student_id: string;
   parent_id: string;
   full_name: string;
+  /** D-10: omitted places a new child on the first pathway level. */
+  start_level_id?: string;
 }
 
 export interface TransferEnrollmentRequest {
@@ -998,7 +1004,9 @@ export interface AdminReportsSessionsSummary {
   scheduled_count: number;
   completed_count: number;
   cancelled_count: number;
+  /** Active enrollments; paying_seats leaves out the not-billed ones. */
   enrolled_seats: number;
+  paying_seats: number;
   capacity: number;
   capacity_utilization: number | null;
   waitlist_count: number;
@@ -1076,7 +1084,10 @@ export interface AdminSessionEconomicsSummary {
   coach_payroll_cents: number;
   rent_cents: number;
   other_expenses_cents: number;
-  expected_profit_cents: number;
+  /** "needs_payroll" until the month's coach payroll is final; profit is null then. */
+  payroll_status: "complete" | "needs_payroll";
+  payroll_blocked_by: string | null;
+  expected_profit_cents: number | null;
   profit_margin: number | null;
 }
 
@@ -1097,7 +1108,8 @@ export interface AdminSessionEconomicsRow {
   coach_payroll_cents: number;
   rent_cents: number;
   other_expenses_cents: number;
-  expected_profit_cents: number;
+  payroll_status: "complete" | "needs_payroll";
+  expected_profit_cents: number | null;
   profit_margin: number | null;
 }
 
@@ -1119,6 +1131,8 @@ export interface AdminMessageView {
   is_broadcast: boolean;
   scope_type?: string | null;
   scope_label?: string | null;
+  /** S67: the class date a coach's cover request (`scope_type: "cover_request"`) is about. */
+  scope_id?: string | null;
   recipient_count?: number | null;
   delivery_status?: string | null;
   /**
@@ -1129,6 +1143,8 @@ export interface AdminMessageView {
   counterparty_id?: string | null;
   /** #864: false only for an incoming DM this admin has not opened yet. */
   is_read?: boolean;
+  /** D-18: the staff member who wrote a reply in a family's academy thread. */
+  author_display_name?: string | null;
 }
 
 export interface AdminMessageList {
@@ -1362,7 +1378,8 @@ export type AdminAttentionKind =
   | "billing_deferrals"
   | "waivers"
   | "session_pressure"
-  | "missing_attendance";
+  | "missing_attendance"
+  | "unpriced_classes";
 
 export interface AdminAttentionItem {
   attention_id: string;
@@ -1553,6 +1570,10 @@ export interface AdminAuditLogView {
   actor_role: string | null;
   actor_name: string | null;
   action: string;
+  /** S39: plain words for `action`; null on rows from an older backend. */
+  action_label?: string | null;
+  /** Which trail the row came from (audit_logs, billing_audit_log, ...). */
+  source?: string | null;
   entity_type: string | null;
   entity_id: string | null;
   created_at: string;
@@ -1560,6 +1581,8 @@ export interface AdminAuditLogView {
 
 export interface AdminAuditLogList {
   logs: AdminAuditLogView[];
+  /** Pass back as `cursor` for the next, older page; null at the end. */
+  next_cursor?: string | null;
 }
 
 export interface SendDuesRemindersResponse {
@@ -3150,7 +3173,9 @@ export interface AdminProjectedIncomeSessionRow {
   session_id: string;
   title: string;
   monthly_fee_cents: number;
+  /** Paying enrollments; enrolled_count adds the not-billed ones. */
   enrollment_count: number;
+  enrolled_count: number;
   expected_cents: number;
 }
 
@@ -3349,6 +3374,8 @@ export interface AdminAttendanceTrendsPeriod {
   scheduled_count: number;
   completed_count: number;
   no_show_count: number;
+  cancelled_count: number;
+  /** Held over every class date, cancelled included. */
   completion_rate: number;
 }
 
@@ -3564,7 +3591,12 @@ export function getAdminRegistration(applicationId: string): Promise<AdminRegist
 
 export function approveAdminRegistration(
   applicationId: string,
-  payload: { session_id?: string | null; waiver_override_reason?: string | null } = {},
+  payload: {
+    session_id?: string | null;
+    waiver_override_reason?: string | null;
+    /** D-10: null places a new child on the first pathway level. */
+    start_level_id?: string | null;
+  } = {},
 ): Promise<AdminRegistrationDetail> {
   return apiFetch<AdminRegistrationDetail>(
     `/admin/registrations/${encodeURIComponent(applicationId)}/approve`,
@@ -3972,9 +4004,15 @@ export function listAdminCancellations(): Promise<SelfCancellationsAdminResponse
   });
 }
 
-export function listAuditLogs(actorType?: AdminAuditActorType | null): Promise<AdminAuditLogList> {
-  const query = actorType ? `?actor_type=${encodeURIComponent(actorType)}` : "";
-  return apiFetch<AdminAuditLogList>(`/admin/audit-logs${query}`, { method: "GET" });
+export function listAuditLogs(
+  actorType?: AdminAuditActorType | null,
+  cursor?: string | null,
+): Promise<AdminAuditLogList> {
+  const params = new URLSearchParams();
+  if (actorType) params.set("actor_type", actorType);
+  if (cursor) params.set("cursor", cursor);
+  const query = params.toString();
+  return apiFetch<AdminAuditLogList>(`/admin/audit-logs${query ? `?${query}` : ""}`, { method: "GET" });
 }
 
 export function sendDuesReminders(payload: { parent_ids?: string[] } = {}): Promise<SendDuesRemindersResponse> {
@@ -4823,4 +4861,78 @@ export function suggestNoClassDates(input: { text: string; classDates: string[] 
     body: JSON.stringify({ text: input.text, class_dates: input.classDates }),
     dedup: false,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Today (S63/S64): today's classes and rosters, plus the never-cached health read
+// ---------------------------------------------------------------------------
+
+export type AdminToday = components["schemas"]["AdminToday"];
+export type AdminTodayClass = components["schemas"]["TodayClass"];
+export type AdminTodayRosterRow = components["schemas"]["TodayRosterRow"];
+export type AdminRosterHealth = components["schemas"]["AdminRosterHealthResponse"];
+export type AdminChildHealth = components["schemas"]["AdminChildHealthView"];
+
+export function getAdminToday(date?: string): Promise<AdminToday> {
+  const query = date ? `?date=${encodeURIComponent(date)}` : "";
+  return apiFetch<AdminToday>(`/admin/today${query}`, { method: "GET" });
+}
+
+/** Health notes (D-14): never cached by the browser, the SW or the persister. */
+export function getAdminTodayRosterHealth(occurrenceId: string): Promise<AdminRosterHealth> {
+  return apiFetch<AdminRosterHealth>(
+    `/admin/today/roster-health?occurrence_id=${encodeURIComponent(occurrenceId)}`,
+    { method: "GET", cache: "no-store" },
+  );
+}
+
+export type AdminPhoneMatch = components["schemas"]["PhoneMatch"];
+
+/** S65: this academy's parents whose phone contains `digits` (4 or more). */
+export function searchParentsByPhone(digits: string): Promise<{ matches: AdminPhoneMatch[] }> {
+  return apiFetch<{ matches: AdminPhoneMatch[] }>(
+    `/admin/phone-search?phone=${encodeURIComponent(digits)}`,
+    { method: "GET" },
+  );
+}
+
+// --- S66: "Coach is sick" cover flow ---------------------------------------
+
+export type CoverOptionsResponse = components["schemas"]["CoverOptionsResponse"];
+export type CoverOptions = components["schemas"]["CoverOptionsView"];
+export type CoverDate = components["schemas"]["CoverDateView"];
+export type AssignCoverResponse = components["schemas"]["AssignCoverResponse"];
+
+/** A coach's class dates in the next two weeks. */
+export function getCoachCoverDates(coachId: string): Promise<CoverOptionsResponse> {
+  return apiFetch<CoverOptionsResponse>(
+    `/admin/coach-cover/options?coach_id=${encodeURIComponent(coachId)}`,
+    { method: "GET" },
+  );
+}
+
+/** Who is free or busy for each class date, and the families on it. */
+export function getCoverOptions(occurrenceIds: string[]): Promise<CoverOptionsResponse> {
+  return apiFetch<CoverOptionsResponse>(
+    `/admin/coach-cover/options?occurrence_ids=${encodeURIComponent(occurrenceIds.join(","))}`,
+    { method: "GET" },
+  );
+}
+
+/** Each family's credit if the date were cancelled; the server writes nothing. */
+export function getCancelPreview(occurrenceId: string): Promise<CreditMissedClassResponse> {
+  return apiFetch<CreditMissedClassResponse>(
+    `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/cancel-preview`,
+    { method: "GET" },
+  );
+}
+
+export function assignCover(
+  occurrenceId: string,
+  payload: { replacement_coach_id: string; notify_families: boolean; reason?: string },
+): Promise<AssignCoverResponse> {
+  return apiFetch<AssignCoverResponse>(
+    `/admin/coach-cover/${encodeURIComponent(occurrenceId)}/assign`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
 }

@@ -11,6 +11,12 @@
  * own `onError` — i.e. already show contextual feedback — are skipped, as are
  * mutations that opt out with `meta: { suppressGlobalError: true }`.
  *
+ * Success feedback is data on the mutation too: declare it and the cache
+ * toasts it once when the mutation succeeds, so a save is never silent.
+ *
+ *   useMutation({ mutationFn, meta: { success: "Class saved" } });
+ *   useMutation({ mutationFn, meta: { success: { title: "Invoice sent", description: "..." } } });
+ *
  * The sink indirection exists because the QueryClient is created above the
  * persona layouts, while the `ds/toast` ToastProvider (a React context) is
  * mounted inside them. The ToastProvider registers itself on mount.
@@ -21,12 +27,19 @@ export interface MutationErrorNotice {
   description?: string;
 }
 
-type MutationErrorSink = (notice: MutationErrorNotice) => void;
+export interface MutationToastNotice extends MutationErrorNotice {
+  kind: "success" | "error";
+}
 
-let activeSink: MutationErrorSink | null = null;
+/** What `meta.success` may hold: a title, or a title plus description. */
+export type MutationSuccessMeta = string | MutationErrorNotice;
+
+type MutationToastSink = (notice: MutationToastNotice) => void;
+
+let activeSink: MutationToastSink | null = null;
 
 /** Register the toast sink. Returns an unregister function for unmount. */
-export function registerMutationErrorSink(sink: MutationErrorSink): () => void {
+export function registerMutationToastSink(sink: MutationToastSink): () => void {
   activeSink = sink;
   return () => {
     if (activeSink === sink) activeSink = null;
@@ -105,9 +118,10 @@ function describeMutationErrorBase(error: unknown): MutationErrorNotice {
       ? error.message
       : undefined;
   if (status !== null && status >= 500) {
+    // Never show the server's 5xx text ("Internal Server Error"); the reference finds it.
     return {
       title: "Something went wrong",
-      description: message ?? "The server hit an unexpected error. Please try again.",
+      description: "That didn't go through on our side. Please try again in a moment.",
     };
   }
   return {
@@ -137,9 +151,18 @@ export function handleGlobalMutationError(error: unknown, mutation: MutationLike
   if (!shouldNotifyGlobally(mutation)) return;
   const notice = describeMutationError(error);
   if (activeSink) {
-    activeSink(notice);
+    activeSink({ kind: "error", ...notice });
   } else {
     // No ToastProvider mounted (e.g. auth pages) — at least keep it observable.
     console.error("[mutation]", notice.title, notice.description ?? "", error);
   }
+}
+
+/** The global onSuccess default: toast `meta.success` when a mutation declares one. */
+export function handleGlobalMutationSuccess(mutation: Pick<MutationLike, "meta">): void {
+  const success = mutation.meta?.success as MutationSuccessMeta | undefined;
+  if (!success || !activeSink) return;
+  activeSink(
+    typeof success === "string" ? { kind: "success", title: success } : { kind: "success", ...success },
+  );
 }

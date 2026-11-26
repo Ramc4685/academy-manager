@@ -19,6 +19,7 @@ from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers
 )
 from backend.v2.interfaces.dropoff_views import DropoffCheckinView
 from backend.v2.interfaces.parent.absence_makeup import AbsenceMakeupView
+from backend.v2.shared.comms import MAX_ACADEMY_MESSAGE_BODY
 
 # --- Onboarding ---
 
@@ -71,7 +72,36 @@ class ApplicationView(BaseModel):
     # True when some live waiver is assigned to a program: the stepper then
     # asks for the class before the waiver. False for a single-waiver academy.
     waiver_class_first: bool = False
+    # S47: False when there is no required waiver to sign (none published, or
+    # only the starter placeholder); the stepper then skips the waiver step.
+    waiver_to_sign: bool = True
     expires_at: datetime
+
+
+class StartApplicationRequest(BaseModel):
+    #: S02: resume this application ("Finish registration") instead of the latest.
+    application_id: str | None = Field(default=None, max_length=64)
+
+
+class ParentRegistrationView(BaseModel):
+    """One registration that is not finished or not yet confirmed (S02).
+
+    ``state``: ``finish`` (back into the wizard), ``waiting`` (the academy
+    confirms), ``waitlisted`` or ``declined``.
+    """
+
+    application_id: str
+    child_first_name: str
+    session_id: str | None = None
+    session_title: str | None = None
+    schedule_label: str | None = None
+    status: str
+    state: Literal["finish", "paying", "waiting", "waitlisted", "declined"]
+    submitted_at: datetime
+
+
+class ParentRegistrationList(BaseModel):
+    registrations: list[ParentRegistrationView]
 
 
 class PatchApplicationRequest(BaseModel):
@@ -230,6 +260,9 @@ class ParentPaymentView(BaseModel):
     # payment paid for; None for legacy/unallocated payments.
     invoice_id: str | None = None
     invoice_period: str | None = None
+    # S57: which children the payment covered and how it was paid, in words.
+    student_names: list[str] = Field(default_factory=list)
+    method_label: str | None = None
 
 
 class ParentPaymentHistoryResponse(BaseModel):
@@ -273,6 +306,12 @@ class ParentInvoiceView(BaseModel):
     void_reason: str | None = None
     #: e.g. ``DEMO-202611-0001``; None for invoices made before numbering.
     invoice_number: str | None = None
+    # S57: who and what the invoice is for, and how it was last paid.
+    student_name: str | None = None
+    class_name: str | None = None
+    paid_on: date | None = None
+    method_label: str | None = None
+    has_receipt: bool = False
 
 
 class ParentInvoicesResponse(BaseModel):
@@ -514,6 +553,8 @@ class ParentScheduleEntryView(BaseModel):
     cancellation_reason: str | None = None
     # The child already has an absence notice for this date.
     absence_reported: bool = False
+    # S43: this parent filed it, so Undo is offered (until class starts).
+    absence_undoable: bool = False
     # Drop-off check-in state; None when the academy has the feature off.
     checkin: DropoffCheckinView | None = None
     # Server-computed: show "I've arrived" now.
@@ -639,6 +680,23 @@ class ParentMessageView(BaseModel):
     scope_label: str | None = None
     urgency: Literal["routine", "urgent"] = "routine"
     author_display_name: str | None = None
+    #: True on what this parent sent to the academy (D-18), so the client
+    #: never compares ids to place a bubble.
+    mine: bool = False
+
+
+class ParentSendMessageRequest(BaseModel):
+    body: str
+
+    @field_validator("body")
+    @classmethod
+    def _trimmed_and_capped(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Write a message first.")
+        if len(v) > MAX_ACADEMY_MESSAGE_BODY:
+            raise ValueError(f"Messages can be up to {MAX_ACADEMY_MESSAGE_BODY} characters.")
+        return v
 
 
 class ParentMessagesResponse(BaseModel):
@@ -728,10 +786,9 @@ class UpdateParentChildRequest(BaseModel):
 class ParentHomeNextSessionView(BaseModel):
     """The child's next upcoming occurrence.
 
-    ``coach_name`` is always ``None`` today — ``GetChildSchedule.execute``
-    hardcodes it. The field is kept for shape parity with
-    ``ParentScheduleEntryView`` so the card can render a coach line the day
-    the use case starts populating it.
+    S45: ``coach_name`` is who coaches that date (substitute, else actual,
+    else scheduled coach), and the family-info fields come from the class as
+    stored (address falls back to the academy's).
     """
 
     occurrence_id: str
@@ -744,6 +801,12 @@ class ParentHomeNextSessionView(BaseModel):
     # "regular" (standing enrollment) or "makeup" / "trial" for a one-time
     # approved attendance (issue #1038).
     source: Literal["regular", "makeup", "trial"] = "regular"
+    #: S17: the family already reported this class as an absence.
+    absence_reported: bool = False
+    venue_address: str | None = None
+    parking_notes: str | None = None
+    what_to_bring: str | None = None
+    arrival_minutes_before: int | None = None
 
 
 class ParentHomeAttendanceView(BaseModel):
@@ -758,7 +821,8 @@ class ParentHomeAttendanceView(BaseModel):
 
 
 class ParentHomeMilestoneView(BaseModel):
-    kind: Literal["note", "skill"]
+    #: ``skill`` is a PASSED skill (a milestone); ``working_on`` is in progress (S18).
+    kind: Literal["note", "skill", "working_on"]
     label: str
     at: datetime
 
@@ -769,6 +833,8 @@ class ParentHomeChildView(BaseModel):
     next_session: ParentHomeNextSessionView | None = None
     attendance_this_month: ParentHomeAttendanceView
     latest_milestone: ParentHomeMilestoneView | None = None
+    #: S45: never marked present or late yet, so Home shows "Before your first class".
+    first_class_pending: bool = False
 
 
 class ParentHomeBalanceView(BaseModel):

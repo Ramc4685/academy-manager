@@ -29,6 +29,7 @@ export { ContactLinks, contactMenuItems } from "./contact-links";
 export type { ContactPoints } from "./contact-links";
 export { PhoneList, PhoneListRow } from "./phone-row";
 export type { PhoneListRowProps } from "./phone-row";
+export { ConfirmActionDialog, useConfirmTarget } from "./confirm-action-dialog";
 export { RallyModal, DialogActions, DialogError, Field, Th } from "./dialog-chrome";
 export { ListToolbar, FilterBar, FilterChip, ToolbarSearch } from "./list-toolbar";
 export { OverflowCue, overflowEdges, useOverflowEdges } from "./overflow-cue";

@@ -10,8 +10,10 @@ import {
   listParentChildProgress,
   listParentChildren,
   getParentProgressJourney,
+  listParentChildSkillNotes,
   type ParentProgressNote,
 } from "@/lib/api/parent";
+import { CoachSkillNotesList } from "@/components/parent/coach-skill-notes";
 import { getParentStudentCertificates } from "@/lib/api/curriculum";
 import { queryKeys } from "@/lib/query/keys";
 import { ClassRecapList } from "@/components/parent/ClassRecapList";
@@ -26,6 +28,8 @@ import {
   SkillChecklist,
   notesForChild,
 } from "./journey";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
+import { useAcademyZone } from "@/lib/format/academy-zone";
 
 // Per-note left-border accents are derived from the note id hash — genuinely
 // dynamic, so these stay as literal color stops (no single token pair
@@ -129,6 +133,7 @@ function EmptyNotes({ firstName }: { firstName: string }) {
 }
 
 function NotesList({ notes }: { notes: ParentProgressNote[] }) {
+  const academyTimezone = useAcademyZone();
   return (
     <ul className="space-y-3 stagger-children">
       {notes.map((note) => {
@@ -153,7 +158,7 @@ function NotesList({ notes }: { notes: ParentProgressNote[] }) {
                       {note.student_name}
                     </p>
                     <time className="text-[11px] shrink-0 text-rally-subtle">
-                      {new Date(note.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                      {formatInAcademyZone(note.created_at, academyTimezone, { month: "short", day: "numeric" })}
                     </time>
                   </div>
                   {note.coach_name && (
@@ -302,6 +307,10 @@ function ChildJourney({ studentId, childName }: { studentId: string; childName: 
     queryKey: ["parent", "certificates", studentId],
     queryFn: () => getParentStudentCertificates(studentId),
   });
+  const { data: skillNotes } = useQuery({
+    queryKey: queryKeys.parent.childSkillNotes(studentId),
+    queryFn: () => listParentChildSkillNotes(studentId),
+  });
   const firstName = childName.split(" ")[0] || childName;
 
   if (journeyQuery.isLoading) return <JourneySkeleton />;
@@ -336,6 +345,9 @@ function ChildJourney({ studentId, childName }: { studentId: string; childName: 
         <p className="rounded-2xl p-4 bg-white border border-rally-line text-sm text-rally-muted">
           Their coach will assign a level after the first classes.
         </p>
+      )}
+      {skillNotes && skillNotes.notes.length > 0 && (
+        <CoachSkillNotesList notes={skillNotes.notes} firstName={firstName} />
       )}
       <MilestoneList milestones={journey.milestones ?? []} firstName={firstName} />
       <RecentWins wins={journey.recent_wins} studentId={studentId} />

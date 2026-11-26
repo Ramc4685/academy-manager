@@ -16,14 +16,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, get_args
 
-from pydantic import ValidationError
-
 from backend.v2.contexts.enrollment.domain.programs import (
     DEFAULT_COACH_DISPLAY,
-    AgeBand,
     ClassPublicProfile,
     CoachDisplay,
     PricePeriod,
+    age_band_from_doc,
 )
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     _session_filter,
@@ -62,7 +60,7 @@ def class_public_profile_from_doc(doc: Mapping[str, Any]) -> ClassPublicProfile:
         ),
         public_description=_text(doc.get("public_description"), 500),
         level=_text(doc.get("level"), 40),
-        age_band=_age_band(doc.get("age_band")),
+        age_band=age_band_from_doc(doc.get("age_band")),
     )
 
 
@@ -104,12 +102,3 @@ def _text(value: object, limit: int) -> str | None:
         return None
     text = str(value).strip()
     return text[:limit] or None
-
-
-def _age_band(value: object) -> AgeBand | None:
-    if not isinstance(value, dict):
-        return None
-    try:
-        return AgeBand(min_age=value.get("min_age"), max_age=value.get("max_age"))
-    except ValidationError:
-        return None

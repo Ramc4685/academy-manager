@@ -1509,3 +1509,89 @@ def test_revoke_is_not_found_for_a_coach(env):
     )
 
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# D-10 (S52): the owner places the unplaced backlog after seeing the list
+# ---------------------------------------------------------------------------
+
+
+class _BacklogPlacement:
+    """Like PlaceOnEnrollment, and the source of truth for who is placed."""
+
+    def __init__(self, placed: set[str]) -> None:
+        self.placed = placed
+        self.calls: list[tuple[str, str | None, str]] = []
+
+    async def place_new_enrollee(self, student_id, *, level_id=None, actor_id=None, reason=""):
+        self.calls.append((student_id, actor_id, reason))
+        if student_id in self.placed:
+            return None
+        self.placed.add(student_id)
+        return "lvl-1"
+
+
+def _backlog_app(roles: tuple[str, ...]) -> tuple[TestClient, _BacklogPlacement]:
+    placement = _BacklogPlacement(placed={"st-placed"})
+    students = [
+        SimpleNamespace(student_id=sid, full_name=name)
+        for sid, name in [
+            ("st-placed", "Pia Placed"),
+            ("st-new-1", "Nia New"),
+            ("st-new-2", "Ned New"),
+        ]
+    ]
+
+    async def list_students(**_kwargs):
+        return SimpleNamespace(students=students, next_cursor=None)
+
+    async def active_level_names(student_ids, _program_id):
+        return {sid: "Level 1" for sid in student_ids if sid in placement.placed}
+
+    use_cases = SimpleNamespace(
+        list_admin_students=SimpleNamespace(execute=list_students),
+        curriculum=SimpleNamespace(
+            resolve_default_program=SimpleNamespace(
+                execute=AsyncMock(return_value=SimpleNamespace(program_id="prog-1"))
+            )
+        ),
+        student_progress=SimpleNamespace(
+            get_active_level_names=SimpleNamespace(execute=active_level_names),
+            place_on_enrollment=placement,
+        ),
+    )
+    claims = _admin_claims().model_copy(update={"roles": roles})
+    return TestClient(_build_app(use_cases, claims)), placement
+
+
+def test_owner_sees_the_unplaced_list_then_places_it_once() -> None:
+    client, placement = _backlog_app(("admin", "owner"))
+
+    listed = client.get("/api/v2/admin/pathway/unplaced")
+    assert listed.status_code == 200, listed.text
+    ids = [s["student_id"] for s in listed.json()["students"]]
+    assert ids == ["st-new-1", "st-new-2"]
+
+    # A stale id the owner never saw as unplaced is skipped, not moved.
+    first = client.post(
+        "/api/v2/admin/pathway/unplaced/place", json={"student_ids": [*ids, "st-placed"]}
+    )
+    again = client.post("/api/v2/admin/pathway/unplaced/place", json={"student_ids": ids})
+
+    assert [r["outcome"] for r in first.json()["results"]] == ["placed", "placed", "skipped"]
+    assert [r["outcome"] for r in again.json()["results"]] == ["skipped", "skipped"]
+    assert [c[0] for c in placement.calls] == ["st-new-1", "st-new-2"]
+    assert placement.calls[0][2] == "owner_backlog_placement"
+    assert client.get("/api/v2/admin/pathway/unplaced").json()["students"] == []
+
+
+def test_admin_who_is_not_owner_cannot_place_the_backlog() -> None:
+    client, placement = _backlog_app(("admin",))
+
+    assert client.get("/api/v2/admin/pathway/unplaced").status_code == 200
+    response = client.post(
+        "/api/v2/admin/pathway/unplaced/place", json={"student_ids": ["st-new-1"]}
+    )
+
+    assert response.status_code == 404
+    assert placement.calls == []

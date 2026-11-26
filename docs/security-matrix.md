@@ -32,6 +32,9 @@ A request returning **404** means "the route does not exist for you," regardless
 | Create session | Yes | No | No |
 | Edit session | Yes | No | No |
 | Cancel session | Yes | No | No |
+| Read cover options (who is free) and a class date's cancel preview | Yes | No | No |
+| Assign cover for a sick coach (Coach is sick flow) | Yes | No | No |
+| Request cover for own class date (I can't make it; inbox message only) | No (admins use Coach is sick) | Assigned only | No |
 | **Enrollment** | | | |
 | Edit roster (add/remove student) | Yes | No | No |
 | Confirm enrollment | Yes | No | Conditional: own child, via Stripe checkout |
@@ -47,12 +50,15 @@ A request returning **404** means "the route does not exist for you," regardless
 | Mark attendance for assigned session | Yes | Conditional: assigned to session | No |
 | Edit historical attendance | Yes | No | No |
 | View attendance for session | Yes | Conditional: assigned to session | Conditional: own child |
+| **Health (D-14)** | | | |
+| Read a class date's health notes, emergency contacts and parent phone | Yes (own academy) | Conditional: assigned to that class date (lead, cover or assistant) | No |
 | **Coaching** | | | |
 | Create lesson plan | Yes | Conditional: assigned sessions | No |
 | Edit lesson plan | Yes | Conditional: own plans | No |
 | View lesson plan | Yes | Conditional: assigned sessions | No |
 | Create progress note for student | Yes | Conditional: assigned students | No |
 | View progress notes | Yes | Conditional: assigned students | Conditional: own child |
+| Read the academy's levels and lesson plans (`GET /coach/pathway`, S68) | Yes | Yes | No (404) |
 | **Payments** | | | |
 | View payment history (academy-wide) | Yes | No | No |
 | View own payment history | N/A | N/A | Yes |
@@ -62,6 +68,7 @@ A request returning **404** means "the route does not exist for you," regardless
 | **Finance** | | | |
 | View academy revenue | Yes | No | No |
 | View own coach payout | Yes | Self only | No |
+| View own classes taught and approved or paid payslips (`GET /coach/profile/pay`, S59) | Own only on this route | Self only: never a draft, rate, per-class amount or revenue | No (404) |
 | View coach payouts (any) | Yes | No | No |
 | Record expense | Yes | No | No |
 | **Identity** | | | |
@@ -75,6 +82,7 @@ A request returning **404** means "the route does not exist for you," regardless
 | Send DM to coach | Yes | N/A | Yes |
 | Send DM to parent | Yes | Yes (assigned children's parents) | N/A |
 | View own messages | Yes | Yes | Yes |
+| Send message to the academy (`POST /parent/messages`, D-18) | Reads and replies (every admin and owner sees every family's thread) | No | Yes (own thread only; no thread id accepted from the client; 10/hour, 30/day; 1–1000 chars) |
 | **Admin / System** | | | |
 | View audit logs | Yes | No | No |
 | Trigger waiver re-acknowledgement | Yes | No | No |
@@ -100,7 +108,26 @@ This section is updated per wave as routes ship.
 | Mark attendance for assigned session | ✅ implemented | ☐ | `backend/v2/tests/interface/test_coach_attendance.py` |
 | View attendance for session (coach: assigned) | ✅ implemented | ☐ | `backend/v2/tests/interface/test_coach_today.py` |
 
+| View own classes taught and released payslips (`GET /coach/profile/pay`) | ✅ implemented (coach id is always the signed-in user) | ✅ | `backend/v2/tests/interface/test_coach_pay_route.py`, `backend/v2/tests/contract/test_coach_pay_summary.py` |
+| Read the academy's levels and lesson plans (`GET /coach/pathway`) | ✅ implemented (reference content only, no student data) | ✅ | `backend/v2/tests/interface/test_coach_pathway_route.py` |
+
 (Filled in as W1A-09 lands.)
+
+### Academy inbox (D-18, S61)
+
+| Action | Access implemented | Wrong persona returns 404 | Test file |
+|---|:---:|:---:|---|
+| Send message to the academy | ✅ parent, own thread | ✅ coach, admin | `backend/v2/tests/interface/test_parent_messages_routes.py` |
+| Admin reads and replies to family threads | ✅ every admin; private DMs stay private | n/a | `backend/v2/tests/interface/test_admin_academy_inbox.py`, `backend/v2/tests/contract/test_message_repo_tenant_isolation.py` |
+
+### Health notes (S49, decision D-14)
+
+| Action | Coach has access | Wrong persona returns 404 | Test file |
+|---|:---:|:---:|---|
+| Read a class date's health notes (`GET /coach/roster-health`) | ✅ assigned only | ✅ unassigned coach, assistant on another class, parent, student, other academy | `backend/v2/tests/interface/test_coach_roster_health.py` |
+| Admin Today and its health marker (`GET /admin/today`, `GET /admin/today/roster-health`) | Admin only (own academy) | ✅ coach, parent, front desk, other academy | `backend/v2/tests/interface/test_admin_today.py` |
+
+Health notes are served only by their own routes, sent `Cache-Control: no-store`, excluded from the service worker cache (`frontend/app/sw.test.ts`) and the query persister (`frontend/lib/query/persistence.test.ts`), and never ride on the cached coach Today, sessions or plan payloads (schema test in the same file). They never go into lists, exports, digests, push, emails or AI input.
 
 ### Wave 1B, 2, 3 — Not yet started
 

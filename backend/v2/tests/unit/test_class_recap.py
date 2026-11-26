@@ -1258,7 +1258,17 @@ async def test_parent_pass_mark_follows_the_skill_id_not_a_shared_name() -> None
     )
     row = (await listing.execute("maya")).recaps[0]
     assert _skills(row.earned_skills) == [(GRIP, "Forehand grip")]
-    assert [s.skill_id for s in row.practiced_skills] == [twin]
+    # The twin stays practised only; the earned GRIP counts as practised too (S18).
+    assert [s.skill_id for s in row.practiced_skills] == [twin, GRIP]
+
+
+async def test_a_skill_earned_at_a_class_counts_as_practised_there() -> None:
+    """S18: the coach recorded only the pass; the parent is not told nothing was practised."""
+    w = World()
+    _store(w, OCC, taught=(GRIP,))
+    row = (await w.child(Passes({"maya": {OCC: {GRIP}}})).execute("maya")).recaps[0]
+    assert _skills(row.earned_skills) == [(GRIP, "Forehand grip")]
+    assert _skills(row.practiced_skills) == [(GRIP, "Forehand grip")]
 
 
 async def test_parent_list_reads_names_and_passes_once_for_the_page() -> None:

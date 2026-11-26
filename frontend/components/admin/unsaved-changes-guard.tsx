@@ -14,7 +14,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
+import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 
 /**
  * Issue #893: one unsaved-changes guard for the whole admin shell.

@@ -16,6 +16,10 @@ import pytest
 from backend.v2.contexts.onboarding.infrastructure.mongo_registration_waiver_repo import (
     MongoRegistrationWaiverRepository,
 )
+from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_template_repo import (
+    MongoWaiverTemplateRepository,
+)
+from backend.v2.shared.starter_waiver import DEFAULT_WAIVER_BODY
 
 NOW = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
 WAIVER_TEXT = "Standard liability waiver body."
@@ -160,3 +164,33 @@ async def test_returns_none_when_collection_empty(db, acad):
     waiver = await repo.get_active()
 
     assert waiver is None
+
+
+async def _seed_starter(db, acad: str, waiver_template_id: str = "tmpl-starter") -> None:
+    await _seed_template(db, academy_id=acad, waiver_template_id=waiver_template_id)
+    await db["waiver_templates"].update_one(
+        {"waiver_template_id": waiver_template_id}, {"$set": {"body": DEFAULT_WAIVER_BODY}}
+    )
+
+
+@pytest.mark.asyncio
+async def test_starter_waiver_is_not_put_to_families(db, acad):
+    """S47 / D-11: the untouched bootstrap text reads as "no waiver configured"."""
+    await _seed_starter(db, acad)
+    repo = MongoRegistrationWaiverRepository(db)
+
+    assert await repo.get_active() is None
+    assert await repo.list_required(None) == []
+    # The per-student parent flow and the admin review read this list.
+    assert await MongoWaiverTemplateRepository(db).list_required_templates() == []
+
+
+@pytest.mark.asyncio
+async def test_a_published_real_waiver_is_asked_for_beside_the_starter(db, acad):
+    await _seed_starter(db, acad)
+    await _seed_template(db, academy_id=acad, waiver_template_id="tmpl-real")
+    repo = MongoRegistrationWaiverRepository(db)
+
+    active = await repo.get_active()
+    assert active is not None and active.waiver_id == "tmpl-real"
+    assert [w.waiver_id for w in await repo.list_required(None)] == ["tmpl-real"]

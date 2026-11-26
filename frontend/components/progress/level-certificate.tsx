@@ -3,10 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AcademyMark } from "@/components/ds/academy-mark";
 import type { CertificateDetail } from "@/lib/api/curriculum";
-import {
-  parseAcademyInstant,
-  resolveAcademyTimeZone,
-} from "@/lib/format/academy-time";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 import { safeHexColor, safeHttpsUrl } from "@/lib/public-page/format";
 import { contrastRatio, ensureContrast } from "@/lib/public-page/theme";
 
@@ -32,11 +29,10 @@ export function formatCertificateDate(
   value: string,
   academyTimezone?: string | null,
 ): string {
-  return parseAcademyInstant(value).toLocaleDateString("en-US", {
+  return formatInAcademyZone(value, academyTimezone, {
     month: "long",
     day: "numeric",
     year: "numeric",
-    timeZone: resolveAcademyTimeZone(academyTimezone).timeZone,
   });
 }
 

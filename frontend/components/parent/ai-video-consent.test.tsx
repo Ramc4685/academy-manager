@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { ParentAiVideoConsentView } from "@/lib/api/parent";
-import { AiVideoConsentBlock } from "./ai-video-consent";
+import { AiVideoConsentBlock, aiConsentViewToShow } from "./ai-video-consent";
 
 // Fictional fixture: no real family.
 const view: ParentAiVideoConsentView = {
@@ -63,5 +63,21 @@ describe("AiVideoConsentBlock", () => {
     expect(html).toContain("Text changed");
     expect(html).toMatch(/<button[^>]*disabled[^>]*>Accept new text<\/button>/);
     expect(html).toMatch(/<button[^>]*>Revoke<\/button>/);
+  });
+});
+
+describe("aiConsentViewToShow (S24)", () => {
+  it("hides placeholder text from a family with no grant", () => {
+    const children = view.children.filter((child) => child.status !== "granted");
+    expect(aiConsentViewToShow({ ...view, children })).toBeNull();
+  });
+
+  it("keeps a child already granted under the placeholder, and only that child", () => {
+    const shown = aiConsentViewToShow(view);
+    expect(shown?.children.map((child) => child.student_id)).toEqual(["st-2"]);
+  });
+
+  it("shows every child once the tenant has real text", () => {
+    expect(aiConsentViewToShow({ ...view, placeholder: false })?.children).toHaveLength(3);
   });
 });

@@ -24,12 +24,14 @@ from pydantic import BaseModel
 from backend.v2.contexts.enrollment.domain.errors import OccurrenceNotFound, StudentNotFound
 from backend.v2.contexts.enrollment.domain.models import SessionOccurrence, Student
 from backend.v2.contexts.enrollment.domain.self_service import (
+    AbsenceNoticeNotFound,
     AbsenceWindowClosed,
     DuplicateAbsenceNotice,
     ParentActionDisabled,
     ParentSelfServicePolicy,
     StudentNotEnrolledInSession,
 )
+from backend.v2.shared.audit import AuditTrail, record_best_effort
 from backend.v2.shared.ids import new_ulid
 
 log = logging.getLogger(__name__)
@@ -293,6 +295,91 @@ class RecordAbsenceNoticeForStudent:
             self._notifier, notice=notice, occurrence=occurrence, student=student
         )
         return notice
+
+
+class WithdrawAbsenceNoticeCommand(BaseModel):
+    model_config = {"frozen": True}
+
+    parent_id: str
+    student_id: str
+    occurrence_id: str
+
+
+class AbsenceNoticeWithdrawalRepository(Protocol):
+    async def get_for_occurrence_and_student(
+        self, occurrence_id: str, student_id: str
+    ) -> AbsenceNotice | None: ...
+
+    async def delete(self, notice: AbsenceNotice) -> None: ...
+
+
+class WithdrawAbsenceNotice:
+    """A parent takes back an absence they reported, before class starts (D-12).
+
+    Only the parent who filed it may withdraw it: an admin-recorded notice or
+    a co-parent's reads as not found. The row is hard-deleted (a soft delete
+    would have to be filtered by the roster, inbox, timeline and the unique
+    re-report index) and an ``absence_notice.withdrawn`` audit row keeps the
+    history. Every reader then shows a normal class, and the make-up
+    eligibility the notice earned goes with it; a make-up request needs the
+    class to have started, so none can be open yet.
+    """
+
+    def __init__(
+        self,
+        *,
+        students: StudentQuery,
+        occurrences: SessionOccurrenceRepository,
+        notices: AbsenceNoticeWithdrawalRepository,
+        policies: SelfServicePolicyRepository,
+        audit: AuditTrail | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._students = students
+        self._occurrences = occurrences
+        self._notices = notices
+        self._policies = policies
+        self._audit = audit
+        self._now = clock
+
+    async def execute(self, cmd: WithdrawAbsenceNoticeCommand) -> None:
+        policy = await self._policies.get_or_default()
+        if not policy.can_report_absence:
+            raise ParentActionDisabled("report_absence")
+        notice = None
+        if await self._students.get_for_parent(cmd.parent_id, cmd.student_id) is not None:
+            notice = await self._notices.get_for_occurrence_and_student(
+                cmd.occurrence_id, cmd.student_id
+            )
+        # Another family's child, another parent's or an admin's notice: all 404.
+        if notice is None or notice.recorded_by_admin or notice.submitted_by != cmd.parent_id:
+            raise AbsenceNoticeNotFound(
+                "no absence notice for this child and class",
+                occurrence_id=cmd.occurrence_id,
+            )
+        occurrence = await self._occurrences.get(cmd.occurrence_id)
+        if (
+            occurrence is None
+            or occurrence.status != "scheduled"
+            or occurrence.start_at <= self._now()
+        ):
+            raise AbsenceWindowClosed(
+                "class has already started; the absence can no longer be undone",
+                occurrence_id=cmd.occurrence_id,
+            )
+        await self._notices.delete(notice)
+        await record_best_effort(
+            self._audit,
+            actor_id=cmd.parent_id,
+            action="absence_notice.withdrawn",
+            entity_type="absence_notice",
+            entity_id=notice.notice_id,
+            metadata={
+                "student_id": notice.student_id,
+                "occurrence_id": notice.occurrence_id,
+                "submitted_at": notice.submitted_at.isoformat(),
+            },
+        )
 
 
 class ListParentAbsences:

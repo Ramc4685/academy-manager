@@ -269,7 +269,10 @@ class MongoStudentRepository(TenantScopedRepository):
         student_id: str,
         *,
         exclude_enrollment_id: str | None = None,
+        session_id: str | None = None,
     ) -> bool:
+        # S48 / D-24: ``session_id`` narrows "already enrolled" to THIS class,
+        # so a second class for an enrolled child goes through approval.
         # Issue #782: widened from ACTIVE_OR_PAUSED (a name that predates
         # `held`, #697) to the domain's NON_TERMINAL — LIVE plus the in-flight
         # `reclaim_pending`. "Already enrolled somewhere, manage that instead"
@@ -282,6 +285,8 @@ class MongoStudentRepository(TenantScopedRepository):
         }
         if exclude_enrollment_id is not None:
             filter_["enrollment_id"] = {"$ne": exclude_enrollment_id}
+        if session_id is not None:
+            filter_["session_id"] = session_id
         enrollment = await self._find_one_in_collection(
             "enrollments",
             filter_,
@@ -1256,6 +1261,11 @@ class MongoStudentRepository(TenantScopedRepository):
             location=str(session.get("location") or "") or None,
             start_at=self._coerce_datetime(session.get("start_at")),
             end_at=self._coerce_datetime(session.get("end_at")),
+            days_of_week=[
+                str(d) for d in cast(list[object], session.get("days_of_week") or []) if d
+            ],
+            start_time=self._optional_str(session.get("start_time")),
+            end_time=self._optional_str(session.get("end_time")),
             status=str(enrollment.get("status") or "active"),
             pending_cancellation_at=self._coerce_datetime(
                 enrollment.get("pending_cancellation_at")

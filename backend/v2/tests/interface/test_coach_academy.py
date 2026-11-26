@@ -44,7 +44,36 @@ def test_coach_academy_happy_path(seed):
         "name": "Riverside Shuttle Club",
         "logo_url": "https://cdn.example.com/logo.png",
         "brand_color": "#2563eb",
+        "contact_email": None,
+        "contact_phone": None,
+        "timezone": None,
     }
+
+
+def test_coach_academy_carries_the_academy_timezone(seed):
+    # S05: coach screens render every instant in the academy's zone.
+    client = _client_with_academy_info(
+        seed,
+        {"test-academy": {"name": "Riverside Shuttle Club", "timezone": "America/Chicago"}},
+    )
+    r = client.get("/api/v2/coach/academy")
+    assert r.status_code == 200, r.text
+    assert r.json()["timezone"] == "America/Chicago"
+
+
+def test_coach_academy_carries_the_contact_a_new_coach_calls(seed):
+    client = _client_with_academy_info(
+        seed,
+        {
+            "test-academy": {
+                "name": "Riverside Shuttle Club",
+                "contact_email": "office@example.com",
+                "contact_phone": "555-0100",
+            }
+        },
+    )
+    body = client.get("/api/v2/coach/academy").json()
+    assert (body["contact_email"], body["contact_phone"]) == ("office@example.com", "555-0100")
 
 
 def test_coach_academy_is_scoped_to_the_request_academy(seed):

@@ -35,6 +35,8 @@ import {
   lifecycleVariant,
   type PersonLifecycle,
 } from "@/lib/format/lifecycle-copy";
+import { useAcademyZone } from "@/lib/format/academy-zone";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 const PAGE_LIMIT = 25;
 
@@ -387,15 +389,16 @@ function SessionsSummaryText({
 }) {
   const listed = names ?? [];
   const sessionTotal = total ?? count;
-  if (sessionTotal <= 0) return <>No active session</>;
+  if (sessionTotal <= 0) return <>No active class</>;
   if (listed.length === 0) {
-    return <>{`${sessionTotal} ${sessionTotal === 1 ? "session" : "sessions"}`}</>;
+    return <>{`${sessionTotal} ${sessionTotal === 1 ? "class" : "classes"}`}</>;
   }
   const unlisted = Math.max(sessionTotal - listed.length, 0);
   return <>{listed.join(", ") + (unlisted > 0 ? `, +${unlisted} more` : "")}</>;
 }
 
 function StudentsTable({ students }: { students: AdminStudentView[] }) {
+  const academyTimezone = useAcademyZone();
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[760px] text-sm">
@@ -403,7 +406,7 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
           <tr className="border-b border-neutral-200 bg-neutral-50 text-left dark:border-neutral-800">
             <Th padding="px-5 py-3">Student</Th>
             <Th padding="px-3 py-3">Parent</Th>
-            <Th padding="px-3 py-3">Sessions</Th>
+            <Th padding="px-3 py-3">Classes</Th>
             <Th padding="px-3 py-3">Attendance</Th>
             <Th padding="px-3 py-3">Dues</Th>
             <Th padding="px-5 py-3">Last attendance</Th>
@@ -473,7 +476,7 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
                 <DuesChip status={student.dues_status} />
               </td>
               <td className="px-5 py-4 font-mono text-[11px] text-rally-subtle">
-                {student.last_seen_at ? new Date(student.last_seen_at).toLocaleDateString() : "—"}
+                {student.last_seen_at ? formatInAcademyZone(student.last_seen_at, academyTimezone) : "—"}
               </td>
             </tr>
           ))}
@@ -502,13 +505,13 @@ function SessionsCell({
   const sessionTotal = total ?? count;
 
   if (sessionTotal <= 0) {
-    return <span className="text-xs text-rally-subtle">No active session</span>;
+    return <span className="text-xs text-rally-subtle">No active class</span>;
   }
   if (listed.length === 0) {
     // Older payloads carry only the count.
     return (
       <span className="font-mono tabular-nums text-rally-base">
-        {sessionTotal} {sessionTotal === 1 ? "session" : "sessions"}
+        {sessionTotal} {sessionTotal === 1 ? "class" : "classes"}
       </span>
     );
   }

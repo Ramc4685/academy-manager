@@ -67,7 +67,7 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
   {
     group: "CLASSES",
     items: [
-      { id: "sessions", href: "/admin/sessions", label: "Sessions", icon: "calendar", match: startsWith("/admin/sessions") },
+      { id: "sessions", href: "/admin/sessions", label: "Classes", icon: "calendar", match: startsWith("/admin/sessions") },
       // Settings overhaul Phase 3 PR 11: authoring moved to Settings ->
       // Curriculum; this item is now student progress tracking. It lands on
       // the owner dashboard (who is moving, who is stuck), which needs no
@@ -101,7 +101,6 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
       // Settings overhaul PR 11b: the price list moved out of Settings.
       { id: "pricing", href: "/admin/pricing", label: "Pricing", icon: "list", match: startsWith("/admin/pricing"), ownerOnly: true },
       { id: "month-close", href: "/admin/reports", label: "Month close", icon: "chart", match: startsWith("/admin/reports"), ownerOnly: true },
-      { id: "billing-health", href: "/admin/billing-health", label: "Billing Health", icon: "signal", match: startsWith("/admin/billing-health"), ownerOnly: true },
       { id: "expenses", href: "/admin/expenses", label: "Expenses", icon: "card", match: startsWith("/admin/expenses") },
       { id: "coach-payouts", href: "/admin/payouts", label: "Coach payouts", icon: "whistle", match: startsWith("/admin/payouts"), ownerOnly: true },
     ],
@@ -112,7 +111,9 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
       // Waivers moved into Settings -> Family policies (Settings overhaul
       // Phase 3 PR 10): the standalone nav item is gone, /admin/waivers
       // redirects there, and its sub-routes still work from the embed.
-      { id: "settings", href: "/admin/settings", label: "Settings", icon: "cog", match: startsWith("/admin/settings") },
+      // S29: Billing Health is Settings > Integrations > Payment system status now,
+      // so its page lights Settings rather than a Money item of its own.
+      { id: "settings", href: "/admin/settings", label: "Settings", icon: "cog", match: (p) => p.startsWith("/admin/settings") || p.startsWith("/admin/billing-health") },
       { id: "audit-logs", href: "/admin/audit-logs", label: "Audit logs", icon: "filter", match: startsWith("/admin/audit-logs"), ownerOnly: true },
     ],
   },
@@ -199,8 +200,8 @@ export interface AdminScreenMeta {
 export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin": { title: "Dashboard", subtitle: "Daily overview", breadcrumbs: ["Admin", "Dashboard"] },
   "/admin/dashboard": { title: "Dashboard", subtitle: "Daily overview", breadcrumbs: ["Admin", "Dashboard"] },
-  "/admin/sessions": { title: "Sessions", subtitle: "Schedule and rosters", breadcrumbs: ["Admin", "Sessions"] },
-  "/admin/sessions/month-dates": { title: "Month dates", subtitle: "Class and no-class days, published to parents", breadcrumbs: ["Admin", "Sessions", "Month dates"] },
+  "/admin/sessions": { title: "Classes", subtitle: "Schedule and rosters", breadcrumbs: ["Admin", "Classes"] },
+  "/admin/sessions/month-dates": { title: "Month dates", subtitle: "Class and no-class days, published to parents", breadcrumbs: ["Admin", "Classes", "Month dates"] },
   "/admin/students": { title: "Students", subtitle: "Every child: classes, attendance, status", breadcrumbs: ["Admin", "People", "Students"] },
   "/admin/pathway": { title: "Progress", subtitle: "Where each student is on the skill pathway", breadcrumbs: ["Admin", "Progress"] },
   "/admin/pathway/dashboard": { title: "Progress", subtitle: "Who is moving, who is stuck", breadcrumbs: ["Admin", "Progress"] },
@@ -213,13 +214,13 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/registrations/[applicationId]": { title: "Registration", subtitle: "Review and decide", breadcrumbs: ["Admin", "Inbox", "Registration"] },
   "/admin/payments": { title: "Payments", subtitle: "Who owes, who is charged, who paid", breadcrumbs: ["Admin", "Money", "Payments"] },
   "/admin/pricing": { title: "Pricing", subtitle: "Plans and where each class's price comes from", breadcrumbs: ["Admin", "Money", "Pricing"] },
-  "/admin/billing-health": { title: "Billing Health", subtitle: "Connect readiness, webhooks, reconciliation", breadcrumbs: ["Admin", "Money", "Billing Health"] },
+  "/admin/billing-health": { title: "Payment system status", subtitle: "Whether parents can pay, and payment updates that got stuck", breadcrumbs: ["Admin", "Settings", "Integrations", "Payment system status"] },
   "/admin/families": { title: "Families", subtitle: "Each family: children, balance, card, autopay", breadcrumbs: ["Admin", "People", "Families"] },
   "/admin/families/[parentId]": { title: "Family", subtitle: "Balance, autopay, invoices and what the system did", breadcrumbs: ["Admin", "People", "Families", "Family"] },
   "/admin/expenses": { title: "Expenses", subtitle: "Categorised academy spend", breadcrumbs: ["Admin", "Money", "Expenses"] },
   "/admin/payouts": { title: "Payroll & payouts", subtitle: "Payout cycles and coach payslips", breadcrumbs: ["Admin", "Money", "Payouts"] },
-  "/admin/reports": { title: "Month close", subtitle: "The month's two runs, its money, and anything odd", breadcrumbs: ["Admin", "Money", "Month close"] },
-  "/admin/reports/session-economics": { title: "Session economics", subtitle: "Revenue, cost, and profit by session", breadcrumbs: ["Admin", "Money", "Month close", "Session economics"] },
+  "/admin/reports": { title: "Month close", subtitle: "Billed, collected and owed for the month, plus the money and attendance reports", breadcrumbs: ["Admin", "Money", "Month close"] },
+  "/admin/reports/session-economics": { title: "Class economics", subtitle: "Revenue, cost, and profit by class", breadcrumbs: ["Admin", "Money", "Month close", "Class economics"] },
   "/admin/reports/refunds": { title: "Refunds & credits", subtitle: "Money returned and account credits by month", breadcrumbs: ["Admin", "Money", "Month close", "Refunds & credits"] },
   "/admin/reports/revenue-by-category": { title: "Revenue by category", subtitle: "Collected revenue split by program and fee category", breadcrumbs: ["Admin", "Money", "Month close", "Revenue by category"] },
   "/admin/reports/deposit-slip": { title: "Deposit slip", subtitle: "Payments received by day and method for bank reconciliation", breadcrumbs: ["Admin", "Money", "Month close", "Deposit slip"] },

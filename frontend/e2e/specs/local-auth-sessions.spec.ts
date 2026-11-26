@@ -61,7 +61,7 @@ test.describe("local authenticated admin session fixes", () => {
     const title = `E2E cancel probe ${Date.now()}`;
     await createSession(page, title);
 
-    const cancelButton = page.getByRole("button", { name: `Cancel session ${title}` });
+    const cancelButton = page.getByRole("button", { name: `Cancel class ${title}` });
     await expect(cancelButton).toBeVisible({ timeout: 30_000 });
     const before = await countSessionRows(page);
     expect(before).toBeGreaterThan(0);
@@ -93,7 +93,7 @@ async function createSession(page: Page, title: string) {
   await page.getByTestId("admin-sessions-create").click();
 
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByRole("heading", { name: "Create session" })).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Create class" })).toBeVisible();
 
   // The Coach field is a dropdown only once the admin directory resolves; while
   // it is loading — or if it fails — the form falls back to a free-text coach

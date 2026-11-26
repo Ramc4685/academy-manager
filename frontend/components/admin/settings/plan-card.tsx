@@ -9,6 +9,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 const STATUS_LABEL: Record<string, string> = {
   trialing: "Trial",
@@ -100,7 +101,7 @@ export function PlanCard() {
                   overview.subscription.billing_status}
                 {overview.subscription.cancel_at_period_end &&
                   overview.subscription.current_period_end &&
-                  ` · ends ${new Date(overview.subscription.current_period_end).toLocaleDateString()}`}
+                  ` · ends ${formatInAcademyZone(overview.subscription.current_period_end)}`}
               </p>
             )}
           </div>
@@ -112,7 +113,7 @@ export function PlanCard() {
                   Growth · {growthPrice} a month
                 </p>
                 <ul className="mt-1 list-disc pl-5 text-sm text-rally-muted">
-                  <li>0 bps processing markup on card and bank payments</li>
+                  <li>No CourtMastr processing fee on card and bank payments</li>
                   <li>AI features as they ship</li>
                 </ul>
               </div>

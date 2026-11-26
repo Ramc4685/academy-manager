@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { ParentScheduleEntry } from "@/lib/api/parent";
 import {
   CANCELLED_EVENT_COLOR,
+  PRESENT_INCLUDING_LATE,
+  presentIncludingLate,
   isMonthPublished,
   noClassReason,
   scheduleEntryToEvent,
@@ -92,5 +94,24 @@ describe("one-time classes (#1038)", () => {
     expect(scheduleSourceLabel(undefined)).toBeNull();
     expect(scheduleSourceLabel("makeup")).toBe("Make-up");
     expect(scheduleSourceLabel("trial")).toBe("Trial");
+  });
+});
+
+describe("scheduleEntryToEvent reported absence (S17)", () => {
+  it("leads the month-grid title with Absent (reported)", () => {
+    const event = scheduleEntryToEvent(entry({ absence_reported: true }), {
+      childName: "Alex",
+      color: "#2563eb",
+    });
+    expect(event.title.startsWith("Absent (reported) — Alex")).toBe(true);
+  });
+});
+
+describe("presentIncludingLate (S18)", () => {
+  it("counts a late mark as present and says so in the label", () => {
+    expect(
+      presentIncludingLate([{ status: "present" }, { status: "late" }, { status: "absent" }]),
+    ).toBe(2);
+    expect(PRESENT_INCLUDING_LATE).toBe("Present (including late)");
   });
 });

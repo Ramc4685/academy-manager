@@ -120,6 +120,7 @@ test("attendance risk rows carry class, coach and share", () => {
         students: 3,
         at_risk: 2,
         at_risk_rate: 2 / 3,
+        not_billed: 2,
       },
       {
         session_id: "c2",
@@ -163,6 +164,11 @@ test("attendance risk rows carry class, coach and share", () => {
       ["No coach assigned", 1, 1, 0],
     ],
   );
+  assert.deepEqual(
+    view.byClass.map((r) => r.notBilled),
+    [2, 0, 0],
+  );
+  assert.equal(view.byCoach[0].notBilled, 0);
   assert.equal(view.byCoach[1].key, "no-coach-1");
   assert.equal(view.students, 4);
   assert.equal(view.atRisk, 2);

@@ -18,7 +18,7 @@
 import { useState } from "react";
 import type { Route } from "next";
 import Link from "next/link";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   IMPORT_COLUMNS,
@@ -27,8 +27,11 @@ import {
   type ImportBatch,
   type ImportRow,
 } from "@/lib/api/admin-family-import";
+import { UnpricedEnrollAcknowledgement } from "@/components/admin/sessions/unpriced-class";
 import { createEnrollment, inviteBillingSetupParent, listAdminSessions } from "@/lib/api/admin";
 import { quoteCell } from "@/lib/admin/import-column-mapping";
+import { refreshAfterEnrollmentChange } from "@/lib/admin/refresh-after-enrollment-change";
+import { StartLevelSelect } from "@/components/admin/enrollment/start-level-select";
 import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -79,10 +82,12 @@ function message(error: unknown, fallback: string): string {
 export async function runQuickAdd({
   batchId,
   sessionId,
+  startLevelId = "",
   invite,
 }: {
   batchId: string;
   sessionId: string;
+  startLevelId?: string;
   invite: boolean;
 }): Promise<StepResult> {
   const committed = await commitFamilyImport(batchId);
@@ -100,6 +105,7 @@ export async function runQuickAdd({
         student_id: family.student_id,
         parent_id: parentId,
         full_name: family.student_name,
+        ...(startLevelId ? { start_level_id: startLevelId } : {}),
       });
       out.enrolled = true;
     } catch (error) {
@@ -121,13 +127,27 @@ export async function runQuickAdd({
   return out;
 }
 
-export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
-  const [open, setOpen] = useState(false);
+export function QuickAddFamily({
+  onAdded,
+  initialOpen = false,
+  initialSessionId = "",
+  onClose,
+}: {
+  onAdded: () => void;
+  /** S65: the Today "New walk-in" button opens the form at once, on the current class. */
+  initialOpen?: boolean;
+  initialSessionId?: string;
+  onClose?: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(initialOpen);
   const [form, setForm] = useState<QuickAddForm>(EMPTY);
-  const [sessionId, setSessionId] = useState("");
+  const [sessionId, setSessionId] = useState(initialSessionId);
+  const [startLevelId, setStartLevelId] = useState("");
   const [invite, setInvite] = useState(true);
   const [checked, setChecked] = useState<ImportBatch | null>(null);
   const [result, setResult] = useState<StepResult | null>(null);
+  const [unpricedAck, setUnpricedAck] = useState(false);
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessions("upcoming"),
@@ -148,13 +168,21 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
       runQuickAdd({
         batchId: checked!.import_batch_id,
         sessionId,
+        startLevelId,
         invite: invite && Boolean(form.parent_email.trim()),
       }),
     onSuccess: (data) => {
+      // S26: the new family and roster seat show at once, on any server machine.
+      refreshAfterEnrollmentChange(queryClient, {
+        studentId: data.family.student_id,
+        parentId: data.family.family_id,
+      });
       setChecked(null);
       setResult(data);
       setForm(EMPTY);
       setSessionId("");
+      setStartLevelId("");
+      setUnpricedAck(false);
       onAdded();
     },
   });
@@ -164,6 +192,10 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
   const row = checked?.rows[0];
+  // S10: enrolling into a class with no fee waits for an acknowledgement.
+  const chosenUnpriced = Boolean(
+    sessionId && sessionsQuery.data?.sessions.find((s) => s.session_id === sessionId)?.unpriced,
+  );
   const ready =
     form.parent_name.trim() &&
     form.student_name.trim() &&
@@ -213,18 +245,24 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
           Class (optional)
           <select
             value={sessionId}
-            onChange={(e) => setSessionId(e.target.value)}
+            onChange={(e) => {
+              setSessionId(e.target.value);
+              setUnpricedAck(false);
+            }}
             className={INPUT}
             data-testid="quick-add-session"
           >
             <option value="">Do not enroll yet</option>
             {(sessionsQuery.data?.sessions ?? []).map((s) => (
               <option key={s.session_id} value={s.session_id}>
-                {s.title}
+                {s.unpriced ? `${s.title} (no price yet)` : s.title}
               </option>
             ))}
           </select>
         </label>
+        {sessionId && (
+          <StartLevelSelect value={startLevelId} onChange={setStartLevelId} className={INPUT} />
+        )}
       </div>
       <label className="mt-3 flex items-center gap-2 text-sm">
         <input
@@ -244,7 +282,7 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
         >
           {check.isPending ? "Checking..." : "Check details"}
         </Button>
-        <Button variant="secondary" onClick={() => setOpen(false)}>
+        <Button variant="secondary" onClick={() => (onClose ? onClose() : setOpen(false))}>
           Close
         </Button>
       </div>
@@ -274,9 +312,14 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
                   ? `${row.student_name} will be added to the existing ${row.family_name ?? "family"}.`
                   : `A new family for ${row.parent_name} with ${row.student_name}.`}
               </p>
+              {chosenUnpriced && (
+                <div className="mt-3">
+                  <UnpricedEnrollAcknowledgement checked={unpricedAck} onChange={setUnpricedAck} />
+                </div>
+              )}
               <Button
                 className="mt-3"
-                disabled={add.isPending}
+                disabled={add.isPending || (chosenUnpriced && !unpricedAck)}
                 onClick={() => add.mutate()}
                 data-testid="quick-add-save"
               >

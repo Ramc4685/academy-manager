@@ -5,6 +5,8 @@ import type { Route } from "next";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { refreshAfterEnrollmentChange } from "@/lib/admin/refresh-after-enrollment-change";
+
 import {
   listAdminSessions,
   type AdminSessionView,
@@ -60,6 +62,17 @@ import {
 import { StatusChip } from "./StatusChip";
 import { useAcademyTimezone } from "@/components/admin/use-academy-today";
 import { academyDateISO } from "@/lib/format/academy-time";
+import { formatWeeklyPattern } from "@/lib/format/session-display";
+import { DialogActions, DialogError, Field, RallyModal } from "@/components/ds/dialog-chrome";
+import {
+  TransferConsequences,
+  sessionTransferSide,
+  transferNeedsAcknowledgement,
+  type TransferSide,
+} from "@/components/admin/enrollment/transfer-consequences";
+
+const MOVE_INPUT_CLASS =
+  "w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800";
 
 const DISCOUNT_CATEGORIES: { value: TuitionDiscountCategory; label: string }[] = [
   { value: "owner_child", label: "Owner child" },
@@ -117,6 +130,7 @@ function SessionsPanel({
     academyDateISO(timezone),
   );
   const [reason, setReason] = useState("");
+  const [movePriceAck, setMovePriceAck] = useState(false);
 
   // Recurring tuition discount editor (#244)
   const [discounting, setDiscounting] =
@@ -199,6 +213,7 @@ function SessionsPanel({
   });
 
   const transferMutation = useMutation({
+    meta: { success: "Student moved" },
     mutationFn: () =>
       transferEnrollment(moving!.enrollment_id, {
         target_session_id: targetSessionId,
@@ -206,18 +221,12 @@ function SessionsPanel({
         reason: reason || null,
       }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.admin.studentDetail(studentId),
-      });
-      // A discount, fee or move can change who gets the sibling discount.
-      if (parentId) {
-        void queryClient.invalidateQueries({
-          queryKey: queryKeys.admin.familySiblingDiscount(parentId),
-        });
-      }
+      // A move changes both rosters, the classes list and the sibling discount.
+      refreshAfterEnrollmentChange(queryClient, { studentId, parentId });
       setMoving(null);
       setTargetSessionId("");
       setReason("");
+      setMovePriceAck(false);
     },
   });
 
@@ -244,25 +253,32 @@ function SessionsPanel({
   const availableSessions: AdminSessionView[] = (
     sessionsQuery.data?.sessions ?? []
   ).filter((s) => s.session_id !== moving?.session_id);
+  const movingFromSession = moving
+    ? (sessionsQuery.data?.sessions ?? []).find((s) => s.session_id === moving.session_id)
+    : undefined;
+  const movingFrom = movingFromSession ? sessionTransferSide(movingFromSession) : null;
+  // The enrollment's own price wins: it carries any per-child fee override.
+  const moveFromSide: TransferSide = {
+    ...movingFrom,
+    title: moving?.session_title ?? "",
+    schedule: (moving && formatWeeklyPattern(moving)) || movingFrom?.schedule || "",
+    amountCents: moving?.amount_cents,
+  };
+  const moveTarget = availableSessions.find((s) => s.session_id === targetSessionId);
+  const moveToSide = moveTarget ? sessionTransferSide(moveTarget) : null;
+  const moveNeedsAck =
+    moveToSide != null && transferNeedsAcknowledgement(moveFromSide, moveToSide);
 
   useEffect(() => {
-    if (!moving && !billingOverride) return;
+    if (!billingOverride) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !transferMutation.isPending) {
-        setMoving(null);
-      }
       if (event.key === "Escape" && !overrideMutation.isPending) {
         setBillingOverride(null);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [
-    billingOverride,
-    moving,
-    overrideMutation.isPending,
-    transferMutation.isPending,
-  ]);
+  }, [billingOverride, overrideMutation.isPending]);
 
   const overridePriceCents = dollarsToCents(overrideAmount);
   const overrideAmountInvalid =
@@ -290,6 +306,7 @@ function SessionsPanel({
         setMoving(session);
         setTargetSessionId("");
         setReason("");
+        setMovePriceAck(false);
         setEffectiveDate(academyDateISO(timezone));
         return;
       case "fee":
@@ -334,7 +351,7 @@ function SessionsPanel({
     <>
       <Card p={20} className="lg:col-span-2">
         <div className="flex items-center justify-between gap-3">
-          <Overline>Enrolled sessions</Overline>
+          <Overline>Enrolled classes</Overline>
           <span className="font-mono text-xs text-rally-muted tabular-nums">
             {sessions.filter((s) => s.status === "active").length} active
           </span>
@@ -344,11 +361,11 @@ function SessionsPanel({
             className="mt-3 text-sm text-rally-muted"
             data-testid="admin-student-no-sessions"
           >
-            No session enrollments.
+            No class enrollments.
           </p>
         ) : isPhone ? (
           <div className="-mx-5 mt-3" data-testid="admin-student-enrolled-sessions">
-            <PhoneList aria-label="Enrolled sessions">
+            <PhoneList aria-label="Enrolled classes">
               {sessions.map((session) => (
                 <PhoneListRow
                   key={session.enrollment_id}
@@ -361,7 +378,7 @@ function SessionsPanel({
                   secondary={
                     <>
                       <div>{session.location ?? session.session_id}</div>
-                      <div>{formatDateTimeRange(session.start_at, session.end_at)}</div>
+                      <div>{formatWeeklyPattern(session) || formatDateTimeRange(session.start_at, session.end_at)}</div>
                       {/* The table's derived money, not a second derivation. */}
                       <div className="flex flex-wrap items-center gap-2">
                         {session.discount ? (
@@ -423,7 +440,7 @@ function SessionsPanel({
             <table className="min-w-full text-left text-sm">
               <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
                 <tr>
-                  <th className="py-2 pr-4 font-medium">Session</th>
+                  <th className="py-2 pr-4 font-medium">Class</th>
                   <th className="py-2 pr-4 font-medium">Schedule</th>
                   <th className="py-2 pr-4 font-medium">Billing</th>
                   <th className="py-2 pr-4 font-medium">Status</th>
@@ -447,7 +464,7 @@ function SessionsPanel({
                       </div>
                     </td>
                     <td className="py-3 pr-4 align-top text-rally-muted">
-                      {formatDateTimeRange(session.start_at, session.end_at)}
+                      {formatWeeklyPattern(session) || formatDateTimeRange(session.start_at, session.end_at)}
                     </td>
                     <td className="py-3 pr-4 align-top">
                       {session.discount ? (
@@ -578,9 +595,7 @@ function SessionsPanel({
         onClose={() => setHolding(null)}
         onHeld={() => {
           setHolding(null);
-          void queryClient.invalidateQueries({
-            queryKey: queryKeys.admin.studentDetail(studentId),
-          });
+          refreshAfterEnrollmentChange(queryClient, { studentId, parentId });
         }}
       />
       <ReturnFromHoldDialog
@@ -589,88 +604,80 @@ function SessionsPanel({
         onClose={() => setReturning(null)}
         onReturned={() => {
           setReturning(null);
-          void queryClient.invalidateQueries({
-            queryKey: queryKeys.admin.studentDetail(studentId),
-          });
+          refreshAfterEnrollmentChange(queryClient, { studentId, parentId });
         }}
       />
 
-      {moving && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="move-session-title"
-            className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl dark:bg-neutral-900"
+      <RallyModal
+        open={Boolean(moving)}
+        onOpenChange={(next) => {
+          if (!next && !transferMutation.isPending) setMoving(null);
+        }}
+        overline="Transfer"
+        title="Move student to another class"
+        description={moving ? `Move ${studentName} out of ${moving.session_title}.` : ""}
+      >
+        {moving && (
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              transferMutation.mutate();
+            }}
           >
-            <h2
-              id="move-session-title"
-              className="mb-1 text-base font-semibold text-rally-ink"
-            >
-              Move student session
-            </h2>
-            <p className="mb-4 text-sm text-rally-muted">
-              Moving <span className="font-medium">{moving.session_title}</span>
-            </p>
-
             {transferMutation.isError && (
-              <p className="mb-3 rounded bg-red-50 px-3 py-2 text-xs text-red-600">
-                {String(transferMutation.error)}
-              </p>
+              <DialogError message={getErrorMessage(transferMutation.error) ?? "Could not move the student."} />
             )}
-
-            <div className="space-y-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium uppercase tracking-overline text-rally-muted">
-                  New session
-                </label>
-                <select
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
-                  value={targetSessionId}
-                  onChange={(e) => setTargetSessionId(e.target.value)}
-                  disabled={sessionsQuery.isPending}
-                >
-                  <option value="">
-                    {sessionsQuery.isPending ? "Loading…" : "Select a session"}
+            <Field label="New class" required>
+              <select
+                required
+                className={MOVE_INPUT_CLASS}
+                value={targetSessionId}
+                onChange={(e) => {
+                  setTargetSessionId(e.target.value);
+                  setMovePriceAck(false);
+                }}
+                disabled={sessionsQuery.isPending}
+              >
+                <option value="">
+                  {sessionsQuery.isPending ? "Loading…" : "Select a class"}
+                </option>
+                {availableSessions.map((s) => (
+                  <option key={s.session_id} value={s.session_id}>
+                    {s.title} {s.coach_name ? `— ${s.coach_name}` : ""}
                   </option>
-                  {availableSessions.map((s) => (
-                    <option key={s.session_id} value={s.session_id}>
-                      {s.title} {s.coach_name ? `— ${s.coach_name}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs font-medium uppercase tracking-overline text-rally-muted">
-                  Effective date
-                </label>
-                <input
-                  type="date"
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
-                  value={effectiveDate}
-                  onChange={(e) => setEffectiveDate(e.target.value)}
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs font-medium uppercase tracking-overline text-rally-muted">
-                  Reason (optional)
-                </label>
-                <textarea
-                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-rally-ink focus:outline-none focus:ring-2 focus:border-rally-cobalt-600 focus:ring-rally-cobalt-600/15 dark:bg-neutral-800"
-                  rows={2}
-                  placeholder="e.g. schedule conflict"
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="mt-5 flex justify-end gap-2">
+                ))}
+              </select>
+            </Field>
+            <Field label="Effective date" required>
+              <input
+                type="date"
+                required
+                className={MOVE_INPUT_CLASS}
+                value={effectiveDate}
+                onChange={(e) => setEffectiveDate(e.target.value)}
+              />
+            </Field>
+            <Field label="Reason">
+              <textarea
+                className={MOVE_INPUT_CLASS}
+                rows={2}
+                placeholder="Optional, e.g. schedule conflict"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+              />
+            </Field>
+            <TransferConsequences
+              from={moveFromSide}
+              to={moveToSide}
+              acknowledged={movePriceAck}
+              onAcknowledge={setMovePriceAck}
+            />
+            <DialogActions>
               <Button
                 variant="ghost"
                 size="sm"
+                type="button"
                 onClick={() => setMoving(null)}
                 disabled={transferMutation.isPending}
               >
@@ -678,15 +685,20 @@ function SessionsPanel({
               </Button>
               <Button
                 size="sm"
-                onClick={() => transferMutation.mutate()}
-                disabled={!targetSessionId || transferMutation.isPending}
+                type="submit"
+                disabled={
+                  !targetSessionId ||
+                  !effectiveDate ||
+                  (moveNeedsAck && !movePriceAck) ||
+                  transferMutation.isPending
+                }
               >
                 {transferMutation.isPending ? "Moving…" : "Move student"}
               </Button>
-            </div>
-          </div>
-        </div>
-      )}
+            </DialogActions>
+          </form>
+        )}
+      </RallyModal>
 
       {discounting && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -873,7 +885,7 @@ function SessionsPanel({
               id="session-fee-title"
               className="mb-1 text-base font-semibold text-rally-ink"
             >
-              Update session fee
+              Update class fee
             </h2>
             <p className="mb-4 text-sm text-rally-muted">
               {billingOverride.session_title}
@@ -914,7 +926,7 @@ function SessionsPanel({
                   onChange={(event) => setOverrideAmount(event.target.value)}
                 />
                 <p className="mt-1 text-xs text-rally-muted">
-                  Use 0.00 to waive this student&apos;s session fee.
+                  Use 0.00 to waive this student&apos;s class fee.
                 </p>
                 {overrideAmountInvalid && (
                   <p className="mt-1 text-xs text-red-600">
@@ -1015,7 +1027,7 @@ function PastEnrollmentsPanel({ rows }: { rows: AdminStudentSessionSummary[] }) 
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
               <tr>
-                <th className="py-2 pr-4 font-medium">Session</th>
+                <th className="py-2 pr-4 font-medium">Class</th>
                 <th className="py-2 pr-4 font-medium">Status</th>
                 <th className="py-2 pr-4 font-medium">Ended</th>
                 <th className="py-2 pr-4 font-medium">Ended by</th>

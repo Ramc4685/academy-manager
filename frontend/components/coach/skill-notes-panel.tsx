@@ -13,6 +13,7 @@ import {
   type SkillNote,
 } from "@/lib/api/coach";
 import type { ApiError } from "@/lib/api/client";
+import type { ParentSkillNoteView } from "@/lib/api/parent";
 import {
   OBSERVATION_MAX,
   noteFromDraft,
@@ -20,16 +21,42 @@ import {
 } from "@/lib/coach/technique-observation";
 import { queryKeys } from "@/lib/query/keys";
 import { Modal } from "@/components/ds/modal";
+import { CoachSkillNotesList } from "@/components/parent/coach-skill-notes";
 import { canChangeNoteVisibility, useCoachSurface } from "./coach-surface-context";
+import { formatInAcademyZone } from "@/lib/format/academy-time";
 
 const BODY_MAX_LENGTH = 1000;
 
+/** "See what the parent sees": the coach's own notes (coach endpoints only),
+ * shaped for the parent's card. Only notes stamped `shared_at` reach the
+ * parent feed; a non-empty `draft` is shown as if shared now. */
+export function parentPreviewNotes(
+  notes: SkillNote[],
+  skillName: string,
+  draft: string,
+): ParentSkillNoteView[] {
+  const shared = notes
+    .filter((n) => n.visibility === "shared" && n.shared_at)
+    .sort((a, b) => (b.shared_at ?? "").localeCompare(a.shared_at ?? ""))
+    .map((n) => ({
+      note_id: n.note_id,
+      skill_name: skillName,
+      body: n.body,
+      shared_at: n.shared_at as string,
+    }));
+  const text = draft.trim();
+  return text
+    ? [{ note_id: "draft", skill_name: skillName, body: text, shared_at: new Date().toISOString() }, ...shared]
+    : shared;
+}
+
 function formatTimestamp(value: string): string {
-  return new Date(value).toLocaleString(undefined, {
+  return formatInAcademyZone(value, undefined, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZoneName: "short",
   });
 }
 
@@ -48,6 +75,7 @@ export function SkillNotesPanel({
 }) {
   const [body, setBody] = useState("");
   const [share, setShare] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   // B6: the draft may pick a different skill of the same level; the note is
   // then saved under that skill, and the hint names it until the coach saves.
   const [observation, setObservation] = useState("");
@@ -122,6 +150,7 @@ export function SkillNotesPanel({
 
   const unavailable = (error as ApiError | undefined)?.status === 503;
   const notes = data?.notes ?? [];
+  const parentPreview = parentPreviewNotes(notes, skillName, share ? body : "");
 
   return (
     <Modal open={open} onClose={onClose} title={`Notes — ${skillName}`} size="md">
@@ -184,7 +213,7 @@ export function SkillNotesPanel({
                           }
                           className="min-h-touch rounded-lg border border-neutral-300 px-3 text-xs font-medium text-neutral-700 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300"
                         >
-                          {pending ? "Saving..." : shared ? "Make private" : "Share"}
+                          {pending ? "Saving..." : shared ? "Make private" : "Share with parent"}
                         </button>
                       )}
                     </div>
@@ -247,11 +276,6 @@ export function SkillNotesPanel({
                 Notes you write stay private to coaches.
               </p>
             ) : (
-              // "Mark as shared", not "Share with parent": nothing on the
-              // parent side reads coach_skill_notes yet (the parent feed reads
-              // progress_notes + session_feedback, and parent skill updates
-              // come from student_progress). The flag is real and enforced —
-              // it just isn't a parent-visible surface today.
               <div className="space-y-1">
                 <label className="flex min-h-touch items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
                   <input
@@ -261,11 +285,25 @@ export function SkillNotesPanel({
                     onChange={(e) => setShare(e.target.checked)}
                     className="h-5 w-5 rounded border-neutral-300"
                   />
-                  Mark as shared
+                  Share with parent
                 </label>
-                <p data-testid="skill-note-share-hint" className="text-xs text-neutral-500">
-                  Shared skill notes are not in the parent portal yet.
+                <p data-testid="skill-note-share-hint" className="text-xs text-neutral-600">
+                  Shared notes show on the child&apos;s Progress page for their family.
                 </p>
+                <button
+                  type="button"
+                  data-testid="skill-note-parent-preview-toggle"
+                  aria-expanded={previewOpen}
+                  onClick={() => setPreviewOpen((v) => !v)}
+                  className="min-h-touch text-xs font-medium text-blue-700 underline dark:text-blue-300"
+                >
+                  {previewOpen ? "Hide parent view" : "See what the parent sees"}
+                </button>
+                {previewOpen && (
+                  <div data-testid="skill-note-parent-preview">
+                    <CoachSkillNotesList notes={parentPreview} firstName="your player" />
+                  </div>
+                )}
               </div>
             )}
             <div className="flex items-center justify-between">

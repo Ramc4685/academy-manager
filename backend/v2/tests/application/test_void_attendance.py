@@ -126,14 +126,14 @@ def test_downstream_readers_never_count_a_voided_mark() -> None:
     that ``voided`` is absent from those lists.
     """
     from backend.v2.contexts.billing.application.use_cases.finance import ATTENDED_STATUSES
-    from backend.v2.contexts.billing.infrastructure.admin_reports_read_model import (
-        ATTENDANCE_RATE_COUNTED_STATUSES,
-        ATTENDANCE_RATE_PRESENT_STATUSES,
+    from backend.v2.shared.reporting_definitions import (
+        ATTENDANCE_COUNTED_STATUSES,
+        ATTENDANCE_PRESENT_STATUSES,
     )
 
     assert "voided" not in ATTENDED_STATUSES
-    assert "voided" not in ATTENDANCE_RATE_COUNTED_STATUSES
-    assert "voided" not in ATTENDANCE_RATE_PRESENT_STATUSES
+    assert "voided" not in ATTENDANCE_COUNTED_STATUSES
+    assert "voided" not in ATTENDANCE_PRESENT_STATUSES
 
 
 def test_now_defaults_to_utc_clock() -> None:

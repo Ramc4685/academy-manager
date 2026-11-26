@@ -441,6 +441,20 @@ async def test_parent_available_catalog_includes_available_recurring_templates(
                 "timezone": "America/Chicago",
                 "start_date": "2026-06-15",
                 "end_date": "2026-07-31",
+                "amount_cents": 0,
+            },
+            {
+                "academy_id": "academy-a",
+                "session_id": "tpl-unpriced",
+                "name": "Unpriced Recurring",
+                "max_students": 5,
+                "status": "active",
+                "days_of_week": ["Tue"],
+                "start_time": "16:30",
+                "end_time": "17:30",
+                "timezone": "America/Chicago",
+                "start_date": "2026-06-01",
+                "end_date": "2026-07-31",
             },
             {
                 "academy_id": "academy-a",
@@ -544,8 +558,8 @@ async def test_parent_available_catalog_includes_available_recurring_templates(
     assert by_id["tpl-not-started"].start_at == datetime(2026, 6, 15, 21, 30, tzinfo=UTC)
     assert by_id["tpl-prod-shaped"].start_at == datetime(2026, 6, 1, 16, 0, tzinfo=UTC)
     assert by_id["tpl-prod-shaped"].amount_cents == 8800
-    # PR 11b: a class with no fee is billed at 0, so the catalog shows 0, not
-    # the old $150 placeholder no charge path ever used.
+    # S42 / D-01: an explicitly Free class (0) is listed; one with no fee set
+    # ("tpl-unpriced") is kept out of parent self-registration.
     assert by_id["tpl-not-started"].amount_cents == 0
 
 
@@ -577,6 +591,7 @@ async def test_parent_available_catalog_filters_full_sessions_before_capping(
                 "title": "Available After Full",
                 "capacity": 4,
                 "status": "scheduled",
+                "amount_cents": 5000,
                 "start_at": datetime(2026, 6, 3, 10, 0, tzinfo=UTC),
                 "end_at": datetime(2026, 6, 3, 11, 0, tzinfo=UTC),
             },
@@ -618,6 +633,7 @@ async def test_parent_available_catalog_batches_enrolled_counts_in_one_query(
             "title": f"Session {index}",
             "capacity": 10,
             "status": "scheduled",
+            "amount_cents": 5000,
             "start_at": datetime(2026, 6, 2, 10, index % 60, tzinfo=UTC),
             "end_at": datetime(2026, 6, 2, 11, index % 60, tzinfo=UTC),
         }

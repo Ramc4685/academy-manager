@@ -19,19 +19,12 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from backend.v2.contexts.identity.domain.models import Role, normalize_email
 from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.starter_waiver import DEFAULT_WAIVER_BODY
 
 OWNER_ACADEMY_ROLE: Role = "owner"
 #: The first user of a new academy holds both roles: ``owner`` alone opens the
 #: owner-only reads (refunds, money settings, staff grants), ``admin`` the rest.
 OWNER_ACADEMY_ROLES: tuple[Role, ...] = ("admin", OWNER_ACADEMY_ROLE)
-#: Body of the placeholder waiver every bootstrapped academy starts with. The
-#: admin setup checklist (roadmap L7) treats a waiver still carrying exactly
-#: this text as "not done yet", so keep it the single source.
-DEFAULT_WAIVER_BODY = (
-    "Default academy participation waiver. Replace this template before "
-    "accepting student registrations."
-)
-
 DEFAULT_RECORDS = (
     "academy",
     "owner_user",

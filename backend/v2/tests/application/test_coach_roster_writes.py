@@ -148,3 +148,56 @@ async def test_set_seat_broker_delegates_to_the_underlying_edit_roster_add() -> 
     uc.set_seat_broker(seat_broker)
 
     assert delegate._seat_broker is seat_broker
+
+
+class _RecordingPlacement:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[tuple[str, str | None, str | None]] = []
+        self.fail = fail
+
+    async def place_new_enrollee(
+        self, student_id: str, *, level_id: str | None = None, actor_id: str | None = None
+    ) -> None:
+        self.calls.append((student_id, level_id, actor_id))
+        if self.fail:
+            raise RuntimeError("pathway unavailable")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+async def test_roster_add_places_the_child_and_never_fails_on_placement(fail: bool) -> None:
+    """D-10: admin roster add (and quick add, which posts to it) places the child;
+    a coach walk-in goes through the same EditRosterAdd. A placement failure
+    leaves the enrollment standing."""
+    from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
+        EditRosterAddCommand,
+    )
+
+    sessions = FakeSessionWriter(sessions={"sess-1": make_session("sess-1", capacity=5)})
+    enrollments = FakeEnrollmentWriter()
+    coach_uc, edit_roster_add = _uc(sessions=sessions, enrollments=enrollments)
+    placement = _RecordingPlacement(fail=fail)
+    coach_uc.set_level_placement(placement)
+
+    admin = await edit_roster_add.execute(
+        EditRosterAddCommand(
+            session_id="sess-1",
+            student_id="stu-a",
+            parent_id="par-1",
+            full_name="Kid A",
+            actor_id="admin-1",
+            start_level_id="lvl-3",
+        )
+    )
+    coach = await coach_uc.execute(
+        CoachAddStudentToRosterCommand(
+            coach_id="coach-1",
+            session_id="sess-1",
+            student_id="stu-b",
+            parent_id="par-1",
+            full_name="Kid B",
+        )
+    )
+
+    assert admin.status == coach.status == "active"
+    assert placement.calls == [("stu-a", "lvl-3", "admin-1"), ("stu-b", None, "coach-1")]

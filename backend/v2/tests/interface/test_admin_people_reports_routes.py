@@ -334,6 +334,7 @@ def test_attendance_risk_shape(admin: TestClient, services: FakeServices) -> Non
             "students": 2,
             "at_risk": 1,
             "at_risk_rate": 0.5,
+            "not_billed": 0,
         }
     ]
     assert body["by_coach"] == [

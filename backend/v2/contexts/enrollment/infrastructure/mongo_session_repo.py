@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from bson import ObjectId
 
+from backend.v2.contexts.enrollment.application.pricing_state import is_unpriced
 from backend.v2.contexts.enrollment.application.use_cases.list_parent_available_sessions import (
     ParentAvailableSession,
 )
@@ -17,6 +18,7 @@ from backend.v2.contexts.enrollment.application.use_cases.public_catalog import 
     PublicCatalogSession,
 )
 from backend.v2.contexts.enrollment.domain.models import SEAT_HOLDING, Session
+from backend.v2.contexts.enrollment.domain.programs import age_band_from_doc
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 from backend.v2.shared.time import LEGACY_FALLBACK_TIMEZONE, academy_timezone_lookup, ensure_utc
 
@@ -272,14 +274,8 @@ def _coerce_template_date(value: object) -> date | None:
 class MongoSessionRepository(TenantScopedRepository):
     collection_name = "sessions"
 
-    # The parent catalog price of a class with no fee stored. It was a $150
-    # placeholder that no charge path used: checkout quotes and monthly
-    # invoices bill an unpriced class at 0 (``quote_enrollment`` and
-    # ``session_amount_cents``), so the catalog now shows that real amount
-    # (Settings overhaul PR 11b, display fix only).
-    def __init__(self, db: Any, *, default_amount_cents: int = 0) -> None:
+    def __init__(self, db: Any) -> None:
         super().__init__(db)
-        self._default_amount_cents = default_amount_cents
 
     @staticmethod
     def _to_domain(doc: dict[str, object], fallback_timezone: str | None = None) -> Session:
@@ -318,6 +314,8 @@ class MongoSessionRepository(TenantScopedRepository):
             arrival_minutes_before=_optional_int(doc.get("arrival_minutes_before")),
             coach_contact_policy=_optional_str(doc.get("coach_contact_policy")),
             absence_policy=_optional_str(doc.get("absence_policy")),
+            age_band=age_band_from_doc(doc.get("age_band")),
+            level=(_optional_str(doc.get("level")) or "")[:40] or None,
         )
 
     async def for_coach_on_date(self, coach_id: str, on_date: date) -> list[Session]:
@@ -432,7 +430,10 @@ class MongoSessionRepository(TenantScopedRepository):
             reserved_seats = int(doc.get("reserved_seats") or enrolled_count)
             occupied = max(enrolled_count, reserved_seats)
             available_seats = max(capacity - occupied, 0)
-            if available_seats <= 0:
+            amount_cents = _optional_amount_cents(doc)
+            # S42 / D-01: a parent never self-registers into an unpriced class
+            # (fee None); it reappears once the owner prices it or marks it Free (0).
+            if available_seats <= 0 or is_unpriced(amount_cents):
                 continue
             rows.append(
                 ParentAvailableSession(
@@ -447,7 +448,7 @@ class MongoSessionRepository(TenantScopedRepository):
                     capacity=capacity,
                     enrolled_count=enrolled_count,
                     available_seats=available_seats,
-                    amount_cents=_amount_cents(doc, self._default_amount_cents),
+                    amount_cents=amount_cents or 0,
                 )
             )
             if len(rows) >= 100:
@@ -537,6 +538,7 @@ class MongoSessionRepository(TenantScopedRepository):
                     or "Class",
                     location=_optional_str(doc.get("location")),
                     venue_address=_optional_str(doc.get("venue_address")),
+                    what_to_bring=_optional_str(doc.get("what_to_bring")),
                     days_of_week=_string_tuple(doc.get("days_of_week")),
                     start_time=start_time,
                     end_time=end_time,
@@ -578,16 +580,6 @@ class MongoSessionRepository(TenantScopedRepository):
             ]
         )
         return {str(doc["_id"]): int(doc["n"]) async for doc in cursor}
-
-
-def _amount_cents(doc: dict[str, object], default_amount_cents: int) -> int:
-    if doc.get("amount_cents") is not None:
-        return int(doc["amount_cents"])
-    if doc.get("monthly_price_cents") is not None:
-        return int(doc["monthly_price_cents"])
-    if doc.get("monthly_price") is not None:
-        return round(float(doc["monthly_price"]) * 100)  # type: ignore[arg-type]
-    return default_amount_cents
 
 
 def _zone(name: str | None) -> ZoneInfo:

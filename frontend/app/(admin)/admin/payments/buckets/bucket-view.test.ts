@@ -11,6 +11,7 @@ import {
   familyChip,
   normalizeCollections,
   periodOptionsFrom,
+  rowActions,
   secondaryLine,
   studentLine,
   todayISO,
@@ -81,6 +82,7 @@ describe("BUCKET_ORDER / BUCKET_META / ACTION_LABEL", () => {
   it("labels every action, including the WhatsApp link", () => {
     expect(ACTION_LABEL).toEqual({
       send_reminder: "Send reminder",
+      send_invoice: "Send invoice",
       record_payment: "Record payment",
       message: "Message",
       skip_month: "Skip this month",
@@ -333,5 +335,28 @@ describe("todayInZone / periodOptionsFrom / actionInvoice", () => {
     expect(actionInvoice({ ...family, action_invoice_id: "named" })?.invoice_id).toBe("named");
     expect(actionInvoice(family)?.invoice_id).toBe("late");
     expect(actionInvoice({ ...family, action_invoice_id: "missing" })?.invoice_id).toBe("late");
+  });
+});
+
+describe("rowActions (S30: an unsent invoice gets Send invoice, not a reminder)", () => {
+  const unsent = (status: string) =>
+    family({
+      actions: ["send_reminder", "record_payment"],
+      invoices: [{ ...family().invoices[0], delivery_status: status }],
+    });
+
+  it("swaps the reminder for Send invoice when the invoice never went out", () => {
+    expect(rowActions(unsent("not_sent"))).toEqual(["send_invoice", "record_payment"]);
+    expect(rowActions(unsent("delivery_failed"))).toEqual(["send_invoice", "record_payment"]);
+  });
+
+  it("keeps Send reminder once the invoice was emailed", () => {
+    expect(rowActions(unsent("sent"))).toEqual(["send_reminder", "record_payment"]);
+    expect(rowActions(unsent("delivered"))).toEqual(["send_reminder", "record_payment"]);
+  });
+
+  it("says issued, not sent, in the Awaiting hint next to 'invoice not sent'", () => {
+    expect(BUCKET_META.awaiting.hint).toMatch(/^Invoices issued and not yet due\./);
+    expect(secondaryLine("awaiting", unsent("not_sent"), TODAY)).toContain("invoice not sent");
   });
 });

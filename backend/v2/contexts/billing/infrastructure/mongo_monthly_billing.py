@@ -10,7 +10,8 @@ the legacy adapter keeps shrinking toward deletion.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 from zoneinfo import ZoneInfo
@@ -111,6 +112,29 @@ MONTHLY_KEY_STATUS_REPAIR_FAILED = "repair_failed"
 MONTHLY_RUN_ENROLLMENT_STATUSES: tuple[str, ...] = ("active", "paused")
 MONTHLY_INVOICED_ENROLLMENT_STATUS = "active"
 MONTHLY_KEY_STATUS_REVIEWED = "reviewed"
+
+#: What the monthly run decides for one enrollment before pricing it:
+#: ``skip`` (paused, deferred, cancelling, skipped month), ``not_billed``
+#: (NoCharge/Waived), ``existing`` (a legacy payment row for the month), or
+#: ``candidate``: passed to pricing, NOT a verdict that it will be invoiced. A
+#: candidate may already hold this month's ledger invoice (the generator stopped
+#: writing legacy payment rows), price to zero, or have no parent; a reader that
+#: needs "would invoice" must also check ``_existing_period_invoice_id``.
+MonthlyBillingKind = Literal["skip", "not_billed", "existing", "candidate"]
+
+
+@dataclass(frozen=True)
+class MonthlyEnrollmentClassification:
+    """One enrollment's read-only monthly-run outcome (no writes made)."""
+
+    kind: MonthlyBillingKind
+    enrollment: dict[str, Any]
+    enrollment_id: str
+    session_id: str
+    student_id: str
+    student_doc: dict[str, Any] | None
+    #: ``monthly_skip_reason`` result when ``kind == "skip"``.
+    skip: tuple[str, Any] | None = None
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -1060,6 +1084,116 @@ class MongoMonthlyBillingGenerator:
             source_total += int(doc.get("amount_cents", 0))
         return max(total, source_total)
 
+    async def classify_monthly_enrollment(
+        self,
+        enrollment: dict[str, Any],
+        *,
+        period: str,
+        now: datetime,
+        academy_timezone: str,
+    ) -> MonthlyEnrollmentClassification:
+        """Read-only: what the monthly run does with ``enrollment`` before pricing.
+
+        Reads only (students, deferrals, legacy payments). Pricing stays in the
+        generator because ``resolve_monthly_charge`` persists calculation
+        snapshots, so a ``candidate`` row can still be skipped there for a zero
+        charge, a missing parent or an invoice already on the ledger.
+        """
+        enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
+        student_id = str(enrollment.get("student_id") or "")
+        student_doc = await self._db["students"].find_one(
+            {"academy_id": current_academy_id(), "student_id": student_id}
+        )
+
+        def outcome(
+            kind: MonthlyBillingKind, skip: tuple[str, Any] | None = None
+        ) -> MonthlyEnrollmentClassification:
+            return MonthlyEnrollmentClassification(
+                kind=kind,
+                enrollment=enrollment,
+                enrollment_id=enrollment_id,
+                session_id=str(enrollment.get("session_id") or ""),
+                student_id=student_id,
+                student_doc=student_doc,
+                skip=skip,
+            )
+
+        skip = await monthly_skip_reason(
+            self._db,
+            enrollment=enrollment,
+            period=period,
+            today=now.date(),
+            academy_timezone=academy_timezone,
+        )
+        if skip is not None:
+            return outcome("skip", skip)
+        if is_not_billed(enrollment):
+            return outcome("not_billed")
+        existing = await self._repo._find_one(
+            {
+                "enrollment_id": enrollment_id,
+                "period": period,
+                "is_deleted": {"$ne": True},
+            }
+        )
+        if existing is not None:
+            return outcome("existing")
+        return outcome("candidate")
+
+    async def classify_monthly_enrollments(
+        self, period: str, *, now: datetime, academy_timezone: str
+    ) -> AsyncIterator[MonthlyEnrollmentClassification]:
+        """Every enrollment the monthly run reads, in run order, classified read-only."""
+        cursor = self._db["enrollments"].find(
+            {
+                "academy_id": current_academy_id(),
+                "status": {"$in": list(MONTHLY_RUN_ENROLLMENT_STATUSES)},
+            },
+            sort=[("created_at", 1), ("enrollment_id", 1)],
+        )
+        async for enrollment in cursor:
+            yield await self.classify_monthly_enrollment(
+                enrollment, period=period, now=now, academy_timezone=academy_timezone
+            )
+
+    async def count_unbilled_enrollments(self, period: str) -> int:
+        """Read-only: enrollments the monthly run would invoice for ``period``
+        that hold no invoice for it yet (the dashboard's "no invoice" item).
+
+        The classifier's ``candidate`` rows, minus the generator's own pricing
+        skips that can be read without writing: no family, a $0 class fee, or
+        a tuition invoice already on the ledger.
+        """
+        academy_id = current_academy_id()
+        academy_timezone = await self._load_academy_timezone() or "UTC"
+        count = 0
+        # The dashboard runs this on every load: price each class once, not per student.
+        fee_by_session: dict[str, int] = {}
+        async for classified in self.classify_monthly_enrollments(
+            period, now=self._clock(), academy_timezone=academy_timezone
+        ):
+            if classified.kind != "candidate":
+                continue
+            if not resolved_parent_id(classified.enrollment, classified.student_doc):
+                continue
+            if classified.session_id not in fee_by_session:
+                session_doc = await self._db["sessions"].find_one(
+                    {"academy_id": academy_id, "session_id": classified.session_id}
+                )
+                # shortcut: the class fee, not the prorated charge (pricing stamps a
+                # snapshot), so a first month with no class dates left still counts.
+                fee_by_session[classified.session_id] = await class_fee_cents_for_period(
+                    self._db, session_doc or {}, period
+                )
+            if fee_by_session[classified.session_id] <= 0:
+                continue
+            if await self._find_existing_invoice_for_enrollment_period(
+                enrollment_id=classified.enrollment_id, period=period
+            ):
+                continue
+            count += 1
+        return count
+
     async def generate_monthly_payments(self, period: str) -> GenerateMonthlyPaymentsResult:
         academy_id = current_academy_id()
         (
@@ -1067,13 +1201,6 @@ class MongoMonthlyBillingGenerator:
             self._autopay_charge_offset_days,
         ) = await self._load_schedule(self._clock().date())
         academy_timezone = await self._load_academy_timezone() or "UTC"
-        cursor = self._db["enrollments"].find(
-            {
-                "academy_id": academy_id,
-                "status": {"$in": list(MONTHLY_RUN_ENROLLMENT_STATUSES)},
-            },
-            sort=[("created_at", 1), ("enrollment_id", 1)],
-        )
         now = self._clock()
         created = 0
         skipped_existing = 0
@@ -1085,39 +1212,30 @@ class MongoMonthlyBillingGenerator:
         repaired_partial_invoices = 0
         failed_repair = 0
         skipped_reviewed = 0
-        async for enrollment in cursor:
-            enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
-            session_id = str(enrollment.get("session_id") or "")
-            student_id = str(enrollment.get("student_id") or "")
-            student_doc = await self._db["students"].find_one(
-                {"academy_id": academy_id, "student_id": student_id}
-            )
-            skip = await monthly_skip_reason(
-                self._db,
-                enrollment=enrollment,
-                period=period,
-                today=now.date(),
-                academy_timezone=academy_timezone,
-            )
-            if skip is not None:
+        async for classified in self.classify_monthly_enrollments(
+            period, now=now, academy_timezone=academy_timezone
+        ):
+            enrollment = classified.enrollment
+            enrollment_id = classified.enrollment_id
+            session_id = classified.session_id
+            student_id = classified.student_id
+            student_doc = classified.student_doc
+            # The reason is the source of truth: never let a skip fall through to pricing.
+            if classified.skip is not None:
                 skipped_paused += 1
                 skipped_details.append(
                     self._skip_detail(
-                        skip, enrollment=enrollment, student_doc=student_doc, period=period
+                        classified.skip,
+                        enrollment=enrollment,
+                        student_doc=student_doc,
+                        period=period,
                     )
                 )
                 continue
-            if is_not_billed(enrollment):
+            if classified.kind == "not_billed":
                 skipped_no_charge += 1
                 continue
-            existing = await self._repo._find_one(
-                {
-                    "enrollment_id": enrollment_id,
-                    "period": period,
-                    "is_deleted": {"$ne": True},
-                }
-            )
-            if existing is not None:
+            if classified.kind == "existing":
                 skipped_existing += 1
                 continue
             session_doc = await self._db["sessions"].find_one(

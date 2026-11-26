@@ -220,8 +220,8 @@ describe("level colour and coach note", () => {
 describe("formatWinDate", () => {
   const now = new Date("2026-10-31T18:00:00Z");
   it("uses the weekday within the last week, the date before that", () => {
-    expect(formatWinDate("2026-10-29T18:00:00Z", now)).toMatch(/^[A-Z][a-z]{2}$/);
-    expect(formatWinDate("2026-10-17T18:00:00Z", now)).toMatch(/Oct/);
+    expect(formatWinDate("2026-10-29T18:00:00Z", "America/Chicago", now)).toMatch(/^[A-Z][a-z]{2}$/);
+    expect(formatWinDate("2026-10-17T18:00:00Z", "America/Chicago", now)).toMatch(/Oct/);
   });
 });
 
