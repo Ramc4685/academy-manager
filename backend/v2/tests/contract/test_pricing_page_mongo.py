@@ -366,11 +366,13 @@ async def test_classes_list_students_and_skip_cancelled(db, acad) -> None:
     await _enroll(db, acad, "e1", "running")
     await _enroll(db, acad, "e2", "running")
     await _enroll(db, acad, "e3", "running", status="cancelled")
+    await _enroll(db, acad, "e4", "running", billing_type="NoCharge")
     overview, _, _ = _use_cases(db)
 
     classes = (await overview.execute()).classes
 
-    assert [(c.session_id, c.students) for c in classes] == [("running", 2)]
+    # "2 paying of 3 enrolled": the not-billed child is enrolled, not paying.
+    assert [(c.session_id, c.students, c.paying_students) for c in classes] == [("running", 3, 2)]
 
 
 @pytest.mark.asyncio

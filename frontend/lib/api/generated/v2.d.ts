@@ -13265,6 +13265,11 @@ export interface components {
             coach_id: string | null;
             /** Coach Name */
             coach_name: string | null;
+            /**
+             * Not Billed
+             * @default 0
+             */
+            not_billed: number;
             /** Session Id */
             session_id: string;
             /** Students */
@@ -18577,6 +18582,8 @@ export interface components {
             fee_set: boolean;
             /** Matching Plan Ids */
             matching_plan_ids: string[];
+            /** Paying Students */
+            paying_students: number;
             /** Plan Id */
             plan_id: string | null;
             /** Scheduled Cents */

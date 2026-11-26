@@ -14135,6 +14135,11 @@
             ],
             "title": "Coach Name"
           },
+          "not_billed": {
+            "default": 0,
+            "title": "Not Billed",
+            "type": "integer"
+          },
           "session_id": {
             "title": "Session Id",
             "type": "string"
@@ -28949,6 +28954,10 @@
             "title": "Matching Plan Ids",
             "type": "array"
           },
+          "paying_students": {
+            "title": "Paying Students",
+            "type": "integer"
+          },
           "plan_id": {
             "anyOf": [
               {
@@ -29021,6 +29030,7 @@
           "charged_cents",
           "fee_set",
           "students",
+          "paying_students",
           "plan_id",
           "matching_plan_ids",
           "stale_link"

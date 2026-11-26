@@ -72,6 +72,8 @@ class ClassPriceFacts:
     fee_set: bool
     #: Active enrollments on the class.
     students: int
+    #: Of those, the ones the monthly run bills ("9 paying of 11 enrolled").
+    paying_students: int
 
 
 SavedOverrideSource = Literal["billing_plan", "class_enrollment"]
@@ -153,6 +155,7 @@ class PricingClassRow(BaseModel):
     charged_cents: int
     fee_set: bool
     students: int
+    paying_students: int
     #: The plan the class is priced from, or ``None`` for custom.
     plan_id: str | None
     #: Active plans at exactly this class's fee: the only plans it may use.
@@ -431,6 +434,7 @@ class GetPricingOverview:
                     charged_cents=cls.charged_cents,
                     fee_set=cls.fee_set,
                     students=cls.students,
+                    paying_students=cls.paying_students,
                     plan_id=plan_id,
                     matching_plan_ids=matching_plan_ids(cls.charged_cents, prices),
                     stale_link=stored_plan is not None and plan_id is None,
@@ -562,6 +566,7 @@ class SetClassPlanLink:
             charged_cents=cls.charged_cents,
             fee_set=cls.fee_set,
             students=cls.students,
+            paying_students=cls.paying_students,
             plan_id=cmd.plan_id,
             matching_plan_ids=matching_plan_ids(cls.charged_cents, prices),
             stale_link=False,

@@ -424,6 +424,9 @@ class ClassRiskRow:
     at_risk: int
     #: ``at_risk / students``; None when the class has no students.
     at_risk_rate: float | None
+    #: Seated here but not billed (left out of ``students``), so the row can
+    #: read "9 paying of 11 enrolled" like every other report.
+    not_billed: int = 0
 
 
 @dataclass(frozen=True)
@@ -476,11 +479,14 @@ def summarize_attendance_risk(
     seated: set[str] = set()
     flagged: set[str] = set()
     not_billed: set[str] = set()
+    not_billed_by_class: dict[str, int] = {}
     for student in facts.students:
         if not student.live_session_ids:
             continue
         if student.not_billed:
             not_billed.add(student.student_id)
+            for session_id in student.live_session_ids:
+                not_billed_by_class[session_id] = not_billed_by_class.get(session_id, 0) + 1
             continue
         seated.add(student.student_id)
         risky = student.state == AT_RISK_STATE
@@ -508,6 +514,7 @@ def summarize_attendance_risk(
                 students=len(roster),
                 at_risk=len(flagged_here),
                 at_risk_rate=_rate(len(flagged_here), len(roster)),
+                not_billed=not_billed_by_class.get(session_id, 0),
             )
         )
         key = coach_id or NO_COACH_KEY

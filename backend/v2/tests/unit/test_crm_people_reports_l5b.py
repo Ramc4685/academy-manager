@@ -87,6 +87,23 @@ def test_attendance_risk_groups_by_class_then_coach() -> None:
     assert (report.students, report.at_risk) == (5, 2)
 
 
+def test_attendance_risk_counts_not_billed_seats_per_class() -> None:
+    facts = _facts()
+    facts = AttendanceRiskFacts(
+        students=(*facts.students, RiskStudent("s7", "active", ("c-tue",), not_billed=True)),
+        classes=facts.classes,
+        coach_names=facts.coach_names,
+    )
+
+    report = summarize_attendance_risk(facts, generated_at=NOW)
+
+    by_class = {r.session_id: r for r in report.by_class}
+    # Paying stays 2 on Tuesday; the not-billed child is counted beside it.
+    assert (by_class["c-tue"].students, by_class["c-tue"].not_billed) == (2, 1)
+    assert by_class["c-sat"].not_billed == 0
+    assert report.not_billed == 1
+
+
 def test_attendance_risk_with_no_seats_is_empty() -> None:
     report = summarize_attendance_risk(
         AttendanceRiskFacts(students=(), classes={}, coach_names={}), generated_at=NOW

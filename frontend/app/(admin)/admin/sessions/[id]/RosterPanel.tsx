@@ -23,6 +23,7 @@ import {
   holdActionsFor,
   type DepartureAction,
 } from "@/components/admin/enrollment/departure-actions";
+import { headcountLabel } from "@/components/admin/not-billed";
 
 import { pendingCancellationLabel } from "@/lib/format/cancellation-copy";
 
@@ -136,7 +137,10 @@ export function RosterMetrics({
         label="In session"
         value={String(filled)}
         detail={
-          [pausedCount > 0 ? `${pausedCount} paused` : "", notBilledCount ? `+${notBilledCount} not billed` : ""]
+          [
+            pausedCount > 0 ? `${pausedCount} paused` : "",
+            notBilledCount ? headcountLabel(filled, filled + notBilledCount) : "",
+          ]
             .filter(Boolean)
             .join(" · ") || undefined
         }

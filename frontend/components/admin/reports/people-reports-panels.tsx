@@ -22,7 +22,7 @@ import {
   studentsText,
   type RiskRow,
 } from "@/lib/people-reports-view";
-import { notBilledSuffix } from "@/components/admin/not-billed";
+import { headcountLabel } from "@/components/admin/not-billed";
 import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 import { Skeleton } from "@/components/ds/skeleton";
@@ -349,7 +349,7 @@ function RiskTable({
               </th>
             )}
             <th scope="col" className={TH_NUM}>
-              Students
+              {kind === "class" ? "Students" : "Paying"}
             </th>
             <th scope="col" className={TH_NUM}>
               At risk
@@ -374,7 +374,9 @@ function RiskTable({
               ) : (
                 <td className={TD_NUM}>{row.classes}</td>
               )}
-              <td className={TD_NUM}>{row.students}</td>
+              <td className={TD_NUM}>
+                {kind === "class" ? headcountLabel(row.students, row.students + row.notBilled) : row.students}
+              </td>
               <td className={TD_NUM}>{row.atRisk}</td>
               <td className={TD_NUM}>{row.share}</td>
             </tr>
@@ -419,8 +421,8 @@ export function AttendanceRiskPanel() {
       ) : (
         <>
           <p className="mt-3 text-sm text-rally-ink" data-testid="people-report-attendance-risk-total">
-            {studentsText(view.atRisk)} at risk of {studentsText(view.students)} in a class
-            {notBilledSuffix(view.notBilled)}.
+            {studentsText(view.atRisk)} at risk of{" "}
+            {headcountLabel(view.students, view.students + view.notBilled)} in a class.
           </p>
           <h3 className="mt-4 text-sm font-semibold text-rally-ink">By class</h3>
           <RiskTable rows={view.byClass} kind="class" caption="At-risk students by class" />

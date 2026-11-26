@@ -35,6 +35,8 @@ export interface PricingClass {
   /** False when the class has no fee stored (it is billed at 0). */
   fee_set: boolean;
   students: number;
+  /** Of `students`, the ones billed ("9 paying of 11 enrolled"). */
+  paying_students: number;
   /** Linked plan, or null for "Custom". */
   plan_id: string | null;
   /** Active plans at exactly this fee: the only plans the class may use. */

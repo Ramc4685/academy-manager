@@ -62,6 +62,8 @@ class PricingClassView(BaseModel):
     charged_cents: int
     fee_set: bool
     students: int
+    #: Of ``students``, the ones billed (the rest are "not billed").
+    paying_students: int
     #: Linked plan, or null for "Custom".
     plan_id: str | None
     #: Active plans at exactly this fee: the only plans the class may use.

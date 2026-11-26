@@ -28,6 +28,7 @@ const cls = (overrides: Partial<PricingClass>): PricingClass => ({
   charged_cents: 12_000,
   fee_set: true,
   students: 3,
+  paying_students: 3,
   plan_id: null,
   matching_plan_ids: [],
   stale_link: false,
@@ -102,6 +103,17 @@ describe("ClassPricesCard", () => {
   it("counts the classes Link matching classes would link", () => {
     const html = render(<ClassPricesCard classes={[cls({})]} plans={plans} autoLinkable={2} />);
     expect(html).toContain("2 classes have exactly one plan at the same price");
+  });
+
+  it("reads paying of enrolled like every other report", () => {
+    const html = render(
+      <ClassPricesCard
+        classes={[cls({ students: 11, paying_students: 9 })]}
+        plans={plans}
+        autoLinkable={0}
+      />,
+    );
+    expect(html).toContain("9 paying of 11 enrolled");
   });
 });
 

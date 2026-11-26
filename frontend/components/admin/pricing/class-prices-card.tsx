@@ -10,6 +10,7 @@ import {
   type PricingClass,
   type PricingPlan,
 } from "@/lib/api/v2/pricing";
+import { headcountLabel } from "@/components/admin/not-billed";
 import { formatCents } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -184,7 +185,7 @@ export function ClassPricesCard({
                       )}
                     </td>
                     <td className="px-4 py-3 text-right font-mono tabular-nums">
-                      {cls.students}
+                      {headcountLabel(cls.paying_students, cls.students)}
                     </td>
                   </tr>
                 );

@@ -68,26 +68,33 @@ class MongoPricingReadModel(TenantScopedRepository):
         super().__init__(db)
         self._now = clock
 
-    async def _active_counts(self, session_ids: list[str] | None = None) -> dict[str, int]:
+    async def _active_counts(
+        self, session_ids: list[str] | None = None
+    ) -> dict[str, tuple[int, int]]:
+        """(enrolled, paying) active enrollments per class."""
         match: dict[str, Any] = {"status": "active"}
         if session_ids is not None:
             match["session_id"] = {"$in": session_ids}
-        cursor = self._db["enrollments"].aggregate(
-            [
-                {"$match": self._scoped(match)},
-                {"$group": {"_id": "$session_id", "n": {"$sum": 1}}},
-            ]
+        cursor = self._find_many_in_collection(
+            "enrollments", match, {"_id": 0, "session_id": 1, "billing_type": 1}
         )
-        return {str(doc["_id"]): int(doc["n"]) async for doc in cursor if doc.get("_id")}
+        counts: dict[str, tuple[int, int]] = {}
+        async for doc in cursor:
+            if not doc.get("session_id"):
+                continue
+            enrolled, paying = counts.get(str(doc["session_id"]), (0, 0))
+            counts[str(doc["session_id"])] = (enrolled + 1, paying + (not is_not_billed(doc)))
+        return counts
 
     @staticmethod
-    def _facts(doc: dict[str, Any], students: int) -> ClassPriceFacts:
+    def _facts(doc: dict[str, Any], counts: tuple[int, int]) -> ClassPriceFacts:
         return ClassPriceFacts(
             session_id=_session_id(doc),
             title=_session_title(doc),
             charged_cents=session_amount_cents(doc),
             fee_set=any(doc.get(field) is not None for field in _FEE_FIELDS),
-            students=students,
+            students=counts[0],
+            paying_students=counts[1],
         )
 
     async def list_classes(self) -> list[ClassPriceFacts]:
@@ -105,14 +112,14 @@ class MongoPricingReadModel(TenantScopedRepository):
             sort=[("title", 1), ("session_id", 1)],
             limit=_ROW_CAP,
         )
-        return [self._facts(doc, counts.get(_session_id(doc), 0)) async for doc in cursor]
+        return [self._facts(doc, counts.get(_session_id(doc), (0, 0))) async for doc in cursor]
 
     async def get_class(self, session_id: str) -> ClassPriceFacts | None:
         doc = await self._find_one({"$or": [{"session_id": session_id}, {"_id": session_id}]})
         if doc is None:
             return None
         counts = await self._active_counts([_session_id(doc)])
-        return self._facts(doc, counts.get(_session_id(doc), 0))
+        return self._facts(doc, counts.get(_session_id(doc), (0, 0)))
 
     async def billed_students(self, session_ids: Sequence[str]) -> dict[str, int]:
         """Distinct students the monthly run invoices on each class.

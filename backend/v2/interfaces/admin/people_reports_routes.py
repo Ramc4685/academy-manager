@@ -144,6 +144,8 @@ class ClassRiskView(BaseModel):
     students: int
     at_risk: int
     at_risk_rate: float | None
+    #: Seated here but not billed; ``students`` counts paying only.
+    not_billed: int = 0
 
 
 class CoachRiskView(BaseModel):
@@ -191,6 +193,7 @@ def _class_risk(row: ClassRiskRow) -> ClassRiskView:
         students=row.students,
         at_risk=row.at_risk,
         at_risk_rate=row.at_risk_rate,
+        not_billed=row.not_billed,
     )
 
 
