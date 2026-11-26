@@ -134,7 +134,7 @@ export function RosterMetrics({
   return (
     <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 2xl:grid-cols-4">
       <RosterMetric
-        label="In session"
+        label="In class"
         value={String(filled)}
         detail={
           [
@@ -290,7 +290,7 @@ export function RosterTable({
             studentId: e.student_id,
             programId: e.pathway_program_id,
             returnTo: `/admin/sessions/${encodeURIComponent(sessionId)}`,
-            returnLabel: "Back to session",
+            returnLabel: "Back to class",
           }) as Parameters<typeof Link>[0]["href"],
         }}
         enrollmentId={e.enrollment_id}

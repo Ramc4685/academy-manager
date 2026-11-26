@@ -351,7 +351,7 @@ function SessionsPanel({
     <>
       <Card p={20} className="lg:col-span-2">
         <div className="flex items-center justify-between gap-3">
-          <Overline>Enrolled sessions</Overline>
+          <Overline>Enrolled classes</Overline>
           <span className="font-mono text-xs text-rally-muted tabular-nums">
             {sessions.filter((s) => s.status === "active").length} active
           </span>
@@ -361,11 +361,11 @@ function SessionsPanel({
             className="mt-3 text-sm text-rally-muted"
             data-testid="admin-student-no-sessions"
           >
-            No session enrollments.
+            No class enrollments.
           </p>
         ) : isPhone ? (
           <div className="-mx-5 mt-3" data-testid="admin-student-enrolled-sessions">
-            <PhoneList aria-label="Enrolled sessions">
+            <PhoneList aria-label="Enrolled classes">
               {sessions.map((session) => (
                 <PhoneListRow
                   key={session.enrollment_id}
@@ -440,7 +440,7 @@ function SessionsPanel({
             <table className="min-w-full text-left text-sm">
               <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
                 <tr>
-                  <th className="py-2 pr-4 font-medium">Session</th>
+                  <th className="py-2 pr-4 font-medium">Class</th>
                   <th className="py-2 pr-4 font-medium">Schedule</th>
                   <th className="py-2 pr-4 font-medium">Billing</th>
                   <th className="py-2 pr-4 font-medium">Status</th>
@@ -614,7 +614,7 @@ function SessionsPanel({
           if (!next && !transferMutation.isPending) setMoving(null);
         }}
         overline="Transfer"
-        title="Move student session"
+        title="Move student to another class"
         description={moving ? `Move ${studentName} out of ${moving.session_title}.` : ""}
       >
         {moving && (
@@ -628,7 +628,7 @@ function SessionsPanel({
             {transferMutation.isError && (
               <DialogError message={getErrorMessage(transferMutation.error) ?? "Could not move the student."} />
             )}
-            <Field label="New session" required>
+            <Field label="New class" required>
               <select
                 required
                 className={MOVE_INPUT_CLASS}
@@ -640,7 +640,7 @@ function SessionsPanel({
                 disabled={sessionsQuery.isPending}
               >
                 <option value="">
-                  {sessionsQuery.isPending ? "Loading…" : "Select a session"}
+                  {sessionsQuery.isPending ? "Loading…" : "Select a class"}
                 </option>
                 {availableSessions.map((s) => (
                   <option key={s.session_id} value={s.session_id}>
@@ -885,7 +885,7 @@ function SessionsPanel({
               id="session-fee-title"
               className="mb-1 text-base font-semibold text-rally-ink"
             >
-              Update session fee
+              Update class fee
             </h2>
             <p className="mb-4 text-sm text-rally-muted">
               {billingOverride.session_title}
@@ -926,7 +926,7 @@ function SessionsPanel({
                   onChange={(event) => setOverrideAmount(event.target.value)}
                 />
                 <p className="mt-1 text-xs text-rally-muted">
-                  Use 0.00 to waive this student&apos;s session fee.
+                  Use 0.00 to waive this student&apos;s class fee.
                 </p>
                 {overrideAmountInvalid && (
                   <p className="mt-1 text-xs text-red-600">
@@ -1027,7 +1027,7 @@ function PastEnrollmentsPanel({ rows }: { rows: AdminStudentSessionSummary[] }) 
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
               <tr>
-                <th className="py-2 pr-4 font-medium">Session</th>
+                <th className="py-2 pr-4 font-medium">Class</th>
                 <th className="py-2 pr-4 font-medium">Status</th>
                 <th className="py-2 pr-4 font-medium">Ended</th>
                 <th className="py-2 pr-4 font-medium">Ended by</th>

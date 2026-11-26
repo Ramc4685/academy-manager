@@ -309,13 +309,13 @@ export function AllInvoicesTab() {
               ))}
             </select>
           </Field>
-          <Field label="Session">
+          <Field label="Class">
             <select
               value={sessionFilter}
               onChange={(event) => setSessionFilter(event.target.value)}
               className={inputClass}
             >
-              <option value="all">All sessions</option>
+              <option value="all">All classes</option>
               {sessionOptions.map((session) => (
                 <option key={session} value={session}>
                   {sessionFilterLabel(session, sessionTitles)}

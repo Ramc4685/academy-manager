@@ -78,7 +78,7 @@ function formatPayRuleLabel(rate: AdminCoachPayRateView): string {
   if (rate.billing_unit === "percent_of_revenue") {
     return `Pay rule: ${rate.percent ?? 0}% of invoiced tuition · effective since ${since}`;
   }
-  const unit = rate.billing_unit === "per_hour" ? "per hour" : "per session";
+  const unit = rate.billing_unit === "per_hour" ? "per hour" : "per class date";
   return `Pay rule: ${money(rate.amount_cents, rate.currency)} ${unit} · effective since ${since}`;
 }
 
@@ -106,7 +106,7 @@ function payRuleLabel(
     return "No pay rule was effective for this payout period.";
   }
   if (applicableRates.length > 1) {
-    return "Pay rule: varies by session date in this payout period.";
+    return "Pay rule: varies by class date in this payout period.";
   }
   return formatPayRuleLabel(applicableRates[0]);
 }
@@ -324,7 +324,7 @@ function Header({
 function SummaryCards({ period }: { period: AdminPayoutPeriodView }) {
   const replacementCount = period.lines.filter((line) => line.basis === "substitute").length;
   const metrics: { label: string; value: string }[] = [
-    { label: "Sessions coached", value: String(period.lines.length) },
+    { label: "Class dates coached", value: String(period.lines.length) },
     { label: "As replacement", value: String(replacementCount) },
     { label: "Warnings", value: String(period.payout_warnings.length) },
     { label: "Total pay", value: money(period.total_amount_cents, period.currency) },
@@ -520,7 +520,7 @@ function Actions({
               block
                 ? block.message
                 : unresolvedCount > 0
-                  ? "Repair unpaid occurrences and recompute before approval."
+                  ? "Repair unpaid class dates and recompute before approval."
                   : "Lock the lines and move this payout to approved."
             }
             disabled={busy || unresolvedCount > 0 || block !== null}
@@ -645,7 +645,7 @@ function PayLog({
       <Card p={0}>
         <div className="border-b border-rally-line px-5 py-4">
           <Overline>
-            Session pay log ({period.lines.length + period.unpaid_occurrences.length})
+            Class date pay log ({period.lines.length + period.unpaid_occurrences.length})
           </Overline>
         </div>
         <div className="overflow-x-auto">
@@ -653,7 +653,7 @@ function PayLog({
             <thead>
               <tr className="border-b border-rally-line text-left">
                 <th className={`${TH} pl-5`}>Date</th>
-                <th className={TH}>Session</th>
+                <th className={TH}>Class</th>
                 <th className={TH}>Role</th>
                 <th className={TH}>Status</th>
                 <th className={`${TH} text-right`}>{percentBasisLabel(period.revenue_basis)}</th>
@@ -724,7 +724,7 @@ function PayLog({
               {period.lines.length === 0 && period.unpaid_occurrences.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-5 py-6 text-center text-sm text-rally-muted">
-                    No sessions in this period.
+                    No class dates in this period.
                   </td>
                 </tr>
               )}
@@ -793,7 +793,7 @@ function PaidRow({
 
   const onEdit = () => {
     const amountText = window.prompt(
-      "New amount for this occurrence (e.g. 45.00):",
+      "New amount for this class date (e.g. 45.00):",
       (line.amount_cents / 100).toFixed(2),
     );
     if (amountText === null) return;
@@ -897,7 +897,7 @@ function PaidRow({
             )}
             <button
               type="button"
-              title="Correct attendance, coach, or replacement for this occurrence"
+              title="Correct attendance, coach, or replacement for this class date"
               onClick={onCorrect}
               aria-label="Correct this line"
               className="rounded p-1 text-rally-muted hover:text-rally-ink focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"

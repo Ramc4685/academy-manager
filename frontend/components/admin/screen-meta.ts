@@ -67,7 +67,7 @@ export const ADMIN_NAV: ReadonlyArray<AdminNavGroup> = [
   {
     group: "CLASSES",
     items: [
-      { id: "sessions", href: "/admin/sessions", label: "Sessions", icon: "calendar", match: startsWith("/admin/sessions") },
+      { id: "sessions", href: "/admin/sessions", label: "Classes", icon: "calendar", match: startsWith("/admin/sessions") },
       // Settings overhaul Phase 3 PR 11: authoring moved to Settings ->
       // Curriculum; this item is now student progress tracking. It lands on
       // the owner dashboard (who is moving, who is stuck), which needs no
@@ -200,8 +200,8 @@ export interface AdminScreenMeta {
 export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin": { title: "Dashboard", subtitle: "Daily overview", breadcrumbs: ["Admin", "Dashboard"] },
   "/admin/dashboard": { title: "Dashboard", subtitle: "Daily overview", breadcrumbs: ["Admin", "Dashboard"] },
-  "/admin/sessions": { title: "Sessions", subtitle: "Schedule and rosters", breadcrumbs: ["Admin", "Sessions"] },
-  "/admin/sessions/month-dates": { title: "Month dates", subtitle: "Class and no-class days, published to parents", breadcrumbs: ["Admin", "Sessions", "Month dates"] },
+  "/admin/sessions": { title: "Classes", subtitle: "Schedule and rosters", breadcrumbs: ["Admin", "Classes"] },
+  "/admin/sessions/month-dates": { title: "Month dates", subtitle: "Class and no-class days, published to parents", breadcrumbs: ["Admin", "Classes", "Month dates"] },
   "/admin/students": { title: "Students", subtitle: "Every child: classes, attendance, status", breadcrumbs: ["Admin", "People", "Students"] },
   "/admin/pathway": { title: "Progress", subtitle: "Where each student is on the skill pathway", breadcrumbs: ["Admin", "Progress"] },
   "/admin/pathway/dashboard": { title: "Progress", subtitle: "Who is moving, who is stuck", breadcrumbs: ["Admin", "Progress"] },
@@ -219,8 +219,8 @@ export const SCREEN_META: Record<string, AdminScreenMeta> = {
   "/admin/families/[parentId]": { title: "Family", subtitle: "Balance, autopay, invoices and what the system did", breadcrumbs: ["Admin", "People", "Families", "Family"] },
   "/admin/expenses": { title: "Expenses", subtitle: "Categorised academy spend", breadcrumbs: ["Admin", "Money", "Expenses"] },
   "/admin/payouts": { title: "Payroll & payouts", subtitle: "Payout cycles and coach payslips", breadcrumbs: ["Admin", "Money", "Payouts"] },
-  "/admin/reports": { title: "Month close", subtitle: "The month's two runs, its money, and anything odd", breadcrumbs: ["Admin", "Money", "Month close"] },
-  "/admin/reports/session-economics": { title: "Session economics", subtitle: "Revenue, cost, and profit by session", breadcrumbs: ["Admin", "Money", "Month close", "Session economics"] },
+  "/admin/reports": { title: "Month close", subtitle: "Billed, collected and owed for the month, plus the money and attendance reports", breadcrumbs: ["Admin", "Money", "Month close"] },
+  "/admin/reports/session-economics": { title: "Class economics", subtitle: "Revenue, cost, and profit by class", breadcrumbs: ["Admin", "Money", "Month close", "Class economics"] },
   "/admin/reports/refunds": { title: "Refunds & credits", subtitle: "Money returned and account credits by month", breadcrumbs: ["Admin", "Money", "Month close", "Refunds & credits"] },
   "/admin/reports/revenue-by-category": { title: "Revenue by category", subtitle: "Collected revenue split by program and fee category", breadcrumbs: ["Admin", "Money", "Month close", "Revenue by category"] },
   "/admin/reports/deposit-slip": { title: "Deposit slip", subtitle: "Payments received by day and method for bank reconciliation", breadcrumbs: ["Admin", "Money", "Month close", "Deposit slip"] },

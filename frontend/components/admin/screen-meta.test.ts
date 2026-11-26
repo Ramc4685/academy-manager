@@ -243,7 +243,7 @@ describe("metaForPath", () => {
   });
 
   it("still appends Detail for routes without a dynamic key", () => {
-    expect(metaForPath("/admin/sessions/sess_1").breadcrumbs).toEqual(["Admin", "Sessions", "Detail"]);
+    expect(metaForPath("/admin/sessions/sess_1").breadcrumbs).toEqual(["Admin", "Classes", "Detail"]);
   });
 });
 

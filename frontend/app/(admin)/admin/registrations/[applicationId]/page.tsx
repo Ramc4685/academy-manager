@@ -82,7 +82,7 @@ export default function AdminRegistrationDetailPage() {
   const studentName = query.data?.student_name || "this student";
   const familyLabel = query.data?.parent_name || query.data?.parent_email || "the family";
   const sessionLabel =
-    query.data?.session_title || query.data?.selected_session_id || "the requested session";
+    query.data?.session_title || query.data?.selected_session_id || "the requested class";
 
   const runDecision = (decision: Decision) => {
     setError(null);
@@ -182,7 +182,7 @@ export default function AdminRegistrationDetailPage() {
               />
               <ActionPanel
                 title="Waitlist"
-                copy="Create the student record and place the registration into the selected session queue."
+                copy="Create the student record and place the registration into the selected class queue."
                 textareaLabel="Waitlist reason"
                 textareaValue={waitlistReason}
                 onTextareaChange={setWaitlistReason}
@@ -244,7 +244,7 @@ export default function AdminRegistrationDetailPage() {
                   active, so the family starts being invoiced for it.
                 </p>
                 <p>A child with no level yet starts on the level chosen above.</p>
-                <p>{familyLabel} is emailed a confirmation with the session details.</p>
+                <p>{familyLabel} is emailed a confirmation with the class details.</p>
               </>
             }
             confirmLabel="Approve registration"
@@ -322,9 +322,9 @@ function RegistrationSummary({ registration }: { registration: AdminRegistration
         </dl>
       </Card>
       <Card p={20}>
-        <Overline>Session and waiver</Overline>
+        <Overline>Class and waiver</Overline>
         <div className="mt-4 space-y-4">
-          <Meta label="Requested session" value={registration.session_title || registration.selected_session_id || "Not selected"} />
+          <Meta label="Requested class" value={registration.session_title || registration.selected_session_id || "Not selected"} />
           <Meta label="Capacity" value={registration.session_capacity == null ? "Not reported" : String(registration.session_capacity)} />
           <div>
             <Overline>Waiver</Overline>

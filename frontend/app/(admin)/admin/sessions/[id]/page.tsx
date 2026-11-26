@@ -82,7 +82,7 @@ const ROSTER_VIEWS = [
 ] as const;
 type RosterView = (typeof ROSTER_VIEWS)[number]["id"];
 
-const CANCEL_FAILED_FALLBACK = "Could not cancel session.";
+const CANCEL_FAILED_FALLBACK = "Could not cancel class.";
 
 // #711: a long-running series lists 20+ dates; by default show the 3 most
 // recent past dates and the next 3 upcoming, in order.
@@ -107,7 +107,7 @@ function windowedOccurrences(
 
 function cancelErrorMessage(err: unknown): string {
   const reason = err instanceof Error ? err.message.trim() : "";
-  return reason ? `Could not cancel session: ${reason}` : CANCEL_FAILED_FALLBACK;
+  return reason ? `Could not cancel class: ${reason}` : CANCEL_FAILED_FALLBACK;
 }
 
 export default function AdminSessionDetailPage() {
@@ -406,7 +406,7 @@ export default function AdminSessionDetailPage() {
             href="/admin/sessions"
             className="inline-flex items-center gap-1 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted hover:text-rally-ink"
           >
-            ← Sessions
+            ← Classes
           </Link>
           {sessionsQuery.isLoading ? (
             <div className="mt-2 h-8 w-48 animate-pulse rounded bg-rally-line/40" />
@@ -424,14 +424,14 @@ export default function AdminSessionDetailPage() {
             </>
           ) : (
             <h1 className="font-display text-2xl font-semibold text-rally-ink">
-              Session unavailable
+              Class unavailable
             </h1>
           )}
         </div>
         <div className="flex flex-wrap gap-2">
           {session && (
             <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>
-              Edit session
+              Edit class
             </Button>
           )}
           {session && (
@@ -447,14 +447,17 @@ export default function AdminSessionDetailPage() {
           >
             Add to roster
           </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={() => setCancelSessionOpen(true)}
-            disabled={cancelSessionMutation.isPending}
-          >
-            {cancelSessionMutation.isPending ? "Cancelling…" : "Cancel session"}
-          </Button>
+          {/* S69: set apart from Edit so cancelling the whole class is never a slip. */}
+          <div className="border-l border-rally-line pl-3 sm:ml-3">
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => setCancelSessionOpen(true)}
+              disabled={cancelSessionMutation.isPending}
+            >
+              {cancelSessionMutation.isPending ? "Cancelling…" : "Cancel class"}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -764,9 +767,9 @@ export default function AdminSessionDetailPage() {
       <ConfirmActionDialog
         open={cancelSessionOpen}
         onOpenChange={setCancelSessionOpen}
-        overline="Cancel session"
-        title="Cancel this session for everyone?"
-        subject={session ? `${session.title} · ${session.location}` : "This session"}
+        overline="Cancel class"
+        title="Cancel this class for everyone?"
+        subject={session ? `${session.title} · ${session.location}` : "This class"}
         consequence={
           <>
             <p>
@@ -774,14 +777,14 @@ export default function AdminSessionDetailPage() {
                 ? "1 family loses its seat"
                 : `${activeEnrollments.length} families lose their seats`}
               , and {waitlist.length === 1 ? "1 entry" : `${waitlist.length} entries`} on the
-              waitlist {waitlist.length === 1 ? "is" : "are"} dropped. Billing for the session
+              waitlist {waitlist.length === 1 ? "is" : "are"} dropped. Billing for the class
               stops; invoices already raised stay and must be voided or credited by hand.
             </p>
-            <p>Every enrolled family is emailed that the session was cancelled.</p>
+            <p>Every enrolled family is emailed that the class was cancelled.</p>
             <p className="font-semibold text-rally-ink">This cannot be undone.</p>
           </>
         }
-        confirmLabel="Cancel session"
+        confirmLabel="Cancel class"
         pending={cancelSessionMutation.isPending}
         onConfirm={() => {
           cancelSessionMutation.mutate();

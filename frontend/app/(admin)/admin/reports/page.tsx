@@ -67,8 +67,8 @@ import {
 const FINANCIAL_REPORTS = [
   {
     href: "/admin/reports/session-economics",
-    title: "Session economics",
-    description: "Revenue, cost and profit by session.",
+    title: "Class economics",
+    description: "Revenue, cost and profit by class.",
   },
   {
     href: "/admin/reports/refunds",
@@ -708,7 +708,7 @@ export default function AdminMonthClosePage() {
           <KpiCard
             label="Waitlist"
             value={sessions ? formatInteger(sessions.waitlist_count) : dashboardQuery.isLoading ? "Loading" : "No data"}
-            description="Families waiting on sessions in the selected month."
+            description="Families waiting on classes in the selected month."
           />
         </div>
 
@@ -934,7 +934,7 @@ export default function AdminMonthClosePage() {
             </BigNum>
           </div>
           <p className="mt-1 text-sm text-rally-subtle">
-            Expected tuition from active enrollments at each session&apos;s monthly fee.
+            Expected tuition from active enrollments at each class&apos;s monthly fee.
           </p>
           {projected && !projected.empty ? (
             <div className="mt-4 space-y-4">
@@ -977,7 +977,7 @@ export default function AdminMonthClosePage() {
                 <table className="w-full min-w-[360px] text-left text-sm">
                   <thead className="text-xs uppercase text-rally-muted">
                     <tr>
-                      <th className="px-2 py-2">Session</th>
+                      <th className="px-2 py-2">Class</th>
                       <th className="px-2 py-2">Students</th>
                       <th className="px-2 py-2">Monthly fee</th>
                       <th className="px-2 py-2">Expected</th>
@@ -1074,7 +1074,7 @@ export default function AdminMonthClosePage() {
         <CollapsibleSection
           id="report-links"
           title="Report links"
-          summary="Session economics, refunds, revenue by category, deposit slip and leaving."
+          summary="Class economics, refunds, revenue by category, deposit slip and leaving."
         >
         <div className="grid gap-4 lg:grid-cols-3">
           {FINANCIAL_REPORTS.map((report) => (

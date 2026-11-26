@@ -407,7 +407,7 @@ export function PlansTable({
                 {PLAN_TYPE_LABEL[row.plan_type ?? "monthly"]}
                 {row.billing_period === "per_session" && (
                   <p className="text-xs text-rally-subtle" data-testid="plan-legacy-period">
-                    Saved earlier as per session. Billing still uses the class fee.
+                    Saved earlier as per class date. Billing still uses the class fee.
                   </p>
                 )}
               </td>
@@ -559,7 +559,7 @@ function SessionTypeDialog({
               >
                 <option value="monthly">{PLAN_TYPE_LABEL.monthly}</option>
                 <option value="per_session" disabled>
-                  Per session - coming later
+                  Per class date - coming later
                 </option>
               </select>
             </FormField>
@@ -568,7 +568,7 @@ function SessionTypeDialog({
             label="Overage rate ($)"
             htmlFor="st-overage"
             error={shown.overage_rate}
-            hint="Charged per session beyond the plan's included sessions. Leave blank for none."
+            hint="Charged per class date beyond the plan's included class dates. Leave blank for none."
           >
             <input
               id="st-overage"

@@ -300,9 +300,9 @@ export function TransferEnrollmentDialog({
       title={bulk ? `Transfer ${enrollments.length} students` : "Transfer enrollment"}
       description={
         bulk
-          ? `Transfer ${enrollments.map((e) => e.full_name).join(", ")} to another session.`
+          ? `Transfer ${enrollments.map((e) => e.full_name).join(", ")} to another class.`
           : open
-            ? `Transfer ${enrollments[0].full_name} to another session.`
+            ? `Transfer ${enrollments[0].full_name} to another class.`
             : ""
       }
       overline="Transfer"
@@ -345,7 +345,7 @@ export function TransferEnrollmentDialog({
           mutation.mutate();
         }}
       >
-        <Field label="Target session" required>
+        <Field label="Target class" required>
           <RallySessionPicker
             sessions={candidateSessions}
             value={targetSessionId}
@@ -441,12 +441,12 @@ export function RallySessionPicker({
       >
         <span className={selected ? "text-rally-ink" : "text-rally-muted"}>
           {loading
-            ? "Loading sessions…"
+            ? "Loading classes…"
             : selected
               ? `${selected.title} — ${formatTime(selected)}`
               : sessions.length === 0
-                ? "No other upcoming sessions"
-                : "Select session"}
+                ? "No other upcoming classes"
+                : "Select class"}
         </span>
         <span className="font-mono text-xs text-rally-muted">{open ? "▴" : "▾"}</span>
       </button>

@@ -2684,8 +2684,8 @@ test.describe("Rally admin shell", () => {
     // row's actions menu, so `clickRowAction` opens that first.
     await clickRowAction(page, {
       rowTitle: "Cancelable Session",
-      directLabel: "Cancel session Cancelable Session",
-      menuItemLabel: "Cancel session",
+      directLabel: "Cancel class Cancelable Session",
+      menuItemLabel: "Cancel class",
     });
     await page.getByTestId("confirm-action-submit").click();
 
@@ -2695,7 +2695,7 @@ test.describe("Rally admin shell", () => {
     // session" is both the prefix and the generic fallback, so matching only
     // that cannot tell a surfaced reason from a swallowed one.
     await expect(banner.locator("p")).toHaveText(
-      "Could not cancel session: Not allowed to cancel this session.",
+      "Could not cancel class: Not allowed to cancel this session.",
     );
 
     // The cancel FAILED, so the row must still be there. Without this, a future
@@ -2703,8 +2703,8 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByText("Cancelable Session")).toBeVisible();
     await expectRowActionAvailable(page, {
       rowTitle: "Cancelable Session",
-      directLabel: "Cancel session Cancelable Session",
-      menuItemLabel: "Cancel session",
+      directLabel: "Cancel class Cancelable Session",
+      menuItemLabel: "Cancel class",
     });
 
     // Blank-message failure: exactly one "Could not cancel session".
@@ -2713,11 +2713,11 @@ test.describe("Rally admin shell", () => {
     failureMode = "blank";
     await clickRowAction(page, {
       rowTitle: "Cancelable Session",
-      directLabel: "Cancel session Cancelable Session",
-      menuItemLabel: "Cancel session",
+      directLabel: "Cancel class Cancelable Session",
+      menuItemLabel: "Cancel class",
     });
     await page.getByTestId("confirm-action-submit").click();
-    await expect(banner.locator("p")).toHaveText("Could not cancel session.");
+    await expect(banner.locator("p")).toHaveText("Could not cancel class.");
   });
 
   // #467 on the DETAIL page — the primary cancel entry point. Its banner had no
@@ -2748,13 +2748,13 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByTestId("admin-session-detail")).toBeVisible();
     // #838: the page button opens the dialog; its confirm fires the DELETE.
     // The dialog's confirm shares the label, so it is reached by test id.
-    await page.getByRole("button", { name: "Cancel session" }).click();
+    await page.getByRole("button", { name: "Cancel class", exact: true }).click();
     await page.getByTestId("confirm-action-submit").click();
 
     const banner = page.getByTestId("admin-session-cancel-error");
     await expect(banner).toBeVisible();
     await expect(banner.locator("p")).toHaveText(
-      "Could not cancel session: Not allowed to cancel this session.",
+      "Could not cancel class: Not allowed to cancel this session.",
     );
     // A failed cancel must not navigate away to the list.
     await expect(page.getByTestId("admin-session-detail")).toBeVisible();
@@ -2762,9 +2762,9 @@ test.describe("Rally admin shell", () => {
     await banner.getByRole("button", { name: "Dismiss" }).click();
     await expect(banner).toBeHidden();
     failureMode = "blank";
-    await page.getByRole("button", { name: "Cancel session" }).click();
+    await page.getByRole("button", { name: "Cancel class", exact: true }).click();
     await page.getByTestId("confirm-action-submit").click();
-    await expect(banner.locator("p")).toHaveText("Could not cancel session.");
+    await expect(banner.locator("p")).toHaveText("Could not cancel class.");
   });
 
   // #503-class: a session payload with NO `days_of_week` key must not crash the
@@ -2779,10 +2779,10 @@ test.describe("Rally admin shell", () => {
 
     await page.goto("/admin/sessions/no-days-session-id");
     await expect(page.getByTestId("admin-session-detail")).toBeVisible();
-    await page.getByRole("button", { name: "Edit session" }).click();
+    await page.getByRole("button", { name: "Edit class" }).click();
 
     await expect(page.getByRole("dialog")).toBeVisible();
-    await expect(page.getByRole("dialog").getByText("Edit session")).toBeVisible();
+    await expect(page.getByRole("dialog").getByText("Edit class")).toBeVisible();
     await expect(page.getByTestId("admin-session-detail")).toBeVisible();
     await expect(page.getByText("Something went wrong")).toHaveCount(0);
   });
@@ -2800,12 +2800,12 @@ test.describe("Rally admin shell", () => {
     // #847: on phone Edit lives behind the row's actions menu.
     await clickRowAction(page, {
       rowTitle: "Legacy No Days",
-      directLabel: "Edit session Legacy No Days",
+      directLabel: "Edit class Legacy No Days",
       menuItemLabel: "Edit",
     });
 
     await expect(page.getByRole("dialog")).toBeVisible();
-    await expect(page.getByRole("dialog").getByText("Edit session")).toBeVisible();
+    await expect(page.getByRole("dialog").getByText("Edit class")).toBeVisible();
     await expect(page.getByTestId("admin-sessions")).toBeVisible();
     await expect(page.getByText("Something went wrong")).toHaveCount(0);
   });

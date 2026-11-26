@@ -168,7 +168,7 @@ export function AdminUsersDirectory({
 
       {!fixedRole && (
         <p className="text-xs text-rally-muted" data-testid="admin-users-staff-help">
-          Pay rates and session assignment are on each coach&apos;s page.
+          Pay rates and class assignment are on each coach&apos;s page.
           {isOwner && (
             <>
               {" "}

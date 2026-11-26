@@ -65,17 +65,17 @@ export const DEPARTURE_ACTION_LABEL: Record<DepartureAction, string> = {
 export const DEPARTURE_ACTION_DESCRIPTION: Record<DepartureAction, string> = {
   transfer:
     "Moves the student to another class; the seat and the invoice go with them. The family is not emailed.",
-  hold: "Keeps the seat and stops billing until the agreed date. The family is emailed.",
+  hold: "Keeps the seat, and there is no next bill until the agreed date back. The family is emailed.",
   return: "Puts the student back in class and starts billing again. The family is emailed.",
-  drop: "Ends the enrollment, frees the seat and stops billing. The family is emailed.",
+  drop: "Frees the seat from the stop date; nothing is billed after it, apart from any cancellation fee. The family is emailed.",
   delete:
     "Takes the row off this roster and frees the seat, for one added in error. The family is not emailed.",
   pause:
-    "Frees the seat and stops billing while the student is away; they join the waitlist. The family is not emailed.",
+    "Frees the seat and the student joins the waitlist; there is no next bill while they are away. The family is not emailed.",
   resume:
     "Takes a seat back when one is free and starts billing again. The family is not emailed.",
   stop_all_classes:
-    "Ends every enrollment this student has, across all their classes. The family is emailed.",
+    "Frees every seat this student has, across all their classes; nothing is billed after the stop date. The family is emailed.",
   undo_scheduled_drop:
     "Calls off the departure booked for the end of the period; seat and billing carry on. The family is not emailed.",
   re_enroll:

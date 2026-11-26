@@ -105,7 +105,7 @@ export function ClassPricesCard({
         <EmptyState
           data-testid="pricing-classes-empty"
           title="No classes yet"
-          description="Classes you add on Sessions show here with the fee they are charged."
+          description="Classes you add on the Classes page show here with the fee they are charged."
         />
       ) : (
         <div className="overflow-x-auto border-t border-rally-line">

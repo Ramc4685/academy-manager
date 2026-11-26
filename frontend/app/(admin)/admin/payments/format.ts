@@ -212,7 +212,7 @@ export function sessionFilterLabel(
   value: string,
   titles: ReadonlyMap<string, string> = new Map(),
 ): string {
-  if (value === "__none__") return "No session";
+  if (value === "__none__") return "No class";
   return titles.get(value) || value;
 }
 

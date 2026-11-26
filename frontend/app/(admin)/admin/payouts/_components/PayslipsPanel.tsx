@@ -108,7 +108,7 @@ function PayslipRows({ rows }: { rows: PayslipRow[] }) {
                   </div>
                   <div className="break-words">{row.coach.email}</div>
                   <div>
-                    {row.sessions} session{row.sessions === 1 ? "" : "s"}
+                    {row.sessions} class date{row.sessions === 1 ? "" : "s"}
                   </div>
                 </>
               }
@@ -128,7 +128,7 @@ function PayslipRows({ rows }: { rows: PayslipRow[] }) {
                   <div className="truncate">
                     <div className="font-semibold leading-tight truncate">{row.coach.display_name || row.coach.email}</div>
                     <div className="text-xs text-neutral-500 truncate">
-                      {row.coach.email} · {row.sessions} assigned session{row.sessions === 1 ? "" : "s"}
+                      {row.coach.email} · {row.sessions} class date{row.sessions === 1 ? "" : "s"}
                     </div>
                   </div>
                 </div>
@@ -146,7 +146,7 @@ function PayslipRows({ rows }: { rows: PayslipRow[] }) {
 
               <div className="flex flex-col gap-1 border-t border-neutral-100 pt-3 dark:border-neutral-800 text-sm">
                 <div className="flex justify-between items-center">
-                  <span className="text-neutral-500">Sessions</span>
+                  <span className="text-neutral-500">Class dates</span>
                   <span className="font-mono font-medium">{row.sessions}</span>
                 </div>
               </div>

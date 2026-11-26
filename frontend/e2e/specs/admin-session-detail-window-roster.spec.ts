@@ -233,7 +233,7 @@ test.describe("admin session detail — class dates window and roster tabs (#711
   });
 
   test("roster metrics read the full list whichever tab is showing", async ({ page }) => {
-    const inSession = page.getByText("In session", { exact: true }).locator("..");
+    const inSession = page.getByText("In class", { exact: true }).locator("..");
     await expect(inSession).toContainText("2");
     await expect(inSession).toContainText("1 paused");
 

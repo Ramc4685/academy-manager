@@ -95,11 +95,11 @@ function fillChip(enrolled: number, capacity: number): { variant: ChipVariant; l
   return { variant: "open", label: "OPEN" };
 }
 
-const CANCEL_FAILED_FALLBACK = "Could not cancel session.";
+const CANCEL_FAILED_FALLBACK = "Could not cancel class.";
 
 function cancelErrorMessage(err: unknown): string {
   const reason = err instanceof Error ? err.message.trim() : "";
-  return reason ? `Could not cancel session: ${reason}` : CANCEL_FAILED_FALLBACK;
+  return reason ? `Could not cancel class: ${reason}` : CANCEL_FAILED_FALLBACK;
 }
 
 export default function AdminSessionsPage() {
@@ -217,7 +217,7 @@ export default function AdminSessionsPage() {
             onClick={() => setCreateOpen(true)}
             data-testid="admin-sessions-create"
           >
-            Create session
+            Create class
           </Button>
         </div>
       </div>
@@ -270,7 +270,7 @@ export default function AdminSessionsPage() {
       ) : sessions.length === 0 ? (
         <Card p={32}>
           <p className="text-center text-sm text-rally-subtle" data-testid="sessions-empty">
-            {scope === "all" ? "No classes match." : "No upcoming sessions found."}
+            {scope === "all" ? "No classes match." : "No upcoming classes found."}
           </p>
         </Card>
       ) : (
@@ -286,8 +286,8 @@ export default function AdminSessionsPage() {
         <ConfirmActionDialog
           open
           onOpenChange={(open) => !open && setCancelTarget(null)}
-          overline="Cancel session"
-          title="Cancel this session for everyone?"
+          overline="Cancel class"
+          title="Cancel this class for everyone?"
           subject={`${cancelTarget.title} · ${cancelTarget.location}`}
           consequence={
             <>
@@ -296,14 +296,14 @@ export default function AdminSessionsPage() {
                 {cancelTarget.enrolled_count === 1 ? "loses its" : "lose their"} seat, and{" "}
                 {cancelTarget.waitlist_count === 1 ? "1 family" : `${cancelTarget.waitlist_count} families`} on
                 the waitlist {cancelTarget.waitlist_count === 1 ? "is" : "are"} dropped. Billing for
-                the session stops; invoices already raised stay and must be voided or credited by
+                the class stops; invoices already raised stay and must be voided or credited by
                 hand.
               </p>
-              <p>Every enrolled family is emailed that the session was cancelled.</p>
+              <p>Every enrolled family is emailed that the class was cancelled.</p>
               <p className="font-semibold text-rally-ink">This cannot be undone.</p>
             </>
           }
-          confirmLabel="Cancel session"
+          confirmLabel="Cancel class"
           pending={deleteMutation.isPending}
           onConfirm={() => {
             deleteMutation.mutate(cancelTarget.session_id);
@@ -438,7 +438,7 @@ function SessionList({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-rally-line text-left">
-              <Th>Session</Th>
+              <Th>Class</Th>
               <Th>Location</Th>
               <Th>Regular days</Th>
               <Th>Time</Th>
@@ -516,19 +516,21 @@ function SessionList({
                         variant="secondary"
                         size="sm"
                         onClick={() => onEdit(s)}
-                        aria-label={`Edit session ${s.title}`}
+                        aria-label={`Edit class ${s.title}`}
                       >
                         Edit
                       </Button>
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        onClick={() => onDelete(s)}
-                        disabled={pendingDeleteId !== null}
-                        aria-label={`Cancel session ${s.title}`}
-                      >
-                        {pendingDeleteId === s.session_id ? "Cancelling…" : "Cancel"}
-                      </Button>
+                      <span className="ml-2 border-l border-rally-line pl-4">
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => onDelete(s)}
+                          disabled={pendingDeleteId !== null}
+                          aria-label={`Cancel class ${s.title}`}
+                        >
+                          {pendingDeleteId === s.session_id ? "Cancelling…" : "Cancel class"}
+                        </Button>
+                      </span>
                     </div>
                   </td>
                 </tr>
@@ -559,7 +561,7 @@ function SessionPhoneList({
   pendingDeleteId: string | null;
 }) {
   return (
-    <PhoneList aria-label="Sessions">
+    <PhoneList aria-label="Classes">
       {sessions.map((s) => {
         const fill = fillChip(s.enrolled_count, s.capacity);
         return (
@@ -588,7 +590,7 @@ function SessionPhoneList({
             actions={[
               {
                 key: "open",
-                label: "Open session",
+                label: "Open class",
                 href: `/admin/sessions/${s.session_id}` as Route,
               },
               {
@@ -599,7 +601,7 @@ function SessionPhoneList({
               { key: "edit", label: "Edit", onSelect: () => onEdit(s) },
               {
                 key: "cancel",
-                label: pendingDeleteId === s.session_id ? "Cancelling…" : "Cancel session",
+                label: pendingDeleteId === s.session_id ? "Cancelling…" : "Cancel class",
                 danger: true,
                 disabled: pendingDeleteId !== null,
                 onSelect: () => onDelete(s),

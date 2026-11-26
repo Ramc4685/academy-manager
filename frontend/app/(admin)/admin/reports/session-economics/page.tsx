@@ -24,7 +24,7 @@ export default function AdminSessionEconomicsPage() {
         <div>
           <Overline>Owner finance</Overline>
           <p className="mt-1 text-sm text-rally-subtle">
-            Session revenue, collections, coach cost, expenses, and expected profit.
+            Class revenue, collections, coach cost, expenses, and expected profit.
           </p>
         </div>
         <label className="flex flex-col gap-1 text-sm font-medium text-rally-ink">
@@ -40,7 +40,7 @@ export default function AdminSessionEconomicsPage() {
 
       {economicsQuery.isError ? (
         <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-          Could not load session economics.
+          Could not load class economics.
         </p>
       ) : null}
 
@@ -81,7 +81,7 @@ export default function AdminSessionEconomicsPage() {
         <MetricStrip label="Coach payroll" value={report ? formatCurrency(report.summary.coach_payroll_cents) : loadingValue(economicsQuery.isLoading)} />
         <MetricStrip label="Rent" value={report ? formatCurrency(report.summary.rent_cents) : loadingValue(economicsQuery.isLoading)} />
         <MetricStrip label="Other expenses" value={report ? formatCurrency(report.summary.other_expenses_cents) : loadingValue(economicsQuery.isLoading)} />
-        <MetricStrip label="Sessions" value={report ? formatInteger(report.sessions.length) : loadingValue(economicsQuery.isLoading)} />
+        <MetricStrip label="Classes" value={report ? formatInteger(report.sessions.length) : loadingValue(economicsQuery.isLoading)} />
       </div>
 
       {report?.empty_states.length ? (
@@ -97,7 +97,7 @@ export default function AdminSessionEconomicsPage() {
 
       <Card p={0} className="overflow-hidden">
         <div className="border-b border-rally-line px-5 py-4">
-          <Overline>Session economics</Overline>
+          <Overline>Class economics</Overline>
           <p className="mt-1 text-sm text-rally-subtle">
             {formatMonth(period)} revenue and cost by recurring session.
           </p>
@@ -106,10 +106,10 @@ export default function AdminSessionEconomicsPage() {
           <table className="w-full min-w-[1180px] text-left text-sm">
             <thead className="bg-rally-paper text-[11px] uppercase tracking-[0.14em] text-rally-muted">
               <tr>
-                <th className="px-5 py-3">Session</th>
+                <th className="px-5 py-3">Class</th>
                 <th className="px-3 py-3">Students</th>
                 <th className="px-3 py-3">Monthly fee</th>
-                <th className="px-3 py-3">Occurrences</th>
+                <th className="px-3 py-3">Class dates</th>
                 <th className="px-3 py-3">Revenue / session</th>
                 <th className="px-3 py-3">Expected</th>
                 <th className="px-3 py-3">Paid</th>
@@ -124,7 +124,7 @@ export default function AdminSessionEconomicsPage() {
               {economicsQuery.isLoading ? (
                 <tr>
                   <td className="px-5 py-8 text-rally-subtle" colSpan={12}>
-                    Loading session economics...
+                    Loading class economics...
                   </td>
                 </tr>
               ) : report?.sessions.length ? (
@@ -175,7 +175,7 @@ export default function AdminSessionEconomicsPage() {
               ) : (
                 <tr>
                   <td className="px-5 py-8 text-rally-subtle" colSpan={12}>
-                    No session economics found for this month.
+                    No class economics found for this month.
                   </td>
                 </tr>
               )}

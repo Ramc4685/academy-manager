@@ -172,7 +172,7 @@ test.describe("admin enrollment withdraw dialog (#670)", () => {
     await expect(dropButton).not.toHaveClass(/bg-orange-600/);
 
     await expect(
-      dialog.getByText("Ends the enrollment, frees the seat and stops billing. The family is emailed."),
+      dialog.getByText("Frees the seat from the stop date; nothing is billed after it, apart from any cancellation fee. The family is emailed."),
     ).toBeVisible();
   });
 

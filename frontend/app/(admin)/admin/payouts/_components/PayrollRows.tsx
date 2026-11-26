@@ -93,7 +93,7 @@ export function PayrollRows({
                     )}
                   </div>
                   <div>
-                    {row.session_count} {row.session_count === 1 ? "session" : "sessions"}
+                    {row.session_count} {row.session_count === 1 ? "class date" : "class dates"}
                     {row.unresolved_unpaid_count > 0
                       ? ` · ${row.unresolved_unpaid_count} unpaid unresolved`
                       : ""}
@@ -114,7 +114,7 @@ export function PayrollRows({
         <thead>
           <tr className="border-b text-left text-muted-foreground">
             <th className="py-2 pr-4 font-medium">Coach</th>
-            <th className="py-2 pr-4 font-medium">Sessions</th>
+            <th className="py-2 pr-4 font-medium">Class dates</th>
             <th className="py-2 pr-4 font-medium">Unpaid</th>
             <th className="py-2 pr-4 font-medium">Total</th>
             <th className="py-2 pr-4 font-medium">Warnings</th>

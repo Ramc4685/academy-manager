@@ -41,7 +41,7 @@ export function stuckDraft(row: Stuck, now = Date.now()): string {
     : `, starting this level ${weeksAgo(row.level_started_at, now)}.`;
   return (
     `Hi! ${progress}${since} Some kids move faster with a bit of one-on-one time, ` +
-    `so we'd love to offer ${kid} a 1-on-1 session to get the next skill. ` +
+    `so we'd love to offer ${kid} a 1-on-1 class to get the next skill. ` +
     `Reply here if you're interested and we'll find a time.`
   );
 }

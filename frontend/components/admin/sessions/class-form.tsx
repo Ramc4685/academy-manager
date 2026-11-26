@@ -640,9 +640,9 @@ export function EditClassDialog({
         if (!nextOpen) setError(null);
         onOpenChange(nextOpen);
       }}
-      title="Edit session"
+      title="Edit class"
       description="Coach, schedule, seats and price."
-      overline="Session"
+      overline="Class"
     >
       {error && <DialogError message={error} />}
       {values && (
@@ -869,9 +869,9 @@ export function CreateClassDialog({
     <RallyModal
       open={open}
       onOpenChange={onOpenChange}
-      title="Create session"
+      title="Create class"
       description="Create a weekly recurring session."
-      overline="New session"
+      overline="New class"
     >
       {error && <DialogError message={error} />}
       <form

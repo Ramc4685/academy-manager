@@ -859,7 +859,7 @@ function ApproveTrialDialog({
         </select>
       </label>
       {occurrencesQuery.isError && (
-        <p className="text-xs text-red-700">Could not load occurrences for this session.</p>
+        <p className="text-xs text-red-700">Could not load class dates for this class.</p>
       )}
       {/* #860, same as the makeup dialog: `ApproveTrialRequest` has no
           notifier either, so say so rather than let the admin assume. */}
@@ -1282,7 +1282,7 @@ export function CancellationsTab() {
           <thead>
             <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
               <Th>Student</Th>
-              <Th>Session</Th>
+              <Th>Class</Th>
               <Th>Cancelled</Th>
               <Th>Fee</Th>
             </tr>

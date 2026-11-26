@@ -594,7 +594,7 @@ function ClassesCard() {
         <EmptyState
           data-testid="public-page-classes-empty"
           title="No classes yet"
-          description="Classes you create under Sessions appear here."
+          description="Classes you create on the Classes page appear here."
         />
       ) : (
         <div className="overflow-x-auto">

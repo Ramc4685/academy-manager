@@ -181,6 +181,6 @@ describe("sessionFilterLabel (S19)", () => {
   });
   it("keeps the id for a session the list does not know, and names the empty bucket", () => {
     expect(sessionFilterLabel("gone_session", titles)).toBe("gone_session");
-    expect(sessionFilterLabel("__none__", titles)).toBe("No session");
+    expect(sessionFilterLabel("__none__", titles)).toBe("No class");
   });
 });

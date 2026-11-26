@@ -42,6 +42,10 @@ export function PausesTab() {
 
   return (
     <div data-testid="admin-pause-requests" className="space-y-4">
+      <p className="text-sm text-rally-subtle">
+        Approving frees the child&apos;s seat (they join the waitlist to come back), and there is no
+        next bill while they are away.
+      </p>
       {isError ? (
         <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           Could not load pause requests.
@@ -72,7 +76,7 @@ export function PausesTab() {
               : "Decline this pause request?"
           }
           subject={`${confirming.request.student_name || confirming.request.student_id || "Student"} · ${
-            confirming.request.session_title || confirming.request.session_id || "session pending"
+            confirming.request.session_title || confirming.request.session_id || "class pending"
           } · ${pauseLabel(confirming.request)}`}
           consequence={
             confirming.decision === "approve" ? (
@@ -169,7 +173,7 @@ function PausesList({
                   <>
                     <div>Student: {request.student_name || request.student_id || "Unknown"}</div>
                     <div className="text-rally-base">
-                      {request.session_title || request.session_id || "Session pending"}
+                      {request.session_title || request.session_id || "Class pending"}
                     </div>
                     <div>{sessionDetail(request)}</div>
                     <div className="text-rally-base">{pauseLabel(request)}</div>
@@ -192,7 +196,7 @@ function PausesList({
               <thead>
                 <tr className="border-b border-neutral-200 text-left dark:border-neutral-800">
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Who</th>
-                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Session</th>
+                  <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Class</th>
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Pause</th>
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Reason</th>
                   <th className="px-2 pb-3 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">Status</th>
@@ -243,7 +247,7 @@ function PauseRow({
         </div>
       </td>
       <td className="px-2 py-3">
-        <div className="font-medium text-rally-base">{request.session_title || request.session_id || "Session pending"}</div>
+        <div className="font-medium text-rally-base">{request.session_title || request.session_id || "Class pending"}</div>
         <div className="mt-1 text-xs text-rally-subtle">
           {sessionDetail(request)}
         </div>
@@ -322,7 +326,7 @@ function sessionDetail(request: AdminPauseRequestView): string {
     request.session_location,
     request.session_start_at ? formatDateTime(request.session_start_at) : null,
   ].filter(Boolean);
-  return parts.join(" · ") || "No session details";
+  return parts.join(" · ") || "No class details";
 }
 
 function Skeleton() {

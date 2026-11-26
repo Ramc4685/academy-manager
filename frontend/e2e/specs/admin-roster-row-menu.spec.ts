@@ -200,7 +200,7 @@ test.describe("admin roster row overflow menu (#713)", () => {
     expect(url.pathname).toBe("/admin/students/stu-1/progress");
     expect(url.searchParams.get("program_id")).toBe("prog-1");
     expect(url.searchParams.get("return_to")).toBe(`/admin/sessions/${SESSION_ID}`);
-    expect(url.searchParams.get("return_label")).toBe("Back to session");
+    expect(url.searchParams.get("return_label")).toBe("Back to class");
   });
 
   /**
@@ -326,7 +326,7 @@ test.describe("bulk roster transfer (A0-8)", () => {
 
     const dialog = page.getByRole("dialog");
     await expect(dialog).toContainText("Transfer 2 students");
-    await dialog.getByRole("button", { name: "Target session" }).click();
+    await dialog.getByRole("button", { name: "Target class" }).click();
     await dialog.getByRole("option", { name: /Thursday 5:00 PM Intermediate/ }).click();
     await dialog.getByRole("button", { name: "Transfer", exact: true }).click();
 

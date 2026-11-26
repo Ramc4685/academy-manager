@@ -164,7 +164,7 @@ function PayoutsContent() {
                   {warningRows.length} coach{warningRows.length > 1 ? "es" : ""}
                 </strong>{" "}
                 have unresolved payroll warnings or unpaid occurrences. Open each payout, repair the
-                session fee or coach rate, then recompute before approval.
+                class fee or coach rate, then recompute before approval.
               </div>
             )}
 
@@ -246,7 +246,7 @@ function PayoutsContent() {
               <p>
                 {warningRows.length === 1 ? "1 coach has" : `${warningRows.length} coaches have`}{" "}
                 unresolved payroll warnings. Generating now bakes the current, possibly wrong,
-                session fee or coach rate into the draft.
+                class fee or coach rate into the draft.
               </p>
             )}
           </>
@@ -269,7 +269,7 @@ function PayoutsContent() {
         consequence={
           <>
             <p>
-              Rebuilds each draft from the current session fees, coach rates and attendance, so
+              Rebuilds each draft from the current class fees, coach rates and attendance, so
               amounts already reviewed this month can change. Approved and paid payslips are left
               alone; nobody is paid and nobody is emailed.
             </p>

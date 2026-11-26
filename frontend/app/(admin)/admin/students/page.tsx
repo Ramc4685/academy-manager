@@ -389,9 +389,9 @@ function SessionsSummaryText({
 }) {
   const listed = names ?? [];
   const sessionTotal = total ?? count;
-  if (sessionTotal <= 0) return <>No active session</>;
+  if (sessionTotal <= 0) return <>No active class</>;
   if (listed.length === 0) {
-    return <>{`${sessionTotal} ${sessionTotal === 1 ? "session" : "sessions"}`}</>;
+    return <>{`${sessionTotal} ${sessionTotal === 1 ? "class" : "classes"}`}</>;
   }
   const unlisted = Math.max(sessionTotal - listed.length, 0);
   return <>{listed.join(", ") + (unlisted > 0 ? `, +${unlisted} more` : "")}</>;
@@ -406,7 +406,7 @@ function StudentsTable({ students }: { students: AdminStudentView[] }) {
           <tr className="border-b border-neutral-200 bg-neutral-50 text-left dark:border-neutral-800">
             <Th padding="px-5 py-3">Student</Th>
             <Th padding="px-3 py-3">Parent</Th>
-            <Th padding="px-3 py-3">Sessions</Th>
+            <Th padding="px-3 py-3">Classes</Th>
             <Th padding="px-3 py-3">Attendance</Th>
             <Th padding="px-3 py-3">Dues</Th>
             <Th padding="px-5 py-3">Last attendance</Th>
@@ -505,13 +505,13 @@ function SessionsCell({
   const sessionTotal = total ?? count;
 
   if (sessionTotal <= 0) {
-    return <span className="text-xs text-rally-subtle">No active session</span>;
+    return <span className="text-xs text-rally-subtle">No active class</span>;
   }
   if (listed.length === 0) {
     // Older payloads carry only the count.
     return (
       <span className="font-mono tabular-nums text-rally-base">
-        {sessionTotal} {sessionTotal === 1 ? "session" : "sessions"}
+        {sessionTotal} {sessionTotal === 1 ? "class" : "classes"}
       </span>
     );
   }

@@ -561,7 +561,7 @@ function DigestLogRow({ entry }: { entry: CoachDigestLogEntryView }) {
 function describeTestResult(res: CoachDigestTestSendResponse): string {
   if (res.status === "sent") return `Test digest sent to ${res.email ?? res.coach_id}.`;
   if (res.status === "skipped_empty")
-    return res.detail ?? "Nothing to send — no sessions for today.";
+    return res.detail ?? "Nothing to send — no classes today.";
   return `Test digest failed to send: ${emailFailureLabel(res.detail)}.`;
 }
 

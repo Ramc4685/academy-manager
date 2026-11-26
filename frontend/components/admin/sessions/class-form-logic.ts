@@ -43,7 +43,7 @@ export function pickablePlans(plans: readonly PricingPlan[] | undefined): Pricin
 
 /** "Group class · $60 / month". */
 export function planOptionLabel(plan: PricingPlan): string {
-  const unit = plan.plan_type === "per_session" ? "session" : "month";
+  const unit = plan.plan_type === "per_session" ? "class date" : "month";
   return `${plan.name} · ${formatFee(plan.price_cents)} / ${unit}`;
 }
 

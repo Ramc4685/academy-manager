@@ -55,7 +55,7 @@ function emailSummary(
         ? `Posted. Emailed ${sent} of ${sent + failed} families — ${failed} could not be reached.`
         : `Posted and emailed ${sent} ${sent === 1 ? "family" : "families"}.`;
     case "no_recipients":
-      return "Posted. Nobody is enrolled in this session yet, so no email was sent.";
+      return "Posted. Nobody is enrolled in this class yet, so no email was sent.";
     case "failed":
       return "Posted, but the email could not be sent. Delete and repost to try again.";
     default:

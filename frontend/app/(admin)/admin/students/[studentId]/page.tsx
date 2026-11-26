@@ -367,7 +367,7 @@ function StudentSummaryStrip({ student }: { student: AdminStudentDetail }) {
     >
       <SummaryMetric
         icon={<CalendarCheck className="size-4" aria-hidden="true" />}
-        label="Active sessions"
+        label="Active classes"
         value={String(student.active_session_count)}
         detail={
           student.last_seen_at
@@ -498,7 +498,7 @@ function EngagementPanel({ student }: { student: AdminStudentDetail }) {
       <DetailList
         rows={[
           {
-            label: "Active sessions",
+            label: "Active classes",
             value: String(student.active_session_count),
           },
           {
@@ -757,7 +757,7 @@ function Header({
             {
               key: "stop-all-classes",
               label: "Stop all classes",
-              description: "Ends every enrollment on the date you pick.",
+              description: "Frees every seat from the date you pick; nothing is billed after it.",
               danger: true,
               onSelect: onStopAllClasses,
             },

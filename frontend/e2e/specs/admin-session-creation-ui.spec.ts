@@ -157,7 +157,7 @@ test.describe("admin session creation and billing-rules settings UI", () => {
     await page.goto("/admin/sessions");
     await page.getByTestId("admin-sessions-create").click();
 
-    await expect(page.getByRole("heading", { name: "Create session" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Create class" })).toBeVisible();
 
     // The coach field renders a placeholder <input> until the admin/users query
     // resolves, then swaps to a <select>. Wait for the option itself so we never
@@ -251,7 +251,7 @@ test.describe("admin session creation and billing-rules settings UI", () => {
     await page.goto("/admin/sessions");
     await page.getByTestId("admin-sessions-create").click();
     const dialog = page.getByRole("dialog");
-    await expect(dialog.getByRole("heading", { name: "Create session" })).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "Create class" })).toBeVisible();
 
     await expect(dialog.getByLabel("Coach").locator("option[value='coach-e2e']")).toBeAttached();
     await dialog.getByLabel("Coach").selectOption("coach-e2e");

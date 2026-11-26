@@ -1071,7 +1071,7 @@ export function SessionAssistantsDialog({
         onOpenChange(nextOpen);
       }}
       title="Edit assistants"
-      description="Assistants see this session in their coach app and can mark attendance, update skills and add notes. They are never paid by payroll."
+      description="Assistants see this class in their coach app and can mark attendance, update skills and add notes. They are never paid by payroll."
       overline="Coaching staff"
     >
       {error && <DialogError message={error} />}

@@ -473,7 +473,7 @@ test.describe("tuition discounts", () => {
     });
 
     await page.goto("/admin/students/student-discounts");
-    await page.getByRole("tab", { name: "Sessions" }).click();
+    await page.getByRole("tab", { name: "Classes" }).click();
     await expect(page.getByTestId("admin-student-enrolled-sessions")).toBeVisible();
     // #865: the Sessions tab is a table on desktop and PhoneListRows below
     // `md:`, so rows are named by id and the action is reached through the
@@ -585,7 +585,7 @@ test.describe("tuition discounts", () => {
     });
 
     await page.goto("/admin/students/student-discounts");
-    await page.getByRole("tab", { name: "Sessions" }).click();
+    await page.getByRole("tab", { name: "Classes" }).click();
     await expect(page.getByTestId("admin-student-enrolled-sessions")).toBeVisible();
     const openNotBilled = async () =>
       (

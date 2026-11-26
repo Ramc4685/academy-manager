@@ -191,6 +191,9 @@ function AdminMessagesContent() {
       >
         <Card p={20} id="direct">
           <LaneHeader index="01" title="Direct messages" />
+          <p className="-mt-2 mb-4 text-sm text-rally-subtle">
+            Goes to one parent&apos;s app inbox. Every admin can see and answer the conversation.
+          </p>
 
           {isLoading ? (
             <MessageSkeleton />
@@ -289,6 +292,10 @@ function AdminMessagesContent() {
 
         <Card p={20} id="broadcast">
           <LaneHeader index="02" title="Broadcast" />
+          <p className="-mt-2 mb-4 text-sm text-rally-subtle">
+            Goes to every parent account in the app inbox, with a phone notification where they
+            turned those on. It is not emailed, so it counts every parent.
+          </p>
           <BroadcastComposer onSent={invalidate} />
           <div className="mt-6">
             <h3 className="mb-2 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted">
@@ -315,6 +322,11 @@ function AdminMessagesContent() {
 
       <Card p={20} id="campaign">
         <LaneHeader index="03" title="Email campaign" />
+        <p className="-mt-2 mb-4 text-sm text-rally-subtle">
+          Emails the parents you choose, plus family contacts set to get notices. Anyone with no
+          email address, a bounced address or who unsubscribed is skipped, so this count can be
+          lower than Broadcast&apos;s.
+        </p>
         <EmailCampaignComposer />
       </Card>
 
@@ -938,12 +950,12 @@ function EmailCampaignComposer() {
   const audienceLabel =
     audienceType === "session"
       ? selectedSessions.length === 0
-        ? "the selected sessions"
+        ? "the selected classes"
         : campaignAudienceLabel(
             previewState,
             selectedSessions.length === 1
               ? `on ${selectedSessions[0].title}`
-              : `across ${selectedSessions.length} sessions`,
+              : `across ${selectedSessions.length} classes`,
           )
       : campaignAudienceLabel(previewState, "in the academy");
   const toggleSession = (id: string) =>
@@ -1016,14 +1028,14 @@ function EmailCampaignComposer() {
               onChange={() => setAudienceType("session")}
               className="accent-rally-cobalt"
             />
-            By session
+            By class
           </label>
         </div>
 
         {audienceType === "session" && (
           <div className="space-y-2">
             <ul
-              aria-label="Select sessions"
+              aria-label="Select classes"
               className="max-h-56 divide-y divide-rally-line overflow-y-auto rounded-md border border-rally-line bg-white"
             >
               {sessions.length === 0 && (

@@ -717,7 +717,7 @@ function SummaryCards({ summary }: { summary: AdminWaiverSummary }) {
       <Card p={20} accent="#f59e0b">
         <Overline>Pending signature</Overline>
         <BigNum size={32}>{summary.pending_signature}</BigNum>
-        <p className="mt-1 text-[11px] text-rally-subtle">Blocks first session</p>
+        <p className="mt-1 text-[11px] text-rally-subtle">Blocks first class date</p>
       </Card>
       <Card p={20} accent="#facc15">
         <Overline>Expiring 30d</Overline>
