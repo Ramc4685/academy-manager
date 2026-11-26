@@ -146,10 +146,20 @@ export default function OnboardingStepperPage() {
       try {
         // S02: "Finish registration" links here with the application to resume.
         const params = new URLSearchParams(window.location.search);
-        const fresh = await startOnboarding(params.get("application"));
+        let fresh = await startOnboarding(params.get("application"));
+        const first = resumeStep(fresh, params.get("step"));
+        // The details step is the only place a stored ?ref= code is attached;
+        // when S21 skips it, attach the code here so a known parent keeps it.
+        const code = storedReferralCode();
+        if (first !== "parent" && code && !fresh.parent_profile.referral_code) {
+          fresh = await patchOnboarding(fresh.application_id, {
+            parent_profile: { ...fresh.parent_profile, referral_code: code },
+          });
+          clearReferralCode();
+        }
         setApp(fresh);
         // S21: a reload stays on its step; a new or second child skips what is already done.
-        setStep(resumeStep(fresh, params.get("step")));
+        setStep(first);
       } catch (e) {
         setError((e as Error).message);
       }

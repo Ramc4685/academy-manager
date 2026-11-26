@@ -261,6 +261,26 @@ test.describe("referral code on the parent step", () => {
     expect(await page.evaluate((key) => localStorage.getItem(key), KEY)).toBeNull();
   });
 
+  test("a known parent who skips Your details still gets the code attached", async ({ page }) => {
+    await stubOnboarding(page, false);
+    await page.addInitScript(
+      ([key, value]) => localStorage.setItem(key, value),
+      [KEY, JSON.stringify({ code: "QZ7KX4MP", at: Date.now() })],
+    );
+    const patches: string[] = [];
+    page.on("request", (req) => {
+      if (req.method() === "PATCH" && req.url().includes(APPLICATION_ID)) {
+        patches.push(req.postData() ?? "");
+      }
+    });
+    await page.goto("/parent/onboarding");
+    await expect(page.getByRole("heading", { name: "Your child" })).toBeVisible();
+    await expect
+      .poll(() => patches.map((p) => JSON.parse(p).parent_profile?.referral_code))
+      .toContain("QZ7KX4MP");
+    expect(await page.evaluate((key) => localStorage.getItem(key), KEY)).toBeNull();
+  });
+
   test("Remove takes the code off the registration", async ({ page }) => {
     const patches = await startWithStoredCode(page);
     await page
