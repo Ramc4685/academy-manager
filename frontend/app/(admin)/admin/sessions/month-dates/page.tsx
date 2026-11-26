@@ -237,7 +237,7 @@ export default function AdminMonthDatesPage() {
         { id: missed.id, label: missed.label, outcome: result.payroll_flag ? `${outcome} ${result.payroll_flag}` : outcome },
       ]);
       setError(null);
-      setNotice(`Saved. ${missed.label} is now marked "No class".`);
+      setNotice(`Saved. ${missed.label} is now marked "No class".${seatChangeNote(result)}`);
       closeMissed();
     },
   });
@@ -623,4 +623,20 @@ export default function AdminMonthDatesPage() {
       )}
     </section>
   );
+}
+
+/** What confirming a missed class did to one-time seats (#1209 item 4). */
+function seatChangeNote(result: {
+  roster_entries_removed?: number;
+  makeups_reopened?: number;
+  trials_reopened?: number;
+}): string {
+  const parts: string[] = [];
+  const seats = result.roster_entries_removed ?? 0;
+  const makeups = result.makeups_reopened ?? 0;
+  const trials = result.trials_reopened ?? 0;
+  if (seats) parts.push(`${seats} one-time ${seats === 1 ? "seat" : "seats"} removed`);
+  if (makeups) parts.push(`${makeups} make-up ${makeups === 1 ? "request" : "requests"} reopened`);
+  if (trials) parts.push(`${trials} ${trials === 1 ? "trial" : "trials"} reopened`);
+  return parts.length ? ` ${parts.join(", ")}.` : "";
 }

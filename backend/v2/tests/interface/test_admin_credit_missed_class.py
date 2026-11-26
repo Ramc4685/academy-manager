@@ -51,6 +51,9 @@ def test_confirm_marks_the_past_date_no_class_and_reports_the_credits(admin_clie
     assert body["dry_run"] is False
     assert body["credits_issued"] == 1
     assert body["credit_total_cents"] == 3000
+    # #1209 item 4: the seat changes the confirm made are reported, not dropped.
+    for key in ("roster_entries_removed", "makeups_reopened", "trials_reopened"):
+        assert isinstance(body[key], int), key
     rows = admin_client.get("/api/v2/admin/sessions/sess-1/occurrences").json()["occurrences"]
     row = next(o for o in rows if o["occurrence_id"] == "occ-admin-missed")
     assert row["status"] == "cancelled" and row["cancellation_reason"] == "gym closed"

@@ -63,7 +63,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
@@ -115,6 +115,11 @@ class BillableEnrollment:
     monthly_discount_cents: int = 0
     #: False for a NoCharge/Waived child (``shared.billing_type``): never charged, never credited.
     billed: bool = True
+    #: Why the monthly run will never invoice this family for the period
+    #: (``monthly_skip_reason``: deferral, skip_period, pending_cancellation),
+    #: or ``None``. A fee-sized credit for such a month hands back money that
+    #: is never collected (#1209 item 6).
+    not_invoiced_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -159,8 +164,10 @@ class OccurrenceCancellationReader(Protocol):
         ...
 
     async def enrollments_for_session(
-        self, session_id: str, *, period: str | None = None
-    ) -> list[BillableEnrollment]: ...
+        self, session_id: str, *, period: str | None = None, today: date | None = None
+    ) -> list[BillableEnrollment]:
+        """``today`` (academy-local) decides whether a billing deferral is active."""
+        ...
 
 
 class OccurrenceOverrideWriter(Protocol):
@@ -380,7 +387,9 @@ class ApplyOccurrenceCancellation:
 
         decisions: list[OccurrenceCreditDecision] = []
         fee_sized: list[_FeeSizedCredit] = []
-        for enrollment in await self._reader.enrollments_for_session(cmd.session_id, period=period):
+        for enrollment in await self._reader.enrollments_for_session(
+            cmd.session_id, period=period, today=_local_day(now, pricing.timezone)
+        ):
             decision, sized = await self._decide(
                 enrollment=enrollment,
                 pricing=pricing,
@@ -600,6 +609,11 @@ class ApplyOccurrenceCancellation:
                 return _skip(enrollment, "free_tuition"), False, 0
             if enrollment.status == "paused":
                 return _skip(enrollment, "paused_not_invoiced"), False, 0
+            if enrollment.not_invoiced_reason is not None:
+                # The monthly run skips this family for the period (a deferral,
+                # a skipped month, a pending end-of-period cancel), so the
+                # class fee is never charged and there is nothing to give back.
+                return _skip(enrollment, f"{enrollment.not_invoiced_reason}_not_invoiced"), False, 0
             if billing_start is not None and period_of(billing_start, pricing.timezone) == period:
                 # Nothing priced yet. Rule 1 handles this family: their
                 # first-month proration reads the overlay and excludes the
@@ -794,3 +808,8 @@ def _reason(*, local_day: str, note: str, invoice: LedgerInvoice | None) -> str:
     if invoice is not None:
         base = f"{base} (invoice {invoice.invoice_number or invoice.invoice_id})"
     return base[:500]
+
+
+def _local_day(now: datetime, timezone_name: str) -> date:
+    """``now`` as the academy-local calendar day."""
+    return now.astimezone(ZoneInfo(timezone_name)).date()

@@ -593,6 +593,9 @@ async def credit_missed_class(
         credit_skips=dict(result.credit_skips),
         payroll_flag=result.payroll_flag,
         billing_result=result.billing_result,
+        roster_entries_removed=result.roster_entries_removed,
+        makeups_reopened=result.makeups_reopened,
+        trials_reopened=result.trials_reopened,
     )
 
 

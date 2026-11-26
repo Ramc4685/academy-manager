@@ -38,7 +38,9 @@ TZ = "America/Chicago"
 CANCELLED_DAY = datetime(2026, 9, 10, 23, 0, tzinfo=UTC)  # 18:00 America/Chicago
 
 
-async def _seed(db, *, invoiced: bool, price_field: str = "amount_cents") -> None:
+async def _seed(
+    db, *, invoiced: bool, price_field: str = "amount_cents", **enrollment_extra
+) -> None:
     await db["academies"].insert_one(
         {"academy_id": ACADEMY, "display_name": "Test Academy", "timezone": TZ}
     )
@@ -68,6 +70,7 @@ async def _seed(db, *, invoiced: bool, price_field: str = "amount_cents") -> Non
             "student_id": "st-1",
             "status": "active",
             "enrolled_at": datetime(2026, 6, 1, tzinfo=UTC),
+            **enrollment_extra,
         }
     )
     if invoiced:
@@ -237,3 +240,35 @@ async def test_migration_0168_scopes_the_unique_credit_index_to_this_feature(db)
     source = inspect.getsource(migration.up)
     assert 'partialFilterExpression={"source_type": CLASS_CANCELLATION_SOURCE_TYPE}' in source
     assert "$type" not in source
+
+
+# Mid-September, before the date: the current month, not yet invoiced.
+_SEPT_NOW = datetime(2026, 9, 5, 15, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_current_month_is_credited_from_the_class_fee(db) -> None:
+    await run_pending_migrations(db)
+    with tenant_scope(ACADEMY):
+        await _seed(db, invoiced=False)
+
+        result = await compose_apply_occurrence_cancellation(db, clock=lambda: _SEPT_NOW).execute(
+            _cmd()
+        )
+
+        assert [d.outcome for d in result.decisions] == ["credited"]
+
+
+@pytest.mark.asyncio
+async def test_a_skipped_month_is_never_credited_from_the_class_fee(db) -> None:
+    """#1209 item 6: the run never invoices a skip_periods month, so no credit."""
+    await run_pending_migrations(db)
+    with tenant_scope(ACADEMY):
+        await _seed(db, invoiced=False, skip_periods=["2026-09"])
+
+        result = await compose_apply_occurrence_cancellation(db, clock=lambda: _SEPT_NOW).execute(
+            _cmd()
+        )
+
+        assert [d.outcome for d in result.decisions] == ["skipped:skip_period_not_invoiced"]
+        assert await MongoCreditLedgerRepository(db).list_for_parent("par-1") == []

@@ -17128,6 +17128,11 @@
             "title": "Families",
             "type": "array"
           },
+          "makeups_reopened": {
+            "default": 0,
+            "title": "Makeups Reopened",
+            "type": "integer"
+          },
           "occurrence_id": {
             "title": "Occurrence Id",
             "type": "string"
@@ -17143,6 +17148,11 @@
             ],
             "title": "Payroll Flag"
           },
+          "roster_entries_removed": {
+            "default": 0,
+            "title": "Roster Entries Removed",
+            "type": "integer"
+          },
           "schedule_changed": {
             "default": false,
             "title": "Schedule Changed",
@@ -17152,6 +17162,11 @@
             "format": "date-time",
             "title": "Start At",
             "type": "string"
+          },
+          "trials_reopened": {
+            "default": 0,
+            "title": "Trials Reopened",
+            "type": "integer"
           }
         },
         "required": [
