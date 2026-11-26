@@ -1063,6 +1063,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.crm_pipeline import compose_mark_lead_enrolled
 
     app.state.admin.admin_registration_review.set_lead_conversion(compose_mark_lead_enrolled(db))
+    # D-10: approval, quick add and roster add (admin or coach) place the
+    # child on a level, attached the same way.
+    from backend.v2.composition.pathway import compose_place_on_enrollment
+
+    _placement = compose_place_on_enrollment(db, outbox)
+    app.state.admin.admin_registration_review.set_level_placement(_placement)
+    app.state.admin.edit_roster_add.set_level_placement(_placement)
+    app.state.coach.add_student_to_roster.set_level_placement(_placement)
     # The event-driven promotion path (Enrollment.EnrollmentCancelled ->
     # PromoteFromWaitlist, wired via install_handlers in compose_parent) is a
     # SECOND PromoteFromWaitlist instance, distinct from the one above that

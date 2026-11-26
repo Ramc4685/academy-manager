@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -50,6 +51,7 @@ from backend.v2.contexts.curriculum.application.use_cases.seed_lesson_cards impo
     LessonCardSeedResult,
     seed_lesson_cards,
 )
+from backend.v2.contexts.curriculum.domain.errors import MultipleActivePrograms, NoActiveProgram
 from backend.v2.contexts.curriculum.infrastructure.mongo_criterion_repo import (
     MongoCriterionRepository,
 )
@@ -123,6 +125,7 @@ from backend.v2.contexts.student_progress.application.use_cases.mark_skill_maste
 )
 from backend.v2.contexts.student_progress.application.use_cases.place_student import (
     PlaceStudentInLevel,
+    PlaceStudentInLevelCommand,
 )
 from backend.v2.contexts.student_progress.application.use_cases.progress_milestones import (
     GetProgressSettings,
@@ -186,6 +189,88 @@ from backend.v2.shared.events import Outbox
 from backend.v2.shared.idempotency import IdempotencyStore
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.tenancy.academy_url import academy_frontend_url
+
+log = logging.getLogger(__name__)
+
+#: Audit reason on a placement made by enrolling the child (D-10).
+ENROLLMENT_PLACEMENT_REASON = "enrollment_placement"
+
+
+class PlaceOnEnrollment:
+    """``EnrollmentLevelPlacement``: a newly enrolled child starts on a level (D-10).
+
+    No level given: the default program's first active level. A level given
+    ("Start at level") brings its own program. A child already on a level in
+    that program keeps it, so re-enrolling or a second class never moves them.
+    An academy without a (single) active program is skipped, not an error.
+    """
+
+    def __init__(
+        self,
+        *,
+        programs: ResolveDefaultActiveProgram,
+        levels: MongoLevelRepository,
+        level_progress: MongoLevelProgressRepository,
+        place: PlaceStudentInLevel,
+    ) -> None:
+        self._programs = programs
+        self._levels = levels
+        self._level_progress = level_progress
+        self._place = place
+
+    async def place_new_enrollee(
+        self, student_id: str, *, level_id: str | None = None, actor_id: str | None = None
+    ) -> None:
+        if level_id:
+            level = await self._levels.get(level_id)
+            if level is None or not level.is_active:
+                log.warning("pathway.enrollment_start_level_missing", extra={"level_id": level_id})
+                return
+            program_id = level.program_id
+        else:
+            try:
+                program_id = (await self._programs.execute()).program_id
+            except (NoActiveProgram, MultipleActivePrograms):
+                return  # no pathway, or several: an admin places by hand
+            first = await self._levels.list_for_program(program_id)
+            if not first:
+                return
+            level_id = first[0].level_id
+        if await self._level_progress.get_active(student_id, program_id) is not None:
+            return
+        await self._place.execute(
+            PlaceStudentInLevelCommand(
+                student_id=student_id,
+                program_id=program_id,
+                level_id=level_id,
+                placed_by=actor_id or "system",
+                reason=ENROLLMENT_PLACEMENT_REASON,
+            )
+        )
+
+
+def compose_place_on_enrollment(
+    db: AsyncIOMotorDatabase[Any], outbox: Outbox | None = None
+) -> PlaceOnEnrollment:
+    levels = MongoLevelRepository(db)
+    level_progress = MongoLevelProgressRepository(db)
+    return PlaceOnEnrollment(
+        programs=ResolveDefaultActiveProgram(programs=MongoProgramRepository(db)),
+        levels=levels,
+        level_progress=level_progress,
+        place=PlaceStudentInLevel(
+            level_progress=level_progress,
+            skill_progress=MongoSkillProgressRepository(db),
+            skill_lookup=CurriculumSkillLookup(
+                skill_repo=MongoSkillRepository(db), level_repo=levels
+            ),
+            recommendations=MongoRecommendationRepository(db),
+            enrollment_lookup=enrollment_status_lookup(db),
+            outbox=outbox,
+            audit=MongoPlacementAuditLog(db),
+        ),
+    )
+
 
 # ---------------------------------------------------------------------------
 # SeedBadmintonPathway callable wrapper

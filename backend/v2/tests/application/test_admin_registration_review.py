@@ -2461,6 +2461,59 @@ async def test_a_failed_registration_receipt_never_fails_approval() -> None:
     assert len(signatures.saved) == 1
 
 
+class _RecordingPlacement:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[tuple[str, str | None, str | None]] = []
+        self.fail = fail
+
+    async def place_new_enrollee(
+        self, student_id: str, *, level_id: str | None = None, actor_id: str | None = None
+    ) -> None:
+        self.calls.append((student_id, level_id, actor_id))
+        if self.fail:
+            raise RuntimeError("pathway unavailable")
+
+
+def _review_with_placement(placement: _RecordingPlacement) -> AdminRegistrationReview:
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(_application(student_id="student-1")),
+        sessions=InMemorySessions([_session()]),
+        students=InMemoryStudents(),
+        enrollments=InMemoryEnrollments(),
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+    review.set_level_placement(placement)
+    return review
+
+
+@pytest.mark.asyncio
+async def test_approve_places_the_child_on_a_level_once() -> None:
+    """D-10: approval starts the child on the first level (or the chosen one)."""
+    placement = _RecordingPlacement()
+    review = _review_with_placement(placement)
+
+    await review.approve(
+        ApproveRegistrationCommand(
+            application_id="app-1", actor_id="admin-1", start_level_id="lvl-2"
+        )
+    )
+    # The idempotent replay of a decided application does not place again.
+    await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    assert placement.calls == [("student-1", "lvl-2", "admin-1")]
+
+
+@pytest.mark.asyncio
+async def test_approve_succeeds_when_placement_fails() -> None:
+    detail = await _review_with_placement(_RecordingPlacement(fail=True)).approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert detail.status == "APPROVED"
+
+
 @pytest.mark.asyncio
 async def test_approve_refuses_an_unpriced_class_before_any_side_effect() -> None:
     """S42 / D-01: a family's registration never lands in a class with no fee."""

@@ -5805,6 +5805,17 @@
             ],
             "title": "Session Id"
           },
+          "start_level_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Level Id"
+          },
           "waiver_override_reason": {
             "anyOf": [
               {
@@ -18180,6 +18191,17 @@
           "session_id": {
             "title": "Session Id",
             "type": "string"
+          },
+          "start_level_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Level Id"
           },
           "student_id": {
             "title": "Student Id",

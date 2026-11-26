@@ -254,6 +254,8 @@ export interface CreateEnrollmentRequest {
   student_id: string;
   parent_id: string;
   full_name: string;
+  /** D-10: omitted places a new child on the first pathway level. */
+  start_level_id?: string;
 }
 
 export interface TransferEnrollmentRequest {
@@ -3587,7 +3589,12 @@ export function getAdminRegistration(applicationId: string): Promise<AdminRegist
 
 export function approveAdminRegistration(
   applicationId: string,
-  payload: { session_id?: string | null; waiver_override_reason?: string | null } = {},
+  payload: {
+    session_id?: string | null;
+    waiver_override_reason?: string | null;
+    /** D-10: null places a new child on the first pathway level. */
+    start_level_id?: string | null;
+  } = {},
 ): Promise<AdminRegistrationDetail> {
   return apiFetch<AdminRegistrationDetail>(
     `/admin/registrations/${encodeURIComponent(applicationId)}/approve`,

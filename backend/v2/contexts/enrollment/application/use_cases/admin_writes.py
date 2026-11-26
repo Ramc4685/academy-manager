@@ -22,6 +22,7 @@ from pymongo.errors import DuplicateKeyError
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentBillingSync,
     EnrollmentEventRepository,
+    EnrollmentLevelPlacement,
     EnrollmentMoveBillingSync,
     EnrollmentQuery,
     EnrollmentWelcomeNotifier,
@@ -853,6 +854,8 @@ class EditRosterAddCommand(BaseModel):
     full_name: str
     actor_id: str | None = None
     reason: str | None = None
+    #: D-10 "Start at level"; None places a new child on the first level.
+    start_level_id: str | None = None
 
 
 class EditRosterAdd:
@@ -919,10 +922,14 @@ class EditRosterAdd:
         # (composition/admin.py is at its line-budget cap, and SeatBroker is
         # composed later in main.py — see composition/enrollment_holds.py).
         self._seat_broker = seat_broker
+        self._placement: EnrollmentLevelPlacement | None = None
         self._now = clock
 
     def set_seat_broker(self, seat_broker: SeatBroker) -> None:
         self._seat_broker = seat_broker
+
+    def set_level_placement(self, placement: EnrollmentLevelPlacement) -> None:
+        self._placement = placement
 
     def _resolve_academy_id(self) -> str:
         return self._academy_id() if callable(self._academy_id) else self._academy_id
@@ -1021,6 +1028,7 @@ class EditRosterAdd:
             await self._release_quietly(cmd.session_id, acquisition)
             raise
         await self._record_created_event(cmd, enrollment, academy_id=academy_id)
+        await self._place_on_level(cmd)
         await self._notify_welcome(cmd)
         await _notify_roster_change(
             self._roster_notifier,
@@ -1075,6 +1083,20 @@ class EditRosterAdd:
                     "student_id": cmd.student_id,
                     "enrollment_id": enrollment.enrollment_id,
                 },
+            )
+
+    async def _place_on_level(self, cmd: EditRosterAddCommand) -> None:
+        """D-10: the child starts on a level. Best-effort, like the email."""
+        if self._placement is None:
+            return
+        try:
+            await self._placement.place_new_enrollee(
+                cmd.student_id, level_id=cmd.start_level_id, actor_id=cmd.actor_id
+            )
+        except Exception:
+            log.exception(
+                "enrollment.roster_add_placement_failed",
+                extra={"session_id": cmd.session_id, "student_id": cmd.student_id},
             )
 
     async def _notify_welcome(self, cmd: EditRosterAddCommand) -> None:

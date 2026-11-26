@@ -835,6 +835,8 @@ class EditRosterAddRequest(BaseModel):
     student_id: str
     parent_id: str
     full_name: str
+    #: D-10: optional pathway level; omitted means the first level.
+    start_level_id: str | None = None
 
 
 class TransferEnrollmentRequest(BaseModel):
@@ -1975,6 +1977,8 @@ class AdminRegistrationDetailView(AdminRegistrationRowView):
 class AdminRegistrationApproveRequest(BaseModel):
     session_id: str | None = None
     waiver_override_reason: str | None = None
+    #: D-10: optional pathway level; omitted means the first level.
+    start_level_id: str | None = None
 
 
 class AdminRegistrationWaitlistRequest(BaseModel):

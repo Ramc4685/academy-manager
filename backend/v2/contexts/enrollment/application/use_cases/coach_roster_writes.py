@@ -11,7 +11,10 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
-from backend.v2.contexts.enrollment.application.ports import EnrollmentWriter
+from backend.v2.contexts.enrollment.application.ports import (
+    EnrollmentLevelPlacement,
+    EnrollmentWriter,
+)
 from backend.v2.contexts.enrollment.application.seat_broker import SeatBroker
 from backend.v2.contexts.enrollment.application.use_cases.admin_writes import (
     EditRosterAdd,
@@ -67,6 +70,9 @@ class CoachAddStudentToRoster:
 
     def set_seat_broker(self, seat_broker: SeatBroker) -> None:
         self._delegate.set_seat_broker(seat_broker)
+
+    def set_level_placement(self, placement: EnrollmentLevelPlacement) -> None:
+        self._delegate.set_level_placement(placement)
 
     async def execute(self, cmd: CoachAddStudentToRosterCommand) -> Enrollment:
         if not await self._assigned_sessions.is_coach_assigned(cmd.coach_id, cmd.session_id):

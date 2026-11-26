@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from backend.v2.contexts.billing.application.use_cases.issue_refund import IssueRefundCommand
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentEventRepository,
+    EnrollmentLevelPlacement,
     EnrollmentWelcomeNotifier,
     EnrollmentWriter,
     RosterChangeNotifier,
@@ -258,6 +259,8 @@ class ApproveRegistrationCommand(BaseModel):
     session_id: str | None = None
     waiver_override_reason: str | None = None
     effective_at: datetime | None = None
+    #: D-10 "Start at level"; None places a new child on the first level.
+    start_level_id: str | None = None
 
 
 class WaitlistRegistrationCommand(BaseModel):
@@ -328,10 +331,15 @@ class AdminRegistrationReview:
         # working unwired; production wiring injects this from main.py via
         # `set_seat_broker`, the same pattern as EditRosterAdd et al.
         self._seat_broker = seat_broker
+        self._placement: EnrollmentLevelPlacement | None = None
         self._now = clock
 
     def set_seat_broker(self, seat_broker: SeatBroker) -> None:
         self._seat_broker = seat_broker
+
+    def set_level_placement(self, placement: EnrollmentLevelPlacement) -> None:
+        """D-10, attached from ``main.py`` like ``set_seat_broker``."""
+        self._placement = placement
 
     def set_lead_conversion(self, lead_conversion: LeadConversionLinker) -> None:
         """Attached from ``main.py`` like ``set_seat_broker``: the crm use case
@@ -559,6 +567,7 @@ class AdminRegistrationReview:
                 }
             )
             await self._complete_review(decided, app)
+            await self._place_on_level(student_id, command)
             try:
                 await self._link_trial_conversion(decided)
             except Exception:
@@ -593,6 +602,19 @@ class AdminRegistrationReview:
                 updated_at=self._now(),
             )
             raise
+
+    async def _place_on_level(self, student_id: str, command: ApproveRegistrationCommand) -> None:
+        """D-10: an approved child starts on a level; never fails the approval."""
+        if self._placement is None:
+            return
+        try:
+            await self._placement.place_new_enrollee(
+                student_id, level_id=command.start_level_id, actor_id=command.actor_id
+            )
+        except Exception:
+            logger.exception(
+                "registration.placement_failed", extra={"application_id": command.application_id}
+            )
 
     async def _release_quietly(self, session_id: str, acquisition: SeatAcquisition | None) -> None:
         """Give a just-acquired seat back without masking the error being

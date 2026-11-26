@@ -15,6 +15,7 @@ import {
 import { queryKeys } from "@/lib/query/keys";
 import { Card, Chip, LaneHeader, Overline } from "@/components/ds";
 import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
+import { StartLevelSelect } from "@/components/admin/enrollment/start-level-select";
 
 /** The three decisions, and the second look each one now needs (#838). */
 type Decision = "approve" | "waitlist" | "reject";
@@ -25,6 +26,7 @@ export default function AdminRegistrationDetailPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [overrideReason, setOverrideReason] = useState("");
+  const [startLevelId, setStartLevelId] = useState("");
   const [waitlistReason, setWaitlistReason] = useState("");
   const [rejectReason, setRejectReason] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +52,7 @@ export default function AdminRegistrationDetailPage() {
     mutationFn: () =>
       approveAdminRegistration(applicationId, {
         waiver_override_reason: overrideReason.trim() || null,
+        start_level_id: startLevelId || null,
       }),
     meta: { success: "Registration approved" },
     onSuccess: refresh,
@@ -216,6 +219,13 @@ export default function AdminRegistrationDetailPage() {
                 }}
               />
             </div>
+            <div className="mt-4 max-w-xs">
+              <StartLevelSelect
+                value={startLevelId}
+                onChange={setStartLevelId}
+                className="rounded-md border border-neutral-200 px-2 py-1.5 text-sm"
+              />
+            </div>
             {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
           </Card>
           </>
@@ -233,6 +243,7 @@ export default function AdminRegistrationDetailPage() {
                   Creates the student record and takes a seat in {sessionLabel}. Enrollment goes
                   active, so the family starts being invoiced for it.
                 </p>
+                <p>A child with no level yet starts on the level chosen above.</p>
                 <p>{familyLabel} is emailed a confirmation with the session details.</p>
               </>
             }

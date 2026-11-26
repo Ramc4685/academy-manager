@@ -10361,6 +10361,8 @@ export interface components {
         AdminRegistrationApproveRequest: {
             /** Session Id */
             session_id?: string | null;
+            /** Start Level Id */
+            start_level_id?: string | null;
             /** Waiver Override Reason */
             waiver_override_reason?: string | null;
         };
@@ -14773,6 +14775,8 @@ export interface components {
             parent_id: string;
             /** Session Id */
             session_id: string;
+            /** Start Level Id */
+            start_level_id?: string | null;
             /** Student Id */
             student_id: string;
         };

@@ -31,6 +31,7 @@ import { UnpricedEnrollAcknowledgement } from "@/components/admin/sessions/unpri
 import { createEnrollment, inviteBillingSetupParent, listAdminSessions } from "@/lib/api/admin";
 import { quoteCell } from "@/lib/admin/import-column-mapping";
 import { refreshAfterEnrollmentChange } from "@/lib/admin/refresh-after-enrollment-change";
+import { StartLevelSelect } from "@/components/admin/enrollment/start-level-select";
 import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -81,10 +82,12 @@ function message(error: unknown, fallback: string): string {
 export async function runQuickAdd({
   batchId,
   sessionId,
+  startLevelId = "",
   invite,
 }: {
   batchId: string;
   sessionId: string;
+  startLevelId?: string;
   invite: boolean;
 }): Promise<StepResult> {
   const committed = await commitFamilyImport(batchId);
@@ -102,6 +105,7 @@ export async function runQuickAdd({
         student_id: family.student_id,
         parent_id: parentId,
         full_name: family.student_name,
+        ...(startLevelId ? { start_level_id: startLevelId } : {}),
       });
       out.enrolled = true;
     } catch (error) {
@@ -128,6 +132,7 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<QuickAddForm>(EMPTY);
   const [sessionId, setSessionId] = useState("");
+  const [startLevelId, setStartLevelId] = useState("");
   const [invite, setInvite] = useState(true);
   const [checked, setChecked] = useState<ImportBatch | null>(null);
   const [result, setResult] = useState<StepResult | null>(null);
@@ -152,6 +157,7 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
       runQuickAdd({
         batchId: checked!.import_batch_id,
         sessionId,
+        startLevelId,
         invite: invite && Boolean(form.parent_email.trim()),
       }),
     onSuccess: (data) => {
@@ -164,6 +170,7 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
       setResult(data);
       setForm(EMPTY);
       setSessionId("");
+      setStartLevelId("");
       setUnpricedAck(false);
       onAdded();
     },
@@ -242,6 +249,9 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
             ))}
           </select>
         </label>
+        {sessionId && (
+          <StartLevelSelect value={startLevelId} onChange={setStartLevelId} className={INPUT} />
+        )}
       </div>
       <label className="mt-3 flex items-center gap-2 text-sm">
         <input
