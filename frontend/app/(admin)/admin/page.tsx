@@ -3,20 +3,21 @@
 /**
  * Admin dashboard landing — Rally restyle.
  *
- * Real data only: sessions today + monthly revenue + collections totals
- * (owed / autopay scheduled / needs action) + recent payments + dashboard
- * attention BFF signals.
+ * Real data only. S64 (D-20): the Today block (today's classes and their
+ * rosters) leads, then dashboard attention signals, then monthly revenue +
+ * collections totals (owed / autopay scheduled / needs action) + recent
+ * payments.
  * Revenue (tile + chart) is owner-only: `/finance/revenue` 404s for admins
  * without the owner scope, so the query is not even issued for them.
  * Recharts is dynamic-imported to keep the admin landing chunk small.
  */
 
+import { Suspense } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 
 import {
-  listAdminSessions,
   getAdminCollections,
   getAdminPaymentFeed,
   getRevenue,
@@ -29,13 +30,14 @@ import { paymentMethodLabel, statusChip } from "@/app/(admin)/admin/payments/for
 import { normalizeCollections } from "@/app/(admin)/admin/payments/buckets/bucket-view";
 
 import { statHint, statText } from "@/lib/ui/load-state";
-import { academyDateISO, academyMonthKey, formatInAcademyZone } from "@/lib/format/academy-time";
+import { academyMonthKey, formatInAcademyZone } from "@/lib/format/academy-time";
 
 import { MyFollowUpsCard } from "@/components/admin/my-follow-ups-card";
 import { ClassReportHandoffsCard } from "@/components/admin/ClassReportHandoffsCard";
 import { SetupChecklistCard } from "@/components/admin/setup-checklist-card";
 import { useIsOwner } from "@/components/admin/owner-context";
 import { useAcademyTimezone } from "@/components/admin/use-academy-today";
+import { TodayBlock } from "@/components/admin/today/today-block";
 import { Card } from "@/components/ds/card";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
@@ -52,17 +54,11 @@ const RevenueChart = dynamic(() => import("@/components/admin/RevenueChart"), {
 const RECENT_PAYMENTS_LIMIT = 5;
 
 export default function AdminDashboardPage() {
-  // "Today" and "this month" are the academy's, not UTC's: after ~6 PM in
-  // Chicago the UTC date is already tomorrow (L2 A0-3).
+  // "This month" is the academy's, not UTC's: after ~6 PM in Chicago the
+  // UTC date is already tomorrow (L2 A0-3).
   const timezone = useAcademyTimezone();
-  const today = academyDateISO(timezone);
   const isOwner = useIsOwner();
   const isPhone = useIsPhone();
-
-  const sessionsQuery = useQuery({
-    queryKey: queryKeys.admin.sessions(today),
-    queryFn: () => listAdminSessions(today),
-  });
 
   // Money tiles read the same six-bucket view as the Payments page, so the
   // dashboard and the bucket list can never disagree about who owes what.
@@ -104,11 +100,9 @@ export default function AdminDashboardPage() {
   // hands back the same zeros, so "Owed this month $0.00 / Needs action 0" read
   // as "all caught up". Every collections tile below therefore goes through
   // `statText`, which shows a dash until the data is really there.
-  const sessions = sessionsQuery.data?.sessions ?? [];
   const collectionsTotals = normalizeCollections(collectionsQuery.data).totals;
   const revenueByMonth = revenueQuery.data?.by_month ?? {};
 
-  const todayCount = sessions.length;
   const monthRevenue = revenueByMonth[academyMonthKey(timezone)] ?? 0;
   const unavailable = attentionQuery.data?.unavailable ?? [];
 
@@ -121,7 +115,14 @@ export default function AdminDashboardPage() {
 
   return (
     <section data-testid="admin-dashboard" className="space-y-6">
-      {/* Issue #842: attention leads the dashboard, above the KPI strip — the
+      {/* S64 (D-20): today's classes come first, so at 375px the front desk
+          sees them on the first screen. The Today block replaces the old
+          "Sessions today" tile. */}
+      <Suspense fallback={null}>
+        <TodayBlock />
+      </Suspense>
+
+      {/* Issue #842: attention sits right under Today, above the KPI strip — the
           items that need a decision matter more than the tiles that just
           report a number. */}
       <Card p={20}>
@@ -174,30 +175,20 @@ export default function AdminDashboardPage() {
         )}
       </Card>
 
-      {/* Roadmap L7: a new academy's setup steps, derived from its settings.
-          S09: below attention and collapsed, so today's work leads on a
-          phone. Renders nothing once every step is done. */}
-      <SetupChecklistCard />
-
       {/* People CRM Phase 4a: the signed-in staff member's follow-ups that
           are overdue or due today. */}
       <MyFollowUpsCard />
 
+      {/* Roadmap L7: a new academy's setup steps, derived from its settings.
+          S09/S64: below Today, attention and follow-ups, collapsed, so
+          today's work leads on a phone. Renders nothing once every step is
+          done. */}
+      <SetupChecklistCard />
+
       {isOwner && <ClassReportHandoffsCard />}
 
       {/* KPI strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <Link
-          href="/admin/sessions"
-          className="block rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-rally-cobalt"
-          data-testid="dashboard-tile-sessions"
-        >
-          <KpiCard
-            label="Sessions today"
-            value={statText(sessionsQuery, () => String(todayCount))}
-            loading={sessionsQuery.isLoading}
-          />
-        </Link>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {isOwner && (
           <KpiCard
             label="Revenue (month to date)"

@@ -842,23 +842,27 @@ test.describe("Rally admin shell", () => {
     await expect(page.getByTestId("admin-dashboard")).toBeVisible();
     const attention = page.getByTestId("admin-dashboard-attention");
     await expect(attention).toBeVisible();
-    const sessionsTile = page.getByTestId("dashboard-tile-sessions");
-    await expect(sessionsTile).toBeVisible();
+    const owedTile = page.getByTestId("dashboard-tile-owed");
+    await expect(owedTile).toBeVisible();
     const attentionBox = await attention.boundingBox();
-    const sessionsBox = await sessionsTile.boundingBox();
+    const owedBox = await owedTile.boundingBox();
     expect(attentionBox).not.toBeNull();
-    expect(sessionsBox).not.toBeNull();
-    // The attention card must sit above (smaller y) the KPI strip — today the
-    // KPI grid renders first, so this fails on unfixed code.
-    expect(attentionBox!.y).toBeLessThan(sessionsBox!.y);
+    expect(owedBox).not.toBeNull();
+    // The attention card must sit above (smaller y) the KPI strip.
+    expect(attentionBox!.y).toBeLessThan(owedBox!.y);
   });
 
-  test("Sessions today tile links to /admin/sessions", async ({ page }) => {
+  // S64 (D-20): Today leads the dashboard and replaces the "Sessions today" tile.
+  test("dashboard starts with Today, above Needs your attention", async ({ page }) => {
     await stubAdminBff(page);
     await page.goto("/admin");
-    await expect(page.getByTestId("admin-dashboard")).toBeVisible();
-    const link = page.locator('a[data-testid="dashboard-tile-sessions"]');
-    await expect(link).toHaveAttribute("href", "/admin/sessions");
+    const today = page.getByTestId("admin-today");
+    await expect(today).toBeVisible();
+    await expect(page.getByTestId("admin-dashboard-attention")).toBeVisible();
+    const todayBox = await today.boundingBox();
+    const attentionBox = await page.getByTestId("admin-dashboard-attention").boundingBox();
+    expect(todayBox!.y).toBeLessThan(attentionBox!.y);
+    await expect(page.getByTestId("dashboard-tile-sessions")).toHaveCount(0);
   });
 
   test("Inbox nav row shows the pending count from the queue endpoint", async ({
@@ -958,7 +962,7 @@ test.describe("Rally admin shell", () => {
       await expect(page.getByTestId("admin-dashboard")).toBeVisible();
 
       // Dashboard: operations tiles stay, revenue tile and chart are gone.
-      await expect(page.getByText("Sessions today")).toBeVisible();
+      await expect(page.getByTestId("admin-today")).toBeVisible();
       await expect(page.getByTestId("admin-dashboard-revenue")).toHaveCount(0);
       await expect(page.getByTestId("admin-dashboard-revenue-chart")).toHaveCount(0);
       await expect(page.getByText("Revenue (month to date)")).toHaveCount(0);

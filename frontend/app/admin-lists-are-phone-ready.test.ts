@@ -40,6 +40,25 @@ const CONVERTED: { name: string; src: () => string }[] = [
 ];
 
 /**
+ * S64: the Today roster sheet is phone-first on every width: one PhoneListRow
+ * per child, no screen table (its only <table> is the print-only roster).
+ */
+describe("Today roster sheet is phone-ready (S64)", () => {
+  const src = source("components/admin/today/roster-sheet.tsx");
+
+  it("lists children as PhoneListRow, with no sideways scroll", () => {
+    expect(src).toContain("PhoneListRow");
+    expect(src).not.toContain("overflow-x-auto");
+    expect(src).not.toContain("md:hidden");
+  });
+
+  it("keeps its one table print-only", () => {
+    expect(src.match(/<table/g)).toHaveLength(1);
+    expect(src).toContain('className="roster-print hidden"');
+  });
+});
+
+/**
  * Issue #857 finishes the rollout #856 started. The approval queues, the money
  * lists and the two detail pages were still bare `<table>` inside
  * `overflow-x-auto`, so every #847 symptom survived there: at 400px the

@@ -4860,3 +4860,26 @@ export function suggestNoClassDates(input: { text: string; classDates: string[] 
     dedup: false,
   });
 }
+
+// ---------------------------------------------------------------------------
+// Today (S63/S64): today's classes and rosters, plus the never-cached health read
+// ---------------------------------------------------------------------------
+
+export type AdminToday = components["schemas"]["AdminToday"];
+export type AdminTodayClass = components["schemas"]["TodayClass"];
+export type AdminTodayRosterRow = components["schemas"]["TodayRosterRow"];
+export type AdminRosterHealth = components["schemas"]["AdminRosterHealthResponse"];
+export type AdminChildHealth = components["schemas"]["AdminChildHealthView"];
+
+export function getAdminToday(date?: string): Promise<AdminToday> {
+  const query = date ? `?date=${encodeURIComponent(date)}` : "";
+  return apiFetch<AdminToday>(`/admin/today${query}`, { method: "GET" });
+}
+
+/** Health notes (D-14): never cached by the browser, the SW or the persister. */
+export function getAdminTodayRosterHealth(occurrenceId: string): Promise<AdminRosterHealth> {
+  return apiFetch<AdminRosterHealth>(
+    `/admin/today/roster-health?occurrence_id=${encodeURIComponent(occurrenceId)}`,
+    { method: "GET", cache: "no-store" },
+  );
+}
