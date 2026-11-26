@@ -91,6 +91,12 @@ export function ReceiptDocument({
               </li>
             ))}
           </ul>
+          {(receipt.refunded_cents ?? 0) > 0 && (
+            <div data-testid="receipt-refunded" className="flex justify-between gap-3">
+              <span>Refunded</span>
+              <span className="tabular-nums">{money(-(receipt.refunded_cents ?? 0))}</span>
+            </div>
+          )}
           <div className="flex justify-between gap-3 font-semibold">
             <span>Balance</span>
             <span className="tabular-nums">{money(receipt.balance_cents)}</span>

@@ -17998,6 +17998,11 @@ export interface components {
             payments: components["schemas"]["ParentReceiptPaymentView"][];
             /** Period Label */
             period_label: string;
+            /**
+             * Refunded Cents
+             * @default 0
+             */
+            refunded_cents: number;
             /** Student Name */
             student_name?: string | null;
             /** Total Cents */

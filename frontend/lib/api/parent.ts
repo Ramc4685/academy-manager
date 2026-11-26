@@ -217,6 +217,7 @@ export interface ParentReceipt {
   currency: string;
   payments: { paid_on: string | null; method: string; amount_cents: number }[];
   balance_cents: number;
+  refunded_cents?: number;
   paid_in_full_on: string | null;
 }
 

@@ -39,5 +39,12 @@ describe("ReceiptDocument", () => {
     expect(html).toContain("Print or save as PDF");
     expect(html).toContain("receipt-print");
     expect(html).toContain("@media print");
+    expect(html).not.toContain("Refunded");
+  });
+
+  it("states a refund on a paid invoice", () => {
+    const html = renderToStaticMarkup(createElement(ReceiptDocument, { receipt: { ...receipt, refunded_cents: 2000 } }));
+    expect(html).toContain("Refunded");
+    expect(html).toContain("−$20.00");
   });
 });

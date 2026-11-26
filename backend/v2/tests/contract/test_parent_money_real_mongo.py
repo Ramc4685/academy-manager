@@ -209,6 +209,7 @@ async def test_receipt_only_for_the_callers_paid_invoice(db, acad) -> None:
         {"paid_on": date(2026, 10, 3), "method": "Cash", "amount_cents": 6000}
     ]
     assert receipt["balance_cents"] == 0
+    assert receipt["refunded_cents"] == 0
     assert receipt["paid_in_full_on"] == date(2026, 10, 3)
 
     assert await money.receipt("p1", "nov-sam") is None  # unpaid

@@ -27243,6 +27243,11 @@
             "title": "Period Label",
             "type": "string"
           },
+          "refunded_cents": {
+            "default": 0,
+            "title": "Refunded Cents",
+            "type": "integer"
+          },
           "student_name": {
             "anyOf": [
               {

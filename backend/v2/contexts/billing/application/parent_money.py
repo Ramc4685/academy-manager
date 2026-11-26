@@ -358,5 +358,7 @@ def build_receipt(
             for f in payments
         ],
         "balance_cents": invoice.balance_due_cents,
+        # A refund does not reopen the invoice; the receipt must still say it.
+        "refunded_cents": invoice.refunded_cents,
         "paid_in_full_on": max(paid_dates) if paid_dates else None,
     }

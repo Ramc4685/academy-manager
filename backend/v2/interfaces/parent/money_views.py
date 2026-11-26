@@ -104,4 +104,5 @@ class ParentReceiptView(BaseModel):
     currency: str
     payments: list[ParentReceiptPaymentView]
     balance_cents: int
+    refunded_cents: int = 0
     paid_in_full_on: date | None = None
