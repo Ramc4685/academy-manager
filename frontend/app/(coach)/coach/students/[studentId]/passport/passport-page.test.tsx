@@ -72,6 +72,21 @@ describe("coach passport page", () => {
     expect(html).toMatch(/data-testid="passport-required-remaining"[^>]*>2 required skills to go/);
   });
 
+  it("says not found, with no Retry, when the passport 404s (S13 persona follow-up)", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retryOnMount: false } } });
+    client
+      .getQueryCache()
+      .build(client, { queryKey: ["coach", "passport", "tej", "default"] })
+      .setState({ status: "error", error: Object.assign(new Error("Not found"), { status: 404 }) });
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <CoachStudentPassportPage />
+      </QueryClientProvider>,
+    );
+    expect(html).toContain("couldn&#x27;t find this child");
+    expect(html).not.toContain("Try again");
+  });
+
   it("drops the remaining line once every required skill is passed", () => {
     const html = render({ ...PLACED, required_remaining: 0 });
     expect(html).not.toContain("required skill");

@@ -19,6 +19,7 @@ import { SKILL_STATUS_LABELS, SkillStatusChip } from "@/components/skills/SkillS
 import { RetryButton } from "@/components/coach/RetryButton";
 import { passportLevelLine } from "@/lib/coach/passport";
 import { formatInAcademyZone } from "@/lib/format/academy-time";
+import type { ApiError } from "@/lib/api/client";
 
 // Statuses a coach may set directly. PASSED is earned only through "Record
 // test" (the backend's CoachSettableStatus rejects it — offering it here
@@ -42,7 +43,7 @@ export default function CoachStudentPassportPage() {
 
   const passportKey = ["coach", "passport", studentId, programId || "default"];
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: passportKey,
     queryFn: () => getStudentPassport(studentId, programId || undefined),
     enabled: Boolean(studentId),
@@ -104,7 +105,13 @@ export default function CoachStudentPassportPage() {
         </p>
       )}
 
-      {isError && (
+      {/* S13 persona follow-up: a 404 (unknown id, or another coach's child)
+          cannot succeed on retry, so it says not found and offers none. */}
+      {isError && (error as ApiError | null)?.status === 404 ? (
+        <p role="alert" data-testid="passport-not-found" className="rounded-md bg-neutral-50 p-3 text-sm text-neutral-700">
+          We couldn&apos;t find this child among the classes you teach.
+        </p>
+      ) : isError && (
         <div role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           <p>Couldn&apos;t load skill passport. Try again.</p>
           <RetryButton onClick={() => void refetch()} className="mt-2" />
