@@ -2243,3 +2243,51 @@ async def test_recent_attendance_carries_the_occurrence_and_correction_trail(db,
     assert row.occurrence_id == "occ-trail"
     assert row.previous_status == "present"
     assert row.corrected_at == now - timedelta(days=1)
+
+
+async def test_same_day_recent_attendance_resolves_each_occurrence_in_tenant(db, acad) -> None:
+    await _seed_student(db, acad, "st-two-classes")
+    start = datetime(2026, 11, 25, 14, 57, tzinfo=UTC)
+    for suffix, title, time in (
+        ("am", "Junior Beginners", start),
+        ("pm", "Junior Skills Clinic", start + timedelta(hours=8, minutes=33)),
+    ):
+        occurrence_id = f"occ-{suffix}"
+        await _seed_mark(
+            db,
+            acad,
+            student_id="st-two-classes",
+            occurrence_id=occurrence_id,
+            start_at=time,
+            marked_at=time,
+            status="present",
+        )
+        await db["session_occurrences"].update_one(
+            {"academy_id": acad, "occurrence_id": occurrence_id},
+            {"$set": {"template_session_id": f"session-{suffix}"}},
+        )
+        await db["sessions"].insert_one(
+            {
+                "academy_id": acad,
+                "session_id": f"session-{suffix}",
+                "title": title,
+                "timezone": "America/Chicago",
+            }
+        )
+    await db["session_occurrences"].insert_one(
+        {"academy_id": "other-academy", "occurrence_id": "occ-pm", "start_at": start}
+    )
+    detail = await MongoStudentRepository(db).get_admin_student("st-two-classes")
+    assert detail is not None
+    pm, am = detail.recent_attendance
+    assert (pm.class_session_id, pm.class_title, pm.class_start_at, pm.class_timezone) == (
+        "session-pm",
+        "Junior Skills Clinic",
+        start + timedelta(hours=8, minutes=33),
+        "America/Chicago",
+    )
+    assert (am.class_session_id, am.class_title, am.class_start_at) == (
+        "session-am",
+        "Junior Beginners",
+        start,
+    )

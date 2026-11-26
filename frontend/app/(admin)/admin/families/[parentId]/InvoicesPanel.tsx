@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MoreVertical } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -39,6 +39,7 @@ function deliveryLabel(inv: FamilyInvoice): string {
 
 export function InvoicesPanel({
   invoices,
+  linkedInvoiceId,
   busy,
   onAction,
   onAddCharge,
@@ -46,14 +47,21 @@ export function InvoicesPanel({
   onFullAudit,
 }: {
   invoices: FamilyInvoice[];
+  linkedInvoiceId?: string | null;
   busy: boolean;
   onAction: (action: InvoiceAction, invoice: FamilyInvoice) => void;
   onAddCharge: (invoice: FamilyInvoice) => void;
   onCreateInvoice: () => void;
   onFullAudit: (invoice: FamilyInvoice) => void;
 }) {
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState(linkedInvoiceId ?? null);
   const isPhone = useIsPhone();
+  const linkedInvoiceExists = invoices.some((invoice) => invoice.invoice_id === linkedInvoiceId);
+  useEffect(() => {
+    if (linkedInvoiceExists && linkedInvoiceId) {
+      document.getElementById(`family-invoice-detail-${linkedInvoiceId}`)?.scrollIntoView({ block: "center" });
+    }
+  }, [linkedInvoiceExists, linkedInvoiceId]);
 
   /**
    * Anything row-specific beyond those two goes behind a More menu (#890), so
@@ -113,6 +121,7 @@ export function InvoicesPanel({
   function expandedDetail(inv: FamilyInvoice) {
     return (
       <div
+        id={`family-invoice-detail-${inv.invoice_id}`}
         className="mt-2 rounded-lg bg-rally-paper px-3 py-2 text-xs"
         data-testid={`invoice-allocations-${inv.invoice_id}`}
       >

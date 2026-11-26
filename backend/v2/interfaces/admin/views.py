@@ -181,6 +181,10 @@ class AdminStudentRecentAttendanceView(BaseModel):
     date: str | None = None
     status: str
     marked_at: datetime | None = None
+    class_session_id: str | None = None
+    class_title: str | None = None
+    class_start_at: datetime | None = None
+    class_timezone: str | None = None
     occurrence_id: str | None = None
     previous_status: str | None = None
     corrected_at: datetime | None = None

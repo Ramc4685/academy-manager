@@ -568,6 +568,34 @@ test.describe("Family record (People CRM §4)", () => {
     await expect(page.getByTestId("drawer-correct-occ-12")).toBeFocused();
   });
 
+  test("recent attendance distinguishes two classes on the same date", async ({ page }) => {
+    await setup(page);
+    const detail = studentDetail("present", null);
+    await page.route("**/api/v2/admin/students/stu-a", (route) =>
+      fulfillJson(route, {
+        ...detail,
+        recent_attendance: detail.recent_attendance.map((mark, index) => ({
+          ...mark,
+          date: "2026-09-12",
+          class_session_id: index === 0 ? "sess-beginners" : "sess-clinic",
+          class_title: index === 0 ? "Junior Beginners" : "Junior Skills Clinic",
+          class_start_at: index === 0 ? "2026-09-12T14:00:00Z" : "2026-09-12T22:30:00Z",
+          class_timezone: "America/Chicago",
+        })),
+      }),
+    );
+    await page.goto("/admin/families/parent-1");
+    await page.getByTestId("family-child-open-stu-a").click();
+    const recent = page.getByTestId("drawer-attendance");
+    await expect(recent.getByRole("link", { name: /Junior Beginners.*9:00 AM CDT/ })).toHaveAttribute(
+      "href", "/admin/sessions/sess-beginners?tab=dates&occurrence=occ-12",
+    );
+    await expect(recent.getByRole("link", { name: /Junior Skills Clinic.*5:30 PM CDT/ })).toHaveAttribute(
+      "href", "/admin/sessions/sess-clinic?tab=dates&occurrence=occ-05",
+    );
+    await expect(recent.getByText("Present", { exact: true })).toHaveCount(2);
+  });
+
   test("cancelling a correction returns focus to its Correct button", async ({ page }) => {
     const { patches } = await setup(page);
     await page.goto("/admin/families/parent-1");

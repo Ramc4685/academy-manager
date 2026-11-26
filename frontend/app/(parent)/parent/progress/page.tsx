@@ -59,6 +59,14 @@ export default function ParentProgressPage() {
  * `student_id`. The client filter stays because the Worker frontend can ship
  * before the API, and an older API ignores the parameter. */
 function ChildNotes({ studentId, firstName }: { studentId: string; firstName: string }) {
+  const requestedChild = useSearchParams().get("child");
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (requestedChild === studentId && window.location.hash === "#coach-notes") {
+      headingRef.current?.focus();
+    }
+  }, [requestedChild, studentId]);
+
   const { data, isLoading, isError } = useQuery({
     queryKey: queryKeys.parent.childProgressNotes(studentId),
     queryFn: () => listParentChildProgress(studentId),
@@ -66,9 +74,9 @@ function ChildNotes({ studentId, firstName }: { studentId: string; firstName: st
   const notes = notesForChild(data?.notes ?? [], studentId);
 
   return (
-    <div data-testid="parent-progress-notes">
+    <div id="coach-notes" data-testid="parent-progress-notes">
       <div className="mt-8 mb-4">
-        <h2 className="font-display text-xl font-bold tracking-tight text-rally-ink">
+        <h2 ref={headingRef} tabIndex={-1} className="font-display text-xl font-bold tracking-tight text-rally-ink">
           Notes from coaches about {firstName}
         </h2>
       </div>
@@ -215,7 +223,9 @@ function SkillProgressSection() {
     setActiveChildIdx(idx);
     // The roster query is still in flight when the router commits the
     // navigation, so move focus once the child actually resolves.
-    sectionRef.current?.focus({ preventScroll: true });
+    if (window.location.hash !== "#coach-notes") {
+      sectionRef.current?.focus({ preventScroll: true });
+    }
   }, [requestedChildId, children]);
 
   // Notes live under a child tab, so the roster's states must stay visible

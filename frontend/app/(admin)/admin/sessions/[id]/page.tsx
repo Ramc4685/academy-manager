@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAcademyTimezone } from "@/components/admin/use-academy-today";
 
 import {
   cancelScheduledDrop,
@@ -113,6 +114,7 @@ export default function AdminSessionDetailPage() {
   const searchParams = useSearchParams();
   const linkedOccurrenceId = searchParams.get("occurrence");
   const queryClient = useQueryClient();
+  const academyTimezone = useAcademyTimezone();
   const [addOpen, setAddOpen] = useState(false);
   // #827: the departed row an admin chose to put back, pre-filling Add to
   // roster. Cleared when the dialog closes so the next plain Add is blank.
@@ -242,6 +244,7 @@ export default function AdminSessionDetailPage() {
   });
 
   const session = sessionsQuery.data ?? null;
+  const occurrenceTimezone = session?.timezone ?? academyTimezone;
   const enrollments = useMemo(
     () => enrollmentsQuery.data?.enrollments ?? [],
     [enrollmentsQuery.data?.enrollments],
@@ -666,7 +669,7 @@ export default function AdminSessionDetailPage() {
               <ReplacementCoachTable
                 occurrences={visibleOccurrences}
                 userNameById={userNameById}
-                timezone={session?.timezone ?? null}
+                timezone={occurrenceTimezone}
                 onEdit={setOccurrenceTarget}
                 onCancel={setCancelTarget}
                 onViewAttendance={setAttendanceTarget}
@@ -895,7 +898,8 @@ export default function AdminSessionDetailPage() {
       />
       <OccurrenceAttendanceDialog
         occurrence={attendanceTarget}
-        timezone={session?.timezone ?? null}
+        sessionTitle={session?.title ?? null}
+        timezone={occurrenceTimezone}
         studentNameById={studentNameById}
         onClose={() => setAttendanceTarget(null)}
       />

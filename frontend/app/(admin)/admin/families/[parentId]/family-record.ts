@@ -11,6 +11,7 @@ import type {
   FamilyStudent,
 } from "@/lib/api/admin-families";
 import type { AdminStudentRecentAttendance } from "@/lib/api/v2/students";
+import { describeAttendanceClass } from "@/lib/admin/attendance-record";
 
 import { shortDate } from "./family-view";
 
@@ -170,6 +171,7 @@ export function attendanceStatusLabel(status: string | null | undefined): string
 }
 
 export interface DrawerAttendanceRow {
+  classDetails: ReturnType<typeof describeAttendanceClass>;
   key: string;
   occurrenceId: string | null;
   dateLabel: string;
@@ -191,10 +193,12 @@ export function drawerAttendanceRows(
 ): DrawerAttendanceRow[] {
   return recent.map((row, index) => {
     const occurrenceId = row.occurrence_id ?? null;
-    const dateLabel = shortDate(row.date) ?? shortDate(row.marked_at ?? null) ?? "Undated";
+    const classDetails = describeAttendanceClass(row);
+    const dateLabel = classDetails.when || (shortDate(row.date) ?? shortDate(row.marked_at ?? null) ?? "Undated");
     return {
       key: occurrenceId ?? `${row.session_id}-${row.date}-${index}`,
       occurrenceId,
+      classDetails,
       dateLabel,
       status: row.status,
       statusLabel: attendanceStatusLabel(row.status),

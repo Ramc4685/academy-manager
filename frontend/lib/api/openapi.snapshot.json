@@ -1817,6 +1817,11 @@
       },
       "AdminCollectionsInvoice": {
         "properties": {
+          "allocated_payment_cents": {
+            "default": 0,
+            "title": "Allocated Payment Cents",
+            "type": "integer"
+          },
           "balance_due_cents": {
             "title": "Balance Due Cents",
             "type": "integer"
@@ -1851,6 +1856,17 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "student_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Id"
           },
           "total_cents": {
             "title": "Total Cents",
@@ -8103,6 +8119,51 @@
       },
       "AdminStudentRecentAttendanceView": {
         "properties": {
+          "class_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Session Id"
+          },
+          "class_start_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Start At"
+          },
+          "class_timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Timezone"
+          },
+          "class_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Title"
+          },
           "corrected_at": {
             "anyOf": [
               {

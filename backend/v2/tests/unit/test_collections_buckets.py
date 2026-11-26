@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from urllib.parse import quote
 
@@ -283,6 +284,29 @@ def test_paid_bucket_falls_back_to_total_minus_balance_without_allocations() -> 
     assert row is not None
     assert row.bucket == "paid"
     assert row.payload["paid"] == {"amount_cents": 12000, "method": None, "paid_at": None}
+
+
+def test_paid_summary_identifies_individual_and_family_invoice_allocations() -> None:
+    invoices = (
+        _invoice(invoice_id="sam", student_id="sam", paid_cents=8000),
+        _invoice(invoice_id="alex", student_id="alex", paid_cents=8000),
+        _invoice(invoice_id="family", student_id=None, paid_cents=500),
+    )
+    row = classify_family(
+        _family(
+            invoices=tuple(
+                replace(invoice, status="paid", balance_due_cents=0) for invoice in invoices
+            )
+        ),
+        today=TODAY,
+    )
+    assert row is not None
+    assert row.bucket == "paid"
+    assert row.payload["paid"]["amount_cents"] == 16500
+    assert [
+        (invoice["invoice_id"], invoice["student_id"], invoice["allocated_payment_cents"])
+        for invoice in row.payload["invoices"]
+    ] == [("sam", "sam", 8000), ("alex", "alex", 8000), ("family", None, 500)]
 
 
 # --------------------------------------------------------------------------- precedence and edge cases

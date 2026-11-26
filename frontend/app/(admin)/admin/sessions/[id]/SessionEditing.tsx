@@ -43,6 +43,7 @@ import {
   todayDateInput,
 } from "./format";
 import {
+  formatAcademyDateTime,
   parseAcademyInstant,
   resolveAcademyTimeZone,
 } from "@/lib/format/academy-time";
@@ -450,11 +451,13 @@ const ATTENDANCE_CHIP: Record<string, string> = {
  */
 export function OccurrenceAttendanceDialog({
   occurrence,
+  sessionTitle,
   timezone,
   studentNameById,
   onClose,
 }: {
   occurrence: AdminSessionOccurrenceView | null;
+  sessionTitle: string | null;
   timezone: string | null;
   studentNameById: Map<string, string>;
   onClose: () => void;
@@ -463,7 +466,6 @@ export function OccurrenceAttendanceDialog({
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const open = Boolean(occurrence);
-  const { timeZone } = resolveAcademyTimeZone(timezone);
   const occurrenceId = occurrence?.occurrence_id ?? null;
 
   useEffect(() => {
@@ -516,14 +518,8 @@ export function OccurrenceAttendanceDialog({
     onError: (err: Error) => setError(err.message ?? "Failed to void this mark."),
   });
 
-  const when = occurrence
-    ? parseAcademyInstant(occurrence.start_at).toLocaleString("en-US", {
-        weekday: "long",
-        month: "short",
-        day: "numeric",
-        timeZone,
-      })
-    : "";
+  const when = occurrence ? formatAcademyDateTime(occurrence.start_at, timezone) : "";
+  const dateDetails = [sessionTitle, when].filter(Boolean).join(" · ");
 
   return (
     <RallyDialog
@@ -533,8 +529,8 @@ export function OccurrenceAttendanceDialog({
       }}
       title="Attendance"
       description={
-        when
-          ? `${when}. Voiding a mark leaves it on the record but stops it counting towards attendance, payroll and absence policy.`
+        dateDetails
+          ? `${dateDetails}. Voiding a mark leaves it on the record but stops it counting towards attendance, payroll and absence policy.`
           : ""
       }
       overline="Class date"

@@ -358,6 +358,8 @@ def _invoice_payload(inv: InvoiceFacts) -> dict[str, Any]:
     return {
         "invoice_id": inv.invoice_id,
         "invoice_number": inv.invoice_number,
+        "student_id": inv.student_id,
+        "allocated_payment_cents": inv.paid_cents,
         "period": inv.period,
         "status": inv.status,
         "total_cents": inv.total_cents,

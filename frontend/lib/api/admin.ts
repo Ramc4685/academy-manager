@@ -462,6 +462,8 @@ export interface AdminCollectionsFamily {
   invoices: {
     invoice_id: string;
     invoice_number: string | null;
+    student_id?: string | null;
+    allocated_payment_cents?: number;
     period: string;
     status: string;
     total_cents: number;

@@ -52,6 +52,7 @@ import { StudentSiblings } from "@/components/admin/siblings";
 
 import { FamilyBillingLink } from "./FamilyBillingLink";
 import { formatCurrencyCents, formatDate, formatDateTime, formatDateUtc } from "./format";
+import { describeAttendanceClass } from "@/lib/admin/attendance-record";
 import { SessionsPanel } from "./SessionsPanel";
 import { StudentWaiversPanel, StudentWaiverWarning } from "./StudentWaivers";
 import { OPEN_BILLING_STATUSES, StatusChip } from "./StatusChip";
@@ -608,25 +609,40 @@ function RecentAttendancePanel({ student }: { student: AdminStudentDetail }) {
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-neutral-200 text-xs uppercase tracking-overline text-rally-muted">
               <tr>
-                <th className="py-2 pr-4 font-medium">Date</th>
+                <th className="py-2 pr-4 font-medium">Class date</th>
                 <th className="py-2 pr-4 font-medium">Status</th>
                 <th className="py-2 font-medium">Marked</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
-              {recent.map((entry) => (
-                <tr key={`${entry.session_id}-${entry.date}-${entry.status}`}>
-                  <td className="py-3 pr-4 align-top text-rally-ink">
-                    {formatDateUtc(entry.date)}
-                  </td>
-                  <td className="py-3 pr-4 align-top">
-                    <StatusChip status={entry.status} />
-                  </td>
-                  <td className="py-3 align-top text-rally-muted">
-                    {formatDateTime(entry.marked_at)}
-                  </td>
-                </tr>
-              ))}
+              {recent.map((entry, index) => {
+                const { label, when, href } = describeAttendanceClass(entry);
+                const dateLabel = when || formatDateUtc(entry.date);
+                return (
+                  <tr key={entry.occurrence_id ?? `${entry.session_id}-${entry.date}-${index}`}>
+                    <td className="py-3 pr-4 align-top text-rally-ink">
+                      {href ? (
+                        <Link
+                          href={href}
+                          className="block font-semibold text-rally-cobalt-600 underline"
+                          aria-label={`Attendance for ${label} · ${dateLabel}`}
+                        >
+                          {label}
+                        </Link>
+                      ) : (
+                        <span className="block font-medium">{label}</span>
+                      )}
+                      <span>{dateLabel}</span>
+                    </td>
+                    <td className="py-3 pr-4 align-top">
+                      <StatusChip status={entry.status} />
+                    </td>
+                    <td className="py-3 align-top text-rally-muted">
+                      {formatDateTime(entry.marked_at)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

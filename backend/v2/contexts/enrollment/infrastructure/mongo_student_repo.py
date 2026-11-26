@@ -52,6 +52,7 @@ from backend.v2.contexts.enrollment.domain.models import (
 from backend.v2.shared.billing_type import is_not_billed
 from backend.v2.shared.profile.completeness import CHILD_REQUIRED, ChildFacts, child_gaps
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
+from backend.v2.shared.time.academy_timezone import academy_timezone_lookup
 
 log = logging.getLogger(__name__)
 
@@ -1613,14 +1614,57 @@ class MongoStudentRepository(TenantScopedRepository):
             .sort([("marked_at", -1), ("date", -1), ("_id", -1)])
             .limit(10)
         )
+        marks = [doc async for doc in cursor]
+        occurrence_ids = {str(doc["occurrence_id"]) for doc in marks if doc.get("occurrence_id")}
+        occurrences = {}
+        if occurrence_ids:
+            occurrences = {
+                doc["occurrence_id"]: doc
+                async for doc in self._db["session_occurrences"].find(
+                    {"academy_id": academy_id, "occurrence_id": {"$in": sorted(occurrence_ids)}},
+                    {"occurrence_id": 1, "session_id": 1, "template_session_id": 1, "start_at": 1},
+                )
+            }
+
+        def session_id_for(mark: dict[str, Any]) -> str | None:
+            occurrence = occurrences.get(mark.get("occurrence_id"), {})
+            return self._optional_str(
+                occurrence.get("template_session_id")
+                or occurrence.get("session_id")
+                or mark.get("session_id")
+            )
+
+        session_ids = {session_id for mark in marks if (session_id := session_id_for(mark))}
+        sessions = await self._sessions_by_id(academy_id, sorted(session_ids))
+        academy_timezone = (
+            await academy_timezone_lookup(self._db)(academy_id)
+            if occurrences
+            and (
+                not session_ids
+                or any(
+                    not sessions.get(session_id, {}).get("timezone") for session_id in session_ids
+                )
+            )
+            else None
+        )
         rows: list[AdminStudentRecentAttendance] = []
-        async for doc in cursor:
+        for doc in marks:
+            occurrence = occurrences.get(doc.get("occurrence_id"))
+            session_id = session_id_for(doc)
+            session = sessions.get(session_id, {}) if session_id else {}
+            class_session_id = self._optional_str(session.get("session_id")) or session_id
             rows.append(
                 AdminStudentRecentAttendance(
                     session_id=self._optional_str(doc.get("session_id")),
                     date=self._attendance_date_label(doc.get("date")),
                     status=str(doc.get("status") or "unknown"),
                     marked_at=self._coerce_datetime(doc.get("marked_at")),
+                    class_session_id=class_session_id if occurrence and session else None,
+                    class_title=self._optional_str(session.get("title") or session.get("name")),
+                    class_start_at=self._coerce_datetime(occurrence.get("start_at"))
+                    if occurrence
+                    else None,
+                    class_timezone=self._optional_str(session.get("timezone")) or academy_timezone,
                     occurrence_id=self._optional_str(doc.get("occurrence_id")),
                     previous_status=self._optional_str(doc.get("previous_status")),
                     corrected_at=self._coerce_datetime(doc.get("corrected_at")),

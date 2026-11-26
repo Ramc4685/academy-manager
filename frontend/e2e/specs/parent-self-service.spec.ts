@@ -83,6 +83,53 @@ async function stubAcademyAndChildren(page: import("@playwright/test").Page): Pr
   });
 }
 
+test("the child schedule shows loading before its first class", async ({ page }) => {
+  await stubParentIdentity(page);
+  await stubAcademyAndChildren(page);
+  await page.clock.setFixedTime(new Date("2026-07-14T17:00:00Z"));
+  let releaseSchedule: () => void = () => {};
+  const pendingSchedule = new Promise<void>((resolve) => { releaseSchedule = resolve; });
+  await page.route(`**/api/v2/parent/children/${STUDENT_ID}/schedule`, async (route) => {
+    await pendingSchedule;
+    await route.fulfill({
+      json: {
+        entries: [{
+          occurrence_id: "occ-started",
+          session_id: "sess-started",
+          session_title: "Class in progress",
+          location: "Court 2",
+          start_at: "2026-07-14T16:45:00Z",
+          end_at: "2026-07-14T17:45:00Z",
+          status: "scheduled",
+        }, {
+          occurrence_id: "occ-next",
+          session_id: "sess-1",
+          session_title: SESSION_TITLE,
+          location: "Court 1",
+          start_at: "2026-07-14T18:00:00Z",
+          end_at: "2026-07-14T19:00:00Z",
+          status: "scheduled",
+        }],
+      },
+    });
+  });
+  await page.goto("/parent/children");
+  try {
+    await expect(page.getByText("Loading class schedule…")).toBeVisible();
+    await expect(page.getByText("No upcoming sessions.")).toHaveCount(0);
+  } finally {
+    releaseSchedule();
+  }
+  const next = page.getByRole("listitem").filter({ hasText: "Next class" });
+  await expect(page.getByText("Class in progress", { exact: true })).toBeVisible();
+  await expect(next).toContainText(SESSION_TITLE);
+  await expect(next).toContainText("1:00 PM");
+  await expect(next).toContainText("Court 1");
+  await expect(page.getByRole("link", { name: `Coach notes for ${STUDENT_NAME}` })).toHaveAttribute(
+    "href", `/parent/progress?child=${STUDENT_ID}#coach-notes`,
+  );
+});
+
 test.describe("parent self-service — absences", () => {
   test.beforeEach(async ({ page }) => {
     await stubParentIdentity(page);
@@ -796,6 +843,15 @@ test.describe("parent self-service — progress", () => {
     await expect(page.getByText("Great footwork this week.")).toHaveCount(0);
     // The tab asks the server for one child at a time.
     expect(requestedIds).toEqual(expect.arrayContaining([STUDENT_ID, SIBLING_ID]));
+
+    await page.goto("/parent/children");
+    await page.getByRole("link", { name: `Coach notes for ${SIBLING_NAME}` }).click();
+    await expect(notes.getByText("Backhand clears are getting deeper.")).toBeVisible();
+    await expect(notes.getByRole("heading", { name: "Notes from coaches about Ben" })).toBeFocused();
+    await page.goto("/parent/children");
+    await page.getByRole("link", { name: `Coach notes for ${STUDENT_NAME}` }).click();
+    await expect(notes.getByText("Great footwork this week.")).toBeVisible();
+    await expect(notes.getByRole("heading", { name: "Notes from coaches about Ava" })).toBeFocused();
   });
 });
 

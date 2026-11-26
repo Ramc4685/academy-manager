@@ -228,14 +228,31 @@ const COLLECTIONS_FIXTURE = {
           parent_name: "Grace Kim",
           parent_email: "grace@example.com",
           action_invoice_id: null,
-          students: [{ student_id: "stu-paid", name: "Noah", session_title: "Fri 4:30 Beginner" }],
+          students: [
+            { student_id: "stu-paid", name: "Noah", session_title: "Free clinic" },
+            { student_id: "stu-paid-2", name: "Maya", session_title: "Free clinic" },
+          ],
           invoices: [
             {
               invoice_id: "inv-paid",
               invoice_number: "INV-2026-09-005",
+              student_id: "stu-paid",
+              allocated_payment_cents: 100000,
               period: "2026-09",
               status: "paid",
-              total_cents: 201000,
+              total_cents: 100000,
+              balance_due_cents: 0,
+              due_date: "2026-09-01",
+              delivery_status: "sent",
+            },
+            {
+              invoice_id: "inv-paid-sibling",
+              invoice_number: "INV-2026-09-006",
+              student_id: "stu-paid-2",
+              allocated_payment_cents: 101000,
+              period: "2026-09",
+              status: "paid",
+              total_cents: 101000,
               balance_due_cents: 0,
               due_date: "2026-09-01",
               delivery_status: "sent",
@@ -349,8 +366,17 @@ test.describe("admin payments buckets", () => {
     await page.getByTestId("bucket-paid-toggle").click();
 
     await expect(details).toHaveJSProperty("open", true);
-    await expect(page.getByTestId("family-row-parent-paid")).toBeVisible();
-    await expect(page.getByTestId("family-row-parent-paid")).toContainText("$2,010.00");
+    const family = page.getByTestId("family-row-parent-paid");
+    await expect(family).toBeVisible();
+    await expect(family).toContainText("Family total");
+    await expect(family).toContainText("$2,010.00");
+    await expect(family).not.toContainText("Free clinic");
+    await expect(family.getByRole("link", { name: /Noah.*\$1,000/ })).toHaveAttribute(
+      "href", "/admin/families/parent-paid?tab=billing&invoice=inv-paid",
+    );
+    await expect(family.getByRole("link", { name: /Maya.*\$1,010/ })).toHaveAttribute(
+      "href", "/admin/families/parent-paid?tab=billing&invoice=inv-paid-sibling",
+    );
   });
 
   test("record payment on a past-due row opens the dialog prefilled with the balance", async ({
