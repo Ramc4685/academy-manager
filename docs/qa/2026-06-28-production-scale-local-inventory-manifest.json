@@ -2788,7 +2788,8 @@
         "no placement",
         "error state",
         "empty state",
-        "notes unavailable"
+        "notes unavailable",
+        "validation"
       ],
       "risk_edges": [
         "External video unavailable",
@@ -3405,7 +3406,8 @@
         "loading",
         "empty",
         "error state",
-        "late-notice warning"
+        "late-notice warning",
+        "validation"
       ],
       "risk_edges": [
         "Late notice submitted inside window",
