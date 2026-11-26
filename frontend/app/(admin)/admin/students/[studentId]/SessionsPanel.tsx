@@ -5,6 +5,8 @@ import type { Route } from "next";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { refreshAfterEnrollmentChange } from "@/lib/admin/refresh-after-enrollment-change";
+
 import {
   listAdminSessions,
   type AdminSessionView,
@@ -206,15 +208,8 @@ function SessionsPanel({
         reason: reason || null,
       }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.admin.studentDetail(studentId),
-      });
-      // A discount, fee or move can change who gets the sibling discount.
-      if (parentId) {
-        void queryClient.invalidateQueries({
-          queryKey: queryKeys.admin.familySiblingDiscount(parentId),
-        });
-      }
+      // A move changes both rosters, the classes list and the sibling discount.
+      refreshAfterEnrollmentChange(queryClient, { studentId, parentId });
       setMoving(null);
       setTargetSessionId("");
       setReason("");
@@ -578,9 +573,7 @@ function SessionsPanel({
         onClose={() => setHolding(null)}
         onHeld={() => {
           setHolding(null);
-          void queryClient.invalidateQueries({
-            queryKey: queryKeys.admin.studentDetail(studentId),
-          });
+          refreshAfterEnrollmentChange(queryClient, { studentId, parentId });
         }}
       />
       <ReturnFromHoldDialog
@@ -589,9 +582,7 @@ function SessionsPanel({
         onClose={() => setReturning(null)}
         onReturned={() => {
           setReturning(null);
-          void queryClient.invalidateQueries({
-            queryKey: queryKeys.admin.studentDetail(studentId),
-          });
+          refreshAfterEnrollmentChange(queryClient, { studentId, parentId });
         }}
       />
 

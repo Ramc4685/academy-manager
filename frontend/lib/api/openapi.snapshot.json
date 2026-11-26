@@ -43591,6 +43591,18 @@
               "title": "Page Size",
               "type": "integer"
             }
+          },
+          {
+            "description": "Skip the 60s cache (after a write).",
+            "in": "query",
+            "name": "fresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Skip the 60s cache (after a write).",
+              "title": "Fresh",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -43625,6 +43637,20 @@
       "get": {
         "description": "Scope tiles (Active, Leaving, Left) over the unfiltered family index.",
         "operationId": "family_index_summary_api_v2_admin_families_summary_get",
+        "parameters": [
+          {
+            "description": "Skip the 60s cache (after a write).",
+            "in": "query",
+            "name": "fresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Skip the 60s cache (after a write).",
+              "title": "Fresh",
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -43635,6 +43661,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Family Index Summary",

@@ -50,6 +50,7 @@ import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { ClassRecapDialog } from "@/components/admin/ClassReportHandoffsCard";
 
 import { UnpricedClassBanner } from "@/components/admin/sessions/unpriced-class";
+import { refreshAfterEnrollmentChange } from "@/lib/admin/refresh-after-enrollment-change";
 import { AddToRosterDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";
 import { formatCurrencyCents, sessionTimeRange } from "./format";
 import { CopyClassDialog } from "./copy-class-dialog";
@@ -846,9 +847,7 @@ export default function AdminSessionDetailPage() {
         onAdded={() => {
           setAddOpen(false);
           setReEnrollTarget(null);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessionDetail(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+          refreshAfterEnrollmentChange(queryClient);
         }}
       />
       <SessionEditDialog
@@ -948,8 +947,7 @@ export default function AdminSessionDetailPage() {
         onMoved={(close) => {
           if (close) setTransferTargets([]);
           setSelectedIds(new Set());
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
+          refreshAfterEnrollmentChange(queryClient);
         }}
       />
       <HoldEnrollmentDialog
@@ -957,10 +955,12 @@ export default function AdminSessionDetailPage() {
         studentName={holdTarget?.full_name ?? ""}
         onClose={() => setHoldTarget(null)}
         onHeld={() => {
+          refreshAfterEnrollmentChange(queryClient, {
+            studentId: holdTarget?.student_id,
+            parentId: holdTarget?.parent_id,
+          });
           setHoldTarget(null);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
       <ReturnFromHoldDialog
@@ -968,10 +968,12 @@ export default function AdminSessionDetailPage() {
         studentName={returnTarget?.full_name ?? ""}
         onClose={() => setReturnTarget(null)}
         onReturned={() => {
+          refreshAfterEnrollmentChange(queryClient, {
+            studentId: returnTarget?.student_id,
+            parentId: returnTarget?.parent_id,
+          });
           setReturnTarget(null);
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.enrollments(sessionId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.admin.waitlist(sessionId) });
-          void queryClient.invalidateQueries({ queryKey: queryKeys.admin.sessions("upcoming") });
         }}
       />
       <WithdrawalCreditDialog

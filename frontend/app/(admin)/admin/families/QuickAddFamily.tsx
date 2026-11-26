@@ -18,7 +18,7 @@
 import { useState } from "react";
 import type { Route } from "next";
 import Link from "next/link";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   IMPORT_COLUMNS,
@@ -30,6 +30,7 @@ import {
 import { UnpricedEnrollAcknowledgement } from "@/components/admin/sessions/unpriced-class";
 import { createEnrollment, inviteBillingSetupParent, listAdminSessions } from "@/lib/api/admin";
 import { quoteCell } from "@/lib/admin/import-column-mapping";
+import { refreshAfterEnrollmentChange } from "@/lib/admin/refresh-after-enrollment-change";
 import { queryKeys } from "@/lib/query/keys";
 import { Button } from "@/components/ds/button";
 import { Card } from "@/components/ds/card";
@@ -123,6 +124,7 @@ export async function runQuickAdd({
 }
 
 export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<QuickAddForm>(EMPTY);
   const [sessionId, setSessionId] = useState("");
@@ -153,6 +155,11 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
         invite: invite && Boolean(form.parent_email.trim()),
       }),
     onSuccess: (data) => {
+      // S26: the new family and roster seat show at once, on any server machine.
+      refreshAfterEnrollmentChange(queryClient, {
+        studentId: data.family.student_id,
+        parentId: data.family.family_id,
+      });
       setChecked(null);
       setResult(data);
       setForm(EMPTY);

@@ -56,6 +56,7 @@ class FamilyIndexReader(Protocol):
 
 class AdminFamilyIndexServices(Protocol):
     index: FamilyIndexReader
+    fresh: FamilyIndexReader | None
 
 
 def get_admin_family_index(request: Request) -> AdminFamilyIndexServices:
@@ -70,9 +71,14 @@ def _academy_id(claims: AuthClaims) -> str:
         return claims.academy_id
 
 
-async def _index(services: AdminFamilyIndexServices, claims: AuthClaims) -> FamilyIndex:
+async def _index(
+    services: AdminFamilyIndexServices, claims: AuthClaims, *, fresh: bool = False
+) -> FamilyIndex:
+    # S26: ``fresh`` reads the zero-TTL build, so a family this client just
+    # added shows on whichever machine answers. Without one, the cached index.
+    reader = (services.fresh if fresh else None) or services.index
     try:
-        return await services.index.build(_academy_id(claims))
+        return await reader.build(_academy_id(claims))
     except FamilyIndexUnavailable as exc:
         raise HTTPException(status_code=503, detail="family index unavailable") from exc
 
@@ -92,6 +98,7 @@ async def list_families(
     order: Literal["asc", "desc"] | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
+    fresh: bool = Query(default=False, description="Skip the 60s cache (after a write)."),
     claims: AuthClaims = Depends(require_staff_tier("front_desk")),
     services: AdminFamilyIndexServices = Depends(get_admin_family_index),
 ) -> AdminFamilyIndexPage:
@@ -100,7 +107,7 @@ async def list_families(
     unknown = sorted(set(stages) - FAMILY_STAGES)
     if unknown:
         raise HTTPException(status_code=422, detail=f"unknown stage: {', '.join(unknown)}")
-    index = await _index(services, claims)
+    index = await _index(services, claims, fresh=fresh)
     view = family_money_view(claims)
     result = query_family_index(
         index,
@@ -123,11 +130,12 @@ async def list_families(
 
 @router.get("/families/summary", response_model=AdminFamilyIndexSummary)
 async def family_index_summary(
+    fresh: bool = Query(default=False, description="Skip the 60s cache (after a write)."),
     claims: AuthClaims = Depends(require_staff_tier("front_desk")),
     services: AdminFamilyIndexServices = Depends(get_admin_family_index),
 ) -> AdminFamilyIndexSummary:
     """Scope tiles (Active, Leaving, Left) over the unfiltered family index."""
-    index = await _index(services, claims)
+    index = await _index(services, claims, fresh=fresh)
     return summary_view(
         summarize_family_index(index),
         generated_at=index.generated_at,

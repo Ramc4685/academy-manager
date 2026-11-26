@@ -25274,6 +25274,8 @@ export interface operations {
                 order?: ("asc" | "desc") | null;
                 page?: number;
                 page_size?: number;
+                /** @description Skip the 60s cache (after a write). */
+                fresh?: boolean;
             };
             header?: never;
             path?: never;
@@ -25303,7 +25305,10 @@ export interface operations {
     };
     family_index_summary_api_v2_admin_families_summary_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Skip the 60s cache (after a write). */
+                fresh?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -25317,6 +25322,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminFamilyIndexSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

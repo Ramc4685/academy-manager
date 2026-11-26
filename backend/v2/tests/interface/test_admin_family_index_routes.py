@@ -95,6 +95,7 @@ class FakeIndex:
 class FakeServices:
     def __init__(self) -> None:
         self.index = FakeIndex()
+        self.fresh: FakeIndex | None = FakeIndex()
 
 
 def _claims(*roles: str) -> AuthClaims:
@@ -348,3 +349,14 @@ def test_record_view_carries_the_at_risk_flag(admin: TestClient) -> None:
     body = admin.get("/api/v2/admin/families/u-alpha/record").json()
     assert body["family"]["at_risk"] is True
     assert body["family"]["at_risk_reasons"] == ["payment"]
+
+
+def test_fresh_reads_the_zero_ttl_index(admin: TestClient, services: FakeServices) -> None:
+    # S26: after a write the client asks for fresh=true; only that read skips the cache.
+    assert services.fresh is not None
+    assert admin.get("/api/v2/admin/families").status_code == 200
+    assert admin.get("/api/v2/admin/families/summary").status_code == 200
+    assert (services.index.calls, services.fresh.calls) == (["acad", "acad"], [])
+    assert admin.get("/api/v2/admin/families?fresh=true").status_code == 200
+    assert admin.get("/api/v2/admin/families/summary?fresh=true").status_code == 200
+    assert (services.index.calls, services.fresh.calls) == (["acad", "acad"], ["acad", "acad"])

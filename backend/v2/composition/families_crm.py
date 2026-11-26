@@ -126,6 +126,10 @@ class AdminPeopleReports:
 class AdminFamilyIndex:
     index: MongoFamilyIndexReadModel
     reports: AdminPeopleReports
+    #: S26: the zero-TTL build of the same index. The 60s ``index`` cache is
+    #: per machine, so an in-process invalidate cannot reach the machine that
+    #: serves the next read; a client that just wrote asks for this instead.
+    fresh: MongoFamilyIndexReadModel | None = None
     notes: AdminFamilyNotes | None = None
     follow_ups: AdminFamilyFollowUps | None = None
     #: The unified family timeline (Phase 5, ``composition/family_timeline.py``).
@@ -190,13 +194,15 @@ def family_directory(db: Any) -> IndexFamilyDirectory:
 def compose_admin_family_index(db: Any) -> AdminFamilyIndex:
     money = MongoFamilyMoneyReadModel(db)
     index = _index_model(db, FAMILY_INDEX_CACHE_TTL_SECONDS, money)
-    families = IndexFamilyDirectory(cached=index, fresh=_index_model(db, 0.0))
+    fresh = _index_model(db, 0.0, money)
+    families = IndexFamilyDirectory(cached=index, fresh=fresh)
     notes = MongoFamilyNoteRepository(db)
     follow_ups = MongoFamilyFollowUpRepository(db)
     staff = _MembershipStaffDirectory(db)
     timezone = academy_timezone_lookup(db)
     return AdminFamilyIndex(
         index=index,
+        fresh=fresh,
         reports=AdminPeopleReports(
             money_owed_by_age=MoneyOwedByAgeReport(index=index, money=money),
             inquiry_conversion=InquiryConversionReport(
