@@ -42,6 +42,8 @@ export interface AdminSessionView {
   timezone: string | null;
   capacity: number;
   amount_cents?: number | null;
+  /** S10: no fee was ever set (null); a free class (0) is priced. Server-derived. */
+  unpriced?: boolean;
   status: "scheduled" | "cancelled" | "completed";
   enrolled_count: number;
   /** Of enrolled_count: children never invoiced (they still take a seat). */
@@ -1362,7 +1364,8 @@ export type AdminAttentionKind =
   | "billing_deferrals"
   | "waivers"
   | "session_pressure"
-  | "missing_attendance";
+  | "missing_attendance"
+  | "unpriced_classes";
 
 export interface AdminAttentionItem {
   attention_id: string;

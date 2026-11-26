@@ -49,6 +49,7 @@ import { HoldEnrollmentDialog, ReturnFromHoldDialog } from "@/components/admin/e
 import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { ClassRecapDialog } from "@/components/admin/ClassReportHandoffsCard";
 
+import { UnpricedClassBanner } from "@/components/admin/sessions/unpriced-class";
 import { AddToRosterDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";
 import { formatCurrencyCents, sessionTimeRange } from "./format";
 import { CopyClassDialog } from "./copy-class-dialog";
@@ -411,8 +412,9 @@ export default function AdminSessionDetailPage() {
               <p className="mt-1 text-sm text-rally-muted">
                 {session.location} · {sessionTimeRange(session)}
                 {session.coach_name ? ` · Coach ${session.coach_name}` : ""}
-                {` · ${formatCurrencyCents(session.amount_cents)}/month`}
+                {session.unpriced ? " · No price" : ` · ${formatCurrencyCents(session.amount_cents)}/month`}
               </p>
+              {session.unpriced && <UnpricedClassBanner />}
             </>
           ) : (
             <h1 className="font-display text-2xl font-semibold text-rally-ink">
@@ -831,6 +833,7 @@ export default function AdminSessionDetailPage() {
           if (!next) setReEnrollTarget(null);
         }}
         sessionId={sessionId}
+        unpriced={Boolean(session?.unpriced)}
         prefill={
           reEnrollTarget
             ? {

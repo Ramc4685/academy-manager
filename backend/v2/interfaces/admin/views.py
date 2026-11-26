@@ -9,8 +9,16 @@ from datetime import UTC, date, datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    EmailStr,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
+from backend.v2.contexts.enrollment.application.pricing_state import is_unpriced
 from backend.v2.contexts.enrollment.application.use_cases.departure_reasons import (
     DepartureReasonCode,
 )
@@ -439,6 +447,12 @@ class AdminSessionView(BaseModel):
     absence_policy: str | None = None
     # Set only by the all-classes list (``window=all``), on the academy's clock.
     phase: Literal["active", "upcoming", "ended"] | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def unpriced(self) -> bool:
+        """S10: no fee was ever set (``None``); a free class (``0``) is priced."""
+        return is_unpriced(self.amount_cents)
 
 
 class AdminSessionList(BaseModel):
@@ -1984,6 +1998,7 @@ AdminAttentionKind = Literal[
     "session_pressure",
     # A past class date with students on the roster and no marks at all.
     "missing_attendance",
+    "unpriced_classes",
 ]
 
 

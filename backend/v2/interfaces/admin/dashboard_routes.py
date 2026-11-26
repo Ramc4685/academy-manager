@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
+from backend.v2.contexts.enrollment.application.pricing_state import is_unpriced
 from backend.v2.interfaces.admin.academy_clock import academy_today
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.interfaces.admin.inbox_routes import missing_attendance_count
@@ -41,6 +42,7 @@ _SOURCE_LABELS: dict[str, str] = {
     "waivers": "waivers",
     "sessions": "today's classes",
     "missing_attendance": "missing attendance",
+    "unpriced_classes": "unpriced classes",
 }
 
 
@@ -398,6 +400,32 @@ async def dashboard_attention(
             )
         )
 
+    # S10: a class with children in it and no fee bills nothing, silently.
+    # A free class (fee 0) is a choice and is not listed.
+    unpriced = await read("unpriced_classes", _unpriced_classes_with_students, [], use_cases)
+    if unpriced:
+        names = ", ".join(
+            f"{_field(s, 'title', 'Class')} ({int(_field(s, 'enrolled_count', 0) or 0)} "
+            f"student{'s' if int(_field(s, 'enrolled_count', 0) or 0) != 1 else ''})"
+            for s in unpriced[:3]
+        )
+        more = f" and {len(unpriced) - 3} more" if len(unpriced) > 3 else ""
+        items.append(
+            AdminAttentionItemView(
+                attention_id="unpriced-classes",
+                kind="unpriced_classes",
+                title="Classes with students and no price",
+                detail=f"{names}{more}. The owner must set a price before these can be billed.",
+                severity="high",
+                href=(
+                    f"/admin/sessions/{_field(unpriced[0], 'session_id')}"
+                    if len(unpriced) == 1
+                    else "/admin/sessions"
+                ),
+                count=len(unpriced),
+            )
+        )
+
     pressured = [p for p in (_session_pressure(s) for s in sessions) if p is not None]
     if pressured:
         items.append(
@@ -419,6 +447,18 @@ async def dashboard_attention(
             for label in unavailable
         ],
     )
+
+
+async def _unpriced_classes_with_students(use_cases: AdminUseCases) -> list[Any]:
+    """Live (not ended) classes with at least one seat taken and no fee set."""
+    rows = await use_cases.list_admin_sessions(None, window="open", coach_id=None)  # type: ignore[operator]
+    return [
+        row
+        for row in rows
+        if _field(row, "status") != "cancelled"
+        and int(_field(row, "enrolled_count", 0) or 0) > 0
+        and is_unpriced(_field(row, "amount_cents"))
+    ]
 
 
 async def _pending_registration_count(use_cases: AdminUseCases) -> int:

@@ -8528,7 +8528,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "pending_registrations" | "overdue_dues" | "autopay_failure" | "dunning_exhaustion" | "autopay_stuck" | "bank_return_review" | "pause_requests" | "scheduled_resume_blocked" | "scheduled_action_failed" | "billing_deferrals" | "waivers" | "session_pressure" | "missing_attendance";
+            kind: "pending_registrations" | "overdue_dues" | "autopay_failure" | "dunning_exhaustion" | "autopay_stuck" | "bank_return_review" | "pause_requests" | "scheduled_resume_blocked" | "scheduled_action_failed" | "billing_deferrals" | "waivers" | "session_pressure" | "missing_attendance" | "unpriced_classes";
             /**
              * Severity
              * @enum {string}
@@ -10896,6 +10896,11 @@ export interface components {
             timezone?: string | null;
             /** Title */
             title: string;
+            /**
+             * Unpriced
+             * @description S10: no fee was ever set (``None``); a free class (``0``) is priced.
+             */
+            readonly unpriced: boolean;
             /** Venue Address */
             venue_address?: string | null;
             /**

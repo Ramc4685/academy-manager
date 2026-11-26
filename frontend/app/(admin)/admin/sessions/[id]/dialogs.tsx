@@ -38,6 +38,7 @@ import type { ApiError } from "@/lib/api/client";
 
 import { useIsOwner } from "@/components/admin/owner-context";
 import { StudentSearchPicker } from "@/components/admin/student-search-picker";
+import { UnpricedEnrollAcknowledgement } from "@/components/admin/sessions/unpriced-class";
 import { DEPARTURE_ACTION_DESCRIPTION } from "@/components/admin/enrollment/departure-actions";
 import { Button } from "@/components/ds/button";
 import { DialogActions, DialogError, Field, RallyModal as RallyDialog } from "@/components/ds/dialog-chrome";
@@ -50,11 +51,14 @@ export function AddToRosterDialog({
   sessionId,
   onAdded,
   prefill,
+  unpriced = false,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   sessionId: string;
   onAdded: () => void;
+  /** S10: the class has no fee yet; enrolling waits for an acknowledgement. */
+  unpriced?: boolean;
   /**
    * Issue #827: seed the form with a student the admin already picked — the
    * Re-enroll action on a departed roster row. The dialog is otherwise
@@ -82,6 +86,10 @@ export function AddToRosterDialog({
     setForm(prefill ?? { student_id: "", parent_id: "", full_name: "" });
   }, [open, prefill]);
   const [error, setError] = useState<string | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+  useEffect(() => {
+    if (!open) setAcknowledged(false);
+  }, [open]);
   const quoteQuery = useQuery<AdminEnrollmentQuote>({
     queryKey: ["admin", "enrollment-quote", sessionId, form.student_id],
     queryFn: () => quoteAdminEnrollment({ session_id: sessionId, student_id: form.student_id }),
@@ -139,11 +147,19 @@ export function AddToRosterDialog({
             }
           />
         </Field>
+        {unpriced && (
+          <UnpricedEnrollAcknowledgement checked={acknowledged} onChange={setAcknowledged} />
+        )}
         <DialogActions>
           <Button variant="secondary" size="sm" type="button" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button variant="primary" size="sm" type="submit" disabled={mutation.isPending}>
+          <Button
+            variant="primary"
+            size="sm"
+            type="submit"
+            disabled={mutation.isPending || (unpriced && !acknowledged)}
+          >
             {mutation.isPending ? "Enrolling…" : "Enroll"}
           </Button>
         </DialogActions>

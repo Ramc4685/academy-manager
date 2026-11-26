@@ -1102,7 +1102,8 @@
               "billing_deferrals",
               "waivers",
               "session_pressure",
-              "missing_attendance"
+              "missing_attendance",
+              "unpriced_classes"
             ],
             "title": "Kind",
             "type": "string"
@@ -7165,6 +7166,12 @@
             "title": "Title",
             "type": "string"
           },
+          "unpriced": {
+            "description": "S10: no fee was ever set (``None``); a free class (``0``) is priced.",
+            "readOnly": true,
+            "title": "Unpriced",
+            "type": "boolean"
+          },
           "venue_address": {
             "anyOf": [
               {
@@ -7212,7 +7219,8 @@
           "start_at",
           "end_at",
           "capacity",
-          "status"
+          "status",
+          "unpriced"
         ],
         "title": "AdminSessionView",
         "type": "object"

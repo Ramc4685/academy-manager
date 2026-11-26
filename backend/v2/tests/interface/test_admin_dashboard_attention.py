@@ -371,4 +371,52 @@ def test_session_pressure_reads_the_academy_local_today(admin_client, monkeypatc
     r = admin_client.get("/api/v2/admin/dashboard/attention")
 
     assert r.status_code == 200, r.text
-    assert seen == [date(2026, 1, 2)]
+    # Today's classes on the academy's date; the second read is the S10
+    # unpriced-class scan, which takes no date.
+    assert seen == [date(2026, 1, 2), None]
+
+
+def test_unpriced_classes_with_students_are_listed_and_free_ones_are_not(admin_client):
+    """S10: a fee of None with children enrolled is loud; a free class (0) is not."""
+    rows = [
+        {
+            "session_id": "s-unpriced",
+            "title": "Tuesday Intermediate",
+            "amount_cents": None,
+            "enrolled_count": 2,
+            "status": "scheduled",
+        },
+        {
+            "session_id": "s-free",
+            "title": "Free clinic",
+            "amount_cents": 0,
+            "enrolled_count": 4,
+            "status": "scheduled",
+        },
+        {
+            "session_id": "s-empty",
+            "title": "Empty new class",
+            "amount_cents": None,
+            "enrolled_count": 0,
+            "status": "scheduled",
+        },
+    ]
+
+    async def list_admin_sessions(on_date, *, window=None, coach_id=None):
+        return rows if window == "open" else []
+
+    admin_client.use_cases.list_admin_sessions = list_admin_sessions
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    items = [i for i in r.json()["items"] if i["kind"] == "unpriced_classes"]
+    assert len(items) == 1
+    assert items[0]["count"] == 1
+    assert items[0]["href"] == "/admin/sessions/s-unpriced"
+    assert "Tuesday Intermediate (2 students)" in items[0]["detail"]
+    assert "Free clinic" not in items[0]["detail"]
+
+    rows[0]["amount_cents"] = 9000  # the owner prices it: the item clears
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+    assert not [i for i in r.json()["items"] if i["kind"] == "unpriced_classes"]

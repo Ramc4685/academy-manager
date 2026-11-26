@@ -28,4 +28,5 @@ Rules for a new kit:
 | --- | --- |
 | k00 | Seven extra families (14 kids) with past Saturday attendance. Keeps the `seed_*` ids of the original `seed_more.js` so it re-runs over a DB that already has them. |
 | k01 | Demo Coach last month: one held class with no pay rate (unpaid) and one paid at a 50% rate. Casey Newcoach active with no held classes last month. |
+| k03 | "Tuesday Intermediate" (`kit_k03_session_tue`): no price (fee null, not 0), two k00 kids enrolled. Run after k00. |
 | k07 | A second academy `acad_fresh_local` at `fresh.localhost` whose only required live waiver is the untouched starter text. Owner `fresh.owner@example.com`: create that login in the Firebase emulator before signing in. |

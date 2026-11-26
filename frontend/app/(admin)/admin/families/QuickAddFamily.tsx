@@ -27,6 +27,7 @@ import {
   type ImportBatch,
   type ImportRow,
 } from "@/lib/api/admin-family-import";
+import { UnpricedEnrollAcknowledgement } from "@/components/admin/sessions/unpriced-class";
 import { createEnrollment, inviteBillingSetupParent, listAdminSessions } from "@/lib/api/admin";
 import { quoteCell } from "@/lib/admin/import-column-mapping";
 import { queryKeys } from "@/lib/query/keys";
@@ -128,6 +129,7 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
   const [invite, setInvite] = useState(true);
   const [checked, setChecked] = useState<ImportBatch | null>(null);
   const [result, setResult] = useState<StepResult | null>(null);
+  const [unpricedAck, setUnpricedAck] = useState(false);
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessions("upcoming"),
@@ -155,6 +157,7 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
       setResult(data);
       setForm(EMPTY);
       setSessionId("");
+      setUnpricedAck(false);
       onAdded();
     },
   });
@@ -164,6 +167,10 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
   const row = checked?.rows[0];
+  // S10: enrolling into a class with no fee waits for an acknowledgement.
+  const chosenUnpriced = Boolean(
+    sessionId && sessionsQuery.data?.sessions.find((s) => s.session_id === sessionId)?.unpriced,
+  );
   const ready =
     form.parent_name.trim() &&
     form.student_name.trim() &&
@@ -213,14 +220,17 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
           Class (optional)
           <select
             value={sessionId}
-            onChange={(e) => setSessionId(e.target.value)}
+            onChange={(e) => {
+              setSessionId(e.target.value);
+              setUnpricedAck(false);
+            }}
             className={INPUT}
             data-testid="quick-add-session"
           >
             <option value="">Do not enroll yet</option>
             {(sessionsQuery.data?.sessions ?? []).map((s) => (
               <option key={s.session_id} value={s.session_id}>
-                {s.title}
+                {s.unpriced ? `${s.title} (no price yet)` : s.title}
               </option>
             ))}
           </select>
@@ -274,9 +284,14 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
                   ? `${row.student_name} will be added to the existing ${row.family_name ?? "family"}.`
                   : `A new family for ${row.parent_name} with ${row.student_name}.`}
               </p>
+              {chosenUnpriced && (
+                <div className="mt-3">
+                  <UnpricedEnrollAcknowledgement checked={unpricedAck} onChange={setUnpricedAck} />
+                </div>
+              )}
               <Button
                 className="mt-3"
-                disabled={add.isPending}
+                disabled={add.isPending || (chosenUnpriced && !unpricedAck)}
                 onClick={() => add.mutate()}
                 data-testid="quick-add-save"
               >
