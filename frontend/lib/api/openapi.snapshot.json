@@ -26787,6 +26787,7 @@
           "state": {
             "enum": [
               "finish",
+              "paying",
               "waiting",
               "waitlisted",
               "declined"

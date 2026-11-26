@@ -17821,7 +17821,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            state: "finish" | "waiting" | "waitlisted" | "declined";
+            state: "finish" | "paying" | "waiting" | "waitlisted" | "declined";
             /** Status */
             status: string;
             /**
