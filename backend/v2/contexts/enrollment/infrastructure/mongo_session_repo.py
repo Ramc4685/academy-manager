@@ -538,6 +538,7 @@ class MongoSessionRepository(TenantScopedRepository):
                     or "Class",
                     location=_optional_str(doc.get("location")),
                     venue_address=_optional_str(doc.get("venue_address")),
+                    what_to_bring=_optional_str(doc.get("what_to_bring")),
                     days_of_week=_string_tuple(doc.get("days_of_week")),
                     start_time=start_time,
                     end_time=end_time,

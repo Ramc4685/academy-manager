@@ -511,3 +511,38 @@ def test_shared_certificate_never_carries_family_or_internal_values() -> None:
         *(v for k, v in SECRETS.items() if k != "academy_id"),
     ):
         assert private not in raw, f"certificate share leaked {private!r}"
+
+
+# --- S46: an explicit allow-list, so every new public field is a deliberate edit ---
+
+#: The public tenant page brief (2026-09-20, section 5) table, plus the fields
+#: later lanes added on purpose. Adding a field to a public DTO fails here
+#: until it is listed, which is the moment to check it against the brief.
+BRIEF_ALLOW_LIST: dict[str, set[str]] = {
+    "PublicBrandDto": {"name", "logo_url", "brand_color", "brand_fill", "brand_on_color"},
+    "PublicAcademyDto": {
+        *("name", "logo_url", "brand_color", "brand_fill", "brand_on_color"),
+        *("venue", "timezone", "currency", "support_email"),
+    },
+    "PublicVenueDto": {"address", "hours_text"},
+    "PublicProgramDto": {"public_id", "name", "description", "level", "age_band", "classes"},
+    "PublicClassDto": {
+        *("public_id", "title", "description", "level", "age_band", "days_of_week"),
+        *("start_time", "end_time", "timezone", "starts_on", "location", "venue_address"),
+        # Brief section 7: the FAQ is seeded from the class's what_to_bring.
+        *("what_to_bring", "coach_name", "price", "seats", "trial_dates"),
+    },
+    "PublicPageFlagsDto": {
+        *("trials_open", "show_price", "show_availability", "price_period_default"),
+        *("privacy_notice_url", "theme", "seats_left_threshold"),
+        *("terms_url", "refund_policy_url"),
+    },
+}
+
+
+@pytest.mark.parametrize("model_name", sorted(BRIEF_ALLOW_LIST))
+def test_public_page_dto_fields_match_the_brief_allow_list(model_name: str) -> None:
+    from backend.v2.interfaces.public import dtos
+
+    model = getattr(dtos, model_name)
+    assert set(model.model_fields) == BRIEF_ALLOW_LIST[model_name]

@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import {
   ageSpan,
   formatAgeBand,
+  formatLevel,
   mapsSearchUrl,
   monogram,
   safeContentImageUrl,
@@ -77,6 +78,7 @@ export function PublicTenantPage({
   const address = academy.venue.address;
   const hours = academy.venue.hours_text;
   const hasVisit = Boolean(address || hours);
+  const refundUrl = safeHttpsUrl(page.page.refund_policy_url);
 
   const nav: NavItem[] = [{ href: CLASSES_ANCHOR, label: "Classes" }];
   if (hasAbout) nav.unshift({ href: "#about", label: "About" });
@@ -205,7 +207,7 @@ export function PublicTenantPage({
                 ) : null}
                 {groups.map((group) => {
                   const groupAge = group.program ? formatAgeBand(group.program.age_band) : null;
-                  const sub = [group.level, groupAge].filter(Boolean).join(" · ");
+                  const sub = [formatLevel(group.level), groupAge].filter(Boolean).join(" · ");
                   return (
                     <div className={styles.program} key={group.key}>
                       <div className={styles.programHead}>
@@ -276,6 +278,15 @@ export function PublicTenantPage({
                 <span>
                   Prices are {view.pricePeriodLabel} unless a class says otherwise, paid through the parent
                   account.
+                  {refundUrl ? (
+                    <>
+                      {" "}
+                      <a href={refundUrl} data-testid="joining-refund-policy">
+                        Read the refund policy
+                      </a>
+                      .
+                    </>
+                  ) : null}
                 </span>
               </li>
             </ol>

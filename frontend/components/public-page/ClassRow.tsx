@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import {
   formatAgeBand,
+  formatLevel,
   formatPrice,
   formatSeatBand,
   formatTimeRange,
@@ -41,6 +42,7 @@ export function ClassRow({
   const title = truncate(cls.title, 60);
   const label = [title, when, time].filter(Boolean).join(", ");
   const age = formatAgeBand(cls.age_band);
+  const level = formatLevel(cls.level);
   const where = cls.location ?? cls.venue_address;
 
   return (
@@ -66,7 +68,7 @@ export function ClassRow({
           </span>
         ) : null}
         {age ? <span>{age}</span> : null}
-        {cls.level ? <span>{cls.level}</span> : null}
+        {level ? <span>{level}</span> : null}
       </div>
       <div className={styles.priceRow}>
         {price ? (

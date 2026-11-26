@@ -80,6 +80,9 @@ def test_published_page_lists_only_published_listable_classes() -> None:
     assert saturday["age_band"] == {"min_age": 6, "max_age": 9}
     assert saturday["days_of_week"] == ["Sat"]
     assert (saturday["start_time"], saturday["end_time"]) == ("09:00", "10:00")
+    # S46: the class's own what-to-bring line is public; a class without one is null.
+    assert saturday["what_to_bring"] == "Racket, non-marking shoes, water"
+    assert full["what_to_bring"] is None
     # Full class (active + held fill both seats; withdrawn does not) is
     # listed as waitlist, not dropped; coach shown by first name only.
     assert full["seats"] == {"band": "waitlist", "seats_left": None}

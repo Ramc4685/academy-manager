@@ -190,9 +190,27 @@ export interface FaqEntry {
 }
 
 /**
- * Phase 1 FAQ: fixed copy that states only what the product itself does.
- * The brief seeds FAQ from each class's `what_to_bring` and `absence_policy`,
- * but the public DTO does not carry those yet (flagged in the release note).
+ * "What should the player bring?" from the classes' own lines (S46): one
+ * shared line as is, different lines per class, and a plain default when no
+ * class has one.
+ */
+function whatToBring(page: PublicAcademyPage): string {
+  const lines = allClasses(page).flatMap((cls) => {
+    const text = cls.what_to_bring?.trim();
+    return text ? [{ title: cls.title, text }] : [];
+  });
+  const distinct = [...new Set(lines.map((line) => line.text))];
+  if (distinct.length === 0) {
+    return "Comfortable sports clothes, indoor sports shoes and a water bottle. The academy tells you before the first class if anything else is needed.";
+  }
+  if (distinct.length === 1) return distinct[0];
+  return lines.map((line) => `${line.title}: ${line.text}`).join(" ");
+}
+
+/**
+ * Phase 1 FAQ: fixed copy that states only what the product itself does,
+ * plus what to bring from the classes' own lines. An academy's own FAQs
+ * replace the whole list.
  */
 export function faqEntries(page: PublicAcademyPage): FaqEntry[] {
   const own = (page.faqs ?? []).filter((f) => f.question?.trim() && f.answer?.trim());
@@ -206,6 +224,7 @@ export function faqEntries(page: PublicAcademyPage): FaqEntry[] {
     });
   }
   entries.push(
+    { question: "What should the player bring?", answer: whatToBring(page) },
     {
       question: "How do we register?",
       answer:

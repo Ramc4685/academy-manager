@@ -5,6 +5,8 @@
  * `format.test.ts`.
  */
 
+import { SKILL_LEVEL_HINTS, classTitleLevel } from "@/lib/parent/onboarding-copy";
+
 import type {
   PublicAgeBand,
   PublicClass,
@@ -114,6 +116,20 @@ export function formatAgeBand(band: PublicAgeBand | null | undefined): string | 
   if (min !== null) return `Ages ${min} and up`;
   if (max !== null) return `Up to age ${max}`;
   return null;
+}
+
+/**
+ * "Beginner: new, or played only a few times" (S46). The same one-liner the
+ * sign-up wizard shows under each level; a level the academy named itself
+ * ("Squad", "Beginner/Intermediate") stays as written.
+ */
+export function formatLevel(level: string | null | undefined): string | null {
+  const text = level?.trim();
+  if (!text) return null;
+  const known = classTitleLevel(text);
+  if (!known || text.toLowerCase().replace(/s$/, "") !== known) return text;
+  const hint = SKILL_LEVEL_HINTS[known];
+  return `${text}: ${hint.charAt(0).toLowerCase()}${hint.slice(1)}`;
 }
 
 /** The widest age span across every band given, for the hero facts line. */

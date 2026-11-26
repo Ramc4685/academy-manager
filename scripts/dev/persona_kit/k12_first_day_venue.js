@@ -2,6 +2,8 @@
 // minutes) so the coach class page shows where to go, and an academy phone and
 // email so a coach's empty first day says who to call. Casey Newcoach has no
 // class unless k06 ran: leave k06 out to see her first-day empty state.
+// S46: a what-to-bring line on both classes for the public page's FAQ
+// (seed_demo_academy.py publishes the page, address and refund link).
 const A = "acad_demo_academy", now = new Date();
 const venue = {
   demo_session_sat: {venue_address: "100 Example Gym Rd, Normal IL", parking_notes: "Park in the north lot; the side door opens at 8:45", arrival_minutes_before: 15, what_to_bring: "Water bottle, sneakers with non-marking soles, comfortable sports clothes"},

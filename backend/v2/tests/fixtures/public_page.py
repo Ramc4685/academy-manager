@@ -203,6 +203,7 @@ async def seed(db: Any, *, published: bool = True) -> None:
                 venue_address="1 River Road, Riverside",
                 whatsapp_group_link=SECRETS["whatsapp"],
                 parking_notes=SECRETS["parking"],
+                what_to_bring="Racket, non-marking shoes, water",
                 coach_contact_policy=SECRETS["coach_policy"],
                 absence_policy=SECRETS["absence_policy"],
                 notes=SECRETS["internal_notes"],

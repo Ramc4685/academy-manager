@@ -208,6 +208,7 @@ def _class_dto(view: PublicClassView, dates: list[BookableTrialDate]) -> PublicC
         starts_on=view.starts_on,
         location=view.location,
         venue_address=view.venue_address,
+        what_to_bring=view.what_to_bring,
         coach_name=view.coach_name,
         price=(
             PublicPriceDto(amount_cents=view.price.amount_cents, period=view.price.period)

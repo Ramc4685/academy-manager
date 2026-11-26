@@ -62,6 +62,8 @@ class PublicClassDto(BaseModel):
     starts_on: date | None = None
     location: str | None = None
     venue_address: str | None = None
+    #: The class's own "what to bring" line; null when the class has none.
+    what_to_bring: str | None = None
     coach_name: str | None = None
     #: Null when the academy hides prices or the class has no price.
     price: PublicPriceDto | None = None
