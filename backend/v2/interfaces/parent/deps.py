@@ -132,6 +132,7 @@ class ParentUseCases:
     confirm_waitlist_offer: ConfirmWaitlistOffer | None = None
     decline_waitlist_offer: DeclineWaitlistOffer | None = None
     list_parent_waitlist: object | None = None  # callable(parent_id)
+    list_parent_registrations: object | None = None  # callable(parent_id), S02
     # Home aggregate (kid-first Home, slice 4). Defaulted so fixtures that
     # predate it keep constructing; real parent composition always sets it.
     get_parent_home: object | None = None  # callable

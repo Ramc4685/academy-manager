@@ -6956,6 +6956,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/parent/registrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The family's registrations that are not finished or not yet confirmed */
+        get: operations["list_registrations_api_v2_parent_registrations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/parent/sessions/available": {
         parameters: {
             query?: never;
@@ -17772,6 +17789,42 @@ export interface components {
             /** Share Url */
             share_url?: string | null;
         };
+        /** ParentRegistrationList */
+        ParentRegistrationList: {
+            /** Registrations */
+            registrations: components["schemas"]["ParentRegistrationView"][];
+        };
+        /**
+         * ParentRegistrationView
+         * @description One registration that is not finished or not yet confirmed (S02).
+         *
+         *     ``state``: ``finish`` (back into the wizard), ``waiting`` (the academy
+         *     confirms), ``waitlisted`` or ``declined``.
+         */
+        ParentRegistrationView: {
+            /** Application Id */
+            application_id: string;
+            /** Child First Name */
+            child_first_name: string;
+            /** Schedule Label */
+            schedule_label?: string | null;
+            /** Session Id */
+            session_id?: string | null;
+            /** Session Title */
+            session_title?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "finish" | "waiting" | "waitlisted" | "declined";
+            /** Status */
+            status: string;
+            /**
+             * Submitted At
+             * Format: date-time
+             */
+            submitted_at: string;
+        };
         /** ParentScheduleEntryView */
         ParentScheduleEntryView: {
             absence_makeup?: components["schemas"]["AbsenceMakeupView"] | null;
@@ -20444,6 +20497,11 @@ export interface components {
              * Format: date-time
              */
             window_opens_at: string;
+        };
+        /** StartApplicationRequest */
+        StartApplicationRequest: {
+            /** Application Id */
+            application_id?: string | null;
         };
         /** StartAutopayRequest */
         StartAutopayRequest: {
@@ -35050,7 +35108,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StartApplicationRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -35059,6 +35121,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApplicationView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -35386,6 +35457,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ParentReferralResponse"];
+                };
+            };
+        };
+    };
+    list_registrations_api_v2_parent_registrations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParentRegistrationList"];
                 };
             };
         };

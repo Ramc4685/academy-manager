@@ -18,6 +18,10 @@ import { AddToCalendar } from "@/components/parent/AddToCalendar";
 import { ScheduleList, type ScheduleListRow } from "@/components/parent/ScheduleList";
 import { academyMonthKey } from "@/lib/format/academy-time";
 import { useLinkedParam } from "@/lib/navigation/use-linked-param";
+import {
+  OpenRegistrationsCard,
+  useParentRegistrations,
+} from "@/components/parent/open-registrations";
 
 /** This month through two months ahead, on the academy's calendar. */
 function scheduleRange(timeZone: string | null | undefined) {
@@ -71,6 +75,7 @@ export default function ParentCalendarPage() {
   const calendarZone = resolveCalendarTimeZone([academyQuery.data?.timezone]);
 
   const children = childrenData?.children ?? [];
+  const registrations = useParentRegistrations().data?.registrations ?? [];
 
   const range = scheduleRange(academyQuery.data?.timezone);
   const scheduleQueries = useQueries({
@@ -149,6 +154,8 @@ export default function ParentCalendarPage() {
         </div>
       </div>
 
+      <OpenRegistrationsCard rows={registrations} />
+
       {children.length > 0 && academyQuery.data && (
         <AddToCalendar academyName={academyQuery.data.display_name} />
       )}
@@ -192,7 +199,7 @@ export default function ParentCalendarPage() {
         <Card p={16}>
           <Skeleton variant="block" height={280} />
         </Card>
-      ) : children.length === 0 ? (
+      ) : children.length === 0 && registrations.length > 0 ? null : children.length === 0 ? (
         <Card p={16}>
           <EmptyState title="No children on file" description="Add a child to see their schedule here." />
         </Card>

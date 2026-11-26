@@ -4,6 +4,8 @@
   or creates a new application.
 - PatchApplication — merges parent/child profile, waiver acceptance, selected session.
 - GetApplicationStatus — polling endpoint for the checkout-return page.
+- ListParentRegistrations — the family's unfinished and not-yet-confirmed
+  registrations (S02), so a child never vanishes between wizard and roster.
 """
 
 from __future__ import annotations
@@ -45,6 +47,7 @@ from backend.v2.contexts.onboarding.domain.waiver_sections import (
     signing_path_for,
 )
 from backend.v2.shared.ids import new_ulid
+from backend.v2.shared.time.mongo import ensure_utc
 
 _EDITABLE = {"DRAFT"}
 APPLICATION_TTL_DAYS = 7
@@ -55,6 +58,40 @@ _RESUME_TO = "DRAFT"
 
 
 logger = logging.getLogger(__name__)
+
+#: S02: the plain state a family sees for each application that is not yet an
+#: enrolled child. "finish" goes back into the wizard; nothing new is stored.
+REGISTRATION_STATES: dict[str, str] = {
+    "DRAFT": "finish",
+    "CHECKOUT_PENDING": "finish",
+    "CHECKOUT_EXPIRED": "finish",
+    "PENDING_APPROVAL": "waiting",
+    "APPROVING": "waiting",
+    "WAITLISTING": "waitlisted",
+    "WAITLISTED": "waitlisted",
+    "DECLINING": "declined",
+    "DECLINED": "declined",
+}
+#: An application here already asks the academy for a seat: a second one for
+#: the same child and class is a duplicate (S02).
+_SUBMITTED = ["CHECKOUT_PENDING", "PENDING_APPROVAL", "APPROVING", "WAITLISTING", "WAITLISTED"]
+DECLINED_VISIBLE_FOR = timedelta(days=30)
+
+
+def _child_key(app: Application) -> str:
+    child = app.child_profile
+    return " ".join(f"{child.first_name} {child.last_name}".lower().split())
+
+
+def same_child(a: Application, b: Application) -> bool:
+    """The student record when both carry one, otherwise the normalised name.
+
+    Twins have different first names, so they never match each other.
+    """
+    if a.student_id and b.student_id:
+        return a.student_id == b.student_id
+    key = _child_key(a)
+    return bool(key) and key == _child_key(b)
 
 
 class SupersededCheckoutRetirement(Protocol):
@@ -77,6 +114,8 @@ class StartApplicationCommand(BaseModel):
     model_config = {"frozen": True}
     parent_user_id: str
     parent_email: str
+    #: S02: "Finish registration" on a card that is not the latest application.
+    application_id: str | None = None
 
 
 class StartApplication:
@@ -94,7 +133,8 @@ class StartApplication:
         self._checkout_retirement = checkout_retirement
 
     async def execute(self, cmd: StartApplicationCommand) -> Application:
-        existing = await self._apps.latest_for_parent(cmd.parent_user_id)
+        requested = await self._requested(cmd)
+        existing = requested or await self._apps.latest_for_parent(cmd.parent_user_id)
         if existing is not None and existing.is_expired(self._now()):
             # The TTL passed with nobody finishing the wizard or Stripe.
             # Retire it (issue #537) rather than handing it back below, or a
@@ -133,13 +173,34 @@ class StartApplication:
             created_at=now,
             updated_at=now,
         )
-        if existing is not None:
+        previous = existing or requested
+        if previous is not None:
             # Returning parent adding another child: carry their own details
             # over from the previous application so they never retype them.
             # The child profile intentionally starts blank.
-            app = app.model_copy(update={"parent_profile": existing.parent_profile})
+            app = app.model_copy(update={"parent_profile": previous.parent_profile})
+        if requested is not None and existing is not None:
+            # Re-read after a missed resume: paid in another tab means no copy.
+            requested = existing if existing.application_id == requested.application_id else None
+        if requested is not None and REGISTRATION_STATES.get(requested.status) == "finish":
+            # An expired checkout the family asked to finish: start again with
+            # the same child and class, never the old payment or waiver.
+            app = app.model_copy(
+                update={
+                    "child_profile": requested.child_profile,
+                    "student_id": requested.student_id,
+                    "selected_session_id": requested.selected_session_id,
+                }
+            )
         await self._apps.save(app)
         return app
+
+    async def _requested(self, cmd: StartApplicationCommand) -> Application | None:
+        if not cmd.application_id:
+            return None
+        app = await self._apps.get(cmd.application_id)
+        # Someone else's id is ignored, never an error a parent could probe with.
+        return app if app is not None and app.parent_user_id == cmd.parent_user_id else None
 
     async def _resume(self, app: Application) -> Application | None:
         """Hand an abandoned checkout attempt back to the wizard.
@@ -381,6 +442,40 @@ class PatchApplication:
             )
 
 
+class ListParentRegistrations:
+    """S02: the family's applications that are not finished or not confirmed.
+
+    Newest first, one row per child and class: a newer attempt for the same
+    child and class hides an older one (an expired checkout restarted).
+    Applications with no child named yet are wizard scratch, not a child.
+    """
+
+    def __init__(self, apps: ApplicationRepository, clock=lambda: datetime.now(UTC)) -> None:
+        self._apps = apps
+        self._now = clock
+
+    async def execute(self, parent_user_id: str) -> list[tuple[Application, str]]:
+        now = self._now()
+        rows: list[tuple[Application, str]] = []
+        for app in await self._apps.list_open_for_parent(parent_user_id, list(REGISTRATION_STATES)):
+            state = REGISTRATION_STATES.get(app.status)
+            if state is None or app.parent_user_id != parent_user_id:
+                continue
+            if not app.child_profile.first_name.strip():
+                continue
+            if state == "declined" and (
+                ensure_utc(app.decided_at or app.updated_at) < now - DECLINED_VISIBLE_FOR
+            ):
+                continue
+            if any(
+                seen.selected_session_id == app.selected_session_id and same_child(seen, app)
+                for seen, _ in rows
+            ):
+                continue
+            rows.append((app, state))
+        return rows
+
+
 class GetApplicationStatus:
     def __init__(self, apps: ApplicationRepository) -> None:
         self._apps = apps
@@ -532,6 +627,7 @@ class TransitionApplication:
             )
         if to == "CHECKOUT_PENDING":
             await self._assert_child_not_enrolled(app)
+            await self._assert_no_open_duplicate(app)
             # The ENTRY transition needs the same CAS as the re-stamp below.
             # This used to be a blind save, so two concurrent starts from one
             # DRAFT application both wrote — leaving two live payable Stripe
@@ -659,6 +755,26 @@ class TransitionApplication:
             checkout_session_id=checkout_session_id,
             payment_id=payment_id,
         )
+
+    async def _assert_no_open_duplicate(self, app: Application) -> None:
+        """S02: one open registration per child and class.
+
+        A second class for the same child, or a twin in the same class, is a
+        different child-and-class pair and goes through.
+        """
+        if not app.selected_session_id:
+            return
+        for other in await self._apps.list_open_for_parent(app.parent_user_id, _SUBMITTED):
+            if (
+                other.application_id != app.application_id
+                and other.selected_session_id == app.selected_session_id
+                and same_child(other, app)
+            ):
+                name = app.child_profile.first_name.strip() or "This child"
+                raise ApplicationNotEditable(
+                    f"{name} is already registered for this class. "
+                    "You can see it on your Home page; we will email you when the academy confirms."
+                )
 
     async def _assert_child_not_enrolled(self, app: Application) -> None:
         if self._student_registrations is None:

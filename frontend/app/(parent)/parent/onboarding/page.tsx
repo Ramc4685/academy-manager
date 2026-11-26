@@ -128,7 +128,9 @@ export default function OnboardingStepperPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const fresh = await startOnboarding();
+        // S02: "Finish registration" links here with the application to resume.
+        const resumeId = new URLSearchParams(window.location.search).get("application");
+        const fresh = await startOnboarding(resumeId);
         setApp(fresh);
       } catch (e) {
         setError((e as Error).message);

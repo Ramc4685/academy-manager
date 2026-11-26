@@ -302,7 +302,10 @@ function ChildCard({ child }: { child: ParentSelfChild }) {
     : null;
 
   return (
-    <article className="rounded-2xl border border-rally-line bg-white p-4 animate-fade-in-up">
+    <article
+      id={`child-${child.student_id}`}
+      className="scroll-mt-20 rounded-2xl border border-rally-line bg-white p-4 animate-fade-in-up"
+    >
       <div className="mb-3 flex items-center justify-between">
         <h2 className="font-bold text-rally-ink text-[15px]">{child.full_name}</h2>
         <GapBadge count={gapCount} />

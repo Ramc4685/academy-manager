@@ -63,6 +63,11 @@ import { OneTimeClassChip } from "@/components/parent/one-time-class";
 import { ArrivalCheckin } from "@/components/parent/arrival-checkin";
 import { dropoffRefetchInterval, parentArrivalView } from "@/lib/dropoff/checkin";
 import { AbsenceMakeupStatus } from "@/components/parent/absence-makeup-status";
+import {
+  AddChildLink,
+  OpenRegistrationsCard,
+  useParentRegistrations,
+} from "@/components/parent/open-registrations";
 
 // Avatar gradients are shared with the kid-first Home cards so the same child
 // wears the same colour on both screens (lib/avatar-gradient.ts).
@@ -94,6 +99,8 @@ export default function ParentChildrenPage() {
     queryFn: listParentEnrollments,
   });
 
+  const registrationsQuery = useParentRegistrations();
+  const registrations = registrationsQuery.data?.registrations ?? [];
   const children = data?.children ?? [];
   const allAttendance = attendanceData?.records ?? [];
   const allEnrollments = enrollmentsData?.enrollments ?? [];
@@ -110,6 +117,11 @@ export default function ParentChildrenPage() {
       <div className="mb-4 animate-fade-in-up">
         <h1 className="font-display text-2xl font-bold tracking-tight text-rally-ink">My children</h1>
         <p className="text-sm mt-0.5 text-rally-muted">Sessions, attendance &amp; progress</p>
+        <AddChildLink className="mt-3" />
+      </div>
+
+      <div className="mb-4 empty:hidden">
+        <OpenRegistrationsCard rows={registrations} />
       </div>
 
       {isError ? (
@@ -127,9 +139,11 @@ export default function ParentChildrenPage() {
           ))}
         </div>
       ) : children.length === 0 ? (
-        <div className="rounded-2xl border border-rally-line bg-white p-8 animate-fade-in-up">
-          <EmptyState title="No children registered yet." />
-        </div>
+        registrations.length > 0 ? null : (
+          <div className="rounded-2xl border border-rally-line bg-white p-8 animate-fade-in-up">
+            <EmptyState title="No children registered yet." />
+          </div>
+        )
       ) : (
         <div className="space-y-4 stagger-children">
           {children.map((child) => (
@@ -277,6 +291,13 @@ function ChildCard({
           className="mt-2 inline-flex min-h-touch items-center text-sm font-semibold text-rally-cobalt-700 underline"
         >
           Coach notes for {child.full_name}
+        </Link>
+        <Link
+          href={`/parent/profile#child-${encodeURIComponent(child.student_id)}`}
+          data-testid={`child-edit-details-${child.student_id}`}
+          className="mt-1 flex min-h-touch items-center text-sm font-semibold text-rally-cobalt-700 underline"
+        >
+          Edit emergency contact and medical notes
         </Link>
       </div>
 

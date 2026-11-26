@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from typing import Any
+
+from fastapi import APIRouter, Body, Depends, Query, Request, status
 
 from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
     PatchApplicationCommand,
@@ -13,9 +15,12 @@ from backend.v2.interfaces.parent.views import (
     ApplicationView,
     ChildProfileView,
     ParentProfileView,
+    ParentRegistrationList,
+    ParentRegistrationView,
     PatchApplicationRequest,
     RegistrationWaiverItemView,
     RegistrationWaiverView,
+    StartApplicationRequest,
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import request_ip, require_persona
@@ -87,6 +92,7 @@ async def get_registration_waiver(
     summary="Start (or return existing draft) onboarding application for the signed-in parent",
 )
 async def start(
+    body: StartApplicationRequest | None = Body(default=None),
     claims: AuthClaims = Depends(require_persona("parent")),
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ApplicationView:
@@ -94,6 +100,7 @@ async def start(
         StartApplicationCommand(
             parent_user_id=claims.user_id,
             parent_email=claims.email,
+            application_id=body.application_id if body else None,
         )
     )
     return _view(app, class_first=await _class_first(use_cases))
@@ -143,3 +150,18 @@ async def status_route(
         application_id, caller_user_id=claims.user_id
     )
     return _view(app, class_first=await _class_first(use_cases))
+
+
+@router.get(
+    "/registrations",
+    response_model=ParentRegistrationList,
+    summary="The family's registrations that are not finished or not yet confirmed",
+)
+async def list_registrations(
+    claims: AuthClaims = Depends(require_persona("parent")),
+    use_cases: ParentUseCases = Depends(get_parent_use_cases),
+) -> ParentRegistrationList:
+    list_rows: Any = use_cases.list_parent_registrations
+    assert list_rows is not None  # wired by compose_parent
+    rows = await list_rows(claims.user_id)
+    return ParentRegistrationList(registrations=[ParentRegistrationView(**r) for r in rows])

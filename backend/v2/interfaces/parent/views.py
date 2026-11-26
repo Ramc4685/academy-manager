@@ -74,6 +74,32 @@ class ApplicationView(BaseModel):
     expires_at: datetime
 
 
+class StartApplicationRequest(BaseModel):
+    #: S02: resume this application ("Finish registration") instead of the latest.
+    application_id: str | None = Field(default=None, max_length=64)
+
+
+class ParentRegistrationView(BaseModel):
+    """One registration that is not finished or not yet confirmed (S02).
+
+    ``state``: ``finish`` (back into the wizard), ``waiting`` (the academy
+    confirms), ``waitlisted`` or ``declined``.
+    """
+
+    application_id: str
+    child_first_name: str
+    session_id: str | None = None
+    session_title: str | None = None
+    schedule_label: str | None = None
+    status: str
+    state: Literal["finish", "waiting", "waitlisted", "declined"]
+    submitted_at: datetime
+
+
+class ParentRegistrationList(BaseModel):
+    registrations: list[ParentRegistrationView]
+
+
 class PatchApplicationRequest(BaseModel):
     parent_profile: ParentProfileView | None = None
     child_profile: ChildProfileView | None = None

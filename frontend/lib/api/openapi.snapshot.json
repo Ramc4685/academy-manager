@@ -26718,6 +26718,96 @@
         "title": "ParentReferralResponse",
         "type": "object"
       },
+      "ParentRegistrationList": {
+        "properties": {
+          "registrations": {
+            "items": {
+              "$ref": "#/components/schemas/ParentRegistrationView"
+            },
+            "title": "Registrations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "registrations"
+        ],
+        "title": "ParentRegistrationList",
+        "type": "object"
+      },
+      "ParentRegistrationView": {
+        "description": "One registration that is not finished or not yet confirmed (S02).\n\n``state``: ``finish`` (back into the wizard), ``waiting`` (the academy\nconfirms), ``waitlisted`` or ``declined``.",
+        "properties": {
+          "application_id": {
+            "title": "Application Id",
+            "type": "string"
+          },
+          "child_first_name": {
+            "title": "Child First Name",
+            "type": "string"
+          },
+          "schedule_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Label"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "session_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Title"
+          },
+          "state": {
+            "enum": [
+              "finish",
+              "waiting",
+              "waitlisted",
+              "declined"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "submitted_at": {
+            "format": "date-time",
+            "title": "Submitted At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application_id",
+          "child_first_name",
+          "status",
+          "state",
+          "submitted_at"
+        ],
+        "title": "ParentRegistrationView",
+        "type": "object"
+      },
       "ParentScheduleEntryView": {
         "properties": {
           "absence_makeup": {
@@ -34241,6 +34331,24 @@
           "window_closes_at"
         ],
         "title": "StaffDropoffCheckinView",
+        "type": "object"
+      },
+      "StartApplicationRequest": {
+        "properties": {
+          "application_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application Id"
+          }
+        },
+        "title": "StartApplicationRequest",
         "type": "object"
       },
       "StartAutopayRequest": {
@@ -58067,6 +58175,23 @@
     "/api/v2/parent/onboarding/start": {
       "post": {
         "operationId": "start_api_v2_parent_onboarding_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/StartApplicationRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -58077,6 +58202,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Start (or return existing draft) onboarding application for the signed-in parent",
@@ -58531,6 +58666,27 @@
         "summary": "The current parent's referral code and rewards earned",
         "tags": [
           "parent.referral"
+        ]
+      }
+    },
+    "/api/v2/parent/registrations": {
+      "get": {
+        "operationId": "list_registrations_api_v2_parent_registrations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentRegistrationList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "The family's registrations that are not finished or not yet confirmed",
+        "tags": [
+          "parent.onboarding"
         ]
       }
     },

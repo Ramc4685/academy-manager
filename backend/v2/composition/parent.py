@@ -24,6 +24,9 @@ from backend.v2.composition.lifecycle_billing import (
     compose_enrollment_billing_sync,
 )
 from backend.v2.composition.occurrence_cancellation import StudentPresenceAdapter
+from backend.v2.composition.parent_registrations import (
+    compose_list_parent_registrations,
+)
 from backend.v2.composition.pathway import (
     CurriculumComposition,
     StudentProgressComposition,
@@ -415,6 +418,7 @@ class ParentComposition:
     # X2: the family's own offers (the email's landing page) and "no thanks".
     decline_waitlist_offer: DeclineWaitlistOffer
     list_parent_waitlist: object  # callable(parent_id)
+    list_parent_registrations: object  # callable(parent_id), S02
     enroll_child: object
     cancel_billing_enrollment: object
     get_parent_waiver_requirement: GetParentWaiverRequirement
@@ -3172,6 +3176,7 @@ def compose_parent(
         confirm_waitlist_offer=compose_confirm_waitlist_offer(db, settings),
         decline_waitlist_offer=compose_decline_waitlist_offer(db, promote=promote),
         list_parent_waitlist=compose_list_parent_waitlist(db),
+        list_parent_registrations=compose_list_parent_registrations(db),
         enroll_child=enroll_child_uc.execute,
         cancel_billing_enrollment=cancel_billing_enrollment_uc.execute,
         get_parent_waiver_requirement=get_waiver_req,

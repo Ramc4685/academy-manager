@@ -378,8 +378,31 @@ export function getRegistrationWaiver(sessionId?: string | null): Promise<Regist
   return apiFetch(`/parent/onboarding/waiver${query}`, { method: "GET" });
 }
 
-export function startOnboarding(): Promise<OnboardingApplication> {
-  return apiFetch("/parent/onboarding/start", { method: "POST", body: "{}" });
+/** Resumes `applicationId` ("Finish registration") or the latest application. */
+export function startOnboarding(applicationId?: string | null): Promise<OnboardingApplication> {
+  return apiFetch("/parent/onboarding/start", {
+    method: "POST",
+    body: JSON.stringify(applicationId ? { application_id: applicationId } : {}),
+  });
+}
+
+/**
+ * S02: a registration that is not finished or not yet confirmed.
+ * `finish` goes back into the wizard; `waiting` is the academy's turn.
+ */
+export interface ParentRegistration {
+  application_id: string;
+  child_first_name: string;
+  session_id: string | null;
+  session_title: string | null;
+  schedule_label: string | null;
+  status: string;
+  state: "finish" | "waiting" | "waitlisted" | "declined";
+  submitted_at: string;
+}
+
+export function listParentRegistrations(): Promise<{ registrations: ParentRegistration[] }> {
+  return apiFetch("/parent/registrations", { method: "GET" });
 }
 
 export function patchOnboarding(

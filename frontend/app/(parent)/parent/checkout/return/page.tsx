@@ -184,11 +184,12 @@ const STATUS_SUMMARIES: Record<string, { title: string; body: (a: OnboardingAppl
   PENDING_APPROVAL: {
     title: "Child added",
     body: (application) =>
-      `${application.child_profile.first_name || "Your child"} has been added. An admin will confirm the enrollment shortly.`,
+      `${application.child_profile.first_name || "Your child"} is on your Home page as waiting for the academy to confirm. We will email you when the academy confirms, and the class then shows on your Calendar.`,
   },
   CHECKOUT_EXPIRED: {
     title: "Checkout expired",
-    body: () => "Your checkout session expired. Restart onboarding to try again.",
+    body: () =>
+      "Your checkout session expired. Use Finish registration on your Home page to try again; nothing was charged.",
   },
   REFUNDED: {
     title: "Refunded",

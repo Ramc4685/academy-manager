@@ -52,6 +52,11 @@ import {
   type ParentHomeActivity,
 } from "@/lib/parent-home";
 import { ErrorNotice } from "@/components/ds/error-notice";
+import {
+  AddChildLink,
+  OpenRegistrationsCard,
+  useParentRegistrations,
+} from "@/components/parent/open-registrations";
 import { scheduleSourceLabel } from "@/lib/parent/schedule-events";
 
 const progressOverviewEnabled =
@@ -103,6 +108,9 @@ export default function ParentDashboardPage() {
     queryFn: () => getParentProgressSummary(),
     enabled: progressOverviewEnabled,
   });
+
+  const registrationsQuery = useParentRegistrations();
+  const registrations = registrationsQuery.data?.registrations ?? [];
 
   const homeChildren = useMemo(
     () => homeQuery.data?.children ?? [],
@@ -176,7 +184,7 @@ export default function ParentDashboardPage() {
         own visible h1 inside RegistrationHero, so this one is hidden only
         when there are children to head.
       */}
-      {hasChildren && <h1 className="sr-only">Home</h1>}
+      {(hasChildren || registrations.length > 0) && <h1 className="sr-only">Home</h1>}
       {coreLoading ? (
         <DashboardSkeleton />
       ) : homeQuery.isError ? (
@@ -192,10 +200,16 @@ export default function ParentDashboardPage() {
       ) : (
         <>
           {showBanner && balance && <BalanceBanner balance={balance} />}
+          <OpenRegistrationsCard rows={registrations} />
           {hasChildren ? (
-            <ChildCardList items={homeChildren} timezone={academyTimezone} />
-          ) : (
+            <>
+              <ChildCardList items={homeChildren} timezone={academyTimezone} />
+              <AddChildLink />
+            </>
+          ) : registrations.length === 0 ? (
             <RegistrationHero academy={academyQuery.data} />
+          ) : (
+            <AddChildLink />
           )}
         </>
       )}
