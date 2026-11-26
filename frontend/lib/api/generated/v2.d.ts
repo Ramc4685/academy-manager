@@ -14363,10 +14363,20 @@ export interface components {
             dry_run: boolean;
             /** Families */
             families?: components["schemas"]["MissedClassFamilyView"][];
+            /**
+             * Makeups Reopened
+             * @default 0
+             */
+            makeups_reopened: number;
             /** Occurrence Id */
             occurrence_id: string;
             /** Payroll Flag */
             payroll_flag?: string | null;
+            /**
+             * Roster Entries Removed
+             * @default 0
+             */
+            roster_entries_removed: number;
             /**
              * Schedule Changed
              * @default false
@@ -14377,6 +14387,11 @@ export interface components {
              * Format: date-time
              */
             start_at: string;
+            /**
+             * Trials Reopened
+             * @default 0
+             */
+            trials_reopened: number;
         };
         /** DMRequest */
         DMRequest: {

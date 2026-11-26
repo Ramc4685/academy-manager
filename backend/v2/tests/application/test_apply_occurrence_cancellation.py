@@ -78,7 +78,7 @@ class FakeReader:
         return self.bases.get(enrollment_id) or self.bases.get(f"{student_id}:{session_id}")
 
     async def enrollments_for_session(
-        self, session_id: str, *, period: str | None = None
+        self, session_id: str, *, period: str | None = None, today: Any = None
     ) -> list[BillableEnrollment]:
         return list(self.enrollments)
 
@@ -295,6 +295,31 @@ async def test_paused_family_with_no_invoice_is_skipped() -> None:
 
     assert credits.rows == []
     assert result.decisions[0].outcome == "skipped:paused_not_invoiced"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["deferral", "skip_period"])
+async def test_month_the_run_never_invoices_is_not_credited_from_the_fee(reason: str) -> None:
+    """#1209 item 6: a deferred or skipped month is never charged, so no fee credit."""
+    reader = FakeReader(enrollments=[_enrollment("enr-1", not_invoiced_reason=reason)])
+    credits = FakeCredits()
+
+    result = await _build(reader, FakeInvoices(), credits, FakeOverrides()).execute(_cmd())
+
+    assert credits.rows == []
+    assert result.decisions[0].outcome == f"skipped:{reason}_not_invoiced"
+
+
+@pytest.mark.asyncio
+async def test_real_invoice_still_credited_when_run_would_skip_the_month() -> None:
+    """A month billed anyway (by hand) keeps its credit: the invoice wins."""
+    reader = FakeReader(enrollments=[_enrollment("enr-1", not_invoiced_reason="skip_period")])
+    invoices = FakeInvoices({"enr-1": _invoice("enr-1", subtotal=12000)})
+    credits = FakeCredits()
+
+    result = await _build(reader, invoices, credits, FakeOverrides()).execute(_cmd())
+
+    assert result.decisions[0].outcome == "credited"
 
 
 @pytest.mark.asyncio

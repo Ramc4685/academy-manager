@@ -63,7 +63,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
@@ -115,6 +115,11 @@ class BillableEnrollment:
     monthly_discount_cents: int = 0
     #: False for a NoCharge/Waived child (``shared.billing_type``): never charged, never credited.
     billed: bool = True
+    #: Why the monthly run will never invoice this family for the period
+    #: (``monthly_skip_reason``: deferral or skip_period),
+    #: or ``None``. A fee-sized credit for such a month hands back money that
+    #: is never collected (#1209 item 6).
+    not_invoiced_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -159,8 +164,10 @@ class OccurrenceCancellationReader(Protocol):
         ...
 
     async def enrollments_for_session(
-        self, session_id: str, *, period: str | None = None
-    ) -> list[BillableEnrollment]: ...
+        self, session_id: str, *, period: str | None = None, today: date | None = None
+    ) -> list[BillableEnrollment]:
+        """``today`` (academy-local) decides whether a billing deferral is active."""
+        ...
 
 
 class OccurrenceOverrideWriter(Protocol):
@@ -380,7 +387,9 @@ class ApplyOccurrenceCancellation:
 
         decisions: list[OccurrenceCreditDecision] = []
         fee_sized: list[_FeeSizedCredit] = []
-        for enrollment in await self._reader.enrollments_for_session(cmd.session_id, period=period):
+        for enrollment in await self._reader.enrollments_for_session(
+            cmd.session_id, period=period, today=now.astimezone(ZoneInfo(pricing.timezone)).date()
+        ):
             decision, sized = await self._decide(
                 enrollment=enrollment,
                 pricing=pricing,
@@ -600,6 +609,13 @@ class ApplyOccurrenceCancellation:
                 return _skip(enrollment, "free_tuition"), False, 0
             if enrollment.status == "paused":
                 return _skip(enrollment, "paused_not_invoiced"), False, 0
+            if enrollment.not_invoiced_reason is not None:
+                # The monthly run skips this family for the period (an open
+                # deferral or a skipped month) and nothing else charged it: an
+                # invoice or a checkout first-month snapshot is handled above,
+                # so a month paid at checkout (also in ``skip_periods``, #506)
+                # still gets its credit.
+                return _skip(enrollment, f"{enrollment.not_invoiced_reason}_not_invoiced"), False, 0
             if billing_start is not None and period_of(billing_start, pricing.timezone) == period:
                 # Nothing priced yet. Rule 1 handles this family: their
                 # first-month proration reads the overlay and excludes the
