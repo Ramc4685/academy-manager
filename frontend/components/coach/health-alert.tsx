@@ -19,7 +19,6 @@ export function coachRosterHealthQuery(occurrenceId: string) {
     queryKey: queryKeys.coach.rosterHealth(occurrenceId),
     queryFn: () => getCoachRosterHealth(occurrenceId),
     gcTime: 0,
-    staleTime: 0,
     refetchOnWindowFocus: false,
     retry: false,
   } as const;
