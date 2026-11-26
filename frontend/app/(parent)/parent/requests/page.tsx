@@ -59,7 +59,7 @@ type RequestTab = "absences" | "makeups" | "trials";
 
 const ALL_TABS: { id: RequestTab; label: string }[] = [
   { id: "absences", label: "Absences" },
-  { id: "makeups", label: "Makeups" },
+  { id: "makeups", label: "Make-ups" },
   { id: "trials", label: "Trials" },
 ];
 

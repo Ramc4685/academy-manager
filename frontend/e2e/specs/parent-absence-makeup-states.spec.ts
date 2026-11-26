@@ -151,7 +151,7 @@ test.describe("parent absences — makeup states", () => {
 
     const book = state("occ-elig").getByRole("link", { name: "Book a makeup" });
     await expect(book).toHaveAttribute("href", "/parent/requests?tab=makeups&makeup=st-1%3Aocc-elig");
-    const makeupsTab = page.getByRole("tab", { name: "Makeups" });
+    const makeupsTab = page.getByRole("tab", { name: "Make-ups" });
     for (const attempt of [1, 2]) {
       await book.click();
       await expect(makeupsTab, `attempt ${attempt}`).toHaveAttribute("aria-selected", "true");

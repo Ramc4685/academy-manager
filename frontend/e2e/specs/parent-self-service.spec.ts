@@ -532,7 +532,7 @@ test.describe("parent self-service — makeups", () => {
     });
 
     await page.goto("/parent/requests");
-    await page.getByRole("tab", { name: "Makeups" }).click();
+    await page.getByRole("tab", { name: "Make-ups" }).click();
 
     const picker = page.getByLabel("Missed class");
     await expect(picker.locator("option")).toHaveText([
@@ -552,7 +552,7 @@ test.describe("parent self-service — makeups", () => {
     await stubMakeupCandidates(page, "error");
 
     await page.goto("/parent/requests");
-    await page.getByRole("tab", { name: "Makeups" }).click();
+    await page.getByRole("tab", { name: "Make-ups" }).click();
 
     await expect(page.getByText("Could not load your missed classes.")).toBeVisible();
     await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
@@ -621,7 +621,7 @@ test.describe("parent self-service — makeups", () => {
     });
 
     await page.goto("/parent/requests");
-    await page.getByRole("tab", { name: "Makeups" }).click();
+    await page.getByRole("tab", { name: "Make-ups" }).click();
 
     await page.getByLabel("Missed class").selectOption(`${STUDENT_ID}:occ-050`);
     await page.getByLabel("Preferred makeup class (optional)").selectOption("occ-200");
