@@ -1034,7 +1034,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.coach_schedule_notices import compose_coach_schedule_notices
 
     app.state.coach_schedule_notices = compose_coach_schedule_notices(
-        db, outbox, message_push=app.state.message_push
+        db, outbox, message_push=app.state.message_push, settings=settings
     )
     # Lead nurture (AI strategy Phase 3 C1): the daily job and the admin editor.
     from backend.v2.composition.nurture import compose_nurture

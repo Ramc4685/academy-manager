@@ -17,13 +17,24 @@ emit, ``tenant_scope(event.academy_id)`` on delivery), never captured here.
 
 from __future__ import annotations
 
+import html
 import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from backend.v2.composition.digests import _build_email_sender, compose_unsubscribe_link_builder
+from backend.v2.composition.email_adapters import _BRAND_HEADING, _branded_shell
 from backend.v2.composition.roster_notifications import (
     format_occurrence_when,
     format_session_schedule,
+)
+from backend.v2.contexts.communications.application.unsubscribe_footer import (
+    append_unsubscribe_footer,
+)
+from backend.v2.contexts.communications.domain.email_category import EmailCategory
+from backend.v2.contexts.communications.domain.models import SelectedRecipientsAudience
+from backend.v2.contexts.communications.infrastructure.mongo_audience_resolver import (
+    MongoAudienceResolver,
 )
 from backend.v2.contexts.enrollment.domain.events import (
     CoachScheduleNoticeKind,
@@ -41,6 +52,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import (
     MongoAcademyRepository,
 )
 from backend.v2.shared.comms import Message, MongoMessageRepository
+from backend.v2.shared.comms.sender_identity import sender_identity_for_current_academy
 from backend.v2.shared.events import handler
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.tenancy.context import tenant_scope
@@ -48,6 +60,11 @@ from backend.v2.shared.tenancy.context import tenant_scope
 log = logging.getLogger(__name__)
 
 Role = Literal["lead", "assistant"]
+
+#: S54 (decision D-17): only a new assignment is also emailed. A cancelled
+#: date already reaches the class's coach as the #671 staff roster email, so
+#: emailing it here too would send that coach two emails for one change.
+EMAILED_KINDS: frozenset[str] = frozenset({"assigned", "date_assigned"})
 
 #: Fields whose change means the class now runs at a different time or court.
 _SCHEDULE_FIELDS = ("days_of_week", "start_time", "end_time", "timezone", "location")
@@ -240,14 +257,39 @@ def render_notice(
     return f"{title} has a new time or court: {schedule}{where}."
 
 
-class CoachScheduleNoticeDelivery:
-    """Turns one notice event into one inbox message plus a phone nudge."""
+def render_assignment_email(*, academy_name: str, text: str, title: str) -> tuple[str, str]:
+    inner = (
+        f"<h2 style='color: {_BRAND_HEADING}; font-size: 18px; margin: 0 0 12px;'>"
+        f"New class: {html.escape(title)}</h2>"
+        f"<p style='margin: 0 0 12px;'>{html.escape(text)}</p>"
+        "<p style='margin: 0 0 12px;'>The class is on your Today and Sessions screens in "
+        "the coach app. Questions? Reply to this email.</p>"
+    )
+    return (
+        f"You're coaching {title}",
+        _branded_shell(academy_name=academy_name, inner_html=inner),
+    )
 
-    def __init__(self, db: Any, message_push: Any | None = None) -> None:
+
+class CoachScheduleNoticeDelivery:
+    """Turns one notice event into one inbox message, a phone nudge and, for a
+    new assignment, one email through the gated send port."""
+
+    def __init__(
+        self,
+        db: Any,
+        message_push: Any | None = None,
+        *,
+        sender: Any | None = None,
+        unsubscribe_links: Any | None = None,
+    ) -> None:
         self._sessions = MongoSessionRepository(db)
         self._academies = MongoAcademyRepository(db)
         self._messages = MongoMessageRepository(db)
+        self._audiences = MongoAudienceResolver(db=db)
         self._push = message_push
+        self._sender = sender
+        self._unsubscribe_links = unsubscribe_links
 
     async def deliver(self, event: CoachScheduleNoticeRequested) -> Message | None:
         payload = event.payload
@@ -259,6 +301,7 @@ class CoachScheduleNoticeDelivery:
             log.warning("coach_schedule_notice_session_missing", extra={"event_id": event.event_id})
             return None
         academy = await self._academies.find_by_id(current_academy_id()) or {}
+        academy_name = str(academy.get("display_name") or academy.get("name") or "")
         message = Message(
             message_id=message_id,
             academy_id=current_academy_id(),
@@ -272,8 +315,7 @@ class CoachScheduleNoticeDelivery:
                 academy_timezone=str(academy.get("timezone") or "") or None,
             ),
             created_at=datetime.now(UTC),
-            author_display_name=str(academy.get("display_name") or academy.get("name") or "")
-            or None,
+            author_display_name=academy_name or None,
         )
         await self._messages.insert(message)
         if self._push is not None:
@@ -281,7 +323,49 @@ class CoachScheduleNoticeDelivery:
                 await self._push.direct_message(message)
             except Exception:
                 log.warning("coach_schedule_notice_push_failed", exc_info=True)
+        if payload.kind in EMAILED_KINDS:
+            await self._email(message, title=session.title, academy=academy)
         return message
+
+    async def _email(self, message: Message, *, title: str, academy: dict[str, Any]) -> None:
+        """Best effort and after the inbox write: a mail outage never costs the
+        coach the in-app notice, and the replay guard above means a retry
+        never sends a second copy."""
+        if self._sender is None or not message.recipient_id:
+            return
+        try:
+            recipients = await self._audiences.resolve_selected_audience(
+                SelectedRecipientsAudience(user_ids=(message.recipient_id,))
+            )
+            academy_name = str(academy.get("display_name") or academy.get("name") or "")
+            subject, body = render_assignment_email(
+                academy_name=academy_name or "Your academy", text=message.body, title=title
+            )
+            identity = await sender_identity_for_current_academy(self._academies)
+            for recipient in recipients:
+                if not (recipient.email or "").strip():
+                    continue
+                footer = (
+                    self._unsubscribe_links.build(
+                        academy_id=current_academy_id(),
+                        user_id=recipient.user_id,
+                        academy_slug=str(academy.get("slug") or "") or None,
+                    )
+                    if self._unsubscribe_links is not None
+                    else None
+                )
+                # NOTIFICATION, like the staff roster alerts: a coach who turned
+                # those off is skipped by the send port's preference gate.
+                await self._sender.send(
+                    recipient=recipient,
+                    subject=subject,
+                    body=append_unsubscribe_footer(body, footer),
+                    category=EmailCategory.NOTIFICATION,
+                    reply_to=identity.reply_to,
+                    sender_name=identity.sender_name,
+                )
+        except Exception:
+            log.warning("coach_schedule_notice_email_failed", exc_info=True)
 
 
 _delivery: CoachScheduleNoticeDelivery | None = None
@@ -302,8 +386,21 @@ async def on_coach_schedule_notice(event: CoachScheduleNoticeRequested) -> None:
 
 
 def compose_coach_schedule_notices(
-    db: Any, outbox: Any, *, message_push: Any | None = None
+    db: Any, outbox: Any, *, message_push: Any | None = None, settings: Any | None = None
 ) -> CoachScheduleNotices:
-    """Installs the handler's delivery and returns the emitter for app.state."""
-    install_coach_schedule_delivery(CoachScheduleNoticeDelivery(db, message_push))
+    """Installs the handler's delivery and returns the emitter for app.state.
+
+    The email port comes from ``_build_email_sender``: the stub (wrapped in the
+    send-time gates) everywhere but an approved environment with delivery on.
+    """
+    install_coach_schedule_delivery(
+        CoachScheduleNoticeDelivery(
+            db,
+            message_push,
+            sender=_build_email_sender(settings, db) if settings is not None else None,
+            unsubscribe_links=(
+                compose_unsubscribe_link_builder(settings) if settings is not None else None
+            ),
+        )
+    )
     return CoachScheduleNotices(db, outbox)

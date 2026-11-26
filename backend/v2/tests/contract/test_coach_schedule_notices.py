@@ -247,3 +247,105 @@ async def test_routes_emit_on_assistants_and_coach_change() -> None:
         r = client.patch("/api/v2/admin/sessions/sess-a", json={"coach_id": "coach-2"})
         assert r.status_code == 200, r.text
         assert outbox.kinds() == [("assigned", "coach-2"), ("unassigned", "coach-1")]
+
+
+# --- S54: the assignment email through the gated send port -------------------
+
+
+def _gated_sender(db: Any) -> Any:
+    from types import SimpleNamespace
+
+    from backend.v2.composition.digests import _build_email_sender
+
+    settings = SimpleNamespace(email_delivery_enabled=False, resend_api_key=None, env="test")
+    return _build_email_sender(settings, db)
+
+
+async def _seed_casey(db: Any, *, opted_out: bool = False) -> None:
+    await db["users"].insert_one(
+        {
+            "user_id": "casey",
+            "academy_id": ACADEMY,
+            "email": "casey@example.com",
+            "display_name": "Casey Newcoach",
+            "is_active": True,
+        }
+    )
+    await db["academy_memberships"].insert_one(
+        {"academy_id": ACADEMY, "user_id": "casey", "roles": ["coach"], "status": "active"}
+    )
+    if opted_out:
+        await db["email_preferences"].insert_one(
+            {"academy_id": ACADEMY, "user_id": "casey", "notifications_opted_out": True}
+        )
+
+
+async def _deliver_all(db: Any, outbox: _Outbox, sender: Any) -> None:
+    delivery = csn.CoachScheduleNoticeDelivery(db, sender=sender)
+    for event in outbox.events:
+        await delivery.deliver(event)
+        await delivery.deliver(event)  # a replay sends nothing more
+
+
+@pytest.mark.asyncio
+async def test_assignment_sends_one_notification_email(db: Any, acad: str) -> None:
+    from backend.v2.composition.digests import unwrap_send_port
+    from backend.v2.contexts.communications.domain.email_category import EmailCategory
+
+    await _seed(db)
+    await _seed_casey(db)
+    outbox = _Outbox()
+    notices = csn.CoachScheduleNotices(db, outbox)
+    before = await notices.session_snapshot("ses_tue")
+    assigned = before.model_copy(update={"coach_id": "casey"})
+    await notices.session_changed(before, assigned, actor_id="owner")
+    # A five-minute time change afterwards is in-app only.
+    await notices.session_changed(
+        assigned, assigned.model_copy(update={"start_time": "17:35"}), actor_id="owner"
+    )
+    sender = _gated_sender(db)
+
+    await _deliver_all(db, outbox, sender)
+
+    sent = [row for row in unwrap_send_port(sender).sent if row["user_id"] == "casey"]
+    assert len(sent) == 1
+    assert sent[0]["category"] is EmailCategory.NOTIFICATION
+    assert sent[0]["subject"] == "You're coaching Tuesday Intermediate"
+    assert sent[0]["sender_name"]  # the academy's name on the From line
+
+
+@pytest.mark.asyncio
+async def test_cancellation_is_not_emailed_twice(db: Any, acad: str) -> None:
+    from backend.v2.composition.digests import unwrap_send_port
+
+    await _seed(db)
+    await _seed_casey(db)
+    outbox = _Outbox()
+    notices = csn.CoachScheduleNotices(db, outbox)
+    await notices.occurrence_cancelled(
+        await notices.occurrence_snapshot("occ_dec1"), reason="Rain", actor_id="owner"
+    )
+    sender = _gated_sender(db)
+    await _deliver_all(db, outbox, sender)
+    # The #671 staff roster email already tells the class's coach.
+    assert unwrap_send_port(sender).sent == []
+    assert await db["messages"].count_documents({"recipient_id": "casey"}) == 1
+
+
+@pytest.mark.asyncio
+async def test_no_email_when_the_coach_switched_notifications_off(db: Any, acad: str) -> None:
+    from backend.v2.composition.digests import unwrap_send_port
+
+    await _seed(db)
+    await _seed_casey(db, opted_out=True)
+    outbox = _Outbox()
+    notices = csn.CoachScheduleNotices(db, outbox)
+    before = await notices.session_snapshot("ses_tue")
+    await notices.session_changed(
+        before, before.model_copy(update={"coach_id": "casey"}), actor_id="owner"
+    )
+    sender = _gated_sender(db)
+    await _deliver_all(db, outbox, sender)
+    assert [r for r in unwrap_send_port(sender).sent if r["user_id"] == "casey"] == []
+    # The in-app message still arrives.
+    assert await db["messages"].count_documents({"recipient_id": "casey"}) == 1
