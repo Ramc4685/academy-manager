@@ -1,4 +1,5 @@
-// K05: Dev Patel moved from the Saturday class to the Wednesday clinic (a
+// K05: Kiran Patel (not "Dev": the base seed already has a Dev Patel) moved
+// from the Saturday class to the Wednesday clinic (a
 // transfer keeps the enrollment and changes its class), with an Absent mark on
 // Sat Nov 21 left behind in the old class. Used by S07, S25, S27.
 // Not covered here: the past one-off date on his schedule (S07/S27 add it).
@@ -17,7 +18,7 @@ db.academy_memberships.updateOne({academy_id: A, user_id: PARENT}, {
   $set: {roles: ["parent"], status: "active", updated_at: now}}, {upsert: true});
 db.students.updateOne({student_id: STUDENT}, {
   $setOnInsert: {created_at: now},
-  $set: {academy_id: A, first_name: "Dev", last_name: "Patel", full_name: "Dev Patel", date_of_birth: "2015-03-14",
+  $set: {academy_id: A, first_name: "Kiran", last_name: "Patel", full_name: "Kiran Patel", date_of_birth: "2015-03-14",
     parent_id: PARENT, parent_user_id: PARENT, emergency_contact_name: "Priya Patel",
     emergency_contact_phone: "555-0150", medical_notes: "__none_declared__", skill_level: "Beginner",
     waiver_accepted: true, waiver_date: now, status: "active", is_deleted: false}}, {upsert: true});
@@ -35,4 +36,4 @@ if (occ) {
     $set: {session_id: "demo_session_sat", marked_by: "demo_user_coach", marked_at: occ.end_at,
       status: "absent", client_app_version: "persona-kit", entry_source: "enrollment"}}, {upsert: true});
 }
-print(`k05: Dev Patel on the Wednesday clinic; Sat Nov 21 mark ${occ ? "set" : "skipped (no such date in this DB)"}`);
+print(`k05: Kiran Patel on the Wednesday clinic; Sat Nov 21 mark ${occ ? "set" : "skipped (no such date in this DB)"}`);

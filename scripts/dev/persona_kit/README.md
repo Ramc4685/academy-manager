@@ -29,9 +29,9 @@ Rules for a new kit:
 | k00 | Seven extra families (14 kids) with past Saturday attendance. Keeps the `seed_*` ids of the original `seed_more.js` so it re-runs over a DB that already has them. |
 | k01 | Demo Coach last month: one held class with no pay rate (unpaid) and one paid at a 50% rate. Casey Newcoach active with no held classes last month. |
 | k03 | "Tuesday Intermediate" (`kit_k03_session_tue`): no price (fee null, not 0), two k00 kids enrolled. Run after k00. |
-| k05 | Dev Patel (`kit_k05_student_dev`) transferred Saturday to Wednesday, with an Absent mark on Sat Nov 21 left in the old class. |
+| k05 | Kiran Patel (`kit_k05_student_dev`; was "Dev Patel", which clashed with the base seed) transferred Saturday to Wednesday, with an Absent mark on Sat Nov 21 left in the old class. |
 | k07 | A second academy `acad_fresh_local` at `fresh.localhost` whose only required live waiver is the untouched starter text. Owner `fresh.owner@example.com`: create that login in the Firebase emulator before signing in. |
-| k27 | Dev Patel (k05) also on the $80 Saturday class, ready to move to the unpriced k03 class. Run after k03 and k05. |
+| k27 | Kiran Patel (k05) also on the $80 Saturday class, ready to move to the unpriced k03 class. Run after k03 and k05. |
 | k16 | (S25 part) the next future Saturday date cancelled with a reason. |
 | k08 | This month on the Saturday class: two enrolled kids not yet invoiced, one paused and one free (NoCharge) enrollment, an overdue emailed invoice, an issued invoice never emailed, and an emailed invoice not yet due. |
 | k15 | Demo Coach: approved payout period last month ($30 per held class), draft this month. Casey Newcoach named as the Wed clinic's assistant. Run after k01. Supersedes k01's unpaid last month (approves it, clears its unpaid classes), so retest S01 and S32 on `run.sh k00 k01` only. |
