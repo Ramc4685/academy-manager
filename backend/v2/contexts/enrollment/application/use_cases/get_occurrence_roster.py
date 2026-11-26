@@ -32,7 +32,7 @@ from backend.v2.contexts.enrollment.application.use_cases.absence_notices import
 from backend.v2.contexts.enrollment.application.use_cases.get_session_roster import (
     GetSessionRoster,
 )
-from backend.v2.contexts.enrollment.domain.models import EnrollmentStatus
+from backend.v2.contexts.enrollment.domain.models import EnrollmentStatus, age_in_years
 from backend.v2.contexts.enrollment.domain.self_service import OccurrenceRosterEntry
 
 EntrySource = Literal["enrollment", "makeup", "trial"]
@@ -64,6 +64,8 @@ class OccurrenceRosterItem(BaseModel):
     # while unmarked). Both None on every other row.
     trial_request_id: str | None = None
     trial_outcome: str | None = None
+    # Whole years; the date of birth itself never leaves the server.
+    age_years: int | None = None
 
 
 class AbsenceNoticeQuery(Protocol):
@@ -146,6 +148,7 @@ class GetOccurrenceRoster:
                 expected_absence=entry.student_id in absent_student_ids,
                 pending_cancellation_at=entry.pending_cancellation_at,
                 hold_return_on=entry.hold_return_on,
+                age_years=entry.age_years,
             )
             for entry in roster
         ]
@@ -188,6 +191,9 @@ class GetOccurrenceRoster:
                             outcomes.get(entry.origin_request_id)
                             if entry.source == "trial"
                             else None
+                        ),
+                        age_years=age_in_years(
+                            getattr(student, "date_of_birth", None), date.today()
                         ),
                     )
                 )

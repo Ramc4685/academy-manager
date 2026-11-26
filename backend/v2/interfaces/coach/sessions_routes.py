@@ -6,6 +6,8 @@ occurrence in the academy, each labelled with its coach.
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends
 
 from backend.v2.interfaces.coach.deps import (
@@ -14,6 +16,7 @@ from backend.v2.interfaces.coach.deps import (
     coach_names_for,
     get_coach_use_cases,
 )
+from backend.v2.interfaces.coach.today_routes import age_band_view
 from backend.v2.interfaces.coach.views import CoachScheduleEntry, CoachScheduleResponse
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import is_coach_supervisor, require_coach_surface
@@ -40,6 +43,10 @@ async def get_sessions(
     academy_zone = await academy_zone_for_sessions(
         sessions, use_cases=use_cases, academy_id=claims.academy_id
     )
+    # One roster read per class, not per date: the list repeats a class weekly.
+    class_ids = sorted({s.session_id for s in sessions})
+    rosters = await asyncio.gather(*[use_cases.get_roster.execute(sid) for sid in class_ids])
+    counts = {sid: len(roster) for sid, roster in zip(class_ids, rosters, strict=True)}
     return CoachScheduleResponse(
         sessions=[
             CoachScheduleEntry(
@@ -52,6 +59,8 @@ async def get_sessions(
                 end_at=s.end_at,
                 coach_id=getattr(s, "coach_id", None),
                 coach_name=coach_names.get(getattr(s, "coach_id", None) or ""),
+                enrolled_count=counts.get(s.session_id),
+                age_band=age_band_view(getattr(s, "age_band", None)),
             )
             for s in sessions
         ]

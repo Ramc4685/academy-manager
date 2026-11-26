@@ -45,9 +45,20 @@ class CoachSessionTeachingPlanResponse(BaseModel):
     unplaced: list[UnplacedStudent] = []
 
 
+class CoachAgeBand(BaseModel):
+    """A class's age span; ``max_age`` None means "and up"."""
+
+    min_age: int | None = None
+    max_age: int | None = None
+
+
 class CoachRosterEntry(BaseModel):
     student_id: str
     full_name: str
+    # Whole years and the active level's name: quiet row metadata. Never the
+    # date of birth, and nothing health-related (this read is cached offline).
+    age_years: int | None = None
+    level_name: str | None = None
     # "held" (#697) is a live roster status: GetSessionRoster deliberately
     # keeps held rows visible, so this Literal must accept it — one rejected
     # row fails response validation for the coach's entire day (#732).
@@ -133,6 +144,7 @@ class CoachSession(BaseModel):
     # has it off. The roster refreshes itself while it is open.
     dropoff_window_opens_at: datetime | None = None
     dropoff_window_closes_at: datetime | None = None
+    age_band: CoachAgeBand | None = None
 
 
 class CoachTodayResponse(BaseModel):
@@ -342,6 +354,9 @@ class CoachScheduleEntry(BaseModel):
     end_at: datetime
     coach_id: str | None = None
     coach_name: str | None = None
+    # Children on the class's roster today, and the class's age span.
+    enrolled_count: int | None = None
+    age_band: CoachAgeBand | None = None
 
 
 class CoachScheduleResponse(BaseModel):

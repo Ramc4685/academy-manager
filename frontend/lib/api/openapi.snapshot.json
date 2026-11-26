@@ -14366,6 +14366,35 @@
         "title": "CoachAcademyView",
         "type": "object"
       },
+      "CoachAgeBand": {
+        "description": "A class's age span; ``max_age`` None means \"and up\".",
+        "properties": {
+          "max_age": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Age"
+          },
+          "min_age": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Age"
+          }
+        },
+        "title": "CoachAgeBand",
+        "type": "object"
+      },
       "CoachDashboardResponse": {
         "properties": {
           "active_student_count": {
@@ -14842,6 +14871,17 @@
       },
       "CoachRosterEntry": {
         "properties": {
+          "age_years": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age Years"
+          },
           "attendance_marked_at": {
             "anyOf": [
               {
@@ -14930,6 +14970,17 @@
             ],
             "title": "Hold Return On"
           },
+          "level_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level Name"
+          },
           "payment_due_cents": {
             "anyOf": [
               {
@@ -14993,6 +15044,16 @@
       },
       "CoachScheduleEntry": {
         "properties": {
+          "age_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoachAgeBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "coach_id": {
             "anyOf": [
               {
@@ -15019,6 +15080,17 @@
             "format": "date-time",
             "title": "End At",
             "type": "string"
+          },
+          "enrolled_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enrolled Count"
           },
           "location": {
             "title": "Location",
@@ -15082,6 +15154,16 @@
       },
       "CoachSession": {
         "properties": {
+          "age_band": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoachAgeBand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "cancellation_reason": {
             "anyOf": [
               {

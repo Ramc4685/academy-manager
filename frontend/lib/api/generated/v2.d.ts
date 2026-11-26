@@ -13391,6 +13391,16 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * CoachAgeBand
+         * @description A class's age span; ``max_age`` None means "and up".
+         */
+        CoachAgeBand: {
+            /** Max Age */
+            max_age?: number | null;
+            /** Min Age */
+            min_age?: number | null;
+        };
         /** CoachDashboardResponse */
         CoachDashboardResponse: {
             /** Active Student Count */
@@ -13556,6 +13566,8 @@ export interface components {
         };
         /** CoachRosterEntry */
         CoachRosterEntry: {
+            /** Age Years */
+            age_years?: number | null;
             /** Attendance Marked At */
             attendance_marked_at?: string | null;
             /** Attendance Status */
@@ -13578,6 +13590,8 @@ export interface components {
             full_name: string;
             /** Hold Return On */
             hold_return_on?: string | null;
+            /** Level Name */
+            level_name?: string | null;
             /** Payment Due Cents */
             payment_due_cents?: number | null;
             /** Pending Cancellation At */
@@ -13591,6 +13605,7 @@ export interface components {
         };
         /** CoachScheduleEntry */
         CoachScheduleEntry: {
+            age_band?: components["schemas"]["CoachAgeBand"] | null;
             /** Coach Id */
             coach_id?: string | null;
             /** Coach Name */
@@ -13600,6 +13615,8 @@ export interface components {
              * Format: date-time
              */
             end_at: string;
+            /** Enrolled Count */
+            enrolled_count?: number | null;
             /** Location */
             location: string;
             /** Occurrence Id */
@@ -13623,6 +13640,7 @@ export interface components {
         };
         /** CoachSession */
         CoachSession: {
+            age_band?: components["schemas"]["CoachAgeBand"] | null;
             /** Cancellation Reason */
             cancellation_reason?: string | null;
             /** Coach Id */

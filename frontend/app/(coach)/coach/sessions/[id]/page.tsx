@@ -35,6 +35,7 @@ import {
   type QueuedMark,
 } from "@/lib/offline/attendance-queue";
 import { CLASS_SYNC_LABELS, classSyncStatus } from "@/lib/offline/sync-status";
+import { ageBandLabel, rosterRowMeta } from "@/lib/coach/class-facts";
 import { isBulkMarkEligible } from "@/lib/coach/bulk-eligibility";
 import { BulkMarkUndoWindow } from "@/lib/coach/bulk-mark-undo";
 import {
@@ -929,6 +930,9 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               {formatAcademyTimeRange(session.start_at, session.end_at, session.timezone)}
             </span>{" "}
             · {session.location}
+            {ageBandLabel(session.age_band) && (
+              <span data-testid="session-age-band"> · {ageBandLabel(session.age_band)}</span>
+            )}
           </p>
           {session.coach_name && (
             <p
@@ -989,6 +993,11 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             >
               Attendance · <span data-testid="marked-count">{progress.label}</span>
             </h2>
+            {notOpenYet && roster.length > 0 && (
+              <span data-testid="roster-read-only" className="text-xs" style={{ color: "var(--rally-muted)" }}>
+                Read only until {opensAt}
+              </span>
+            )}
             {!progress.complete && (
               <span
                 data-testid="needs-marks-badge"
@@ -1411,6 +1420,15 @@ function RosterRow({
           <p className="text-sm font-medium" style={{ color: "var(--rally-ink)" }}>
             {student.full_name}
           </p>
+          {rosterRowMeta(student) && (
+            <span
+              data-testid={`roster-meta-${student.student_id}`}
+              className="text-xs"
+              style={{ color: "var(--rally-muted)" }}
+            >
+              {rosterRowMeta(student)}
+            </span>
+          )}
           {student.expected_absence && <Chip variant="pending" label="EXPECTED ABSENCE" />}
           {voided && <Chip variant="closing" label="VOIDED" />}
           {student.entry_source === "makeup" && <Chip variant="makeup" label="MAKE-UP" />}

@@ -11,6 +11,7 @@ from typing import Any, Final, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from backend.v2.contexts.enrollment.domain.programs import AgeBand
 from backend.v2.shared.security.external_url import validate_external_url
 
 #: Issue #697 adds "held" (keeps the seat) and "reclaim_pending" (the
@@ -243,6 +244,8 @@ class Session(BaseModel):
     arrival_minutes_before: int | None = Field(default=None, ge=0, le=120)
     coach_contact_policy: str | None = Field(default=None, max_length=500)
     absence_policy: str | None = Field(default=None, max_length=1000)
+    # The class's own age span (set on the class's public profile); None when unset.
+    age_band: AgeBand | None = None
 
     @field_validator("whatsapp_group_link")
     @classmethod
@@ -384,3 +387,17 @@ class RosterEntry(BaseModel):
     hold_return_on: date | None = None
     # So a past occurrence's roster can leave out children who joined later.
     enrolled_at: datetime | None = None
+    # Whole years, computed here so the date of birth never leaves the server.
+    age_years: int | None = None
+
+
+def age_in_years(date_of_birth: str | None, on: date) -> int | None:
+    """Whole years old on ``on``; None for a missing or unreadable date of birth."""
+    if not date_of_birth:
+        return None
+    try:
+        born = date.fromisoformat(str(date_of_birth)[:10])
+    except ValueError:
+        return None
+    years = on.year - born.year - ((on.month, on.day) < (born.month, born.day))
+    return years if years >= 0 else None

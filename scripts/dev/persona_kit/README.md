@@ -39,3 +39,4 @@ Rules for a new kit:
 | k36 | Junior Beginners: Lena and Felix Schmidt not billed (scholarship, coach's child), so it reads "9 paying of 11 enrolled". Run after k00. |
 | k05 | Dev Patel (k00) transferred from the Saturday class to Wednesday, with his Sat Nov 21 mark left on the old class. |
 | k06 | Casey Newcoach leads "Casey's Junior Starters" (a copy of the Wednesday clinic) with Tej Walkin, Noor Haddad and Owen Pryce enrolled and not placed on a level. Needs k01. Leave it out for Casey's empty first day. |
+| k15 | Age ranges on the Saturday (7–13) and Wednesday (8–12) classes. Ages on roster rows come from existing dates of birth (k00 and the base seed). |

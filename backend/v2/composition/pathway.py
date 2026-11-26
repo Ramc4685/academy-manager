@@ -78,6 +78,9 @@ from backend.v2.contexts.student_progress.application.use_cases.certificate_shar
 from backend.v2.contexts.student_progress.application.use_cases.curriculum_change_checks import (
     CurriculumChangeChecks,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_active_level_names import (
+    GetActiveLevelNames,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_certificate_detail import (
     GetCertificateDetail,
 )
@@ -316,6 +319,7 @@ class StudentProgressComposition:
     get_certificate_detail: GetCertificateDetail
     revoke_certificate: RevokeCertificate
     get_skill_board: GetSkillBoard
+    get_active_level_names: GetActiveLevelNames
     get_teaching_focus: GetTeachingFocus
     get_recent_skill_updates: GetRecentSkillUpdates
     get_in_progress_skills: GetInProgressSkills
@@ -498,6 +502,9 @@ def compose_student_progress(
             certificates=certificate_repo, skill_lookup=skill_lookup
         ),
         revoke_certificate=RevokeCertificate(certificates=certificate_repo, audit=progress_audit),
+        get_active_level_names=GetActiveLevelNames(
+            level_progress=level_progress_repo, skill_lookup=skill_lookup
+        ),
         get_skill_board=GetSkillBoard(
             level_progress=level_progress_repo,
             skill_progress=skill_progress_repo,

@@ -17,6 +17,7 @@ from backend.v2.contexts.enrollment.application.use_cases.public_catalog import 
     PublicCatalogSession,
 )
 from backend.v2.contexts.enrollment.domain.models import SEAT_HOLDING, Session
+from backend.v2.contexts.enrollment.domain.programs import age_band_from_doc
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 from backend.v2.shared.time import LEGACY_FALLBACK_TIMEZONE, academy_timezone_lookup, ensure_utc
 
@@ -318,6 +319,7 @@ class MongoSessionRepository(TenantScopedRepository):
             arrival_minutes_before=_optional_int(doc.get("arrival_minutes_before")),
             coach_contact_policy=_optional_str(doc.get("coach_contact_policy")),
             absence_policy=_optional_str(doc.get("absence_policy")),
+            age_band=age_band_from_doc(doc.get("age_band")),
         )
 
     async def for_coach_on_date(self, coach_id: str, on_date: date) -> list[Session]:

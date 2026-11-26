@@ -35,9 +35,19 @@ export type AttendanceStatus = "present" | "absent" | "late";
 /** People CRM L3a: what happened at an approved trial. */
 export type TrialOutcome = "came" | "no_show";
 
+/** A class's age span; `max_age` null means "and up". */
+export interface CoachAgeBand {
+  min_age?: number | null;
+  max_age?: number | null;
+}
+
 export interface CoachRosterEntry {
   student_id: string;
   full_name: string;
+  /** Whole years (the date of birth never reaches the coach). */
+  age_years?: number | null;
+  /** The child's active level; null when not placed. */
+  level_name?: string | null;
   enrollment_status: EnrollmentStatus;
   /** Issue #675: parent end-of-period cancel pending; the student still attends until then. */
   pending_cancellation_at?: string | null;
@@ -107,6 +117,7 @@ export interface CoachSession {
   /** Drop-off check-in window for this date; null when the academy has it off. */
   dropoff_window_opens_at?: string | null;
   dropoff_window_closes_at?: string | null;
+  age_band?: CoachAgeBand | null;
 }
 
 /** The coach sees the parent's name and the player's age only. */
@@ -296,6 +307,9 @@ export interface CoachScheduleEntry {
   end_at: string;
   coach_id?: string | null;
   coach_name?: string | null;
+  /** Children on the class's roster now. */
+  enrolled_count?: number | null;
+  age_band?: CoachAgeBand | null;
 }
 
 export interface CoachScheduleResponse {

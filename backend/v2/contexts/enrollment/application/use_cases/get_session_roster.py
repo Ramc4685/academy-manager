@@ -2,17 +2,30 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import date
+
 from backend.v2.contexts.enrollment.application.ports import (
     EnrollmentQuery,
     StudentQuery,
 )
-from backend.v2.contexts.enrollment.domain.models import ROSTER_VISIBLE, RosterEntry
+from backend.v2.contexts.enrollment.domain.models import (
+    ROSTER_VISIBLE,
+    RosterEntry,
+    age_in_years,
+)
 
 
 class GetSessionRoster:
-    def __init__(self, enrollments: EnrollmentQuery, students: StudentQuery) -> None:
+    def __init__(
+        self,
+        enrollments: EnrollmentQuery,
+        students: StudentQuery,
+        today: Callable[[], date] = date.today,
+    ) -> None:
         self._enrollments = enrollments
         self._students = students
+        self._today = today
 
     async def execute(self, session_id: str) -> list[RosterEntry]:
         # Issue #697 (contract §2.4 T1 roster visibility): a held row stays
@@ -25,6 +38,7 @@ class GetSessionRoster:
         students = await self._students.by_ids([e.student_id for e in active])
         by_id = {s.student_id: s for s in students}
         out: list[RosterEntry] = []
+        today = self._today()
         for e in active:
             s = by_id.get(e.student_id)
             if s is None:
@@ -39,6 +53,7 @@ class GetSessionRoster:
                     pending_cancellation_at=e.pending_cancellation_at,
                     hold_return_on=e.hold_return_on,
                     enrolled_at=e.enrolled_at,
+                    age_years=age_in_years(getattr(s, "date_of_birth", None), today),
                 )
             )
         return out

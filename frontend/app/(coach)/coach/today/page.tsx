@@ -22,6 +22,7 @@ import {
   todayISO,
 } from "@/lib/coach/marking";
 import { coachScheduleEntryHref } from "@/lib/coach/schedule-links";
+import { coachPlanHref } from "@/lib/coach/class-facts";
 import { queryKeys } from "@/lib/query/keys";
 import { reportVitals } from "@/lib/pwa/vitals";
 import { formatSessionTimeRange, sessionDateKey } from "@/lib/time/session-time";
@@ -99,25 +100,22 @@ export default function CoachTodayPage() {
           <h1 className="text-2xl font-semibold">{viewingToday ? "Today" : formatPlainDate(date)}</h1>
           {viewingToday && <p className="text-sm text-neutral-500">{formatPlainDate(date)}</p>}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {/*
-           * UI-7 (critique run 4, leftover 9): the plan page is scoped to the
-           * date, not the session, so one link per day replaces the identical
-           * "View teaching plan" button that sat under every session card
-           * (its border class named a colour that is not a token, so it rendered none).
-           */}
-          {sessions.some((s) => !isCancelled(s)) && (
-            <Link
-              href={`/coach/today/plan?date=${date}` as Parameters<typeof Link>[0]["href"]}
-              data-testid="view-teaching-plan"
-              className="inline-flex min-h-touch items-center rounded-lg border border-rally-cobalt-600 px-4 text-sm font-semibold text-rally-cobalt-700 hover:bg-rally-cobalt-50 dark:text-rally-cobalt-100 dark:hover:bg-rally-night-panel"
-            >
-              View teaching plan
-            </Link>
-          )}
-          <DatePicker date={date} onChange={setDate} />
-        </div>
+        <DatePicker date={date} onChange={setDate} />
       </header>
+
+      {/*
+       * UI-7: the plan page is scoped to the date, not the session, so one
+       * full-width button per day (testers missed the small header link).
+       */}
+      {sessions.some((s) => !isCancelled(s)) && (
+        <Link
+          href={coachPlanHref(date) as Parameters<typeof Link>[0]["href"]}
+          data-testid="view-teaching-plan"
+          className="mb-4 flex min-h-touch w-full items-center justify-center rounded-lg border border-rally-cobalt-600 px-4 text-sm font-semibold text-rally-cobalt-700 hover:bg-rally-cobalt-50 dark:text-rally-cobalt-100 dark:hover:bg-rally-night-panel"
+        >
+          View teaching plan
+        </Link>
+      )}
 
       {waitingMarks > 0 && (
         <p

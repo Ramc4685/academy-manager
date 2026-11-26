@@ -16,6 +16,7 @@ from backend.v2.contexts.enrollment.domain.models import (
     SessionOccurrence,
     SessionOccurrenceStatus,
 )
+from backend.v2.contexts.enrollment.domain.programs import AgeBand
 
 
 class CoachOccurrenceForDate(BaseModel):
@@ -36,6 +37,7 @@ class CoachOccurrenceForDate(BaseModel):
     # with its reason, instead of silently disappearing from the list.
     status: SessionOccurrenceStatus = "scheduled"
     cancellation_reason: str | None = None
+    age_band: AgeBand | None = None
 
 
 class ListCoachOccurrencesForDate:
@@ -159,6 +161,7 @@ async def _hydrate_occurrences(
                 coach_id=getattr(session, "coach_id", None) if session else None,
                 status=occurrence.status,
                 cancellation_reason=occurrence.cancellation_reason,
+                age_band=getattr(session, "age_band", None) if session else None,
             )
         )
     return rows

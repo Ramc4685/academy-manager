@@ -24,3 +24,10 @@ def test_coach_sessions_parent_persona_returns_404(parent_client):
 def test_coach_sessions_unauthenticated_returns_401(anon_client):
     r = anon_client.get("/api/v2/coach/sessions")
     assert r.status_code == 401
+
+
+def test_coach_sessions_rows_carry_the_class_headcount(coach_client):
+    body = coach_client.get("/api/v2/coach/sessions").json()
+    counts = {s["session_id"]: s["enrolled_count"] for s in body["sessions"]}
+    # s-today-1 has Alice and Bob enrolled; s-today-2 has nobody.
+    assert counts == {"s-today-1": 2, "s-today-2": 0}
