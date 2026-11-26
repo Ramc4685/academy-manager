@@ -201,7 +201,7 @@ test.describe("local authenticated route inventory", () => {
     for (const href of routesForRole("parent", SHARED_AUTH_ROUTES)) {
       test(`${href} renders without framework errors`, async ({ page }, testInfo) => {
         const runtimeIssues = collectRuntimeIssues(page);
-        await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/payments/);
+        await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/dashboard/);
         await assertRouteRenders(page, href, runtimeIssues, testInfo);
       });
     }
@@ -330,7 +330,7 @@ async function signInForRole(page: Page, role: ManifestRole) {
     return;
   }
   if (role === "parent" || role === "authenticated") {
-    await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/payments/);
+    await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/dashboard/);
     return;
   }
   throw new Error(`Unsupported dynamic route role: ${role}`);

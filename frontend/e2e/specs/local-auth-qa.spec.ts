@@ -19,7 +19,7 @@ test.describe("local authenticated QA defect coverage", () => {
   test("seeded parent exercises onboarding controls and wrong-role redirects", async ({
     page,
   }) => {
-    await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/payments/);
+    await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/dashboard/);
 
     await page.goto("/parent/onboarding");
     await expect(page.getByTestId("parent-onboarding")).toBeVisible();
@@ -32,23 +32,23 @@ test.describe("local authenticated QA defect coverage", () => {
       .click();
 
     const dob = page.getByLabel("Date of birth");
-    await expect(dob).toHaveAttribute("type", "text");
+    await expect(dob).toHaveAttribute("type", "date");
     await dob.fill("2014-02-03");
     await expect(dob).toHaveValue("2014-02-03");
     await page.getByRole("radio", { name: "Beginner" }).click();
     await expect(page.getByRole("radio", { name: "Beginner" })).toBeChecked();
 
     await page.goto("/admin");
-    await expect(page).toHaveURL(/\/parent\/payments\?access_denied=admin/);
+    await expect(page).toHaveURL(/\/parent\/dashboard\?access_denied=admin/);
     await expect(page.getByTestId("persona-access-denied")).toContainText("admin access");
 
     await page.goto("/coach/sessions");
-    await expect(page).toHaveURL(/\/parent\/payments\?access_denied=coach/);
+    await expect(page).toHaveURL(/\/parent\/dashboard\?access_denied=coach/);
     await expect(page.getByTestId("persona-access-denied")).toContainText("coach access");
   });
 
   test("seeded parent sees no billing portal before a Stripe customer exists", async ({ page }) => {
-    await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/payments/);
+    await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/dashboard/);
 
     await page.goto("/parent/payments");
     await expect(page.getByTestId("parent-payments")).toBeVisible();
@@ -116,7 +116,7 @@ test.describe("local authenticated QA defect coverage", () => {
     page,
   }) => {
     test.slow();
-    await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/payments/);
+    await signIn(page, PARENT_EMAIL, PARENT_PASSWORD, /\/parent\/dashboard/);
     await page.goto("/parent/waivers");
     await expect(page.getByTestId("parent-waivers")).toBeVisible();
     await page.goto("/parent/attendance");

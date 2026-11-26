@@ -72,8 +72,8 @@ test.describe("real-auth smoke", () => {
     const body = await response.json();
     expect(body.roles).toContain("parent");
 
-    await expect(page).toHaveURL(/\/parent\/payments/, { timeout: 30_000 });
-    await expect(page.getByTestId("parent-payments")).toBeVisible({ timeout: 30_000 });
+    await expect(page).toHaveURL(/\/parent\/dashboard/, { timeout: 30_000 });
+    await expect(page.getByTestId("parent-dashboard")).toBeVisible({ timeout: 30_000 });
   });
 
   test("unauthenticated visit to /admin redirects to /login", async ({ page }) => {
