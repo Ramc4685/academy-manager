@@ -1073,6 +1073,13 @@ async def test_projected_income_splits_autopay_vs_manual_with_overrides() -> Non
                 "status": "active",
             },
             {
+                # A $0 override made a child free before "not billed" existed.
+                "enrollment_id": "enr-zero",
+                "academy_id": "acad",
+                "session_id": "sess-a",
+                "status": "active",
+            },
+            {
                 "enrollment_id": "enr-paused",
                 "academy_id": "acad",
                 "session_id": "sess-a",
@@ -1111,6 +1118,11 @@ async def test_projected_income_splits_autopay_vs_manual_with_overrides() -> Non
                 "autopay_enrollment_status": "active",
                 "override_price_cents": 12_000,
             },
+            {
+                "enrollment_id": "enr-zero",
+                "academy_id": "acad",
+                "override_price_cents": 0,
+            },
         ]
     )
 
@@ -1121,16 +1133,18 @@ async def test_projected_income_splits_autopay_vs_manual_with_overrides() -> Non
     assert projection["total_cents"] == 52_000
     assert projection["autopay_cents"] == 32_000
     assert projection["manual_cents"] == 20_000
-    assert projection["enrollment_count"] == 3
+    assert projection["enrollment_count"] == 5
     assert projection["autopay_enrollment_count"] == 2
-    assert projection["manual_enrollment_count"] == 1
+    assert projection["manual_enrollment_count"] == 3
+    # Paying = every billed child, $0 ones included (dashboard and session
+    # economics agree); enrolled adds the not-billed scholarship child.
     assert projection["by_session"] == [
         {
             "session_id": "sess-a",
             "title": "Monday Advanced",
             "monthly_fee_cents": 20_000,
-            "enrollment_count": 2,
-            "enrolled_count": 3,
+            "enrollment_count": 3,
+            "enrolled_count": 4,
             "expected_cents": 40_000,
         },
         {
@@ -1140,6 +1154,14 @@ async def test_projected_income_splits_autopay_vs_manual_with_overrides() -> Non
             "enrollment_count": 1,
             "enrolled_count": 1,
             "expected_cents": 12_000,
+        },
+        {
+            "session_id": "sess-free",
+            "title": "Free Clinic",
+            "monthly_fee_cents": 0,
+            "enrollment_count": 1,
+            "enrolled_count": 1,
+            "expected_cents": 0,
         },
     ]
     assert projection["empty"] is False

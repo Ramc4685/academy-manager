@@ -112,12 +112,14 @@ async def test_without_a_change_every_projection_reads_todays_numbers(real_db, a
     for period in _MONTHS:
         result = await projected(period)
         # juniors 2 x OLD + squad 1 x OLD; adults stores only the legacy
-        # ``monthly_price_cents``, which this report has never read.
+        # ``monthly_price_cents``, which this report has never read, so its
+        # child is listed as paying at $0 (the dashboard counts it too).
         assert result["total_cents"] == 3 * OLD
         assert result["manual_cents"] == 3 * OLD
         assert {row["session_id"]: row["expected_cents"] for row in result["by_session"]} == {
             "juniors": 2 * OLD,
             "squad": OLD,
+            "adults": 0,
         }
         assert await _economics(economics, period) == {"juniors": OLD}
 

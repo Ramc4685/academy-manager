@@ -1139,15 +1139,15 @@ def make_projected_income_report(
             },
         )
         not_billed_count = 0
-        not_billed_by_session: dict[str, int] = {}
+        enrolled_by_session: dict[str, int] = {}
         async for enrollment in enrollments_cursor:
             session_id = str(enrollment.get("session_id") or "")
             if not session_id:
                 continue
+            enrolled_by_session[session_id] = enrolled_by_session.get(session_id, 0) + 1
             if is_not_billed(enrollment):
                 # Never invoiced, so never income; reported as "+N not billed".
                 not_billed_count += 1
-                not_billed_by_session[session_id] = not_billed_by_session.get(session_id, 0) + 1
                 continue
             session_ids.add(session_id)
             enrollment_rows.append(
@@ -1215,9 +1215,9 @@ def make_projected_income_report(
                 continue
             monthly_fee = fee_by_session.get(row["session_id"], 0)
             override = override_by_enrollment.get(row["enrollment_id"])
-            expected = override if override is not None else monthly_fee
-            if expected <= 0:
-                continue
+            # A $0 fee or override still counts as paying, as on the dashboard
+            # and session economics: only "not billed" leaves the paying count.
+            expected = max(override if override is not None else monthly_fee, 0)
             is_autopay = autopay_by_enrollment.get(row["enrollment_id"]) == "active"
             total_cents += expected
             if is_autopay:
@@ -1233,17 +1233,14 @@ def make_projected_income_report(
                     "title": str(session.get("title") or session.get("name") or ""),
                     "monthly_fee_cents": monthly_fee,
                     "enrollment_count": 0,
+                    # "9 paying of 11 enrolled": the same two counts every report shows.
+                    "enrolled_count": enrolled_by_session.get(row["session_id"], 0),
                     "expected_cents": 0,
                 },
             )
             session_row["enrollment_count"] += 1
             session_row["expected_cents"] += expected
 
-        for session_id, session_row in by_session.items():
-            # "9 paying of 11 enrolled": the same two counts every report shows.
-            session_row["enrolled_count"] = session_row["enrollment_count"] + (
-                not_billed_by_session.get(session_id, 0)
-            )
         rows = sorted(
             by_session.values(),
             key=lambda item: (-int(item["expected_cents"]), str(item["title"])),
