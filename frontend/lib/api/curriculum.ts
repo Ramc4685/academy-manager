@@ -1018,6 +1018,40 @@ export function getAdminSessionSkillBoard(
   );
 }
 
+/** D-10: start an unplaced child on this coach's roster at the first level. 409 if placed. */
+export function placeCoachUnplacedStudent(
+  sessionId: string,
+  studentId: string,
+): Promise<{ student_id: string; level_id: string }> {
+  return apiFetch(
+    `/coach/sessions/${encodeURIComponent(sessionId)}/students/${encodeURIComponent(studentId)}/pathway-placement`,
+    { method: "POST" },
+  );
+}
+
+export interface UnplacedStudent {
+  student_id: string;
+  student_name: string;
+}
+
+/** Active students with no level (the list the owner sees before placing them). */
+export function listUnplacedStudents(): Promise<{
+  program_id: string;
+  students: UnplacedStudent[];
+}> {
+  return apiFetch("/admin/pathway/unplaced", { method: "GET" });
+}
+
+/** Owner only: place the listed unplaced students on the first level. */
+export function placeUnplacedBacklog(studentIds: string[]): Promise<{
+  results: { student_id: string; outcome: "placed" | "skipped" | "refused"; level_id?: string }[];
+}> {
+  return apiFetch("/admin/pathway/unplaced/place", {
+    method: "POST",
+    body: JSON.stringify({ student_ids: studentIds }),
+  });
+}
+
 export function getCoachSessionSkillBoard(
   sessionId: string,
   programId?: string,

@@ -190,6 +190,7 @@ export const queryKeys = {
     sessionTypesList: (includeArchived: boolean) =>
       ["admin", "session-types", { includeArchived }] as const,
     pathwayDashboard: () => ["admin", "pathway", "dashboard"] as const,
+    pathwayUnplaced: () => ["admin", "pathway", "unplaced"] as const,
     lessonCards: (programId: string) =>
       ["admin", "pathway", programId, "lesson-cards"] as const,
     coachDigestLog: () => ["admin", "comms", "digests", "log"] as const,

@@ -2527,6 +2527,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/pathway/unplaced": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Unplaced Students
+         * @description Active students with no level: the list the owner sees before placing them.
+         */
+        get: operations["list_unplaced_students_api_v2_admin_pathway_unplaced_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/pathway/unplaced/place": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Place Unplaced Backlog
+         * @description Owner only (D-10): put the listed unplaced students on the first level.
+         *
+         *     Re-checked here, so a student placed since the list was shown, or no longer
+         *     active, is skipped rather than moved. Running it twice places nobody twice.
+         */
+        post: operations["place_unplaced_backlog_api_v2_admin_pathway_unplaced_place_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/pause-requests": {
         parameters: {
             query?: never;
@@ -5819,6 +5862,29 @@ export interface paths {
         get: operations["get_session_students_progress_api_v2_coach_sessions__session_id__students_progress_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/coach/sessions/{session_id}/students/{student_id}/pathway-placement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Place Unplaced Student
+         * @description D-10: start an unplaced child on this roster at the first level.
+         *
+         *     Only a child on a roster this coach runs (404 otherwise), and only one with
+         *     no level: a placed child is the owner's to move.
+         */
+        post: operations["place_unplaced_student_api_v2_coach_sessions__session_id__students__student_id__pathway_placement_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -18717,6 +18783,11 @@ export interface components {
             /** Set By */
             set_by: string;
         };
+        /** PlaceBacklogBody */
+        PlaceBacklogBody: {
+            /** Student Ids */
+            student_ids: string[];
+        };
         /** PlaceStudentBody */
         PlaceStudentBody: {
             /** Level Id */
@@ -27190,6 +27261,59 @@ export interface operations {
             };
         };
     };
+    list_unplaced_students_api_v2_admin_pathway_unplaced_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    place_unplaced_backlog_api_v2_admin_pathway_unplaced_place_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlaceBacklogBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_pause_requests_api_v2_admin_pause_requests_get: {
         parameters: {
             query?: never;
@@ -33649,6 +33773,38 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    place_unplaced_student_api_v2_coach_sessions__session_id__students__student_id__pathway_placement_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                student_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };

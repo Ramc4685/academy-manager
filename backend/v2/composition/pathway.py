@@ -219,34 +219,41 @@ class PlaceOnEnrollment:
         self._place = place
 
     async def place_new_enrollee(
-        self, student_id: str, *, level_id: str | None = None, actor_id: str | None = None
-    ) -> None:
+        self,
+        student_id: str,
+        *,
+        level_id: str | None = None,
+        actor_id: str | None = None,
+        reason: str = ENROLLMENT_PLACEMENT_REASON,
+    ) -> str | None:
+        """The level placed on, or None when the child kept theirs or there is none."""
         if level_id:
             level = await self._levels.get(level_id)
             if level is None or not level.is_active:
                 log.warning("pathway.enrollment_start_level_missing", extra={"level_id": level_id})
-                return
+                return None
             program_id = level.program_id
         else:
             try:
                 program_id = (await self._programs.execute()).program_id
             except (NoActiveProgram, MultipleActivePrograms):
-                return  # no pathway, or several: an admin places by hand
+                return None  # no pathway, or several: an admin places by hand
             first = await self._levels.list_for_program(program_id)
             if not first:
-                return
+                return None
             level_id = first[0].level_id
         if await self._level_progress.get_active(student_id, program_id) is not None:
-            return
+            return None
         await self._place.execute(
             PlaceStudentInLevelCommand(
                 student_id=student_id,
                 program_id=program_id,
                 level_id=level_id,
                 placed_by=actor_id or "system",
-                reason=ENROLLMENT_PLACEMENT_REASON,
+                reason=reason,
             )
         )
+        return level_id
 
 
 def compose_place_on_enrollment(
@@ -423,6 +430,8 @@ class StudentProgressComposition:
     #: ``(academy_id, token) -> https://<slug>.<apex>/c/<token>``: the academy's
     #: own host, never the product host (where ``/c/`` is a 404).
     certificate_share_url: Callable[[str, str], Awaitable[str]]
+    #: D-10: first-level placement for an unplaced child (coach board, owner backlog).
+    place_on_enrollment: PlaceOnEnrollment
 
 
 # ---------------------------------------------------------------------------
@@ -662,6 +671,7 @@ def compose_student_progress(
         ),
         record_milestones=compose_record_milestones(db),
         certificate_share_url=_certificate_share_url(db),
+        place_on_enrollment=compose_place_on_enrollment(db, outbox),
     )
 
 

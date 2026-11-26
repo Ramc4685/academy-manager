@@ -496,6 +496,38 @@ async def _require_roster_students(
     return resolved_session_id
 
 
+#: Audit reason when a coach starts an unplaced child from the skill board.
+COACH_BOARD_PLACEMENT_REASON = "coach_board_placement"
+
+
+@router.post("/sessions/{session_id}/students/{student_id}/pathway-placement", status_code=201)
+async def place_unplaced_student(
+    session_id: str,
+    student_id: str,
+    claims: AuthClaims = Depends(require_coach_surface()),
+    use_cases: CoachUseCases = Depends(get_coach_use_cases),
+) -> object:
+    """D-10: start an unplaced child on this roster at the first level.
+
+    Only a child on a roster this coach runs (404 otherwise), and only one with
+    no level: a placed child is the owner's to move.
+    """
+    if use_cases.student_progress is None:
+        raise HTTPException(status_code=503, detail="Student progress service not configured")
+    await _require_roster_students(
+        use_cases, claims.user_id, session_id, [student_id], None, is_coach_supervisor(claims)
+    )
+    level_id = await use_cases.student_progress.place_on_enrollment.place_new_enrollee(
+        student_id, actor_id=claims.user_id, reason=COACH_BOARD_PLACEMENT_REASON
+    )
+    if level_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This child already has a level, or the academy has no pathway yet.",
+        )
+    return {"student_id": student_id, "level_id": level_id}
+
+
 @router.post("/sessions/{session_id}/skills/{skill_id}/mastered")
 async def mark_skill_mastered(
     session_id: str,

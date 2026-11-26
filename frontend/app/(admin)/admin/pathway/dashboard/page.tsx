@@ -16,6 +16,7 @@ import { ErrorNotice } from "@/components/ds/error-notice";
 import { Skeleton } from "@/components/ds/skeleton";
 
 import { almostThereDraft, composeHref, stuckDraft, weeksAgo } from "./pathway-drafts";
+import { UnplacedBacklog } from "./unplaced-backlog";
 
 const progressOverviewEnabled = process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
 
@@ -108,6 +109,12 @@ function Dashboard({ data }: { data: PathwayDashboard }) {
         </Card>
         <LevelUpRuleCard data={data} />
       </div>
+
+      {data.unplaced_count > 0 && data.levels.length > 0 && (
+        <UnplacedBacklog
+          firstLevelName={[...data.levels].sort((a, b) => a.sequence - b.sequence)[0]!.name}
+        />
+      )}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <ListCard

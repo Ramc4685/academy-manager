@@ -578,6 +578,28 @@ class _PassportByStudentUseCase:
         return result
 
 
+class _RecordingPlacement:
+    """Like PlaceOnEnrollment: a child already placed is left alone (None)."""
+
+    def __init__(self) -> None:
+        self.placed: dict[str, str] = {}
+        self.calls: list[tuple[str, str | None, str]] = []
+
+    async def place_new_enrollee(
+        self,
+        student_id: str,
+        *,
+        level_id: str | None = None,
+        actor_id: str | None = None,
+        reason: str = "",
+    ) -> str | None:
+        self.calls.append((student_id, actor_id, reason))
+        if student_id in self.placed:
+            return None
+        self.placed[student_id] = "lvl-1"
+        return "lvl-1"
+
+
 class _AssignedSessions:
     def __init__(
         self,
@@ -663,6 +685,7 @@ def _build_real_router_app(
         resolve_default_program=_SpyUseCase(
             _Dumpable(program_id=PROGRAM_ID, name="Badminton Skill Pathway")
         ),
+        place_on_enrollment=_RecordingPlacement(),
     )
     student_progress = SimpleNamespace(
         get_passport=spies.get_passport,
@@ -674,6 +697,7 @@ def _build_real_router_app(
         mark_skill_mastered=spies.mark_skill_mastered,
         unmark_skill_mastered=spies.unmark_skill_mastered,
         set_mastery_note=spies.set_mastery_note,
+        place_on_enrollment=spies.place_on_enrollment,
     )
     curriculum = SimpleNamespace(
         get_program=spies.get_program,
@@ -2330,3 +2354,37 @@ def test_passport_names_a_paused_child_the_roster_hides() -> None:
         .json()
     )
     assert body["student_name"] == "Student One"
+
+
+def test_coach_places_an_unplaced_child_on_their_own_roster_once() -> None:
+    """D-10 (S52): the coach starts a roster child at level one; a placed child is not moved."""
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID], assigned_session_ids={SESSION_ID}
+    )
+    client = TestClient(app)
+    url = f"/api/v2/coach/sessions/{SESSION_ID}/students/{STUDENT_ID}/pathway-placement"
+
+    first = client.post(url)
+    again = client.post(url)
+
+    assert first.status_code == 201, first.text
+    assert first.json() == {"student_id": STUDENT_ID, "level_id": "lvl-1"}
+    assert again.status_code == 409
+    assert spies.place_on_enrollment.calls[0] == (STUDENT_ID, COACH_ID, "coach_board_placement")
+
+
+@pytest.mark.parametrize(
+    ("student_id", "assigned"),
+    [("other-student", {SESSION_ID}), (STUDENT_ID, set())],
+)
+def test_coach_cannot_place_a_child_off_their_roster(student_id: str, assigned: set[str]) -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID], assigned_session_ids=assigned
+    )
+
+    response = TestClient(app).post(
+        f"/api/v2/coach/sessions/{SESSION_ID}/students/{student_id}/pathway-placement"
+    )
+
+    assert response.status_code == 404
+    assert spies.place_on_enrollment.calls == []

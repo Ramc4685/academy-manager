@@ -29248,6 +29248,24 @@
         "title": "PipelineOverrideView",
         "type": "object"
       },
+      "PlaceBacklogBody": {
+        "properties": {
+          "student_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5000,
+            "minItems": 1,
+            "title": "Student Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "student_ids"
+        ],
+        "title": "PlaceBacklogBody",
+        "type": "object"
+      },
       "PlaceStudentBody": {
         "properties": {
           "level_id": {
@@ -46859,6 +46877,70 @@
         ]
       }
     },
+    "/api/v2/admin/pathway/unplaced": {
+      "get": {
+        "description": "Active students with no level: the list the owner sees before placing them.",
+        "operationId": "list_unplaced_students_api_v2_admin_pathway_unplaced_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response List Unplaced Students Api V2 Admin Pathway Unplaced Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Unplaced Students",
+        "tags": [
+          "admin-progress"
+        ]
+      }
+    },
+    "/api/v2/admin/pathway/unplaced/place": {
+      "post": {
+        "description": "Owner only (D-10): put the listed unplaced students on the first level.\n\nRe-checked here, so a student placed since the list was shown, or no longer\nactive, is skipped rather than moved. Running it twice places nobody twice.",
+        "operationId": "place_unplaced_backlog_api_v2_admin_pathway_unplaced_place_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaceBacklogBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Place Unplaced Backlog Api V2 Admin Pathway Unplaced Place Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Place Unplaced Backlog",
+        "tags": [
+          "admin-progress"
+        ]
+      }
+    },
     "/api/v2/admin/pause-requests": {
       "get": {
         "operationId": "list_pause_requests_api_v2_admin_pause_requests_get",
@@ -56412,6 +56494,58 @@
           }
         },
         "summary": "Get Session Students Progress",
+        "tags": [
+          "coach-skills"
+        ]
+      }
+    },
+    "/api/v2/coach/sessions/{session_id}/students/{student_id}/pathway-placement": {
+      "post": {
+        "description": "D-10: start an unplaced child on this roster at the first level.\n\nOnly a child on a roster this coach runs (404 otherwise), and only one with\nno level: a placed child is the owner's to move.",
+        "operationId": "place_unplaced_student_api_v2_coach_sessions__session_id__students__student_id__pathway_placement_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "student_id",
+            "required": true,
+            "schema": {
+              "title": "Student Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Place Unplaced Student Api V2 Coach Sessions  Session Id  Students  Student Id  Pathway Placement Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Place Unplaced Student",
         "tags": [
           "coach-skills"
         ]

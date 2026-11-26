@@ -669,12 +669,13 @@ class EnrollmentLevelPlacement(Protocol):
     The adapter lives in ``composition/pathway.py``; enrollment never imports
     student_progress. ``level_id`` None means the program's first level. A
     child who already has a level keeps it. Best-effort: call sites must not
-    let a placement failure undo the enrollment.
+    let a placement failure undo the enrollment. Returns the level placed on,
+    None when nothing changed.
     """
 
     async def place_new_enrollee(
         self, student_id: str, *, level_id: str | None = None, actor_id: str | None = None
-    ) -> None: ...
+    ) -> str | None: ...
 
 
 #: What changed on a roster (issue #612). One vocabulary for every trigger, so

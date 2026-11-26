@@ -3,14 +3,18 @@
 import { useParams, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { useState } from "react";
+
 import {
   getCoachSessionSkillBoard,
+  placeCoachUnplacedStudent,
   recordTestAttempt,
   updateSkillStatus,
   type SkillStatus,
 } from "@/lib/api/curriculum";
 import { SkillBoardView, type SkillBoardActions } from "@/components/pathway/skill-board";
 import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
+import { Button } from "@/components/ds/button";
 import { dateFromOccurrenceId, sessionIdFromOccurrenceId, todayISO } from "@/lib/coach/marking";
 
 
@@ -72,6 +76,14 @@ export default function CoachSessionProgressPage() {
     onSettled: invalidate,
   });
 
+  const [placeError, setPlaceError] = useState<string | null>(null);
+  const placeMutation = useMutation({
+    mutationFn: (studentId: string) => placeCoachUnplacedStudent(sessionId, studentId),
+    onMutate: () => setPlaceError(null),
+    onError: (err: Error) => setPlaceError(err.message),
+    onSettled: invalidate,
+  });
+
   const actions: SkillBoardActions = {
     setStatus: (args) => statusMutation.mutateAsync(args),
     quickPass: (args) =>
@@ -108,7 +120,28 @@ export default function CoachSessionProgressPage() {
           ))}
         </div>
       ) : board ? (
-        <SkillBoardView board={board} actions={actions} />
+        <>
+          {placeError && (
+            <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+              {placeError}
+            </p>
+          )}
+          <SkillBoardView
+            board={board}
+            actions={actions}
+            renderUnplacedAction={(student) => (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={placeMutation.isPending}
+                onClick={() => placeMutation.mutate(student.student_id)}
+                data-testid={`place-unplaced-${student.student_id}`}
+              >
+                Start on the first level
+              </Button>
+            )}
+          />
+        </>
       ) : null}
     </section>
   );
