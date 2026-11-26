@@ -280,8 +280,7 @@ def test_waiver_step_is_done_with_any_live_waiver_lineage():
     # An optional placeholder next to a real waiver counts: nobody signs it.
     optional_placeholder = {"body": DEFAULT_WAIVER_BODY, "required": False}
     assert (
-        _derive(waivers=(True, {"live_waivers": [optional_placeholder, photo]}))["waiver"]
-        == "done"
+        _derive(waivers=(True, {"live_waivers": [optional_placeholder, photo]}))["waiver"] == "done"
     )
     assert _derive(waivers=(True, {"live_waivers": []}))["waiver"] == "todo"
 

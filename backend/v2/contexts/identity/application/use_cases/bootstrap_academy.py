@@ -37,6 +37,7 @@ def is_starter_waiver_body(body: object) -> bool:
     """True when ``body`` is still the untouched bootstrap placeholder."""
     return isinstance(body, str) and body.strip() == DEFAULT_WAIVER_BODY
 
+
 DEFAULT_RECORDS = (
     "academy",
     "owner_user",
