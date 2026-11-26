@@ -253,8 +253,6 @@ def _build(now: datetime, user_ids: dict[str, str]) -> dict[str, list[dict[str, 
             created_at=now,
         )
         session["academy_id"] = DEMO_ACADEMY_ID
-        # S46: listed on the published public page with its level and ages.
-        session |= {"published": True, "level": "Beginner", "age_band": {"min_age": 8, "max_age": 12}}
         sessions.append(session)
         for row in build_session_occurrence_docs(
             session, window_start=today, days_back=28, days_forward=28
@@ -908,10 +906,6 @@ async def seed(
                 "timezone": TZ,
                 "status": "active",
                 "contact_email": PERSONAS["owner"][0],
-                # S46: the public page answers where and refunds before sign-up.
-                "address": "100 Example Gym Rd, Normal IL",
-                "refund_policy_url": "https://example.com/demo-academy/refunds",
-                "public_page.published": True,
                 "updated_at": now,
             }
         },

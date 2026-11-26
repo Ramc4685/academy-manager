@@ -53,11 +53,6 @@ async def test_apply_seeds_the_demo_academy(real_db: Any) -> None:
     academy = await real_db["academies"].find_one({"academy_id": DEMO_ACADEMY_ID})
     assert academy["slug"] == "demo-academy"
     assert academy["primary_domain"] == "demo-academy.courtmastr.com"
-    # S46: the public page is published with an address and refund link,
-    # and both classes are listed on it.
-    assert academy["public_page"]["published"] is True
-    assert academy["address"] and academy["refund_policy_url"].startswith("https://")
-    assert await real_db["sessions"].count_documents({"published": True}) == 2
     domain = await real_db["academy_domains"].find_one({"domain": "demo-academy.courtmastr.com"})
     assert (domain["academy_id"], domain["status"]) == (DEMO_ACADEMY_ID, "verified")
 

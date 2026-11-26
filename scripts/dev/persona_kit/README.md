@@ -47,6 +47,7 @@ Rules for a new kit:
 | k10 | Alex Demo: next Saturday class (48h+ out) with no absence reported, and a late mark on the latest past class this month. |
 | k11 | Alex Demo working on Split step (PRACTICING) with one private coach note and one ticked shared before S53 (no `shared_at`, so the parent does not see it until the coach shares it again). Partial: record the pass in the coach app during the re-test. |
 | k44 | Casey Newcoach on no part of Tuesday Intermediate (k03), with future dates left to cancel and her email notifications on. Run after k01 and k03. |
+| k46 | (S46) The demo academy's public page published with an address and an example.com refund link; both demo classes listed as Beginner, ages 8-12. |
 | k68 | Two Level 1 lesson cards (`kit_k68_card_*`) on the demo academy's first active program, so "What we teach" opens with teaching content. For Casey's My week (no class today, one next week) run k01 and k15 (Wed clinic assistant) and leave k06 out. |
 | k19 | Rosa Alvarez (sign her up first) has no phone, for the named profile gap. Partial: the broadcast-audience half is S69's. |
 | k51 | (S51) Mila Quinn's PENDING_APPROVAL registration for Casey's class. Run after k01 and k06. |
