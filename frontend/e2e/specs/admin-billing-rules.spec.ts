@@ -156,6 +156,12 @@ test.describe("admin settings → billing rules", () => {
 
     await page.getByTestId("billing-rules-input-late_fee_cents").fill("17.50");
     await expect(page.getByTestId("billing-rules-save")).toHaveText("Save changes");
+    // S31: a new late-fee amount needs the acknowledgement tick before Save.
+    await expect(page.getByTestId("billing-rules-changed")).toContainText(
+      "Tick the box above to save the late fee.",
+    );
+    await expect(page.getByTestId("billing-rules-save")).toBeDisabled();
+    await page.getByTestId("billing-rules-late-fee-ack").check();
     await expect(page.getByTestId("billing-rules-changed")).toContainText("Saves Late fee");
     await page.getByTestId("billing-rules-save").click();
 
@@ -233,6 +239,7 @@ test.describe("admin settings → billing rules", () => {
     await page.goto("/admin/settings?panel=billing-rules");
 
     await page.getByTestId("billing-rules-input-late_fee_cents").fill("17.50");
+    await page.getByTestId("billing-rules-late-fee-ack").check();
     await page.getByTestId("billing-rules-save").click();
 
     await expect(page.getByTestId("billing-rules-error-late_fee_cents")).toContainText(

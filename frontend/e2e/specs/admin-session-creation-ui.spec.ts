@@ -349,6 +349,8 @@ test.describe("admin session creation and billing-rules settings UI", () => {
 
     await page.getByTestId("billing-rules-input-late_fee_cents").fill("17.50");
     await page.getByTestId("billing-rules-input-invoice_due_days").fill("10");
+    // S31: a new late-fee amount needs the acknowledgement tick before Save.
+    await page.getByTestId("billing-rules-late-fee-ack").check();
     await page.getByTestId("billing-rules-save").click();
 
     await expect.poll(() => rulesPut).toEqual({ invoice_due_days: 10, late_fee_cents: 1750 });
