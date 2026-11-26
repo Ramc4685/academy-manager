@@ -37,6 +37,7 @@ import {
 } from "@/lib/offline/attendance-queue";
 import { CLASS_SYNC_LABELS, classSyncStatus } from "@/lib/offline/sync-status";
 import { ageBandLabel, rosterRowMeta, venueLines } from "@/lib/coach/class-facts";
+import { CantMakeIt } from "@/components/coach/cant-make-it";
 import { isBulkMarkEligible } from "@/lib/coach/bulk-eligibility";
 import { BulkMarkUndoWindow } from "@/lib/coach/bulk-mark-undo";
 import {
@@ -953,6 +954,13 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               Coach: {session.coach_name}
             </p>
           )}
+          <CantMakeIt
+            occurrenceId={session.occurrence_id}
+            title={session.title}
+            startAt={session.start_at}
+            status={session.status}
+            timezone={session.timezone}
+          />
         </div>
       </header>
 

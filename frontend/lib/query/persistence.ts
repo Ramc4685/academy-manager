@@ -60,6 +60,8 @@ export function shouldPersistQuery(queryKey: unknown, status: string): boolean {
   // Children's health notes and emergency contacts (S49, D-14) are never
   // stored on the device: online-only, like the service worker treats them.
   if (queryKey[1] === "roster-health") return false;
+  // A cover request (S67) must never show a stale "requested" from the device.
+  if (queryKey[1] === "cover-request") return false;
   return status === "success";
 }
 

@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
+from backend.v2.composition.coach_cover import user_facts
 from backend.v2.contexts.enrollment.application.pricing_state import is_unpriced
 from backend.v2.interfaces.admin.academy_clock import academy_today
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
@@ -45,6 +46,8 @@ _SOURCE_LABELS: dict[str, str] = {
     "missing_attendance": "missing attendance",
     "unpriced_classes": "unpriced classes",
     "unbilled_students": "students with no invoice",
+    "cover_requests": "cover requests",
+    "messages_waiting": "messages",
 }
 
 
@@ -121,6 +124,26 @@ async def dashboard_attention(
                 severity="high",
                 href="/admin/inbox?tab=registrations",
                 count=pending_registrations,
+            )
+        )
+
+    # S67: a coach can't make a class date; one line each, into the cover flow.
+    for line in await read("cover_requests", _cover_request_lines, [], request):
+        items.append(line)
+    waiting = await read("messages_waiting", _messages_waiting, 0, request)
+    if waiting:
+        items.append(
+            AdminAttentionItemView(
+                attention_id="messages-waiting",
+                kind="messages_waiting",
+                title="Messages waiting",
+                detail=(
+                    f"{waiting} conversation{'s' if waiting != 1 else ''} "
+                    f"{'are' if waiting != 1 else 'is'} waiting for a reply."
+                ),
+                severity="medium",
+                href="/admin/messages",
+                count=waiting,
             )
         )
 
@@ -554,6 +577,38 @@ async def _past_due_family_count(request: Request) -> int:
 async def _unbilled_student_count(request: Request, today: date) -> int:
     """Enrollments with no invoice for the academy's current month."""
     return int(await request.app.state.admin_unbilled_students.count(today.strftime("%Y-%m")))
+
+
+async def _cover_request_lines(request: Request) -> list[AdminAttentionItemView]:
+    """ "{Coach} can't make {class}, {date}" per open request on a future date."""
+    cover = getattr(request.app.state, "coach_cover", None)
+    if cover is None:
+        return []
+    occurrences = await cover.upcoming_open_cover_requests(now=datetime.now(UTC))
+    if not occurrences:
+        return []
+    requesters = await cover.open_cover_requests(occurrences)
+    names = await user_facts(cover.db, list(requesters.values()))
+    lines: list[AdminAttentionItemView] = []
+    for occ in occurrences:
+        day, time = await cover.when(occ)
+        coach = (names.get(requesters[occ.occurrence_id]) or {}).get("name") or "A coach"
+        lines.append(
+            AdminAttentionItemView(
+                attention_id=f"cover-request-{occ.occurrence_id}",
+                kind="cover_requests",
+                title=f"{coach} can't make {await cover.title(occ) or 'a class'}, {day}",
+                detail=f"At {time}. Assign cover or cancel the class date.",
+                severity="high",
+                href=f"/admin?cover={occ.occurrence_id}",
+            )
+        )
+    return lines
+
+
+async def _messages_waiting(request: Request) -> int:
+    cover = getattr(request.app.state, "coach_cover", None)
+    return int(await cover.messages_waiting()) if cover is not None else 0
 
 
 async def _read_attention_source(

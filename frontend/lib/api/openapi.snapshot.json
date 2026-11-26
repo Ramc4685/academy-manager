@@ -1104,7 +1104,9 @@
               "session_pressure",
               "missing_attendance",
               "unpriced_classes",
-              "unbilled_students"
+              "unbilled_students",
+              "cover_requests",
+              "messages_waiting"
             ],
             "title": "Kind",
             "type": "string"
@@ -3683,6 +3685,17 @@
               }
             ],
             "title": "Recipient Id"
+          },
+          "scope_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Id"
           },
           "scope_label": {
             "anyOf": [
@@ -17372,6 +17385,53 @@
           "busy"
         ],
         "title": "CoverOptionsView",
+        "type": "object"
+      },
+      "CoverRequestBody": {
+        "additionalProperties": false,
+        "properties": {
+          "occurrence_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "occurrence_id"
+        ],
+        "title": "CoverRequestBody",
+        "type": "object"
+      },
+      "CoverRequestView": {
+        "additionalProperties": false,
+        "properties": {
+          "requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested At"
+          }
+        },
+        "title": "CoverRequestView",
         "type": "object"
       },
       "CreateAbsenceNoticeRequest": {
@@ -56384,6 +56444,89 @@
         "summary": "Mark attendance for one student in a session (idempotent on mutation_id)",
         "tags": [
           "coach"
+        ]
+      }
+    },
+    "/api/v2/coach/cover-requests": {
+      "get": {
+        "operationId": "get_cover_request_api_v2_coach_cover_requests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverRequestView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "When I asked for cover on a class date, if I did",
+        "tags": [
+          "coach.cover-requests"
+        ]
+      },
+      "post": {
+        "operationId": "request_cover_api_v2_coach_cover_requests_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoverRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverRequestView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tell the academy I can't make a class date (inbox message only)",
+        "tags": [
+          "coach.cover-requests"
         ]
       }
     },

@@ -946,3 +946,23 @@ export function getCoachRosterHealth(occurrenceId: string): Promise<CoachRosterH
     { method: "GET", cache: "no-store" },
   );
 }
+
+/** S67: when this coach asked the academy for cover on a class date, if they did. */
+export interface CoachCoverRequest {
+  requested_at: string | null;
+}
+
+/** S67: "I can't make it" — one message to the academy inbox; nothing is cancelled. */
+export function requestCoachCover(occurrenceId: string, reason?: string): Promise<CoachCoverRequest> {
+  return apiFetch<CoachCoverRequest>("/coach/cover-requests", {
+    method: "POST",
+    body: JSON.stringify({ occurrence_id: occurrenceId, reason: reason?.trim() || null }),
+  });
+}
+
+export function getCoachCoverRequest(occurrenceId: string): Promise<CoachCoverRequest> {
+  return apiFetch<CoachCoverRequest>(
+    `/coach/cover-requests?occurrence_id=${encodeURIComponent(occurrenceId)}`,
+    { method: "GET", cache: "no-store" },
+  );
+}

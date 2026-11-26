@@ -5494,6 +5494,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/coach/cover-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** When I asked for cover on a class date, if I did */
+        get: operations["get_cover_request_api_v2_coach_cover_requests_get"];
+        put?: never;
+        /** Tell the academy I can't make a class date (inbox message only) */
+        post: operations["request_cover_api_v2_coach_cover_requests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/coach/dashboard": {
         parameters: {
             query?: never;
@@ -8854,7 +8872,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "pending_registrations" | "overdue_dues" | "autopay_failure" | "dunning_exhaustion" | "autopay_stuck" | "bank_return_review" | "pause_requests" | "scheduled_resume_blocked" | "scheduled_action_failed" | "billing_deferrals" | "waivers" | "session_pressure" | "missing_attendance" | "unpriced_classes" | "unbilled_students";
+            kind: "pending_registrations" | "overdue_dues" | "autopay_failure" | "dunning_exhaustion" | "autopay_stuck" | "bank_return_review" | "pause_requests" | "scheduled_resume_blocked" | "scheduled_action_failed" | "billing_deferrals" | "waivers" | "session_pressure" | "missing_attendance" | "unpriced_classes" | "unbilled_students" | "cover_requests" | "messages_waiting";
             /**
              * Severity
              * @enum {string}
@@ -9807,6 +9825,8 @@ export interface components {
             recipient_count?: number | null;
             /** Recipient Id */
             recipient_id: string | null;
+            /** Scope Id */
+            scope_id?: string | null;
             /** Scope Label */
             scope_label?: string | null;
             /** Scope Type */
@@ -14808,6 +14828,18 @@ export interface components {
             status: string;
             /** Title */
             title: string;
+        };
+        /** CoverRequestBody */
+        CoverRequestBody: {
+            /** Occurrence Id */
+            occurrence_id: string;
+            /** Reason */
+            reason?: string | null;
+        };
+        /** CoverRequestView */
+        CoverRequestView: {
+            /** Requested At */
+            requested_at?: string | null;
         };
         /** CreateAbsenceNoticeRequest */
         CreateAbsenceNoticeRequest: {
@@ -33553,6 +33585,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MarkAttendanceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_cover_request_api_v2_coach_cover_requests_get: {
+        parameters: {
+            query: {
+                occurrence_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverRequestView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    request_cover_api_v2_coach_cover_requests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CoverRequestBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoverRequestView"];
                 };
             };
             /** @description Validation Error */

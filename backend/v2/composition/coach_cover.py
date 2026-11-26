@@ -28,6 +28,8 @@ from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import 
 from backend.v2.contexts.enrollment.infrastructure.mongo_session_repo import (
     MongoSessionRepository,
 )
+from backend.v2.shared.comms.messages import Message, MongoMessageRepository
+from backend.v2.shared.ids import new_ulid
 from backend.v2.shared.tenancy.context import current_academy_id
 from backend.v2.shared.time.academy_timezone import (
     academy_timezone_lookup,
@@ -85,6 +87,10 @@ class CoachClassDate:
 
 def _utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _millis(value: datetime) -> datetime:
+    return value.replace(microsecond=value.microsecond // 1000 * 1000)
 
 
 def teaching_coach(occurrence: SessionOccurrence) -> str:
@@ -171,6 +177,7 @@ class CoachCoverReader:
     def __post_init__(self) -> None:
         self._occurrences = MongoSessionOccurrenceRepository(self.db)
         self._sessions = MongoSessionRepository(self.db)
+        self._messages = MongoMessageRepository(self.db)
 
     async def when(self, occurrence: SessionOccurrence) -> tuple[str, str]:
         """``("Tue, Dec 8", "5:30 PM")`` on the academy's clock."""
@@ -273,6 +280,119 @@ class CoachCoverReader:
             for pid in parent_ids
         ]
         return sorted(families, key=lambda f: (f.family_name.casefold(), f.parent_id))
+
+    # --- S67: the coach's "I can't make it" ---------------------------------
+
+    async def cover_request(self, occurrence_id: str, coach_id: str) -> Message | None:
+        doc = await self.db["messages"].find_one(
+            {
+                "academy_id": current_academy_id(),
+                "kind": "dm",
+                "sender_id": coach_id,
+                "scope_type": COVER_REQUEST_SCOPE,
+                "scope_id": occurrence_id,
+                "deleted_at": None,
+            }
+        )
+        return MongoMessageRepository._to_domain(doc) if doc else None
+
+    async def request_cover(
+        self, occurrence: SessionOccurrence, *, coach_id: str, body: str
+    ) -> tuple[Message, bool]:
+        """One academy-inbox message, idempotent per coach and class date.
+
+        Returns ``(message, created)``. Nothing else happens: no cancellation,
+        no cover, no family message, no email.
+        """
+        # shortcut: find-then-insert can double a request on a simultaneous
+        # double tap; harmless (two identical inbox lines), add a unique index if seen.
+        existing = await self.cover_request(occurrence.occurrence_id, coach_id)
+        if existing is not None:
+            return existing, False
+        message = Message(
+            message_id=str(new_ulid()),
+            academy_id=current_academy_id(),
+            kind="dm",
+            sender_id=coach_id,
+            sender_persona="coach",
+            recipient_id=None,
+            body=body,
+            # Mongo keeps milliseconds; match it so a repeat tap returns the same instant.
+            created_at=_millis(datetime.now(UTC)),
+            scope_type=COVER_REQUEST_SCOPE,
+            scope_id=occurrence.occurrence_id,
+            inbox_thread_id=coach_id,
+        )
+        await self._messages.insert(message)
+        return message, True
+
+    async def open_cover_requests(self, occurrences: Sequence[SessionOccurrence]) -> dict[str, str]:
+        """``{occurrence id: requesting coach id}`` for requests still open: the
+        date is not cancelled and the requester still teaches or assists it, so
+        assigning cover (or cancelling) clears it."""
+        by_id = {o.occurrence_id: o for o in occurrences}
+        if not by_id:
+            return {}
+        cursor = self.db["messages"].find(
+            {
+                "academy_id": current_academy_id(),
+                "kind": "dm",
+                "scope_type": COVER_REQUEST_SCOPE,
+                "scope_id": {"$in": list(by_id)},
+                "deleted_at": None,
+            },
+            {"scope_id": 1, "sender_id": 1},
+        )
+        out: dict[str, str] = {}
+        async for doc in cursor:
+            occ = by_id.get(str(doc.get("scope_id")))
+            sender = str(doc.get("sender_id") or "")
+            if occ is None or occ.status == "cancelled":
+                continue
+            if sender in {teaching_coach(occ), *occ.assistant_coach_ids}:
+                out[occ.occurrence_id] = sender
+        return out
+
+    async def upcoming_open_cover_requests(self, *, now: datetime) -> list[SessionOccurrence]:
+        """Open requests for class dates that have not started yet, soonest first."""
+        cursor = self.db["messages"].find(
+            {
+                "academy_id": current_academy_id(),
+                "kind": "dm",
+                "scope_type": COVER_REQUEST_SCOPE,
+                "deleted_at": None,
+                "created_at": {"$gte": now - COVER_WINDOW * 2},
+            },
+            {"scope_id": 1},
+        )
+        ids = sorted({str(doc["scope_id"]) async for doc in cursor if doc.get("scope_id")})
+        if not ids:
+            return []
+        occurrences = [o for o in await self._occurrences.get_many(ids) if _utc(o.start_at) > now]
+        open_ids = await self.open_cover_requests(occurrences)
+        return sorted(
+            (o for o in occurrences if o.occurrence_id in open_ids),
+            key=lambda o: _utc(o.start_at),
+        )
+
+    async def messages_waiting(self) -> int:
+        """Academy-inbox threads whose newest message is from the other end
+        (a family, or a coach asking for cover): waiting on staff."""
+        cursor = self.db["messages"].aggregate(
+            [
+                {
+                    "$match": {
+                        "academy_id": current_academy_id(),
+                        "kind": "dm",
+                        "inbox_thread_id": {"$gt": ""},
+                        "deleted_at": None,
+                    }
+                },
+                {"$sort": {"created_at": -1}},
+                {"$group": {"_id": "$inbox_thread_id", "sender": {"$first": "$sender_id"}}},
+            ]
+        )
+        return sum([1 async for row in cursor if row.get("sender") == row.get("_id")])
 
 
 async def user_facts(db: Any, user_ids: Sequence[str]) -> dict[str, dict[str, str | None]]:

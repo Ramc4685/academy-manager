@@ -1131,6 +1131,8 @@ export interface AdminMessageView {
   is_broadcast: boolean;
   scope_type?: string | null;
   scope_label?: string | null;
+  /** S67: the class date a coach's cover request (`scope_type: "cover_request"`) is about. */
+  scope_id?: string | null;
   recipient_count?: number | null;
   delivery_status?: string | null;
   /**

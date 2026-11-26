@@ -316,3 +316,126 @@ def test_a_coachs_dates_are_the_next_two_weeks(db: Any) -> None:
     assert res.status_code == 200, res.text
     assert [d["occurrence_id"] for d in res.json()["dates"]] == ["occ-soon"]
     assert client.get("/api/v2/admin/coach-cover/options?coach_id=nobody").status_code == 404
+
+
+# --- S67: the coach's "I can't make it" --------------------------------------
+
+
+def _coach_client(db: Any, user_id: str) -> TestClient:
+    """The admin test app with the coach router mounted, signed in as a coach."""
+    from backend.v2.interfaces.coach.router import router as coach_router
+
+    client, _ = _client(db)
+    app = client.app
+    app.include_router(coach_router, prefix="/api/v2")  # type: ignore[attr-defined]
+    app.dependency_overrides[get_auth_claims] = lambda: AuthClaims(  # type: ignore[attr-defined]
+        user_id=user_id, email=f"{user_id}@example.com", academy_id=ACADEMY, roles=("coach",)
+    )
+    return client
+
+
+def _seed_next(db: Any) -> None:
+    start = (datetime.now(UTC) + timedelta(days=3)).replace(microsecond=0)
+    asyncio.run(
+        db["session_occurrences"].insert_one(_occ("occ-next", "sess-ti", start, "coach-casey"))
+    )
+
+
+def test_a_cover_request_is_one_inbox_message_and_nothing_else(db: Any) -> None:
+    _seed_next(db)
+    client = _coach_client(db, "coach-casey")
+    url = "/api/v2/coach/cover-requests"
+    assert client.get(f"{url}?occurrence_id=occ-next").json() == {"requested_at": None}
+    res = client.post(url, json={"occurrence_id": "occ-next", "reason": "Unwell"})
+    assert res.status_code == 200, res.text
+    first = res.json()["requested_at"]
+    # Idempotent: a second tap returns the same request.
+    assert client.post(url, json={"occurrence_id": "occ-next"}).json()["requested_at"] == first
+    assert client.get(f"{url}?occurrence_id=occ-next").json() == {"requested_at": first}
+
+    async def check() -> None:
+        (msg,) = await db["messages"].find({}).to_list(None)
+        assert msg["kind"] == "dm" and msg["recipient_id"] is None
+        assert msg["inbox_thread_id"] == "coach-casey"
+        assert (msg["scope_type"], msg["scope_id"]) == ("cover_request", "occ-next")
+        assert msg["body"].startswith("Casey Lee can't ")
+        assert " Tuesday Intermediate on " in msg["body"]
+        assert msg["body"].endswith(". Reason: Unwell.")
+        occ = await db["session_occurrences"].find_one({"occurrence_id": "occ-next"})
+        assert occ["status"] == "scheduled" and not occ.get("substitute_coach_id")
+
+    asyncio.run(check())
+
+
+def test_only_an_assigned_coach_can_ask_and_only_for_a_future_date(db: Any) -> None:
+    _seed_next(db)
+    url = "/api/v2/coach/cover-requests"
+    other = _coach_client(db, "coach-priya")
+    assert other.post(url, json={"occurrence_id": "occ-next"}).status_code == 404
+    assert other.get(f"{url}?occurrence_id=occ-next").status_code == 404
+    casey = _coach_client(db, "coach-casey")
+    assert casey.post(url, json={"occurrence_id": "occ-b"}).status_code == 404
+
+    past = datetime.now(UTC) - timedelta(hours=2)
+    asyncio.run(
+        db["session_occurrences"].insert_many(
+            [
+                _occ("occ-past", "sess-ti", past, "coach-casey"),
+                _occ(
+                    "occ-gone",
+                    "sess-ti",
+                    past + timedelta(days=5),
+                    "coach-casey",
+                    status="cancelled",
+                ),
+            ]
+        )
+    )
+    for oid in ("occ-past", "occ-gone"):
+        assert casey.post(url, json={"occurrence_id": oid}).status_code == 409, oid
+
+
+def test_the_front_desk_sees_an_open_request_until_cover_is_assigned(db: Any) -> None:
+    _seed_next(db)
+    _coach_client(db, "coach-casey").post(
+        "/api/v2/coach/cover-requests", json={"occurrence_id": "occ-next"}
+    )
+    reader = CoachCoverReader(db=db, health=compose_coach_roster_health(db))
+
+    async def check() -> None:
+        set_academy_id(ACADEMY)  # this task's own context copy
+        (occ,) = await reader.upcoming_open_cover_requests(now=datetime.now(UTC))
+        assert occ.occurrence_id == "occ-next"
+        assert await reader.open_cover_requests([occ]) == {"occ-next": "coach-casey"}
+        # The coach's thread waits on staff until someone replies.
+        assert await reader.messages_waiting() == 1
+        await db["session_occurrences"].update_one(
+            {"occurrence_id": "occ-next"}, {"$set": {"substitute_coach_id": "coach-demo"}}
+        )
+        assert await reader.upcoming_open_cover_requests(now=datetime.now(UTC)) == []
+
+    asyncio.run(check())
+
+
+def test_admin_messages_offer_find_cover_on_a_cover_request() -> None:
+    from backend.v2.interfaces.admin.comms_routes import _message_view
+    from backend.v2.shared.comms.messages import Message
+
+    def msg(scope_type: str, scope_id: str) -> Message:
+        return Message(
+            message_id="m1",
+            academy_id=ACADEMY,
+            kind="dm",
+            sender_id="coach-casey",
+            sender_persona="coach",
+            recipient_id=None,
+            body="x",
+            created_at=datetime.now(UTC),
+            scope_type=scope_type,
+            scope_id=scope_id,
+            inbox_thread_id="coach-casey",
+        )
+
+    assert _message_view(msg("cover_request", "occ-next"), "u-admin").scope_id == "occ-next"
+    # Other scoped messages keep their scope id to themselves.
+    assert _message_view(msg("session", "sess-ti"), "u-admin").scope_id is None

@@ -345,6 +345,7 @@ def _message_view(m: Message, viewer_id: str) -> AdminMessageView:
             m.scope_label
             or ("Whole academy announcement" if m.kind == "announcement" else "Direct message")
         ),
+        scope_id=m.scope_id if m.scope_type == "cover_request" else None,
         recipient_count=m.recipient_count,
         delivery_status=m.delivery_status or "recorded",
         counterparty_id=counterparty,

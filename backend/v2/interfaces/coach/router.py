@@ -16,6 +16,7 @@ from .ai_technique_routes import router as ai_technique_router
 from .announcement_routes import router as announcement_router
 from .attendance_routes import router as attendance_router
 from .class_recap_routes import router as class_recap_router
+from .cover_request_routes import router as cover_request_router
 from .dashboard_routes import router as dashboard_router
 from .dropoff_routes import router as dropoff_router
 from .feedback_routes import router as feedback_router
@@ -42,6 +43,7 @@ router.include_router(dropoff_router)
 router.include_router(notes_router)
 router.include_router(roster_router)
 router.include_router(roster_health_router)
+router.include_router(cover_request_router)
 router.include_router(feedback_router)
 router.include_router(skill_router)
 router.include_router(messages_router)

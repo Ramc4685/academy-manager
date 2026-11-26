@@ -20,7 +20,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from zoneinfo import ZoneInfo
 
 from bson import ObjectId
@@ -49,6 +49,9 @@ from backend.v2.shared.time.academy_timezone import (
     academy_timezone_lookup,
     resolve_academy_clock_timezone,
 )
+
+if TYPE_CHECKING:
+    from backend.v2.composition.coach_cover import CoachCoverReader
 
 Phase = Literal["now", "next", "later", "finished", "cancelled"]
 RosterAttendance = Literal["present", "late", "absent"]
@@ -82,7 +85,7 @@ class TodayClass(BaseModel):
     cover_coach_name: str | None = None
     #: Lead, cover and assistants: who "Running late" messages (S65).
     staff_ids: list[str] = []
-    #: Filled by the coach cover flow (S67); false until it lands.
+    #: A coach asked for cover (S67) and still teaches this date: "COACH CAN'T MAKE IT".
     cover_requested: bool = False
     enrolled_count: int
     here_count: int
@@ -126,7 +129,7 @@ class AdminToday(BaseModel):
     timezone: str
     classes: list[TodayClass]
     tomorrow: TodayTomorrow
-    #: Academy-inbox threads waiting on staff (S61); 0 until it lands.
+    #: Academy-inbox threads whose newest message is from the family or coach (S61, S67).
     messages_waiting: int = 0
     #: D-14 accepted for every academy; there is no per-academy switch yet.
     health_enabled: bool = True
@@ -178,6 +181,8 @@ class AdminTodayReader:
     db: Any
     health: RosterHealthReader
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+    #: Cover requests and inbox counts (S67); None in tests that do not wire it.
+    cover: CoachCoverReader | None = None
 
     def __post_init__(self) -> None:
         self._occurrences = MongoSessionOccurrenceRepository(self.db)
@@ -211,6 +216,13 @@ class AdminTodayReader:
             self._list.execute_for_academy(target + timedelta(days=1)),
         )
         staff = {o.occurrence_id: o for o in stored}
+        cover_open, waiting = (
+            await asyncio.gather(
+                self.cover.open_cover_requests(stored), self.cover.messages_waiting()
+            )
+            if self.cover is not None
+            else ({}, 0)
+        )
         marks_by: dict[tuple[str, str], str] = {
             (m.occurrence_id, m.student_id): m.status for m in marks if m.status != "voided"
         }
@@ -267,6 +279,7 @@ class AdminTodayReader:
                     coach_name=people.get(lead or "", {}).get("name"),
                     cover_coach_name=people.get(cover, {}).get("name") if cover else None,
                     staff_ids=staff_ids,
+                    cover_requested=c.occurrence_id in cover_open,
                     enrolled_count=len(rows),
                     here_count=sum(1 for row in rows if row.attendance in ("present", "late")),
                     absent_count=sum(1 for row in rows if row.attendance == "absent"),
@@ -279,6 +292,7 @@ class AdminTodayReader:
             date=target,
             timezone=zone,
             classes=out,
+            messages_waiting=waiting,
             tomorrow=TodayTomorrow(
                 class_count=len(tomorrow_starts),
                 first_start_at=tomorrow_starts[0] if tomorrow_starts else None,
@@ -344,5 +358,7 @@ class AdminTodayReader:
         return {str(doc["student_id"]): parent_ref(doc) async for doc in cursor}
 
 
-def compose_admin_today(db: Any, *, health: RosterHealthReader) -> AdminTodayReader:
-    return AdminTodayReader(db=db, health=health)
+def compose_admin_today(
+    db: Any, *, health: RosterHealthReader, cover: CoachCoverReader | None = None
+) -> AdminTodayReader:
+    return AdminTodayReader(db=db, health=health, cover=cover)

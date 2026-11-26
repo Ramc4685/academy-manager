@@ -1756,6 +1756,8 @@ class AdminMessageView(BaseModel):
     is_broadcast: bool
     scope_type: str | None = None
     scope_label: str | None = None
+    #: S67: a coach's cover request carries its class date, for "Find cover".
+    scope_id: str | None = None
     recipient_count: int | None = None
     delivery_status: str | None = None
     #: The other party in a DM, from the reading admin's point of view (#864).
@@ -2033,6 +2035,10 @@ AdminAttentionKind = Literal[
     "unpriced_classes",
     # S34: enrollments the monthly run would invoice that have no invoice yet.
     "unbilled_students",
+    # S67: a coach said they can't make a class date that has no cover yet.
+    "cover_requests",
+    # S67: academy-inbox threads whose newest message is from a family or coach.
+    "messages_waiting",
 ]
 
 

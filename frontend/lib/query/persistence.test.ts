@@ -33,6 +33,7 @@ describe("shouldPersistQuery", () => {
 
   it("never persists children's health notes", () => {
     expect(shouldPersistQuery(["coach", "roster-health", "occ-1"], "success")).toBe(false);
+    expect(shouldPersistQuery(["coach", "cover-request", "occ-1"], "success")).toBe(false);
     expect(shouldPersistQuery(["admin", "today", "roster-health", "occ-1"], "success")).toBe(false);
   });
 

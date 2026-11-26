@@ -13,6 +13,7 @@
  * until the admin presses Send.
  */
 
+import type { Route } from "next";
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -783,6 +784,15 @@ function MessageBubble({
         <p className="mt-1 font-mono text-[10px] text-rally-subtle">
           {who} · {formatAcademyDateTime(message.sent_at, null)}
         </p>
+        {message.scope_type === "cover_request" && message.scope_id ? (
+          <Link
+            href={`/admin?cover=${encodeURIComponent(message.scope_id)}` as Route}
+            className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-rally-cobalt underline"
+            data-testid="admin-message-find-cover"
+          >
+            Find cover
+          </Link>
+        ) : null}
       </div>
     </li>
   );

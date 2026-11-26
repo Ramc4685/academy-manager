@@ -1215,14 +1215,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.coach_roster_health import compose_coach_roster_health
 
     app.state.coach_roster_health = compose_coach_roster_health(db)
-    # S63 (D-20): the admin dashboard's Today block, sharing that reader.
-    from backend.v2.composition.admin_today import compose_admin_today
-
-    app.state.admin_today = compose_admin_today(db, health=app.state.coach_roster_health)
-    # S66: the "Coach is sick" cover flow, sharing that reader's roster.
+    # S66/S67: the "Coach is sick" cover flow and coach cover requests, sharing that reader's roster.
     from backend.v2.composition.coach_cover import compose_coach_cover
 
     app.state.coach_cover = compose_coach_cover(db, health=app.state.coach_roster_health)
+    # S63 (D-20): the admin dashboard's Today block, sharing both readers.
+    from backend.v2.composition.admin_today import compose_admin_today
+
+    app.state.admin_today = compose_admin_today(
+        db, health=app.state.coach_roster_health, cover=app.state.coach_cover
+    )
     # B5 month-close narrator (paid AI): the gated LlmPort over the month-close reader.
     from backend.v2.composition.ai_reports import compose_ai_reports
 
