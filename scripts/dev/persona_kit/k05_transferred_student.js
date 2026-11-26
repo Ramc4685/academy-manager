@@ -4,7 +4,10 @@
 // Sat Nov 21 left behind in the old class. Used by S07, S25, S27.
 // Not covered here: the past one-off date on his schedule (S07/S27 add it).
 const A = "acad_demo_academy", now = new Date();
-const PARENT = "kit_k05_user_parent_patel", STUDENT = "kit_k05_student_dev";
+// The base demo seed may already own patel.family@example.com; reuse that parent
+// so the unique normalized_email index never trips on a fresh database.
+const PARENT = db.users.findOne({normalized_email: "patel.family@example.com"})?.user_id ?? "kit_k05_user_parent_patel";
+const STUDENT = "kit_k05_student_dev";
 const OCC = "demo_session_sat:2026-11-21:09:00";
 
 db.users.updateOne({user_id: PARENT}, {
