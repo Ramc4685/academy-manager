@@ -40,4 +40,4 @@ Rules for a new kit:
 | k05 | Dev Patel (k00) transferred from the Saturday class to Wednesday, with his Sat Nov 21 mark left on the old class. |
 | k06 | Casey Newcoach leads "Casey's Junior Starters" (a copy of the Wednesday clinic) with Tej Walkin, Noor Haddad and Owen Pryce enrolled and not placed on a level. Needs k01. Leave it out for Casey's empty first day. |
 | k12 | Venue address, parking note and arrive-early minutes on the Saturday and Wednesday classes, plus the academy phone 555-0142 and office@example.com. Casey has no classes unless k06 ran, so leave k06 out to see her first-day empty state with the contact line. |
-| k15 | Age ranges on the Saturday (7–13) and Wednesday (8–12) classes. Ages on roster rows come from existing dates of birth (k00 and the base seed). |
+| k16 | Age ranges on the Saturday (7–13) and Wednesday (8–12) classes. Ages on roster rows come from existing dates of birth (k00 and the base seed). |
