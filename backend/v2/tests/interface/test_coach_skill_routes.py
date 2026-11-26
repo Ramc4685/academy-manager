@@ -1247,6 +1247,8 @@ def test_supervisor_can_share_another_coachs_skill_note_via_real_use_case() -> N
     assert body["note_id"] == "note-stranger"
     assert body["coach_id"] == "coach-someone-else"
     assert body["visibility"] == "shared"
+    # The coach list carries the stamp the "See what the parent sees" preview reads.
+    assert body["shared_at"] is not None
     assert repo.saved[0].visibility == "shared"
 
 
