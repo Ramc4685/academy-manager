@@ -78,6 +78,7 @@ describe("coach Today with no class today: My week", () => {
     expect(html).toContain("Running late or unwell? Call first.");
     expect(html).toContain("Level 1 · Level name 1");
     expect(html).toContain("See all 3 levels and lessons");
+    expect(html).toContain('href="/coach/pathway"');
     expect(html.replace(/<[^>]+>/g, " ")).not.toMatch(/session/i);
   });
 

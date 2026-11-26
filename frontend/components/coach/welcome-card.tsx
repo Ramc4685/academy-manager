@@ -40,6 +40,19 @@ export function markWelcome(userId: string | null | undefined, patch: WelcomePro
   }
 }
 
+/**
+ * "none" once hidden (or before progress is read), "set" for the one visit
+ * that finishes all three, else "steps". Finishing also stores hidden, so the
+ * next visit is "none".
+ */
+export function welcomeStage(
+  progress: WelcomeProgress | null,
+  phoneDone: boolean,
+): "none" | "set" | "steps" {
+  if (!progress || progress.hidden) return "none";
+  return phoneDone && progress.contact && progress.pathway ? "set" : "steps";
+}
+
 export function WelcomeCard() {
   const profile = useQuery({ queryKey: queryKeys.coach.profile(), queryFn: getCoachProfile });
   const { data: academy } = useQuery({ queryKey: queryKeys.coach.academy(), queryFn: getCoachAcademy });
@@ -51,14 +64,15 @@ export function WelcomeCard() {
   }, [userId]);
 
   const phoneDone = !!profile.data?.phone?.trim();
-  const allDone = !!progress && phoneDone && !!progress.contact && !!progress.pathway;
+  const stage = welcomeStage(progress, phoneDone);
+  const allDone = stage === "set";
   useEffect(() => {
     // Storage is marked hidden now, but this visit's state is not, so
     // "You're set." shows once and the card never returns.
     if (allDone) markWelcome(userId, { hidden: true });
   }, [allDone, userId]);
 
-  if (!profile.data || !progress || progress.hidden) return null;
+  if (!profile.data || !progress || stage === "none") return null;
 
   const name = academy?.name ?? "the academy";
   const hasContact = !!(academy?.contact_phone?.trim() || academy?.contact_email?.trim());
