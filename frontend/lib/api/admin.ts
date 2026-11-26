@@ -1139,6 +1139,8 @@ export interface AdminMessageView {
   counterparty_id?: string | null;
   /** #864: false only for an incoming DM this admin has not opened yet. */
   is_read?: boolean;
+  /** D-18: the staff member who wrote a reply in a family's academy thread. */
+  author_display_name?: string | null;
 }
 
 export interface AdminMessageList {

@@ -66,6 +66,18 @@ const SAVES: Array<{ name: string; file: string; anchor: string; success: string
     anchor: "updateSelfServicePolicy(patch.payload)",
     success: 'meta: { success: "Self-service settings saved" }',
   },
+  {
+    name: "parent message to the academy (S62)",
+    file: "components/messages/academy-thread.tsx",
+    anchor: "sendParentMessage(body)",
+    success: "meta: { success: `Message sent to ${academyName}.` }",
+  },
+  {
+    name: "admin reply to a family (S62)",
+    file: "app/(admin)/admin/messages/page.tsx",
+    anchor: "sendDm({ recipient_id: recipientId, body })",
+    success: 'meta: { success: "Reply sent." }',
+  },
 ];
 
 describe("silent saves confirm (S28)", () => {

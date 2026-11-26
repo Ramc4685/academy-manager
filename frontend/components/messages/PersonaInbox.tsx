@@ -10,7 +10,7 @@
  * exists once rather than drifting between two near-identical files.
  */
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { InboxMessage, InboxMessagesResponse } from "@/lib/api/v2/messages";
@@ -30,6 +30,15 @@ interface PersonaInboxProps {
   /** `<persona>-messages` / `<persona>-message-list` test ids. */
   testId: string;
   emptyStateDescription: string;
+  emptyStateTitle?: string;
+  /** Rendered above the day groups (the parent's academy thread, D-18). */
+  renderThread?: (state: {
+    messages: InboxMessage[];
+    isLoading: boolean;
+    isError: boolean;
+  }) => ReactNode;
+  /** Leave direct messages out of the day groups (they live in the thread). */
+  excludeDirect?: boolean;
 }
 
 export function PersonaInbox({
@@ -38,6 +47,9 @@ export function PersonaInbox({
   markMessageRead,
   testId,
   emptyStateDescription,
+  emptyStateTitle = "No messages yet",
+  renderThread,
+  excludeDirect = false,
 }: PersonaInboxProps) {
   const queryClient = useQueryClient();
 
@@ -54,7 +66,11 @@ export function PersonaInbox({
   const linkedId = useLinkedParam("message");
   const linkedMissing =
     Boolean(linkedId) && !isLoading && !isError && !messages.some((m) => m.message_id === linkedId);
-  const groups = useMemo(() => groupByDay(data?.messages ?? []), [data]);
+  const listed = useMemo(
+    () => (data?.messages ?? []).filter((m) => !excludeDirect || m.kind !== "dm"),
+    [data, excludeDirect],
+  );
+  const groups = useMemo(() => groupByDay(listed), [listed]);
 
   const setRead = (messageId: string, read: boolean) => {
     queryClient.setQueryData(queryKey, (old: InboxMessagesResponse | undefined) =>
@@ -98,6 +114,8 @@ export function PersonaInbox({
     <section data-testid={`${testId}-messages`} className="space-y-4">
       <h1 className="text-lg font-semibold text-rally-ink">Messages</h1>
 
+      {renderThread?.({ messages, isLoading, isError })}
+
       {isError && (
         <Card p={16} style={{ borderColor: "#fecaca", background: "#fef2f2" }}>
           <div role="alert" className="flex items-center justify-between gap-3">
@@ -124,9 +142,9 @@ export function PersonaInbox({
         <Card p={16}>
           <Skeleton variant="line" lines={4} />
         </Card>
-      ) : messages.length === 0 ? (
+      ) : listed.length === 0 ? (
         <Card p={16}>
-          <EmptyState title="No messages yet" description={emptyStateDescription} />
+          <EmptyState title={emptyStateTitle} description={emptyStateDescription} />
         </Card>
       ) : (
         <div className="space-y-5" data-testid={`${testId}-message-list`}>

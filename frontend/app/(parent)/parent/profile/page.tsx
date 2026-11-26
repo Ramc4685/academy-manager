@@ -7,6 +7,7 @@ import { Button } from "@/components/ds/button";
 import { FormField, fieldDescribedBy } from "@/components/ds/form-field";
 import { Skeleton } from "@/components/ds/skeleton";
 import { useToast } from "@/components/ds/toast";
+import { ContactAcademyCard } from "@/components/parent/contact-academy-card";
 import { ChildWaiverStatus } from "@/components/parent/child-waiver-status";
 import { ReferralCard } from "@/components/parent/referral-card";
 import { AppLockSetting } from "@/components/persona/app-lock-setting";
@@ -52,6 +53,10 @@ export default function ParentProfilePage() {
       <div className="mb-4 animate-fade-in-up">
         <h1 className="font-display text-2xl font-bold tracking-tight text-rally-ink">My profile</h1>
         <p className="text-sm mt-0.5 text-rally-muted">Keep your details and your children&apos;s up to date</p>
+      </div>
+
+      <div className="mb-4">
+        <ContactAcademyCard />
       </div>
 
       {isError ? (

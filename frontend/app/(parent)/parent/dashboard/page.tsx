@@ -671,6 +671,12 @@ function AcademyContact({ academy }: { academy?: ParentAcademy }) {
               {academy.contact_phone}
             </a>
           )}
+          <Link
+            href="/parent/messages#academy"
+            className="inline-flex min-h-touch items-center rounded-lg border border-rally-line bg-white px-3 text-xs font-bold text-rally-ink"
+          >
+            Message the academy
+          </Link>
         </div>
       </div>
     </div>
