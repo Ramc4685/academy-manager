@@ -15,7 +15,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
-  listBillingWebhookEvents,
   listAdminPayments,
   undoPaymentPaid,
   type AdminPaymentListFilters,
@@ -32,9 +31,7 @@ import { Chip } from "@/components/ds/chip";
 import { Field, Th } from "@/components/ds/dialog-chrome";
 import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
 import { TableSkeleton } from "@/components/ds/skeleton";
-import { Overline } from "@/components/ds/typography";
 import { useIsPhone } from "@/lib/use-is-phone";
-import { webhookEventLabel } from "@/lib/billing-health";
 
 import {
   disputeLabel,
