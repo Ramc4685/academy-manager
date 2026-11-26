@@ -11,13 +11,13 @@ else gets 404. Services: ``app.state.coach_cover`` (``composition/coach_cover.py
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.v2.composition.coach_cover import CoachCoverReader, user_facts
 from backend.v2.composition.coach_roster_health import is_assigned
-from backend.v2.contexts.enrollment.domain.models import SessionOccurrence
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_coach_surface
 
@@ -47,9 +47,7 @@ def get_coach_cover(request: Request) -> CoachCoverReader:
     return reader
 
 
-async def _assigned(
-    reader: CoachCoverReader, occurrence_id: str, user_id: str
-) -> SessionOccurrence:
+async def _assigned(reader: CoachCoverReader, occurrence_id: str, user_id: str) -> Any:
     occurrence = await reader.occurrence(occurrence_id)
     if occurrence is None or not is_assigned(occurrence, user_id):
         raise HTTPException(status_code=404, detail="Not found")

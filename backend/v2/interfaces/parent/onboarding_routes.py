@@ -11,7 +11,6 @@ from backend.v2.contexts.onboarding.application.use_cases.manage_application imp
     PatchApplicationCommand,
     StartApplicationCommand,
 )
-from backend.v2.contexts.onboarding.domain.models import Application
 from backend.v2.interfaces.parent.deps import ParentUseCases, get_parent_use_cases
 from backend.v2.interfaces.parent.views import (
     ApplicationView,
@@ -31,7 +30,7 @@ router = APIRouter(tags=["parent.onboarding"])
 logger = logging.getLogger(__name__)
 
 
-async def _waiver_flags(use_cases: ParentUseCases, app: Application) -> tuple[bool, bool]:
+async def _waiver_flags(use_cases: ParentUseCases, app: Any) -> tuple[bool, bool]:
     """(class_first, waiver_to_sign) for the stepper.
 
     S47 / D-11: no required waiver to sign (none published, or only the starter
@@ -52,14 +51,12 @@ async def _waiver_flags(use_cases: ParentUseCases, app: Application) -> tuple[bo
     return bool(class_first), bool(waivers) or unknown
 
 
-async def _app_view(use_cases: ParentUseCases, app: Application) -> ApplicationView:
+async def _app_view(use_cases: ParentUseCases, app: Any) -> ApplicationView:
     class_first, to_sign = await _waiver_flags(use_cases, app)
     return _view(app, class_first=class_first, waiver_to_sign=to_sign)
 
 
-def _view(
-    app: Application, *, class_first: bool = False, waiver_to_sign: bool = True
-) -> ApplicationView:
+def _view(app: Any, *, class_first: bool = False, waiver_to_sign: bool = True) -> ApplicationView:
     return ApplicationView(
         application_id=app.application_id,
         status=app.status,
