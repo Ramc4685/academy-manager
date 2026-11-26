@@ -480,13 +480,8 @@ from backend.v2.contexts.finance.application.use_cases.manage_payout_period impo
 from backend.v2.contexts.finance.infrastructure.mongo_application_funnel_reader import (
     MongoApplicationFunnelReader,
 )
-from backend.v2.contexts.finance.infrastructure.mongo_attendance_snapshot_reader import (
-    MongoAttendanceSnapshotReader,
-)
-from backend.v2.contexts.finance.infrastructure.mongo_coach_payout_snapshot_reader import (
-    MongoCoachPayoutSnapshotReader,
-)
 from backend.v2.contexts.finance.infrastructure.mongo_compliance_reader import MongoComplianceReader
+from backend.v2.contexts.finance.infrastructure.mongo_held_class_reader import MongoHeldClassReader
 from backend.v2.contexts.finance.infrastructure.mongo_payout_audit_log import (
     MongoPayoutAuditLogRepository,
 )
@@ -4415,7 +4410,7 @@ def compose_admin(
         from backend.v2.shared.tenancy import current_academy_id
 
         return await GetAttendanceTrends(
-            snapshot_repo=MongoAttendanceSnapshotReader(db),
+            classes=MongoHeldClassReader(db),
             academy_id=current_academy_id(),
         ).execute(periods)
 
@@ -4423,7 +4418,7 @@ def compose_admin(
         from backend.v2.shared.tenancy import current_academy_id
 
         return await GetCoachUtilization(
-            snapshot_repo=MongoCoachPayoutSnapshotReader(db),
+            classes=MongoHeldClassReader(db),
             compliance_reader=MongoComplianceReader(db),
             academy_id=current_academy_id(),
         ).execute(periods)

@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 # Re-exported: the rounding rule is shared with the coaching payout read
 # models, and contexts may not import one another, so it lives in `shared`.
 from backend.v2.shared.money import round_money_minor as round_money_minor
+from backend.v2.shared.reporting_definitions import month_window
 
 
 def report_zone(timezone_name: str | None) -> ZoneInfo:
@@ -35,18 +36,10 @@ def month_bounds(period: str, timezone_name: str | None = None) -> tuple[datetim
     """UTC instants spanning ``period`` as the academy's own clock sees it (#608).
 
     The bounds stay UTC-aware because they are Mongo query bounds and Mongo
-    stores UTC; only where the month starts and ends moves.
+    stores UTC; only where the month starts and ends moves. One definition
+    with the finance trends: :func:`backend.v2.shared.reporting_definitions.month_window`.
     """
-    year_str, month_str = period.split("-", 1)
-    year = int(year_str)
-    month = int(month_str)
-    zone = report_zone(timezone_name)
-    start = datetime(year, month, 1, tzinfo=zone)
-    if month == 12:
-        end = datetime(year + 1, 1, 1, tzinfo=zone)
-    else:
-        end = datetime(year, month + 1, 1, tzinfo=zone)
-    return start.astimezone(UTC), end.astimezone(UTC)
+    return month_window(period, timezone_name)
 
 
 def money_to_cents(value: Any) -> int:

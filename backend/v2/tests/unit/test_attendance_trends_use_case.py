@@ -1,12 +1,11 @@
 """Unit tests for GetAttendanceTrends use case.
 
-All tests use a simple stub ``AttendanceSnapshotReader`` — no Mongo
-required.
+All tests use a simple stub ``HeldClassReader`` — no Mongo required.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from dataclasses import dataclass
 from decimal import Decimal
 
 import pytest
@@ -15,47 +14,41 @@ from backend.v2.contexts.finance.application.use_cases.attendance_trends import 
     AttendanceTrendsResult,
     GetAttendanceTrends,
 )
-from backend.v2.contexts.finance.domain.reporting_snapshots import SessionAttendanceSnapshot
 
-_NOW = datetime(2026, 5, 1, 0, 0, tzinfo=UTC)
+
+@dataclass(frozen=True)
+class _Counts:
+    period: str
+    scheduled_count: int
+    completed_count: int
+    no_show_count: int
 
 
 def _snap(
-    session_id: str,
-    period: str,
-    scheduled: int,
-    completed: int,
-    no_show: int,
-    academy_id: str = "test-academy",
-) -> SessionAttendanceSnapshot:
-    return SessionAttendanceSnapshot(
-        academy_id=academy_id,
-        session_id=session_id,
-        period=period,
-        scheduled_count=scheduled,
-        completed_count=completed,
-        no_show_count=no_show,
-        computed_at=_NOW,
+    session_id: str, period: str, scheduled: int, completed: int, no_show: int, **_: object
+) -> _Counts:
+    return _Counts(
+        period=period, scheduled_count=scheduled, completed_count=completed, no_show_count=no_show
     )
 
 
 class StubSnapshotReader:
-    """Stub implementation of AttendanceSnapshotReader for unit tests."""
+    """Stub ``HeldClassReader`` returning fixed per-period rows."""
 
-    def __init__(self, snapshots: list[SessionAttendanceSnapshot]) -> None:
-        self._snapshots = snapshots
+    def __init__(self, rows: list[_Counts]) -> None:
+        self._rows = rows
 
-    async def list_snapshots_for_periods(
+    async def class_counts_for_periods(
         self, *, academy_id: str, periods: list[str]
-    ) -> list[SessionAttendanceSnapshot]:
-        return [s for s in self._snapshots if s.period in periods]
+    ) -> list[_Counts]:
+        return [r for r in self._rows if r.period in periods]
+
+    async def coach_hours_for_periods(self, *, academy_id: str, periods: list[str]) -> list:
+        return []
 
 
-def _use_case(snapshots: list[SessionAttendanceSnapshot]) -> GetAttendanceTrends:
-    return GetAttendanceTrends(
-        snapshot_repo=StubSnapshotReader(snapshots),
-        academy_id="test-academy",
-    )
+def _use_case(rows: list[_Counts]) -> GetAttendanceTrends:
+    return GetAttendanceTrends(classes=StubSnapshotReader(rows), academy_id="test-academy")
 
 
 @pytest.mark.asyncio

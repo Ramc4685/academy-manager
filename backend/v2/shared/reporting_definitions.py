@@ -12,6 +12,8 @@ children), so the same month read 0 completed next to an 82% attendance rate.
   out the not-billed ones (:func:`backend.v2.shared.billing_type.is_not_billed`).
 - **Attendance by class date**: a mark counts in the month its class met
   (its occurrence's ``start_at``), not the month it was marked.
+- **Month**: ``[first instant, next month's first instant)`` on the
+  academy's own clock (:func:`month_window`).
 
 Lives in ``shared`` because billing and finance both read it and contexts may
 not import one another.
@@ -23,6 +25,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Final, Literal
+from zoneinfo import ZoneInfo
 
 from backend.v2.shared.billing_type import is_not_billed
 
@@ -35,10 +38,29 @@ ATTENDANCE_PRESENT_STATUSES: Final[frozenset[str]] = frozenset({"present", "late
 ClassState = Literal["held", "upcoming", "cancelled"]
 
 
-def _utc(value: object) -> datetime | None:
+def as_utc(value: object) -> datetime | None:
     if not isinstance(value, datetime):
         return None
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def month_window(period: str, timezone_name: str | None = None) -> tuple[datetime, datetime]:
+    """UTC bounds of ``YYYY-MM`` as the academy's clock sees it (#608).
+
+    An unset or unknown zone reads as UTC, so a report still renders.
+    """
+    year, month = (int(part) for part in period.split("-", 1))
+    try:
+        zone = ZoneInfo(timezone_name) if timezone_name else ZoneInfo("UTC")
+    except (KeyError, ValueError):
+        zone = ZoneInfo("UTC")
+    start = datetime(year, month, 1, tzinfo=zone)
+    end = (
+        datetime(year + 1, 1, 1, tzinfo=zone)
+        if month == 12
+        else datetime(year, month + 1, 1, tzinfo=zone)
+    )
+    return start.astimezone(UTC), end.astimezone(UTC)
 
 
 def class_state(occurrence: Mapping[str, Any], *, now: datetime) -> ClassState:
@@ -48,7 +70,7 @@ def class_state(occurrence: Mapping[str, Any], *, now: datetime) -> ClassState:
         return "cancelled"
     if status == "completed":
         return "held"
-    end_at = _utc(occurrence.get("end_at"))
+    end_at = as_utc(occurrence.get("end_at"))
     return "held" if end_at is not None and end_at < now else "upcoming"
 
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
+from decimal import Decimal
 from typing import Protocol
 
 from backend.v2.contexts.finance.domain.payout_audit import PayoutAuditEntry
@@ -369,6 +370,52 @@ class MarkedWithin24hReader(Protocol):
     ) -> Sequence[CoachComplianceCounts]: ...
 
 
+class PeriodClassCounts(Protocol):
+    """One month's class dates, by the shared held-class definition."""
+
+    @property
+    def period(self) -> str: ...
+
+    @property
+    def scheduled_count(self) -> int: ...  # held + upcoming (cancelled left out)
+
+    @property
+    def completed_count(self) -> int: ...  # held
+
+    @property
+    def no_show_count(self) -> int: ...  # "absent" marks on those classes
+
+
+class CoachPeriodHours(Protocol):
+    """One coach's held-class hours and payroll in one month."""
+
+    @property
+    def coach_id(self) -> str: ...
+
+    @property
+    def period(self) -> str: ...
+
+    @property
+    def hours(self) -> Decimal: ...
+
+    @property
+    def payout_minor(self) -> int: ...
+
+
+class HeldClassReader(Protocol):
+    """Reads ``session_occurrences`` (and attendance, payout periods) per
+    academy month, through ``backend.v2.shared.reporting_definitions`` so the
+    trends agree with month close."""
+
+    async def class_counts_for_periods(
+        self, *, academy_id: str, periods: list[str]
+    ) -> Sequence[PeriodClassCounts]: ...
+
+    async def coach_hours_for_periods(
+        self, *, academy_id: str, periods: list[str]
+    ) -> Sequence[CoachPeriodHours]: ...
+
+
 __all__ = [
     "AcademyRevenueSnapshotRepository",
     "ApplicationFunnelReader",
@@ -379,12 +426,15 @@ __all__ = [
     "CoachMonthOccurrences",
     "CoachPayoutSnapshotReader",
     "CoachPayoutSnapshotRepository",
+    "CoachPeriodHours",
+    "HeldClassReader",
     "MarkedWithin24hReader",
     "MonthlyCoachOccurrenceReader",
     "PayoutAuditLog",
     "PayoutCalculation",
     "PayoutCalculator",
     "PayoutPeriodRepository",
+    "PeriodClassCounts",
     "SessionAttendanceSnapshotRepository",
     "SessionOccurrenceCounts",
     "SessionOccurrenceReader",
