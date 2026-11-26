@@ -31,6 +31,7 @@ import {
   showAutopayOptinForBalance,
   showAutopayOptinForInvoice,
 } from "@/lib/parent-autopay-optin";
+import { autopayConfigurable, emptyInvoicesCopy } from "@/lib/parent/payments-page";
 import { queryKeys } from "@/lib/query/keys";
 
 const AUTOPAY_START_FAILED =
@@ -436,6 +437,9 @@ export default function ParentPaymentsPage() {
   const manualPaymentsOnly =
     liveEnrollments.some((e) => e.autopay_offer === "manual_payments") &&
     liveEnrollments.every((e) => e.autopay_offer === "manual_payments" || e.autopay_offer === "free_class");
+  // S24: no Autopay block when no class has an autopay to start or manage.
+  const showAutopay = autopayConfigurable(enrollments) || Boolean(autopayError);
+  const emptyInvoices = emptyInvoicesCopy(manualPaymentsOnly);
   const pauseRequests = pauseRequestsQuery.data?.requests ?? [];
   const creditBalance = creditsQuery.data?.balance_cents ?? 0;
   const credits = creditsQuery.data?.credits ?? [];
@@ -609,7 +613,10 @@ export default function ParentPaymentsPage() {
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-rally-subtle">Invoices</p>
         {invoices.length === 0 ? (
-          <p className="text-sm text-rally-subtle">No invoices yet.</p>
+          <div data-testid="invoices-empty" className="rounded-xl border border-rally-line bg-white px-4 py-3">
+            <p className="text-sm font-medium text-rally-ink">{emptyInvoices.title}</p>
+            <p className="mt-0.5 text-xs text-rally-subtle">{emptyInvoices.body}</p>
+          </div>
         ) : (
           <div className="space-y-2">
             {invoices.map((invoice) => {
@@ -776,24 +783,26 @@ export default function ParentPaymentsPage() {
         )}
       </div>
 
+      {manualPaymentsOnly && (
+        <div data-testid="manual-payments-note" className="mb-2 rounded-xl border border-rally-line bg-rally-paper px-4 py-3 text-sm text-rally-ink">
+          <p className="font-medium">Pay the academy directly</p>
+          <p className="mt-0.5 text-xs text-rally-subtle">
+            {academyQuery.data?.display_name ?? "Your academy"} records payments at the front desk, so there is nothing to set up online.
+          </p>
+          {academyQuery.data?.payment_instructions && (
+            <p className="mt-1 whitespace-pre-line text-xs text-rally-muted">{academyQuery.data.payment_instructions}</p>
+          )}
+        </div>
+      )}
+
       {/* Autopay */}
+      {showAutopay && (
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-rally-subtle">Autopay</p>
         {autopayError && (
           <p role="alert" data-testid="autopay-error" className="mb-2 rounded-xl border border-status-red-500/30 bg-status-red-50 px-4 py-3 text-sm text-status-red-800">
             {autopayError}
           </p>
-        )}
-        {manualPaymentsOnly && (
-          <div data-testid="manual-payments-note" className="mb-2 rounded-xl border border-rally-line bg-rally-paper px-4 py-3 text-sm text-rally-ink">
-            <p className="font-medium">Pay the academy directly</p>
-            <p className="mt-0.5 text-xs text-rally-subtle">
-              {academyQuery.data?.display_name ?? "Your academy"} records payments at the front desk, so there is nothing to set up online.
-            </p>
-            {academyQuery.data?.payment_instructions && (
-              <p className="mt-1 whitespace-pre-line text-xs text-rally-muted">{academyQuery.data.payment_instructions}</p>
-            )}
-          </div>
         )}
         {enrollments.length === 0 ? (
           <p className="text-sm text-rally-subtle">No active enrollments.</p>
@@ -873,6 +882,7 @@ export default function ParentPaymentsPage() {
           </div>
         )}
       </div>
+      )}
 
       {/* Pause requests (collapsible) */}
       <CollapsibleSection
@@ -970,17 +980,23 @@ function CollapsibleSection({
 }) {
   return (
     <div>
-      <button type="button" onClick={onToggle} className="flex w-full items-center justify-between py-1">
+      {/* S24: a disclosure row, not a heading look-alike. */}
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex min-h-touch w-full items-center justify-between rounded-xl border border-rally-line bg-white px-4 text-left hover:bg-rally-paper"
+      >
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-rally-subtle">
-            {title}
-          </span>
+          <span className="text-sm font-medium text-rally-ink">{title}</span>
           {badge && (
             <span className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold bg-rally-line text-rally-muted">
               {badge}
             </span>
           )}
         </div>
+        <span className="flex items-center gap-1 text-xs font-medium text-rally-cobalt-700">
+          {open ? "Hide" : "Show"}
         <svg
           width="14" height="14" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
@@ -989,6 +1005,7 @@ function CollapsibleSection({
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
+        </span>
       </button>
       {open && <div className="mt-2">{children}</div>}
     </div>

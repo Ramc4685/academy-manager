@@ -30,6 +30,7 @@ import {
   type RegistrationWaiver,
 } from "@/lib/api/parent";
 import type { ApiError } from "@/lib/api/client";
+import { toPaymentErrorMessage } from "@/lib/api/payment-error";
 import {
   formatAcademyMoment,
   formatSessionOccurrence,
@@ -77,6 +78,9 @@ type Step = OnboardingStep;
  * the field instead of stranding them on the review screen with a raw
  * machine-readable field name.
  */
+const CHECKOUT_START_FAILED =
+  "We couldn't start the payment. Please try again, or contact the academy.";
+
 const MISSING_FIELD_HELP: Record<string, { step: Step; label: string }> = {
   parent_phone: { step: "parent", label: "your phone number" },
   date_of_birth: { step: "child", label: "your child's date of birth" },
@@ -242,7 +246,8 @@ export default function OnboardingStepperPage() {
           "The price we were holding ran out while you were filling things in. Please check the updated amount below and continue.",
         );
       } else {
-        setError(err.message);
+        // S24: never show gateway detail ("Stripe connected account...") to a parent.
+        setError(toPaymentErrorMessage(err, CHECKOUT_START_FAILED));
       }
       setSaving(false);
     }

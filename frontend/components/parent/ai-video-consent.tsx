@@ -33,8 +33,8 @@ export function AiVideoConsentCard() {
         : revokeParentAiVideoConsent(input.studentId),
     onSuccess: (view) => queryClient.setQueryData(queryKeys.parent.aiVideoConsent(), view),
   });
-  if (!query.data || query.data.children.length === 0) return null;
-  const view = query.data;
+  const view = query.data ? aiConsentViewToShow(query.data) : null;
+  if (!view) return null;
   return (
     <AiVideoConsentBlock
       view={view}
@@ -48,6 +48,20 @@ export function AiVideoConsentCard() {
       }
     />
   );
+}
+
+/**
+ * S24: a draft (placeholder) text is not offered to parents. A child already
+ * granted under it stays listed so the grant can still be seen and revoked;
+ * consent records are never touched here.
+ */
+export function aiConsentViewToShow(
+  view: ParentAiVideoConsentView,
+): ParentAiVideoConsentView | null {
+  const children = view.placeholder
+    ? view.children.filter((child) => child.status === "granted")
+    : view.children;
+  return children.length > 0 ? { ...view, children } : null;
 }
 
 export function AiVideoConsentBlock({
