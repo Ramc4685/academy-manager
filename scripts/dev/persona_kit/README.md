@@ -34,10 +34,8 @@ Rules for a new kit:
 | k27 | Dev Patel (k05) also on the $80 Saturday class, ready to move to the unpriced k03 class. Run after k03 and k05. |
 | k16 | (S25 part) the next future Saturday date cancelled with a reason. |
 | k08 | This month on the Saturday class: two enrolled kids not yet invoiced, one paused and one free (NoCharge) enrollment, an overdue emailed invoice, an issued invoice never emailed, and an emailed invoice not yet due. |
-| k15 | Demo Coach: approved payout period last month ($30 per held class), draft this month. Casey Newcoach named as the Wed clinic's assistant. Run after k01. |
 | k15 | Demo Coach: approved payout period last month ($30 per held class), draft this month. Casey Newcoach named as the Wed clinic's assistant. Run after k01. Supersedes k01's unpaid last month (approves it, clears its unpaid classes), so retest S01 and S32 on `run.sh k00 k01` only. |
 | k36 | Junior Beginners: Lena and Felix Schmidt not billed (scholarship, coach's child), so it reads "9 paying of 11 enrolled". Run after k00. |
-| k05 | Dev Patel (k00) transferred from the Saturday class to Wednesday, with his Sat Nov 21 mark left on the old class. |
 | k06 | Casey Newcoach leads "Casey's Junior Starters" (a copy of the Wednesday clinic) with Tej Walkin, Noor Haddad and Owen Pryce enrolled and not placed on a level. Needs k01. Leave it out for Casey's empty first day. |
 | k12 | Venue address, parking note and arrive-early minutes on the Saturday and Wednesday classes, plus the academy phone 555-0142 and office@example.com. Casey has no classes unless k06 ran, so leave k06 out to see her first-day empty state with the contact line. |
 | k16 | Age ranges and levels on the Saturday (7–13, Mixed levels) and Wednesday (8–12, Beginner) classes. Ages on roster rows come from existing dates of birth (k00 and the base seed). |
