@@ -46,7 +46,7 @@ months.forEach(([y, m, status]) => {
   if (period.lines_version === token) {
     held.forEach(o => db.payout_period_lines.updateOne(
       {academy_id: A, period_id: period.period_id, lines_version: token, occurrence_id: o.occurrence_id},
-      {$set: {coach_id: COACH, basis: "per_session", minutes: "60", amount_minor: status === "approved" ? 3000 : 0,
+      {$set: {coach_id: COACH, basis: "scheduled", minutes: "60", amount_minor: status === "approved" ? 3000 : 0,
         currency: "USD", rate_id: null, percent_bps: null, expected_revenue_minor: null,
         original_amount_minor: null, adjustment_reason: null}}, {upsert: true}));
   }
