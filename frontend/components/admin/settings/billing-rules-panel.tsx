@@ -8,6 +8,7 @@ import {
   ACH_ENABLED_FIELD,
   ACH_KEY,
   ACH_PERCENT_FIELD,
+  canSave,
   canSaveRules,
   changedRulesText,
   diffForm,
@@ -61,7 +62,7 @@ export function BillingRulesPanel() {
   const needsLateFeeAck = turnsLateFeeOn(query.data, diff);
   const saveEnabled = canSaveRules(diff, needsLateFeeAck, lateFeeAcknowledged);
   // The tick is the only thing standing between the owner and Save: point at it.
-  const ackIsBlocker = needsLateFeeAck && !lateFeeAcknowledged && canSaveRules(diff, false, false);
+  const ackIsBlocker = needsLateFeeAck && !lateFeeAcknowledged && canSave(diff);
   const mutation = useMutation({
     mutationFn: () => updateBillingRules(diff.payload),
     meta: { success: "Billing rules saved" },
