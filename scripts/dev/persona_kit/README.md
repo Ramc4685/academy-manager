@@ -35,4 +35,5 @@ Rules for a new kit:
 | k16 | (S25 part) the next future Saturday date cancelled with a reason. |
 | k08 | This month on the Saturday class: two enrolled kids not yet invoiced, one paused and one free (NoCharge) enrollment, an overdue emailed invoice, an issued invoice never emailed, and an emailed invoice not yet due. |
 | k15 | Demo Coach: approved payout period last month ($30 per held class), draft this month. Casey Newcoach named as the Wed clinic's assistant. Run after k01. |
+| k15 | Demo Coach: approved payout period last month ($30 per held class), draft this month. Casey Newcoach named as the Wed clinic's assistant. Run after k01. Supersedes k01's unpaid last month (approves it, clears its unpaid classes), so retest S01 and S32 on `run.sh k00 k01` only. |
 | k36 | Junior Beginners: Lena and Felix Schmidt not billed (scholarship, coach's child), so it reads "9 paying of 11 enrolled". Run after k00. |
