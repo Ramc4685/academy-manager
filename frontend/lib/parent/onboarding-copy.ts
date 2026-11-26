@@ -31,6 +31,30 @@ export function classLevelNote(title: string, childLevel: string): string | null
   return `This class is listed as ${LEVEL_NAMES[classLevel]}; you chose ${LEVEL_NAMES[childLevel as SkillLevel]}. You can still pick it.`;
 }
 
+/** "Beginner" on the Review step; an unchosen level says so instead of "—". */
+export function skillLevelLabel(level: string): string {
+  return LEVEL_NAMES[level as SkillLevel] ?? "level not given";
+}
+
+/**
+ * The Review step's price lines. A $0 quote gets one plain line: "0 of 4
+ * classes — monthly rate covers 4 classes" and "Starting next month: $0.00"
+ * read as paid-class wording (S22 persona follow-up). Never "Free" (see below).
+ */
+export function reviewPriceLines(quote: {
+  amount_due_cents: number;
+  next_billing_amount_cents: number;
+  message: string;
+}): string[] {
+  if (quote.amount_due_cents === 0 && quote.next_billing_amount_cents === 0) {
+    return [`Price: ${monthlyPriceLabel(0)}. Nothing to pay at checkout.`];
+  }
+  return [
+    `First month: ${formatCents(quote.amount_due_cents)} · ${quote.message}`,
+    `Starting next month: ${monthlyPriceLabel(quote.next_billing_amount_cents)}`,
+  ];
+}
+
 /**
  * "$80.00 per month". Never "Free": an unpriced class also reaches here as 0,
  * and only S42 knows whether a class is explicitly free.

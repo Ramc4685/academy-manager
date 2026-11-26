@@ -55,10 +55,11 @@ import {
   dateOfBirthError,
   localIsoDate,
   monthlyPriceLabel,
+  reviewPriceLines,
+  skillLevelLabel,
   SKILL_LEVEL_HINTS,
 } from "@/lib/parent/onboarding-copy";
 import { listPhrase } from "@/lib/parent/profile-gaps";
-import { formatCents } from "@/lib/money";
 
 /**
  * Parent onboarding stepper.
@@ -1005,25 +1006,29 @@ function ReviewStep({
         style={{ borderColor: "var(--rally-line)", background: "white", color: "var(--rally-ink)" }}
       >
         <li>Parent: {app.parent_profile.first_name} {app.parent_profile.last_name}</li>
-        <li>Child: {app.child_profile.first_name} {app.child_profile.last_name} ({app.child_profile.skill_level || "—"})</li>
+        <li>Child: {app.child_profile.first_name} {app.child_profile.last_name} ({skillLevelLabel(app.child_profile.skill_level)})</li>
         <li>
           Session:{" "}
           {selectedSession
             ? `${selectedSession.title} · ${formatSessionTime(selectedSession, academyTimezone)}`
             : app.selected_session_id ?? "—"}
         </li>
-        <li>
-          First month:{" "}
-          {quote
-            ? `${formatCents(quote.amount_due_cents)} · ${quote.message}`
-            : quoteLoading
+        {selectedSession && classLevelNote(selectedSession.title, app.child_profile.skill_level) && (
+          <li style={{ color: "#854f0b" }} data-testid="onboarding-review-level-note">
+            {classLevelNote(selectedSession.title, app.child_profile.skill_level)}
+          </li>
+        )}
+        {quote ? (
+          reviewPriceLines(quote).map((line) => <li key={line}>{line}</li>)
+        ) : (
+          <li>
+            First month:{" "}
+            {quoteLoading
               ? "Calculating..."
               : selectedSession
                 ? monthlyPriceLabel(selectedSession.amount_cents)
                 : "—"}
-        </li>
-        {quote && (
-          <li>Starting next month: {monthlyPriceLabel(quote.next_billing_amount_cents)}</li>
+          </li>
         )}
         {quote?.quote_expires_at && (
           <li data-testid="onboarding-price-held">
