@@ -23,6 +23,7 @@ import {
 import { AnnouncementsPanel } from "@/components/announcements/AnnouncementsPanel";
 import { confirmFailureMessage, dropoffRefetchInterval } from "@/lib/dropoff/checkin";
 import { ClassRecapPanel } from "@/components/coach/ClassRecapPanel";
+import { useUnsavedChanges } from "@/components/admin/unsaved-changes-guard";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
 import { SessionDetailTabs, SessionNextStep } from "@/components/coach/SessionDetailTabs";
 import { TrialOutcomeControl } from "@/components/coach/trial-outcome-control";
@@ -291,6 +292,8 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   // `recap=open` (Today's shortcut, the skills screen's next step) lands on
   // the recap already open and scrolled into view.
   const [recapOpen, setRecapOpen] = useState(recapParam === "open");
+  // Collapsing unmounts the recap and its draft, so it asks first like leaving does.
+  const { requestLeave } = useUnsavedChanges();
   const recapRef = useRef<HTMLElement>(null);
   const recapScrolled = useRef(false);
   useEffect(() => {
@@ -1143,7 +1146,9 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               data-testid="class-recap-toggle"
               aria-expanded={recapOpen}
               aria-controls="coach-class-recap"
-              onClick={() => setRecapOpen((open) => !open)}
+              onClick={() =>
+                recapOpen ? requestLeave(() => setRecapOpen(false)) : setRecapOpen(true)
+              }
               className="min-h-touch w-full rounded-lg border px-3 text-left text-sm font-semibold uppercase tracking-wide"
               style={{ color: "var(--rally-muted)", borderColor: "var(--rally-line)" }}
             >
