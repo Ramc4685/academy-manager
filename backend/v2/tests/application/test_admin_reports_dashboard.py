@@ -99,26 +99,59 @@ async def test_reports_dashboard_composes_monthly_finance_attendance_and_capacit
             {
                 "attendance_id": "att-1",
                 "academy_id": "acad",
+                "occurrence_id": "occ-2",
                 "status": "present",
                 "marked_at": datetime(2026, 5, 3, tzinfo=UTC),
             },
             {
                 "attendance_id": "att-2",
                 "academy_id": "acad",
+                "occurrence_id": "occ-2",
                 "status": "late",
                 "marked_at": datetime(2026, 5, 4, tzinfo=UTC),
             },
             {
                 "attendance_id": "att-3",
                 "academy_id": "acad",
+                "occurrence_id": "occ-2",
                 "status": "absent",
                 "marked_at": datetime(2026, 5, 5, tzinfo=UTC),
             },
             {
                 "attendance_id": "att-other",
                 "academy_id": "other",
+                "occurrence_id": "occ-2",
                 "status": "present",
                 "marked_at": datetime(2026, 5, 6, tzinfo=UTC),
+            },
+        ]
+    )
+    # One class date of each kind: upcoming, held (by the clock) and cancelled.
+    await db["session_occurrences"].insert_many(
+        [
+            {
+                "occurrence_id": "occ-1",
+                "academy_id": "acad",
+                "session_id": "sess-1",
+                "status": "scheduled",
+                "start_at": datetime(2026, 5, 30, tzinfo=UTC),
+                "end_at": datetime(2999, 5, 30, tzinfo=UTC),
+            },
+            {
+                "occurrence_id": "occ-2",
+                "academy_id": "acad",
+                "session_id": "sess-2",
+                "status": "scheduled",
+                "start_at": datetime(2026, 5, 2, 14, tzinfo=UTC),
+                "end_at": datetime(2026, 5, 2, 15, tzinfo=UTC),
+            },
+            {
+                "occurrence_id": "occ-3",
+                "academy_id": "acad",
+                "session_id": "sess-3",
+                "status": "cancelled",
+                "start_at": datetime(2026, 5, 9, tzinfo=UTC),
+                "end_at": datetime(2026, 5, 9, 1, tzinfo=UTC),
             },
         ]
     )
@@ -230,6 +263,7 @@ async def test_reports_dashboard_composes_monthly_finance_attendance_and_capacit
         "completed_count": 1,
         "cancelled_count": 1,
         "enrolled_seats": 2,
+        "paying_seats": 2,
         "capacity": 12,
         "capacity_utilization": 0.1667,
         "waitlist_count": 1,
@@ -693,6 +727,7 @@ async def test_reports_dashboard_returns_meaningful_empty_states() -> None:
             "completed_count": 0,
             "cancelled_count": 0,
             "enrolled_seats": 0,
+            "paying_seats": 0,
             "capacity": 0,
             "capacity_utilization": None,
             "waitlist_count": 0,
@@ -1025,6 +1060,13 @@ async def test_projected_income_splits_autopay_vs_manual_with_overrides() -> Non
                 "status": "paused",
             },
             {
+                "enrollment_id": "enr-scholarship",
+                "academy_id": "acad",
+                "session_id": "sess-a",
+                "status": "active",
+                "billing_type": "NoCharge",
+            },
+            {
                 "enrollment_id": "enr-other-tenant",
                 "academy_id": "other",
                 "session_id": "sess-a",
@@ -1069,6 +1111,7 @@ async def test_projected_income_splits_autopay_vs_manual_with_overrides() -> Non
             "title": "Monday Advanced",
             "monthly_fee_cents": 20_000,
             "enrollment_count": 2,
+            "enrolled_count": 3,
             "expected_cents": 40_000,
         },
         {
@@ -1076,6 +1119,7 @@ async def test_projected_income_splits_autopay_vs_manual_with_overrides() -> Non
             "title": "Friday Beginner",
             "monthly_fee_cents": 15_000,
             "enrollment_count": 1,
+            "enrolled_count": 1,
             "expected_cents": 12_000,
         },
     ]
@@ -1586,3 +1630,95 @@ async def test_session_economics_withholds_margin_for_classes_not_yet_held() -> 
     assert report["summary"]["payroll_blocked_by"] == (
         "Some classes this month have not been held yet."
     )
+
+
+@pytest.mark.asyncio
+async def test_completed_equals_held_class_dates_and_attendance_reads_by_class_date() -> None:
+    """Bug-06: 82% attendance next to 0 completed. Both now read class dates."""
+    db = _payroll_db()
+    await db["sessions"].insert_one(
+        {"session_id": "sess-1", "academy_id": "acad", "status": "scheduled", "capacity": 12}
+    )
+    await db["session_occurrences"].insert_many(
+        [
+            {
+                "occurrence_id": f"occ-{day}",
+                "academy_id": "acad",
+                "session_id": "sess-1",
+                "status": "scheduled",  # nothing writes "completed"
+                "start_at": datetime(2026, 5, day, 14, tzinfo=UTC),
+                "end_at": datetime(2026, 5, day, 15, tzinfo=UTC),
+            }
+            for day in (2, 9, 16)
+        ]
+        + [
+            {
+                "occurrence_id": "occ-june",
+                "academy_id": "acad",
+                "session_id": "sess-1",
+                "status": "scheduled",
+                "start_at": datetime(2026, 6, 6, 14, tzinfo=UTC),
+                "end_at": datetime(2026, 6, 6, 15, tzinfo=UTC),
+            }
+        ]
+    )
+    await db["attendance"].insert_many(
+        [
+            # May class marked late, in June: counts in May.
+            {
+                "academy_id": "acad",
+                "occurrence_id": "occ-16",
+                "status": "present",
+                "marked_at": datetime(2026, 6, 2, tzinfo=UTC),
+            },
+            {
+                "academy_id": "acad",
+                "occurrence_id": "occ-2",
+                "status": "absent",
+                "marked_at": datetime(2026, 5, 2, tzinfo=UTC),
+            },
+            # June class marked early, in May: not May attendance.
+            {
+                "academy_id": "acad",
+                "occurrence_id": "occ-june",
+                "status": "present",
+                "marked_at": datetime(2026, 5, 31, tzinfo=UTC),
+            },
+        ]
+    )
+    await db["enrollments"].insert_many(
+        [
+            {
+                "enrollment_id": f"enr-{i}",
+                "academy_id": "acad",
+                "session_id": "sess-1",
+                "status": "active",
+            }
+            for i in range(9)
+        ]
+        + [
+            {
+                "enrollment_id": "enr-free",
+                "academy_id": "acad",
+                "session_id": "sess-1",
+                "status": "active",
+                "billing_type": "NoCharge",
+            },
+            {
+                "enrollment_id": "enr-waived",
+                "academy_id": "acad",
+                "session_id": "sess-1",
+                "status": "active",
+                "billing_type": "Waived",
+            },
+        ]
+    )
+
+    dashboard = await _dashboard(db)
+
+    assert dashboard["sessions"]["completed_count"] == 3
+    assert dashboard["sessions"]["scheduled_count"] == 0
+    assert dashboard["sessions"]["enrolled_seats"] == 11
+    assert dashboard["sessions"]["paying_seats"] == 9
+    assert dashboard["attendance"]["recorded_count"] == 2
+    assert dashboard["attendance"]["present_count"] == 1

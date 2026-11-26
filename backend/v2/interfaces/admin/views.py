@@ -2426,7 +2426,9 @@ class AdminReportsSessionsSummary(BaseModel):
     scheduled_count: int = 0
     completed_count: int = 0
     cancelled_count: int = 0
+    #: Active enrollments; ``paying_seats`` leaves out the not-billed ones.
     enrolled_seats: int = 0
+    paying_seats: int = 0
     capacity: int = 0
     capacity_utilization: float | None = None
     waitlist_count: int = 0
@@ -2503,7 +2505,10 @@ class AdminProjectedIncomeSessionRow(BaseModel):
     session_id: str
     title: str = ""
     monthly_fee_cents: int = 0
+    #: Paying enrollments (the ones this income comes from).
     enrollment_count: int = 0
+    #: Every active enrollment, paying or not billed.
+    enrolled_count: int = 0
     expected_cents: int = 0
 
 

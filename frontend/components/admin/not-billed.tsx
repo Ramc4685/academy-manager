@@ -51,6 +51,11 @@ export function notBilledSuffix(count: number | null | undefined): string {
   return count ? ` · +${count} not billed` : "";
 }
 
+/** "9 paying of 11 enrolled", or "11 enrolled" when every child pays (S36). */
+export function headcountLabel(paying: number, enrolled: number): string {
+  return paying === enrolled ? `${enrolled} enrolled` : `${paying} paying of ${enrolled} enrolled`;
+}
+
 const INPUT =
   "w-full rounded-lg border border-rally-line bg-white px-3 py-2 text-sm text-rally-ink outline-none focus:border-rally-cobalt";
 

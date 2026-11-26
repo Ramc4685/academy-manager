@@ -47,7 +47,7 @@ import {
   warningLine,
 } from "@/lib/month-close-view";
 import type { MonthCloseTile } from "@/lib/month-close-view";
-import { notBilledSuffix } from "@/components/admin/not-billed";
+import { headcountLabel, notBilledSuffix } from "@/components/admin/not-billed";
 import { Card } from "@/components/ds/card";
 import { Chip } from "@/components/ds/chip";
 import { Button } from "@/components/ds/button";
@@ -179,6 +179,8 @@ export default function AdminMonthClosePage() {
   const invoiceTiles = tiles.filter((tile) => tile.cents == null);
   const runBox = autopayRunBox(close);
   const odd = oddRows(close);
+  const oddFlagged = odd.filter((row) => row.count > 0);
+  const oddClear = odd.filter((row) => row.count === 0);
   const warning = warningLine(close);
   const discounts = close.tuition_discounts;
   const closeLoading = monthCloseQuery.isLoading;
@@ -415,17 +417,30 @@ export default function AdminMonthClosePage() {
         ) : null}
 
         {/*
-          * Always visible, never grouped: these four checks are the evidence
-          * behind a non-ok verdict, so hiding them behind a click would make
-          * the headline unanswerable.
+          * Always visible, never grouped: a check with a count is the evidence
+          * behind a non-ok verdict, so it keeps its own row. Checks at zero
+          * collapse into one "clear" line (S36).
           */}
         <Card p={24} data-testid="anything-odd-box">
             <Overline>Anything odd</Overline>
             <p className="mt-1 text-sm text-rally-subtle">
-              Four checks over this month&apos;s invoices. A zero is the answer you want.
+              Four checks over this month&apos;s invoices.
             </p>
+            {oddClear.length > 0 ? (
+              <p className="mt-4 text-sm text-rally-subtle" data-testid="odd-clear">
+                {oddFlagged.length === 0 ? "All four checks are clear: " : "Clear: "}
+                {oddClear.map((row, index) => (
+                  <span key={row.code} data-testid={`odd-${row.code}-clear`}>
+                    {index > 0 ? ", " : ""}
+                    {row.label.toLowerCase()}
+                  </span>
+                ))}
+                .
+              </p>
+            ) : null}
+            {oddFlagged.length > 0 ? (
             <ul className="mt-4 space-y-2">
-              {odd.map((row) => (
+              {oddFlagged.map((row) => (
                 <li
                   key={row.code}
                   className="rounded-md border border-rally-line"
@@ -471,6 +486,7 @@ export default function AdminMonthClosePage() {
                 </li>
               ))}
             </ul>
+            ) : null}
         </Card>
 
         <CollapsibleSection
@@ -693,13 +709,20 @@ export default function AdminMonthClosePage() {
                 </BigNum>
               </div>
               <p className="text-sm text-neutral-500 mt-1">
-                Scheduled and completed sessions in {formatMonth(period)}.
+                Class dates held and still to come in {formatMonth(period)}.
               </p>
             </div>
             <dl className="grid min-w-64 gap-3 sm:grid-cols-2">
-              <DashboardTerm label="Completed" value={sessions ? formatInteger(sessions.completed_count) : "No data"} />
+              <DashboardTerm label="Held" value={sessions ? formatInteger(sessions.completed_count) : "No data"} />
               <DashboardTerm label="Cancelled" value={sessions ? formatInteger(sessions.cancelled_count) : "No data"} />
-              <DashboardTerm label="Seats" value={sessions ? `${formatInteger(sessions.enrolled_seats)} / ${formatInteger(sessions.capacity)}` : "No data"} />
+              <DashboardTerm
+                label="Seats"
+                value={
+                  sessions
+                    ? `${headcountLabel(sessions.paying_seats ?? sessions.enrolled_seats, sessions.enrolled_seats)} · ${formatInteger(sessions.capacity)} seats`
+                    : "No data"
+                }
+              />
               <DashboardTerm label="Attendance marks" value={attendance ? formatInteger(attendance.recorded_count) : "No data"} />
               <DashboardTerm label="Waitlist" value={sessions ? formatInteger(sessions.waitlist_count) : "No data"} />
             </dl>
@@ -917,7 +940,9 @@ export default function AdminMonthClosePage() {
                     {projectedSessions.map((row) => (
                       <tr key={row.session_id}>
                         <td className="px-2 py-2 font-medium text-rally-ink">{row.title || row.session_id}</td>
-                        <td className="px-2 py-2 text-rally-muted">{formatInteger(row.enrollment_count)}</td>
+                        <td className="px-2 py-2 text-rally-muted">
+                          {headcountLabel(row.enrollment_count, row.enrolled_count ?? row.enrollment_count)}
+                        </td>
                         <td className="px-2 py-2 text-rally-muted">{formatMoney(row.monthly_fee_cents)}</td>
                         <td className="px-2 py-2 text-rally-muted">{formatMoney(row.expected_cents)}</td>
                       </tr>

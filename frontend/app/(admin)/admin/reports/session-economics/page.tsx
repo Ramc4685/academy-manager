@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import { headcountLabel } from "@/components/admin/not-billed";
 import { Card } from "@/components/ds/card";
 import { BigNum, Overline } from "@/components/ds/typography";
 import { getAdminSessionEconomics } from "@/lib/api/admin";
@@ -137,13 +138,13 @@ export default function AdminSessionEconomicsPage() {
                     </td>
                     <td className="px-3 py-4">
                       <div className="font-semibold text-rally-ink">
-                        {formatInteger(session.active_enrollment_count)}
+                        {headcountLabel(
+                          session.active_enrollment_count,
+                          session.active_enrollment_count + (session.not_billed_enrollment_count ?? 0),
+                        )}
                       </div>
                       <div className="mt-1 text-xs text-rally-muted">
                         {formatInteger(session.paid_student_count)} paid · {formatInteger(session.unpaid_student_count)} due
-                        {session.not_billed_enrollment_count
-                          ? ` · +${formatInteger(session.not_billed_enrollment_count)} not billed`
-                          : ""}
                       </div>
                     </td>
                     <NumberCell value={formatCurrency(session.monthly_fee_cents)} />

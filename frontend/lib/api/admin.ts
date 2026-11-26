@@ -1002,7 +1002,9 @@ export interface AdminReportsSessionsSummary {
   scheduled_count: number;
   completed_count: number;
   cancelled_count: number;
+  /** Active enrollments; paying_seats leaves out the not-billed ones. */
   enrolled_seats: number;
+  paying_seats: number;
   capacity: number;
   capacity_utilization: number | null;
   waitlist_count: number;
@@ -3159,7 +3161,9 @@ export interface AdminProjectedIncomeSessionRow {
   session_id: string;
   title: string;
   monthly_fee_cents: number;
+  /** Paying enrollments; enrolled_count adds the not-billed ones. */
   enrollment_count: number;
+  enrolled_count: number;
   expected_cents: number;
 }
 

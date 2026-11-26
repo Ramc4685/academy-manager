@@ -10192,6 +10192,11 @@ export interface components {
         /** AdminProjectedIncomeSessionRow */
         AdminProjectedIncomeSessionRow: {
             /**
+             * Enrolled Count
+             * @default 0
+             */
+            enrolled_count: number;
+            /**
              * Enrollment Count
              * @default 0
              */
@@ -10601,6 +10606,11 @@ export interface components {
              * @default 0
              */
             enrolled_seats: number;
+            /**
+             * Paying Seats
+             * @default 0
+             */
+            paying_seats: number;
             /**
              * Scheduled Count
              * @default 0

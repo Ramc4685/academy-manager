@@ -5565,6 +5565,11 @@
       },
       "AdminProjectedIncomeSessionRow": {
         "properties": {
+          "enrolled_count": {
+            "default": 0,
+            "title": "Enrolled Count",
+            "type": "integer"
+          },
           "enrollment_count": {
             "default": 0,
             "title": "Enrollment Count",
@@ -6546,6 +6551,11 @@
           "enrolled_seats": {
             "default": 0,
             "title": "Enrolled Seats",
+            "type": "integer"
+          },
+          "paying_seats": {
+            "default": 0,
+            "title": "Paying Seats",
             "type": "integer"
           },
           "scheduled_count": {

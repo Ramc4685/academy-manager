@@ -306,8 +306,9 @@ test.describe("admin month close", () => {
     await page.goto("/admin/reports");
     await expect(page.getByTestId("anything-odd-box")).toBeVisible({ timeout: 45_000 });
 
-    // Every check renders, even at zero, so the owner learns the box's shape.
-    await expect(page.getByTestId("odd-invoice_without_enrollment-count")).toHaveText("0");
+    // A check at zero collapses into the one "clear" line; a flagged one keeps its row.
+    await expect(page.getByTestId("odd-invoice_without_enrollment-clear")).toBeVisible();
+    await expect(page.getByTestId("odd-invoice_without_enrollment-count")).toHaveCount(0);
     await expect(page.getByTestId("odd-autopay_no_card-count")).toHaveText("2");
 
     await expect(page.getByTestId("odd-autopay_no_card-items")).toHaveCount(0);
@@ -361,8 +362,9 @@ test.describe("admin month close", () => {
     await openMonthCloseSection(page, "invoices");
     await expect(page.getByTestId("month-close-tile-voided")).toContainText("nothing voided");
     await expect(page.getByTestId("void-reasons")).toHaveCount(0);
-    // All four checks still render at zero.
-    await expect(page.getByTestId("odd-autopay_on_dead_enrollment-count")).toHaveText("0");
+    // All four checks at zero read as one clear line.
+    await expect(page.getByTestId("odd-clear")).toContainText("All four checks are clear");
+    await expect(page.getByTestId("odd-autopay_on_dead_enrollment-clear")).toBeVisible();
 
     expect(errors, `Console errors: ${errors.join("\n")}`).toEqual([]);
   });

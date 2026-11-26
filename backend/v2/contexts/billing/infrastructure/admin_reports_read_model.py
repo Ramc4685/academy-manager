@@ -50,14 +50,15 @@ from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import 
 )
 from backend.v2.shared.billing_type import is_not_billed
 from backend.v2.shared.occurrences import occurrence_session_id
+from backend.v2.shared.reporting_definitions import (
+    Headcount,
+    attendance_for_classes_filter,
+    class_state,
+    headcount,
+    is_present,
+)
 from backend.v2.shared.tenancy import current_academy_id
 from backend.v2.shared.time import academy_timezone_lookup, resolve_reporting_timezone
-
-# Attendance-rate denominator and numerator (#554). ``voided`` appears in
-# neither: an annulled mark drops out of the rate entirely rather than
-# counting as an absence.
-ATTENDANCE_RATE_COUNTED_STATUSES = ("present", "late", "absent")
-ATTENDANCE_RATE_PRESENT_STATUSES = frozenset({"present", "late"})
 
 
 async def _reporting_timezone(db: AsyncIOMotorDatabase[Any], academy_id: str) -> str:
@@ -828,37 +829,49 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                     family_amounts = bucket["family_amounts"]
                     family_amounts[family_id] = int(family_amounts.get(family_id, 0)) + outstanding
 
-        present_count = 0
-        recorded_count = 0
-        attendance_cursor = db["attendance"].find(
-            {
-                "academy_id": academy_id,
-                "marked_at": {"$gte": start, "$lt": end},
-                "status": {"$in": list(ATTENDANCE_RATE_COUNTED_STATUSES)},
-            }
-        )
-        async for attendance in attendance_cursor:
-            recorded_count += 1
-            if str(attendance.get("status")) in ATTENDANCE_RATE_PRESENT_STATUSES:
-                present_count += 1
-        attendance_rate = round(present_count / recorded_count, 4) if recorded_count else None
-
         session_ids: list[str] = []
-        scheduled_count = 0
-        completed_count = 0
-        cancelled_count = 0
         capacity = 0
+        # Class dates, not class records: one row per occurrence in the month,
+        # held/upcoming/cancelled by the shared definition (nothing writes a
+        # session's status to "completed", so that read 0 forever).
+        class_counts = {"held": 0, "upcoming": 0, "cancelled": 0}
+        month_occurrence_ids: list[str] = []
         # A class counts in every month it meets, not only the month it began:
         # its occurrences in the month name it (as session economics does),
         # plus any class whose first date falls in the month.
         month_session_ids: set[str] = set()
+        now = datetime.now(UTC)
         async for occurrence in db["session_occurrences"].find(
             {"academy_id": academy_id, "start_at": {"$gte": start, "$lt": end}},
-            {"session_id": 1, "template_session_id": 1},
+            {
+                "occurrence_id": 1,
+                "session_id": 1,
+                "template_session_id": 1,
+                "status": 1,
+                "end_at": 1,
+            },
         ):
+            state = class_state(occurrence, now=now)
+            class_counts[state] += 1
+            if state != "cancelled" and occurrence.get("occurrence_id"):
+                month_occurrence_ids.append(str(occurrence["occurrence_id"]))
             occurrence_session = occurrence_session_id(occurrence)
             if occurrence_session:
                 month_session_ids.add(occurrence_session)
+
+        # Attendance by class date: marks on this month's classes.
+        present_count = 0
+        recorded_count = 0
+        if month_occurrence_ids:
+            async for attendance in db["attendance"].find(
+                {"academy_id": academy_id, **attendance_for_classes_filter(month_occurrence_ids)},
+                {"status": 1},
+            ):
+                recorded_count += 1
+                if is_present(attendance.get("status")):
+                    present_count += 1
+        attendance_rate = round(present_count / recorded_count, 4) if recorded_count else None
+
         # Two queries, not one $or: session_id carries a partial index and the
         # planner will not use it inside $or (docs/agent/backend-api-rules.md).
         month_sessions: dict[str, dict[str, Any]] = {}
@@ -872,29 +885,26 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 month_sessions.setdefault(str(doc.get("session_id") or doc.get("_id")), doc)
         for session_id, session in month_sessions.items():
             session_ids.append(session_id)
-            status = str(session.get("status") or "scheduled")
-            if status == "completed":
-                completed_count += 1
-            elif status == "cancelled":
-                cancelled_count += 1
-            else:
-                scheduled_count += 1
-            if status != "cancelled":
+            if str(session.get("status") or "scheduled") != "cancelled":
                 capacity += int(session.get("capacity") or session.get("max_students") or 0)
 
-        enrolled_seats = 0
+        seats = Headcount(enrolled=0, paying=0)
         if session_ids:
-            enrollments_cursor = db["enrollments"].find(
-                {
-                    "academy_id": academy_id,
-                    "session_id": {"$in": session_ids},
-                    "status": "active",
-                    "is_deleted": {"$ne": True},
-                },
-                {"student_id": 1},
+            seats = headcount(
+                [
+                    enrollment
+                    async for enrollment in db["enrollments"].find(
+                        {
+                            "academy_id": academy_id,
+                            "session_id": {"$in": session_ids},
+                            "status": "active",
+                            "is_deleted": {"$ne": True},
+                        },
+                        {"student_id": 1, "billing_type": 1},
+                    )
+                ]
             )
-            async for _enrollment in enrollments_cursor:
-                enrolled_seats += 1
+        enrolled_seats = seats.enrolled
         capacity_utilization = round(enrolled_seats / capacity, 4) if capacity else None
 
         waitlist_count = 0
@@ -1047,10 +1057,11 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 "empty": recorded_count == 0,
             },
             "sessions": {
-                "scheduled_count": scheduled_count,
-                "completed_count": completed_count,
-                "cancelled_count": cancelled_count,
+                "scheduled_count": class_counts["upcoming"],
+                "completed_count": class_counts["held"],
+                "cancelled_count": class_counts["cancelled"],
                 "enrolled_seats": enrolled_seats,
+                "paying_seats": seats.paying,
                 "capacity": capacity,
                 "capacity_utilization": capacity_utilization,
                 "waitlist_count": waitlist_count,
@@ -1128,6 +1139,7 @@ def make_projected_income_report(
             },
         )
         not_billed_count = 0
+        not_billed_by_session: dict[str, int] = {}
         async for enrollment in enrollments_cursor:
             session_id = str(enrollment.get("session_id") or "")
             if not session_id:
@@ -1135,6 +1147,7 @@ def make_projected_income_report(
             if is_not_billed(enrollment):
                 # Never invoiced, so never income; reported as "+N not billed".
                 not_billed_count += 1
+                not_billed_by_session[session_id] = not_billed_by_session.get(session_id, 0) + 1
                 continue
             session_ids.add(session_id)
             enrollment_rows.append(
@@ -1226,6 +1239,11 @@ def make_projected_income_report(
             session_row["enrollment_count"] += 1
             session_row["expected_cents"] += expected
 
+        for session_id, session_row in by_session.items():
+            # "9 paying of 11 enrolled": the same two counts every report shows.
+            session_row["enrolled_count"] = session_row["enrollment_count"] + (
+                not_billed_by_session.get(session_id, 0)
+            )
         rows = sorted(
             by_session.values(),
             key=lambda item: (-int(item["expected_cents"]), str(item["title"])),
