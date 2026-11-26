@@ -208,6 +208,7 @@ export function AcademyPanel() {
   useReportSettingsDirty("academy", dirty);
 
   const mutation = useMutation({
+    meta: { success: "Academy settings saved" },
     mutationFn: () => updateAdminAcademy(payload),
     onSuccess: () => {
       setSavedAt(savedAtNow());

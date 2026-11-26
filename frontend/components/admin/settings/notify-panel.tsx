@@ -85,6 +85,7 @@ export function NotifyPanel() {
   const dirty = Object.keys(payload).length > 0;
   useReportSettingsDirty("notify", dirty);
   const mutation = useMutation({
+    meta: { success: "Notification settings saved" },
     mutationFn: () => updateAdminNotifications(payload),
     onSuccess: () => {
       setSavedAt(savedAtNow());

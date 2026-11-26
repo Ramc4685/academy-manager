@@ -415,6 +415,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   }, [sessionOccurrenceId, date, queryClient, hydrateQueued, patchTodayMarks]);
 
   const noteMutation = useMutation({
+    meta: { success: "Note saved" },
     mutationFn: ({
       studentId,
       body,

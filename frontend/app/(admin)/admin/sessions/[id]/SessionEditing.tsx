@@ -881,6 +881,7 @@ export function OccurrenceReplacementDialog({
   }, [dialogOpen, occurrence]);
 
   const mutation = useMutation({
+    meta: { success: "Replacement saved" },
     mutationFn: () => {
       const trimmedReason = reason.trim() || null;
       if (occurrence) {

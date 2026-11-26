@@ -254,6 +254,8 @@ export function TransferEnrollmentDialog({
   const toSide = targetSession ? sessionTransferSide(targetSession) : null;
   const needsPriceAck = toSide != null && transferNeedsAcknowledgement(fromSide, toSide);
   const mutation = useMutation({
+    // A bulk move with refused rows keeps the dialog open to list them.
+    meta: bulk ? undefined : { success: "Student moved" },
     mutationFn: async (): Promise<string[]> => {
       const payload = {
         target_session_id: targetSessionId,

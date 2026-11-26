@@ -98,10 +98,10 @@ function AboutYouCard({ profile }: { profile: ParentSelfProfile }) {
   }, [profile.display_name, profile.phone]);
 
   const saveMutation = useMutation({
+    meta: { success: "Profile saved" },
     mutationFn: () => updateParentProfile({ display_name: displayName, phone }),
     onSuccess: (updated) => {
       queryClient.setQueryData(queryKeys.parent.profile(), updated);
-      toast({ kind: "success", title: "Saved" });
     },
   });
 

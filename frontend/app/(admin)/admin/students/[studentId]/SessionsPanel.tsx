@@ -213,6 +213,7 @@ function SessionsPanel({
   });
 
   const transferMutation = useMutation({
+    meta: { success: "Student moved" },
     mutationFn: () =>
       transferEnrollment(moving!.enrollment_id, {
         target_session_id: targetSessionId,

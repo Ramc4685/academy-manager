@@ -43,6 +43,7 @@ export function SelfServicePanel() {
   const patch = useMemo(() => policyPatch(query.data, form), [query.data, form]);
   const hasErrors = Object.keys(patch.errors).length > 0;
   const mutation = useMutation({
+    meta: { success: "Self-service settings saved" },
     mutationFn: () => updateSelfServicePolicy(patch.payload),
     onSuccess: (data) => {
       setSavedAt(savedAtNow());

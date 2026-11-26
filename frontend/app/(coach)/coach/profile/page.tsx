@@ -39,6 +39,7 @@ export default function CoachProfilePage() {
   }
 
   const mutation = useMutation({
+    meta: { success: "Profile saved" },
     mutationFn: (payload: UpdateCoachProfileRequest) => updateCoachProfile(payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.coach.profile() });
