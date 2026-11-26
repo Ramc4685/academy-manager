@@ -39,7 +39,7 @@ export function skillLevelLabel(level: string): string {
 /**
  * The Review step's price lines. A $0 quote gets one plain line: "0 of 4
  * classes — monthly rate covers 4 classes" and "Starting next month: $0.00"
- * read as paid-class wording (S22 persona follow-up). Never "Free" (see below).
+ * read as paid-class wording (S22 persona follow-up).
  */
 export function reviewPriceLines(quote: {
   amount_due_cents: number;
@@ -47,7 +47,7 @@ export function reviewPriceLines(quote: {
   message: string;
 }): string[] {
   if (quote.amount_due_cents === 0 && quote.next_billing_amount_cents === 0) {
-    return [`Price: ${monthlyPriceLabel(0)}. Nothing to pay at checkout.`];
+    return ["Free class. Nothing to pay at checkout."];
   }
   return [
     `First month: ${formatCents(quote.amount_due_cents)} · ${quote.message}`,
@@ -56,11 +56,11 @@ export function reviewPriceLines(quote: {
 }
 
 /**
- * "$80.00 per month". Never "Free": an unpriced class also reaches here as 0,
- * and only S42 knows whether a class is explicitly free.
+ * "$80.00 per month", or "Free". The parent catalog lists no unpriced class
+ * (S42), so a 0 here is a class the owner marked Free.
  */
 export function monthlyPriceLabel(cents: number): string {
-  return `${formatCents(cents)} per month`;
+  return cents === 0 ? "Free" : `${formatCents(cents)} per month`;
 }
 
 /** The local calendar date as YYYY-MM-DD, for a date input's `max`. */

@@ -437,6 +437,7 @@ def _session() -> Session:
         start_at=NOW + timedelta(days=1),
         end_at=NOW + timedelta(days=1, hours=1),
         capacity=8,
+        amount_cents=8000,
     )
 
 
@@ -2420,3 +2421,50 @@ async def test_a_failed_registration_receipt_never_fails_approval() -> None:
     await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
 
     assert len(signatures.saved) == 1
+
+
+@pytest.mark.asyncio
+async def test_approve_refuses_an_unpriced_class_before_any_side_effect() -> None:
+    """S42 / D-01: a family's registration never lands in a class with no fee."""
+    unpriced = _session().model_copy(update={"amount_cents": None, "title": "Tuesday Intermediate"})
+    sessions = InMemorySessions([unpriced])
+    apps = InMemoryApplications(_application())
+    enrollments = InMemoryEnrollments()
+    review = AdminRegistrationReview(
+        apps=apps,
+        sessions=sessions,
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(ApplicationNotEditable, match="Tuesday Intermediate has no price yet"):
+        await review.approve(ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1"))
+
+    assert sessions.reserve_calls == 0
+    assert enrollments.created == []
+    assert apps.saved == []
+
+
+@pytest.mark.asyncio
+async def test_approve_accepts_a_class_marked_free() -> None:
+    free = _session().model_copy(update={"amount_cents": 0})
+    enrollments = InMemoryEnrollments()
+    review = AdminRegistrationReview(
+        apps=InMemoryApplications(_application()),
+        sessions=InMemorySessions([free]),
+        students=InMemoryStudents(),
+        enrollments=enrollments,
+        waitlist=InMemoryWaitlist(),
+        academy_id=ACADEMY_ID,
+        clock=lambda: NOW,
+    )
+
+    detail = await review.approve(
+        ApproveRegistrationCommand(application_id="app-1", actor_id="admin-1")
+    )
+
+    assert detail.enrollment_id is not None
+    assert len(enrollments.created) == 1

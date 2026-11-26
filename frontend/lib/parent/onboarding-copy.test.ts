@@ -25,7 +25,7 @@ describe("sign-up wizard copy (S22)", () => {
 
   it("says per month on a class price, and never promises Free for a blank price", () => {
     expect(monthlyPriceLabel(8000)).toBe("$80.00 per month");
-    expect(monthlyPriceLabel(0)).toBe("$0.00 per month");
+    expect(monthlyPriceLabel(0)).toBe("Free");
   });
 
   it("explains every skill level in one line", () => {
@@ -48,9 +48,9 @@ describe("sign-up wizard copy (S22)", () => {
 });
 
 describe("review step wording (S22 persona follow-up)", () => {
-  it("gives a $0 quote one plain line, not paid-class wording", () => {
+  it("gives a free class one plain line, not '0 of 4 classes' (S42)", () => {
     const zero = { amount_due_cents: 0, next_billing_amount_cents: 0, message: "0 of 4 classes" };
-    expect(reviewPriceLines(zero)).toEqual(["Price: $0.00 per month. Nothing to pay at checkout."]);
+    expect(reviewPriceLines(zero)).toEqual(["Free class. Nothing to pay at checkout."]);
     const paid = { amount_due_cents: 6000, next_billing_amount_cents: 8000, message: "3 of 4 classes" };
     expect(reviewPriceLines(paid)).toEqual([
       "First month: $60.00 · 3 of 4 classes",

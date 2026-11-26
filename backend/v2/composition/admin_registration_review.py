@@ -19,6 +19,7 @@ from backend.v2.contexts.enrollment.application.ports import (
     StudentWriter,
     WaitlistRepository,
 )
+from backend.v2.contexts.enrollment.application.pricing_state import is_unpriced
 from backend.v2.contexts.enrollment.application.seat_broker import SeatAcquisition, SeatBroker
 from backend.v2.contexts.enrollment.domain.events import (
     EnrollmentLifecycleEvent,
@@ -407,6 +408,15 @@ class AdminRegistrationReview:
         # Decision 9: an unsigned required waiver warns staff (the queue row and
         # detail show it) and never blocks enrollment, so approval does not look
         # at it. The optional reason is still recorded on the decision.
+
+        # S42 / D-01: a family's own registration never lands in an unpriced
+        # class; refuse before any claim or seat side effect.
+        target = await self._sessions.get(session_id)
+        if target is not None and is_unpriced(target.amount_cents):
+            raise ApplicationNotEditable(
+                f"{target.title} has no price yet. The owner must set a price or mark it "
+                "Free before this registration can be approved."
+            )
 
         now = self._now()
         app = await self._claim_review(app, "APPROVING", now)
