@@ -184,7 +184,9 @@ test.describe("billing trust and recovery surfaces", () => {
     await expect(page.getByText("Cancelled", { exact: true })).toBeVisible();
     await expect(page.getByText("Enrollment cancelled")).toBeVisible();
     await expect(page.getByText("$0.00").first()).toBeVisible();
-    await expect(page.getByText("$90.00")).toHaveCount(0);
+    // S57: the only $90.00 is the open invoice's per-child charge line.
+    await expect(page.getByTestId("money-summary-lines")).toContainText("$90.00");
+    await expect(page.getByText("$90.00")).toHaveCount(1);
     await expect(page.getByRole("button", { name: /^Pay \$90/ })).toHaveCount(0);
     await expect(page.getByTestId("invoice-autopay-optin-inv-void")).toHaveCount(0);
     // The summary figure excludes the voided invoice.
@@ -228,6 +230,10 @@ test.describe("billing trust and recovery surfaces", () => {
     // endpoint on every admin page, so every shell stub must cover it.
     await page.route("**/api/v2/admin/inbox/counts", (route) =>
       fulfillJson(route, { counts: {}, total: 0 }),
+    );
+    // The All invoices tab names each class from the all-classes list.
+    await page.route("**/api/v2/admin/sessions?window=all", (route) =>
+      fulfillJson(route, { sessions: [] }),
     );
 
     await page.route("**/api/v2/admin/payments*", (route) => {

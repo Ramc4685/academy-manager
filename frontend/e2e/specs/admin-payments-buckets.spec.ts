@@ -294,6 +294,10 @@ async function stubAdminShell(page: Page): Promise<void> {
   await page.route("**/api/v2/admin/inbox/counts", (route) =>
     fulfillJson(route, { counts: {}, total: 0 }),
   );
+  // The All invoices tab names each class from the all-classes list.
+  await page.route("**/api/v2/admin/sessions?window=all", (route) =>
+    fulfillJson(route, { sessions: [] }),
+  );
 }
 
 const ALL_SIX_METHODS = ["cash", "check", "zelle", "venmo", "bank_transfer", "other"];
