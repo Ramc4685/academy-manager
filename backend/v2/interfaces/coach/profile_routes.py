@@ -76,7 +76,7 @@ async def get_my_pay(
         **summary.model_dump(),
         academy_contact=CoachAcademyContactView(
             name=str(info.get("name") or "Your academy"),
-            phone=info.get("contact_phone") or None,  # type: ignore[arg-type]
-            email=info.get("contact_email") or None,  # type: ignore[arg-type]
+            phone=info.get("contact_phone") or None,
+            email=info.get("contact_email") or None,
         ),
     )

@@ -1261,7 +1261,9 @@ class MongoStudentRepository(TenantScopedRepository):
             location=str(session.get("location") or "") or None,
             start_at=self._coerce_datetime(session.get("start_at")),
             end_at=self._coerce_datetime(session.get("end_at")),
-            days_of_week=[str(d) for d in (session.get("days_of_week") or []) if d],
+            days_of_week=[
+                str(d) for d in cast(list[object], session.get("days_of_week") or []) if d
+            ],
             start_time=self._optional_str(session.get("start_time")),
             end_time=self._optional_str(session.get("end_time")),
             status=str(enrollment.get("status") or "active"),

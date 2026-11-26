@@ -158,7 +158,7 @@ class StartApplication:
         *,
         apps: ApplicationRepository,
         academy_id: Callable[[], str],
-        clock=lambda: datetime.now(UTC),
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         checkout_retirement: SupersededCheckoutRetirement | None = None,
         account_profile: Callable[[str], Awaitable[ParentProfile | None]] | None = None,
     ) -> None:

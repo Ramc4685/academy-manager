@@ -161,7 +161,7 @@ class GetCoachPaySummary:
             CoachPayslip(
                 period_start=row.period_start,
                 period_end=row.period_end,
-                status=row.status,  # type: ignore[arg-type]
+                status=row.status,
                 total_cents=row.total_minor,
                 currency=row.currency.lower(),
                 approved_on=row.approved_on,

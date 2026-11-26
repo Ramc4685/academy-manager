@@ -2897,6 +2897,7 @@ def compose_parent(
             """
             session = await sessions_query.get(session_id)
             occurrence = await occurrences_query.get(occurrence_id)
+            coach_id: str | None
             if occurrence is not None:
                 coach_id = (
                     occurrence.substitute_coach_id
