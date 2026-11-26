@@ -75,3 +75,12 @@ export function dateOfBirthError(value: string, today: string): string | null {
   if (value > today) return "Date of birth can't be in the future.";
   return null;
 }
+
+/**
+ * Above a returning family's waiver: each child is signed for separately (the
+ * rule stays), so say why it is asked again and that the name is filled in.
+ */
+export function waiverPerChildNote(childFirstName: string): string {
+  const child = childFirstName.trim() || "this child";
+  return `Each child needs their own signed waiver, so this one is for ${child}. Your name is already filled in.`;
+}

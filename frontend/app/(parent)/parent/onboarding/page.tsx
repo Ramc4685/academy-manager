@@ -58,6 +58,7 @@ import {
   reviewPriceLines,
   skillLevelLabel,
   SKILL_LEVEL_HINTS,
+  waiverPerChildNote,
 } from "@/lib/parent/onboarding-copy";
 import { listPhrase } from "@/lib/parent/profile-gaps";
 
@@ -318,6 +319,7 @@ export default function OnboardingStepperPage() {
                 ? `${app.parent_profile.first_name} ${app.parent_profile.last_name}`.trim()
                 : ""
             }
+            childFirstName={app.child_profile.first_name}
             saving={saving}
             onAccept={async (signerName, initials) => {
               if (
@@ -445,7 +447,10 @@ function ParentStep({
       }}
       className="space-y-3"
     >
-      <StepHeading>Your details</StepHeading>
+      <StepHeading>Your details (parent or guardian)</StepHeading>
+      <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
+        Your own name and phone. Your child&apos;s details come next.
+      </p>
       {v.referral_code ? (
         <p className="flex items-center justify-between gap-3 text-sm" data-testid="onboarding-referral-code">
           <span>
@@ -464,10 +469,10 @@ function ParentStep({
           </Button>
         </p>
       ) : null}
-      <Field label="First name">
+      <Field label="Your first name">
         <input value={v.first_name} onChange={(e) => setV({ ...v, first_name: e.target.value })} required />
       </Field>
-      <Field label="Last name">
+      <Field label="Your last name">
         <input value={v.last_name} onChange={(e) => setV({ ...v, last_name: e.target.value })} required />
       </Field>
       {/*
@@ -476,7 +481,7 @@ function ParentStep({
         payment step and be bounced with nothing to click. The form and the
         server-side completeness guard must agree.
       */}
-      <Field label="Phone">
+      <Field label="Your phone">
         <input
           type="tel"
           value={v.phone}
@@ -739,11 +744,13 @@ function WaiverStep({
   onContinue,
   saving,
   defaultSignerName,
+  childFirstName,
 }: {
   accepted: boolean;
   sessionId: string | null;
   birthDate: string | null;
   defaultSignerName: string;
+  childFirstName: string;
   onAccept: (signerName: string, initials: Record<string, Record<string, string>>) => void;
   onContinue: () => void;
   saving: boolean;
@@ -814,6 +821,11 @@ function WaiverStep({
   return (
     <div className="space-y-4">
       <StepHeading>{several ? "Waivers" : "Waiver"}</StepHeading>
+      {defaultSignerName && !accepted ? (
+        <p className="text-sm" style={{ color: "var(--rally-muted)" }} data-testid="onboarding-waiver-per-child">
+          {waiverPerChildNote(childFirstName)}
+        </p>
+      ) : null}
       <div className="space-y-4" data-testid={several ? "onboarding-waivers" : undefined}>
         {sectioned.map(({ item, needed }) => (
           <div key={item.waiver_template_id} className="space-y-2">
@@ -1005,7 +1017,7 @@ function ReviewStep({
         className="space-y-1 rounded-2xl border p-4 text-sm"
         style={{ borderColor: "var(--rally-line)", background: "white", color: "var(--rally-ink)" }}
       >
-        <li>Parent: {app.parent_profile.first_name} {app.parent_profile.last_name}</li>
+        <li>Parent or guardian: {app.parent_profile.first_name} {app.parent_profile.last_name}</li>
         <li>Child: {app.child_profile.first_name} {app.child_profile.last_name} ({skillLevelLabel(app.child_profile.skill_level)})</li>
         <li>
           Session:{" "}

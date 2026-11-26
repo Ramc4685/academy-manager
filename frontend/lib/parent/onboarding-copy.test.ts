@@ -9,6 +9,7 @@ import {
   reviewPriceLines,
   skillLevelLabel,
   SKILL_LEVEL_HINTS,
+  waiverPerChildNote,
 } from "@/lib/parent/onboarding-copy";
 
 describe("sign-up wizard copy (S22)", () => {
@@ -60,5 +61,14 @@ describe("review step wording (S22 persona follow-up)", () => {
   it("capitalises the level and names a missing one", () => {
     expect(skillLevelLabel("beginner")).toBe("Beginner");
     expect(skillLevelLabel("")).toBe("level not given");
+  });
+});
+
+describe("waiverPerChildNote (Wave A follow-up)", () => {
+  it("says the waiver is per child and names the child", () => {
+    expect(waiverPerChildNote("Mateo")).toBe(
+      "Each child needs their own signed waiver, so this one is for Mateo. Your name is already filled in.",
+    );
+    expect(waiverPerChildNote("  ")).toContain("for this child.");
   });
 });
