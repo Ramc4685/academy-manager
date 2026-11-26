@@ -452,7 +452,7 @@ export function WelcomeEmailFields({
           </Field>
           {text("venue_address", "Venue address", academyDefaultPlaceholder(defaults.venue_address))}
           {text("parking_notes", "Parking notes", academyDefaultPlaceholder(defaults.parking_notes))}
-          {text("what_to_bring", "What to bring", academyDefaultPlaceholder(defaults.what_to_bring))}
+          {text("what_to_bring", "What to bring (also on your public page)", academyDefaultPlaceholder(defaults.what_to_bring))}
           <Field label="Arrive N minutes before class">
             <input
               type="number"

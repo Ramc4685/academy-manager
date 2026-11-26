@@ -29,7 +29,7 @@ export const PACK_ROWS: readonly PackRowSpec[] = [
   { field: "whatsapp_group_link", label: "Group chat (WhatsApp) link", kind: "url", hasDefault: false },
   { field: "venue_address", label: "Venue address", kind: "multiline", hasDefault: true },
   { field: "parking_notes", label: "Parking notes", kind: "multiline", hasDefault: true },
-  { field: "what_to_bring", label: "What to bring", kind: "multiline", hasDefault: true },
+  { field: "what_to_bring", label: "What to bring (also on your public page)", kind: "multiline", hasDefault: true },
   { field: "arrival_minutes_before", label: "Arrive early", kind: "minutes", hasDefault: true },
   { field: "coach_contact_policy", label: "Coach contact", kind: "multiline", hasDefault: true },
   { field: "absence_policy", label: "Absences & make-ups", kind: "multiline", hasDefault: true },
