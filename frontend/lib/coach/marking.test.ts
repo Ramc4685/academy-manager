@@ -112,17 +112,12 @@ describe("dateFromOccurrenceId", () => {
     expect(dateFromOccurrenceId("sess_sat:2026-11-21")).toBe("2026-11-21");
   });
 
-  it("converts an instant-shaped id to the device's local date", () => {
-    const instant = "2026-11-21T15:00:00+00:00";
-    const local = new Date(instant);
-    const expected = `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, "0")}-${String(local.getDate()).padStart(2, "0")}`;
-    expect(dateFromOccurrenceId(`sess_sat:${instant}`)).toBe(expected);
-  });
-
   it("returns null for a bare session id or junk", () => {
     expect(dateFromOccurrenceId("sess_sat")).toBeNull();
     expect(dateFromOccurrenceId("sess_sat:not-a-date")).toBeNull();
     expect(dateFromOccurrenceId("sess_sat:2026-13-99Tjunk")).toBeNull();
+    // No wired writer emits instant-shaped ids; guessing a zone would be wrong.
+    expect(dateFromOccurrenceId("sess_sat:2026-11-21T01:00:00+00:00")).toBeNull();
   });
 });
 

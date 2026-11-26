@@ -160,18 +160,13 @@ function localDateKey(d: Date): string {
 
 /**
  * The class date an occurrence id carries, so a link without `?date=` still
- * resolves. Two id shapes exist: `<session>:YYYY-MM-DD:HH:MM` (already the
- * local date) and `<session>:<ISO instant>` (converted to the device's local
- * date, which is the academy's for a coach on site). Null for a bare session id.
+ * resolves. Every writer uses `<session>:YYYY-MM-DD:HH:MM`, already the
+ * academy-local date. Null for a bare session id or any other shape.
  */
 export function dateFromOccurrenceId(occurrenceId: string): string | null {
   const sep = occurrenceId.indexOf(":");
   if (sep < 0) return null;
   const rest = occurrenceId.slice(sep + 1);
-  if (/^\d{4}-\d{2}-\d{2}T/.test(rest)) {
-    const instant = new Date(rest);
-    return Number.isNaN(instant.getTime()) ? null : localDateKey(instant);
-  }
   return /^(\d{4}-\d{2}-\d{2})(?::|$)/.exec(rest)?.[1] ?? null;
 }
 
