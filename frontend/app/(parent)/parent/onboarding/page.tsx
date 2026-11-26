@@ -49,6 +49,14 @@ import {
   resumeStep,
   type OnboardingStep,
 } from "@/lib/parent/onboarding-steps";
+import {
+  classLevelNote,
+  dateOfBirthError,
+  formatUsd,
+  localIsoDate,
+  monthlyPriceLabel,
+  SKILL_LEVEL_HINTS,
+} from "@/lib/parent/onboarding-copy";
 
 /**
  * Parent onboarding stepper.
@@ -231,7 +239,7 @@ export default function OnboardingStepperPage() {
         // checkout must never substitute a figure they never saw (#731).
         void quoteQuery.refetch();
         setError(
-          "This quote expired while you were filling things in. Please check the updated amount below and continue.",
+          "The price we were holding ran out while you were filling things in. Please check the updated amount below and continue.",
         );
       } else {
         setError(err.message);
@@ -323,6 +331,7 @@ export default function OnboardingStepperPage() {
             error={sessionsQuery.isError}
             onRetry={() => void sessionsQuery.refetch()}
             saving={saving}
+            childLevel={app.child_profile.skill_level}
             onSelect={async (id) => {
               if (await save({ selected_session_id: id })) advance();
             }}
@@ -528,11 +537,14 @@ function ChildStep({
   }, [existingChildren, preselectedStudentId]);
 
   const existingSelected = selection !== NEW_CHILD_SELECTION;
+  const today = localIsoDate(new Date());
+  const dobError = dateOfBirthError(v.date_of_birth, today);
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
+        if (dobError) return;
         onSave(v);
       }}
       className="space-y-3"
@@ -621,18 +633,22 @@ function ChildStep({
       </Field>
       <Field label="Date of birth">
         <input
-          type="text"
-          inputMode="text"
+          type="date"
           autoComplete="bday"
-          placeholder="YYYY-MM-DD"
-          pattern="\d{4}-\d{2}-\d{2}"
-          maxLength={10}
+          max={today}
           value={v.date_of_birth}
           onChange={(e) => setV({ ...v, date_of_birth: e.target.value })}
           readOnly={existingSelected}
+          aria-invalid={dobError ? true : undefined}
+          aria-describedby={dobError ? "onboarding-dob-error" : undefined}
           required
         />
       </Field>
+      {dobError && (
+        <p id="onboarding-dob-error" role="alert" className="text-sm text-red-700" data-testid="onboarding-dob-error">
+          {dobError}
+        </p>
+      )}
       <fieldset className="space-y-2">
         <legend className="text-sm font-medium" style={{ color: "var(--rally-ink)" }}>Skill level</legend>
         <div className="grid grid-cols-3 gap-2 stagger-children" role="radiogroup" aria-label="Skill level">
@@ -641,7 +657,7 @@ function ChildStep({
             return (
               <label
                 key={level}
-                className="relative flex min-h-11 items-center justify-center rounded-xl border px-2 text-center text-sm capitalize transition-colors"
+                className="relative flex min-h-11 flex-col items-center justify-center rounded-xl border px-2 py-1.5 text-center text-sm transition-colors"
                 style={{
                   borderColor: selected ? "#facc15" : "var(--rally-line)",
                   background: selected ? "#fffbe9" : "white",
@@ -657,7 +673,10 @@ function ChildStep({
                   onChange={() => setV({ ...v, skill_level: level })}
                   className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                 />
-                {level}
+                <span className="capitalize">{level}</span>
+                <span className="mt-0.5 text-[11px] font-normal leading-tight" style={{ color: "var(--rally-muted)" }}>
+                  {SKILL_LEVEL_HINTS[level]}
+                </span>
               </label>
             );
           })}
@@ -682,9 +701,13 @@ function ChildStep({
         <textarea
           rows={2}
           placeholder="Allergies, conditions, or anything a coach should know"
-          disabled={noMedicalConditions}
           value={noMedicalConditions ? "" : (v.medical_notes ?? "")}
-          onChange={(e) => setV({ ...v, medical_notes: e.target.value })}
+          onChange={(e) => {
+            // Writing a note answers the question, so "none" no longer applies.
+            setNoMedicalConditions(false);
+            setV({ ...v, medical_notes: e.target.value });
+          }}
+          data-testid="onboarding-medical-notes"
         />
       </Field>
       <label className="flex items-center gap-2 text-sm" style={{ color: "var(--rally-ink)" }}>
@@ -857,9 +880,12 @@ function SessionStep({
   onRetry,
   onSelect,
   saving,
+  childLevel,
 }: {
   selected: string | null;
   sessions: ParentAvailableSession[];
+  /** The level chosen on the child step, for the level-mismatch note. */
+  childLevel: string;
   academyTimezone: string | null;
   loading: boolean;
   error: boolean;
@@ -867,6 +893,7 @@ function SessionStep({
   onSelect: (id: string) => void;
   saving: boolean;
 }) {
+  const levelNote = (session: ParentAvailableSession) => classLevelNote(session.title, childLevel);
   return (
     <div className="space-y-3">
       <StepHeading>Pick a session</StepHeading>
@@ -930,12 +957,17 @@ function SessionStep({
                       </span>
                     </span>
                     <span className="shrink-0 text-sm font-semibold" style={{ color: "var(--rally-ink)" }}>
-                      {formatCents(session.amount_cents)}
+                      {monthlyPriceLabel(session.amount_cents)}
                     </span>
                   </span>
                   <span className="mt-2 block text-xs" style={{ color: "var(--rally-muted)" }}>
                     {session.available_seats} of {session.capacity} seats open
                   </span>
+                  {levelNote(session) && (
+                    <span className="mt-2 block text-xs" style={{ color: "#854f0b" }} data-testid="onboarding-level-note">
+                      {levelNote(session)}
+                    </span>
+                  )}
                 </button>
               </li>
             );
@@ -983,16 +1015,20 @@ function ReviewStep({
         <li>
           First month:{" "}
           {quote
-            ? `${formatCents(quote.amount_due_cents)} · ${quote.message}`
+            ? `${formatUsd(quote.amount_due_cents)} · ${quote.message}`
             : quoteLoading
               ? "Calculating..."
               : selectedSession
-                ? formatCents(selectedSession.amount_cents)
+                ? monthlyPriceLabel(selectedSession.amount_cents)
                 : "—"}
         </li>
-        {quote && <li>Starting next month: {formatCents(quote.next_billing_amount_cents)}</li>}
+        {quote && (
+          <li>Starting next month: {monthlyPriceLabel(quote.next_billing_amount_cents)}</li>
+        )}
         {quote?.quote_expires_at && (
-          <li>Quote expires: {formatShortDateTime(quote.quote_expires_at, academyTimezone)}</li>
+          <li data-testid="onboarding-price-held">
+            Price held until {formatShortDateTime(quote.quote_expires_at, academyTimezone)}
+          </li>
         )}
         <li>Waiver: {app.waiver_accepted ? "Accepted" : "Not accepted"}</li>
       </ul>
@@ -1040,13 +1076,6 @@ function formatSessionTime(
 
 function formatShortDateTime(value: string, academyTimezone: string | null): string {
   return formatAcademyMoment(value, academyTimezone);
-}
-
-function formatCents(cents: number): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: "USD",
-  }).format(cents / 100);
 }
 
 function OnboardingStyles() {

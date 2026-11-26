@@ -1,0 +1,45 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  classLevelNote,
+  classTitleLevel,
+  dateOfBirthError,
+  localIsoDate,
+  monthlyPriceLabel,
+  SKILL_LEVEL_HINTS,
+} from "@/lib/parent/onboarding-copy";
+
+describe("sign-up wizard copy (S22)", () => {
+  it("bounds the date of birth at today and explains a bad one", () => {
+    const today = localIsoDate(new Date(2026, 10, 26));
+    expect(today).toBe("2026-11-26");
+    expect(dateOfBirthError("2018-04-12", today)).toBeNull();
+    expect(dateOfBirthError("2026-11-26", today)).toBeNull();
+    expect(dateOfBirthError("2026-11-27", today)).toBe("Date of birth can't be in the future.");
+    expect(dateOfBirthError("2018-4", today)).toBe("Enter the date of birth as a full date.");
+    expect(dateOfBirthError("", today)).toBeNull();
+  });
+
+  it("says per month on a class price, and Free for a free class", () => {
+    expect(monthlyPriceLabel(8000)).toBe("$80.00 per month");
+    expect(monthlyPriceLabel(0)).toBe("Free");
+  });
+
+  it("explains every skill level in one line", () => {
+    for (const level of ["beginner", "intermediate", "advanced"] as const) {
+      expect(SKILL_LEVEL_HINTS[level].length).toBeGreaterThan(0);
+    }
+  });
+
+  it("notes, without blocking, a class listed for another level", () => {
+    expect(classTitleLevel("Tuesday Intermediate")).toBe("intermediate");
+    expect(classTitleLevel("Junior Beginners")).toBe("beginner");
+    expect(classTitleLevel("Beginner to Advanced Mixed")).toBeNull();
+    expect(classLevelNote("Tuesday Intermediate", "beginner")).toBe(
+      "This class is listed as Intermediate; you chose Beginner. You can still pick it.",
+    );
+    expect(classLevelNote("Tuesday Intermediate", "intermediate")).toBeNull();
+    expect(classLevelNote("Saturday Squad", "beginner")).toBeNull();
+    expect(classLevelNote("Tuesday Intermediate", "")).toBeNull();
+  });
+});
