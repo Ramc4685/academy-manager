@@ -306,7 +306,9 @@ test.describe("Recap and skills feedback", () => {
     await expect(page.getByTestId("recap-save-state")).toHaveText("No recap saved yet.");
     await page.getByTestId("recap-skill-select").selectOption("sk-serve");
     await page.getByRole("button", { name: "Add", exact: true }).click();
-    await expect(page.getByTestId("recap-save-state")).toHaveText("Unsaved changes.");
+    await expect(page.getByTestId("recap-save-state")).toHaveText(
+      "Unsaved. Press Save recap to keep these changes.",
+    );
     await page.getByTestId("recap-save").click();
     await expect(page.getByTestId("recap-save-state")).toHaveText("Recap saved.");
     expect(saves).toHaveLength(1);

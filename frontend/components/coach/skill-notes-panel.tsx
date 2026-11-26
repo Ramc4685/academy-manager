@@ -263,8 +263,8 @@ export function SkillNotesPanel({
                   />
                   Mark as shared
                 </label>
-                <p data-testid="skill-note-share-hint" className="text-xs text-neutral-500">
-                  Shared skill notes are not in the parent portal yet.
+                <p data-testid="skill-note-share-hint" className="text-xs text-neutral-600">
+                  Today parents do not see skill notes, shared or not.
                 </p>
               </div>
             )}

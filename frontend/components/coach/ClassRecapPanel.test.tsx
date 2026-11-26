@@ -1,6 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const unsavedReports: Array<[string, boolean]> = [];
+vi.mock("@/components/admin/unsaved-changes-guard", () => ({
+  useReportUnsavedChanges: (key: string, unsaved: boolean) => unsavedReports.push([key, unsaved]),
+}));
 
 import type { ApiError } from "@/lib/api/client";
 import type { ClassRecapView } from "@/lib/api/class-recap";
@@ -12,6 +17,7 @@ import {
   afterReportError,
   ClassRecapEditor,
   ClassReportForm,
+  recapSaveState,
   refreshTodayRecapFlags,
 } from "./ClassRecapPanel";
 
@@ -317,5 +323,24 @@ describe("refreshTodayRecapFlags", () => {
       client.getQueryState(queryKeys.coach.todayPlan("2026-11-22"))
         ?.isInvalidated,
     ).toBe(false);
+  });
+});
+
+describe("ClassRecapPanel unsaved draft", () => {
+  it("tells the coach an added line is not saved until Save recap", () => {
+    expect(recapSaveState(true, 0)).toBe("Unsaved. Press Save recap to keep these changes.");
+    expect(recapSaveState(false, 0)).toBe("No recap saved yet.");
+    expect(recapSaveState(false, 3)).toBe("Recap saved.");
+  });
+
+  it("registers the recap with the leave-page warning", () => {
+    unsavedReports.length = 0;
+    render();
+    expect(unsavedReports).toContainEqual(["class-recap-occ-1", false]);
+  });
+
+  it("says the after-class report goes to the owner, not to parents", () => {
+    const html = render();
+    expect(html).toContain("Report to the owner (parents do not see this)");
   });
 });

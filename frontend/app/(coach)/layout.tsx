@@ -14,6 +14,7 @@ import { useNeedsReviewCount } from "@/lib/offline/use-needs-review-count";
 import { CoachInstallCard } from "@/components/coach/install-card";
 import { CoachSurfaceProvider } from "@/components/coach/coach-surface-context";
 import { ToastProvider } from "@/components/ds/toast";
+import { UnsavedChangesProvider } from "@/components/admin/unsaved-changes-guard";
 import { PersonaSwitcher } from "@/components/persona/persona-switcher";
 import { AccessDeniedNotice } from "@/components/persona/access-denied-notice";
 import { AuthUnavailableScreen } from "@/components/persona/auth-unavailable";
@@ -84,6 +85,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
 
   return (
     <ToastProvider>
+    <UnsavedChangesProvider>
     <CoachSurfaceProvider
       assistant={assistant}
       userId={auth.authorized ? auth.user.user_id : null}
@@ -221,6 +223,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
       </nav>
     </div>
     </CoachSurfaceProvider>
+    </UnsavedChangesProvider>
     </ToastProvider>
   );
 }
