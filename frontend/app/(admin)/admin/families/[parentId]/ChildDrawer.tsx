@@ -77,7 +77,7 @@ export function ChildDrawer({
     mutationFn: (c: Correction & { target: CorrectableAttendanceStatus }) =>
       correctStudentAttendance(c.row.occurrenceId ?? "", child.studentId, {
         status: c.target,
-        reason: c.reason.trim() || null,
+        reason: c.reason.trim(),
       }),
     onSuccess: async (result, c) => {
       await queryClient.invalidateQueries({
@@ -419,8 +419,9 @@ function CorrectionForm({
         </div>
       </fieldset>
       <label className="mt-2 block text-sm text-rally-ink">
-        Reason (optional)
+        Reason
         <textarea
+          required
           rows={2}
           value={reason}
           onChange={(e) => onChange({ ...correction, reason: e.target.value })}
@@ -432,7 +433,8 @@ function CorrectionForm({
         <Button
           size="sm"
           variant="primary"
-          disabled={!target}
+          // S25: the server requires a reason for every admin correction.
+          disabled={!target || reason.trim().length === 0}
           data-testid="drawer-correction-review"
           onClick={() => onChange({ ...correction, step: "confirm" })}
         >

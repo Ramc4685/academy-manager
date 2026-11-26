@@ -10985,6 +10985,8 @@ export interface components {
             status: "present" | "absent" | "late" | "voided";
             /** Student Id */
             student_id: string;
+            /** Student Name */
+            student_name?: string | null;
         };
         /** AdminStudentCurrentPaymentSummaryView */
         AdminStudentCurrentPaymentSummaryView: {
@@ -14013,7 +14015,7 @@ export interface components {
         /** CorrectStudentAttendanceRequest */
         CorrectStudentAttendanceRequest: {
             /** Reason */
-            reason?: string | null;
+            reason: string;
             /**
              * Status
              * @enum {string}

@@ -10,7 +10,10 @@ storage properties:
   other academy's row is untouched;
 * the audit trail (actor, previous status, reason, time) is persisted on the
   tenant's own row and the outbox event carries the tenant and ``actor_role``;
-* the coach 24h window does not apply to an admin.
+* the coach 24h window does not apply to an admin;
+* (S25) a reason is required, an admin can give a first mark to a child the
+  register missed, and the class-date list names every child, former ones
+  included.
 """
 
 from __future__ import annotations
@@ -160,7 +163,10 @@ def test_admin_corrects_outside_the_coach_window_and_the_audit_trail_is_persiste
 def test_an_occurrence_and_student_from_another_academy_is_404(db: Any) -> None:
     outbox = RecordingOutbox()
     with _client(db, roles=("admin",), outbox=outbox) as client:
-        r = client.patch(PATH.format(occ="occ-b", student="stu-b"), json={"status": "absent"})
+        r = client.patch(
+            PATH.format(occ="occ-b", student="stu-b"),
+            json={"status": "absent", "reason": "register fix"},
+        )
     assert r.status_code == 404, r.text
     assert r.json()["error"]["code"] == "Coaching.AttendanceNotFound"
     assert outbox.events == []
@@ -171,7 +177,10 @@ def test_an_occurrence_and_student_from_another_academy_is_404(db: Any) -> None:
 def test_a_student_from_another_academy_on_our_occurrence_is_404(db: Any) -> None:
     outbox = RecordingOutbox()
     with _client(db, roles=("admin",), outbox=outbox) as client:
-        r = client.patch(PATH.format(occ="occ-a", student="stu-b"), json={"status": "late"})
+        r = client.patch(
+            PATH.format(occ="occ-a", student="stu-b"),
+            json={"status": "late", "reason": "register fix"},
+        )
     assert r.status_code == 404, r.text
     assert outbox.events == []
 
@@ -179,8 +188,111 @@ def test_a_student_from_another_academy_on_our_occurrence_is_404(db: Any) -> Non
 def test_a_coach_cannot_use_the_admin_correction_route(db: Any) -> None:
     outbox = RecordingOutbox()
     with _client(db, roles=("coach",), outbox=outbox) as client:
-        r = client.patch(PATH.format(occ="occ-a", student="stu-a"), json={"status": "absent"})
+        r = client.patch(
+            PATH.format(occ="occ-a", student="stu-a"),
+            json={"status": "absent", "reason": "register fix"},
+        )
     assert r.status_code in {403, 404}, r.text
     assert outbox.events == []
     row = _find(db, {"academy_id": ACADEMY_A, "attendance_id": "att-occ-a-stu-a"})
     assert row is not None and row["status"] == "present"
+
+
+class OneOccurrence:
+    """Tenant A's ``occ-new`` only, standing in for the tenant-scoped lookup."""
+
+    async def get(self, occurrence_id: str) -> Any:
+        if occurrence_id != "occ-new":
+            return None
+        return SimpleNamespace(occurrence_id="occ-new", session_id="sess-1")
+
+
+def _first_mark_client(db: Any, outbox: RecordingOutbox) -> TestClient:
+    from backend.v2.composition.attendance_corrections import compose_attendance_corrections
+
+    client = _client(db, roles=("admin",), outbox=outbox)
+    composed = compose_attendance_corrections(
+        db,
+        occurrence_lookup=OneOccurrence(),  # type: ignore[arg-type]
+        outbox=outbox,  # type: ignore[arg-type]
+        academy_id=lambda: ACADEMY_A,
+    )
+    client.app.state.admin = SimpleNamespace(  # type: ignore[attr-defined]
+        correct_attendance=composed.correct,
+        list_occurrence_attendance=composed.list_for_occurrence,
+    )
+    return client
+
+
+def _student(academy_id: str, student_id: str, name: str) -> dict[str, Any]:
+    return {"academy_id": academy_id, "student_id": student_id, "full_name": name}
+
+
+def test_a_correction_needs_a_reason(db: Any) -> None:
+    outbox = RecordingOutbox()
+    with _client(db, roles=("admin",), outbox=outbox) as client:
+        missing = client.patch(PATH.format(occ="occ-a", student="stu-a"), json={"status": "absent"})
+        blank = client.patch(
+            PATH.format(occ="occ-a", student="stu-a"), json={"status": "absent", "reason": "  "}
+        )
+    assert missing.status_code == 422, missing.text
+    assert blank.status_code == 422, blank.text
+    assert outbox.events == []
+    row = _find(db, {"academy_id": ACADEMY_A, "attendance_id": "att-occ-a-stu-a"})
+    assert row is not None and row["status"] == "present"
+
+
+def test_an_admin_marks_a_child_the_register_missed(db: Any) -> None:
+    asyncio.run(db["students"].insert_one(_student(ACADEMY_A, "stu-unmarked", "Ana Unmarked")))
+    outbox = RecordingOutbox()
+    with _first_mark_client(db, outbox) as client:
+        r = client.patch(
+            PATH.format(occ="occ-new", student="stu-unmarked"),
+            json={"status": "present", "reason": "coach missed her on the register"},
+        )
+        listed = client.get("/api/v2/admin/session-occurrences/occ-new/attendance")
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "present"
+    row = _find(
+        db, {"academy_id": ACADEMY_A, "occurrence_id": "occ-new", "student_id": "stu-unmarked"}
+    )
+    assert row is not None
+    assert row["marked_by"] == "u-admin-a"
+    assert row["corrected_by"] == "u-admin-a"
+    assert row["correction_reason"] == "coach missed her on the register"
+    assert listed.status_code == 200, listed.text
+    assert [a["student_name"] for a in listed.json()["attendance"]] == ["Ana Unmarked"]
+
+
+def test_a_first_mark_for_another_academys_student_is_refused(db: Any) -> None:
+    asyncio.run(db["students"].insert_one(_student(ACADEMY_B, "stu-b-only", "Bea Other")))
+    outbox = RecordingOutbox()
+    with _first_mark_client(db, outbox) as client:
+        r = client.patch(
+            PATH.format(occ="occ-new", student="stu-b-only"),
+            json={"status": "present", "reason": "x"},
+        )
+    assert r.status_code == 404, r.text
+    assert _find(db, {"occurrence_id": "occ-new", "student_id": "stu-b-only"}) is None
+
+
+def test_a_first_mark_on_another_academys_occurrence_is_refused(db: Any) -> None:
+    asyncio.run(db["students"].insert_one(_student(ACADEMY_A, "stu-a2", "Ari Ours")))
+    outbox = RecordingOutbox()
+    with _first_mark_client(db, outbox) as client:
+        r = client.patch(
+            PATH.format(occ="occ-b", student="stu-a2"), json={"status": "present", "reason": "x"}
+        )
+    assert r.status_code == 404, r.text
+    assert _find(db, {"occurrence_id": "occ-b", "student_id": "stu-a2"}) is None
+
+
+def test_a_mark_for_a_child_whose_record_is_gone_reads_former_student(db: Any) -> None:
+    # stu-a has a mark in academy A but no students row there (only the
+    # same id would resolve in another academy, which must not leak).
+    asyncio.run(db["students"].insert_one(_student(ACADEMY_B, "stu-a", "Leaked Name")))
+    outbox = RecordingOutbox()
+    with _first_mark_client(db, outbox) as client:
+        listed = client.get("/api/v2/admin/session-occurrences/occ-a/attendance")
+    assert listed.status_code == 200, listed.text
+    assert [a["student_name"] for a in listed.json()["attendance"]] == ["Former student"]

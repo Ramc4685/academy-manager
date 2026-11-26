@@ -922,6 +922,7 @@ export default function AdminSessionDetailPage() {
       />
       <OccurrenceReplacementDialog
         sessionId={sessionId}
+        scheduledCoachId={session?.coach_id ?? null}
         open={replacementOpen}
         occurrence={occurrenceTarget}
         onClose={() => {

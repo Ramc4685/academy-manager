@@ -2422,7 +2422,8 @@ def test_admin_can_correct_student_attendance_any_time(admin_client):
 def test_admin_correct_student_attendance_missing_mark_404(admin_client):
     r = admin_client.patch(
         "/api/v2/admin/session-occurrences/occ-admin-1/attendance/ghost",
-        json={"status": "absent"},
+        # A student unknown to the academy: no first mark either (S25).
+        json={"status": "absent", "reason": "register fix"},
     )
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "Coaching.AttendanceNotFound"

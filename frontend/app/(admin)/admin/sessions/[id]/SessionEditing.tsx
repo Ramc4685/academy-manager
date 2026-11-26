@@ -34,6 +34,11 @@ import {
 } from "@/components/ds/dialog-chrome";
 
 import { CoachSelect } from "./dialogs";
+import { FORMER_STUDENT, occurrenceAttendanceRows } from "./occurrence-attendance-rows";
+import {
+  correctStudentAttendance,
+  type CorrectableAttendanceStatus,
+} from "@/lib/api/admin-families";
 import {
   actionCellClass,
   actionHeaderClass,
@@ -48,6 +53,8 @@ import {
   resolveAcademyTimeZone,
 } from "@/lib/format/academy-time";
 import { checkinActorLine, confirmFailureMessage } from "@/lib/dropoff/checkin";
+
+const CORRECTABLE_STATUSES: CorrectableAttendanceStatus[] = ["present", "absent", "late"];
 
 /**
  * A date the server will refuse to cancel (#671).
@@ -140,7 +147,7 @@ export function ReplacementCoachTable({
 
   function statusNode(occurrence: AdminSessionOccurrenceView) {
     if (occurrence.status === "cancelled") {
-      return (
+      const chip = (
         <span
           data-testid="occurrence-cancelled-chip"
           title={occurrence.cancellation_reason ?? undefined}
@@ -151,6 +158,20 @@ export function ReplacementCoachTable({
         >
           Cancelled
         </span>
+      );
+      // S25: the reason families were sent, on the row itself, not only on hover.
+      return occurrence.cancellation_reason ? (
+        <span className="inline-flex flex-col items-start gap-1">
+          {chip}
+          <span
+            data-testid={`occurrence-cancel-reason-${occurrence.occurrence_id}`}
+            className="text-xs text-rally-muted"
+          >
+            {occurrence.cancellation_reason}
+          </span>
+        </span>
+      ) : (
+        chip
       );
     }
     if (occurrence.status === "completed") {
@@ -463,6 +484,13 @@ export function OccurrenceAttendanceDialog({
   onClose: () => void;
 }) {
   const [voidTarget, setVoidTarget] = useState<string | null>(null);
+  // S25: Present / Absent / Late for any child on the date, reason required.
+  const [correctTarget, setCorrectTarget] = useState<{
+    studentId: string;
+    name: string;
+    current: AdminStudentAttendanceView["status"] | null;
+  } | null>(null);
+  const [correctStatus, setCorrectStatus] = useState<CorrectableAttendanceStatus | null>(null);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const open = Boolean(occurrence);
@@ -471,6 +499,7 @@ export function OccurrenceAttendanceDialog({
   useEffect(() => {
     if (!open) return;
     setVoidTarget(null);
+    setCorrectTarget(null);
     setReason("");
     setError(null);
   }, [open, occurrenceId]);
@@ -484,6 +513,7 @@ export function OccurrenceAttendanceDialog({
   });
 
   const rows: AdminStudentAttendanceView[] = attendanceQuery.data?.attendance ?? [];
+  const rosterRows = occurrenceAttendanceRows(rows, studentNameById);
   const dropoff = attendanceQuery.data?.dropoff;
 
   // Admin confirms a parent's "I've arrived": the server writes
@@ -516,6 +546,23 @@ export function OccurrenceAttendanceDialog({
       await attendanceQuery.refetch();
     },
     onError: (err: Error) => setError(err.message ?? "Failed to void this mark."),
+  });
+
+  const correctMutation = useMutation({
+    mutationFn: () => {
+      if (!occurrenceId || !correctTarget || !correctStatus) throw new Error("No mark selected.");
+      return correctStudentAttendance(occurrenceId, correctTarget.studentId, {
+        status: correctStatus,
+        reason: reason.trim(),
+      });
+    },
+    meta: { success: "Attendance mark saved" },
+    onSuccess: async () => {
+      setCorrectTarget(null);
+      setReason("");
+      await attendanceQuery.refetch();
+    },
+    onError: (err: Error) => setError(err.message ?? "Could not save this mark."),
   });
 
   const when = occurrence ? formatAcademyDateTime(occurrence.start_at, timezone) : "";
@@ -608,53 +655,140 @@ export function OccurrenceAttendanceDialog({
       )}
       {attendanceQuery.isLoading ? (
         <p className="text-sm text-rally-subtle">Loading marks...</p>
-      ) : rows.length === 0 ? (
+      ) : rosterRows.length === 0 ? (
         <p className="text-sm text-rally-subtle">
           No attendance was recorded for this date.
         </p>
       ) : (
         <ul className="space-y-2" data-testid="occurrence-attendance-list">
-          {rows.map((row) => (
+          {rosterRows.map(({ studentId, name: studentName, mark: row }) => (
             <li
-              key={row.attendance_id}
-              className="flex items-center justify-between gap-3 border-b border-rally-line/60 pb-2"
+              key={studentId}
+              data-testid={`occurrence-attendance-row-${studentId}`}
+              className="flex flex-wrap items-center justify-between gap-3 border-b border-rally-line/60 pb-2"
             >
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-rally-ink">
-                  {studentNameById.get(row.student_id) ?? row.student_id}
-                </p>
+                <p className="truncate text-sm font-medium text-rally-ink">{studentName}</p>
                 <span
                   className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium capitalize ${
-                    ATTENDANCE_CHIP[row.status] ?? "bg-rally-line text-rally-muted"
+                    row
+                      ? (ATTENDANCE_CHIP[row.status] ?? "bg-rally-line text-rally-muted")
+                      : "bg-rally-line text-rally-muted"
                   }`}
-                  data-testid={`attendance-status-${row.student_id}`}
+                  data-testid={`attendance-status-${studentId}`}
                 >
-                  {row.status}
+                  {row ? row.status : "Not marked"}
                 </span>
-                {row.status === "voided" && row.correction_reason && (
+                {row?.status === "voided" && row.correction_reason && (
                   <p className="mt-1 text-xs text-rally-subtle">
                     Voided: {row.correction_reason}
                   </p>
                 )}
               </div>
-              {row.status !== "voided" && (
+              <div className="flex flex-wrap gap-2">
                 <Button
                   variant="secondary"
                   size="sm"
                   type="button"
-                  data-testid={`void-attendance-${row.student_id}`}
+                  data-testid={`change-attendance-${studentId}`}
                   onClick={() => {
-                    setVoidTarget(row.student_id);
+                    setCorrectTarget({ studentId, name: studentName, current: row?.status ?? null });
+                    setCorrectStatus(null);
+                    setVoidTarget(null);
                     setReason("");
                     setError(null);
                   }}
                 >
-                  Void mark
+                  {row ? "Change mark" : "Give a mark"}
                 </Button>
-              )}
+                {row && row.status !== "voided" && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    type="button"
+                    data-testid={`void-attendance-${studentId}`}
+                    onClick={() => {
+                      setVoidTarget(studentId);
+                      setCorrectTarget(null);
+                      setReason("");
+                      setError(null);
+                    }}
+                  >
+                    Void mark
+                  </Button>
+                )}
+              </div>
             </li>
           ))}
         </ul>
+      )}
+
+      {correctTarget && (
+        <form
+          className="mt-4 space-y-3"
+          data-testid="correct-attendance-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            correctMutation.mutate();
+          }}
+        >
+          <fieldset>
+            <legend className="text-sm font-medium text-rally-ink">
+              Mark {correctTarget.name} as
+            </legend>
+            <div className="mt-2 flex flex-wrap gap-3">
+              {CORRECTABLE_STATUSES.filter((status) => status !== correctTarget.current).map(
+                (status) => (
+                  <label
+                    key={status}
+                    className="inline-flex min-h-11 items-center gap-2 text-sm capitalize"
+                  >
+                    <input
+                      type="radio"
+                      name="correct-attendance-status"
+                      value={status}
+                      checked={correctStatus === status}
+                      onChange={() => setCorrectStatus(status)}
+                      data-testid={`correct-attendance-status-${status}`}
+                      className="size-4 accent-rally-cobalt-600"
+                    />
+                    {status}
+                  </label>
+                ),
+              )}
+            </div>
+          </fieldset>
+          <Field label="Reason">
+            <input
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              className={inputClass}
+              placeholder="Coach marked the wrong child"
+              maxLength={500}
+              required
+              data-testid="correct-attendance-reason"
+            />
+          </Field>
+          <DialogActions>
+            <Button
+              variant="secondary"
+              size="sm"
+              type="button"
+              onClick={() => setCorrectTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              type="submit"
+              data-testid="confirm-correct-attendance"
+              disabled={correctMutation.isPending || !correctStatus || reason.trim().length === 0}
+            >
+              {correctMutation.isPending ? "Saving..." : "Save mark"}
+            </Button>
+          </DialogActions>
+        </form>
       )}
 
       {voidTarget && (
@@ -666,7 +800,9 @@ export function OccurrenceAttendanceDialog({
           }}
         >
           <Field
-            label={`Why is ${studentNameById.get(voidTarget) ?? voidTarget}'s mark being voided?`}
+            label={`Why is ${
+              rosterRows.find((r) => r.studentId === voidTarget)?.name ?? FORMER_STUDENT
+            }'s mark being voided?`}
           >
             <input
               value={reason}
@@ -708,12 +844,15 @@ export function OccurrenceReplacementDialog({
   occurrence,
   onClose,
   onSaved,
+  scheduledCoachId = null,
 }: {
   sessionId: string;
   open: boolean;
   occurrence: AdminSessionOccurrenceView | null;
   onClose: () => void;
   onSaved: () => void;
+  /** The class's own coach, for a new replacement (no occurrence yet). */
+  scheduledCoachId?: string | null;
 }) {
   const isEditing = Boolean(occurrence);
   const dialogOpen = open || isEditing;
@@ -726,10 +865,12 @@ export function OccurrenceReplacementDialog({
     queryFn: () => listAdminUsers("coach"),
     enabled: dialogOpen,
   });
+  // S25: the scheduled coach cannot replace themselves.
+  const scheduled = occurrence?.scheduled_coach_id ?? scheduledCoachId;
   const coaches = assignableCoaches(
     coachesQuery.data?.users ?? [],
     occurrence?.actual_coach_id,
-  );
+  ).filter((coach) => coach.user_id !== scheduled);
 
   useEffect(() => {
     if (!dialogOpen) return;

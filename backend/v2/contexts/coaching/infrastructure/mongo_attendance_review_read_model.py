@@ -34,6 +34,23 @@ class MongoAttendanceReviewReadModel(TenantScopedRepository):
         )
         return {str(doc["session_id"]): _session_name(doc) async for doc in cursor}
 
+    async def student_names(self, student_ids: list[str]) -> dict[str, str]:
+        """Names of this academy's students by id; ids outside the tenant are absent.
+
+        Withdrawn and transferred children keep their ``students`` row, so a
+        former student still resolves; a missing key means no such student here.
+        """
+        if not student_ids:
+            return {}
+        return {
+            str(doc["student_id"]): str(doc.get("full_name") or "Student")
+            async for doc in self._find_many_in_collection(
+                "students",
+                {"student_id": {"$in": sorted(set(student_ids))}},
+                {"student_id": 1, "full_name": 1},
+            )
+        }
+
     async def occurrences_between(self, start: datetime, end: datetime) -> list[ReviewOccurrence]:
         occurrences = [
             doc
@@ -104,14 +121,7 @@ class MongoAttendanceReviewReadModel(TenantScopedRepository):
                 {"occurrence_id": {"$in": sorted({str(r["occurrence_id"]) for r in rows})}},
             )
         }
-        students = {
-            str(doc["student_id"]): str(doc.get("full_name") or "Student")
-            async for doc in self._find_many_in_collection(
-                "students",
-                {"student_id": {"$in": sorted({str(r["student_id"]) for r in rows})}},
-                {"student_id": 1, "full_name": 1},
-            )
-        }
+        students = await self.student_names([str(r["student_id"]) for r in rows])
         session_ids = {
             occurrence_session_id(occurrences[str(r["occurrence_id"])])
             if str(r["occurrence_id"]) in occurrences

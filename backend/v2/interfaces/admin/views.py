@@ -514,7 +514,17 @@ class UpdateOccurrenceCoachAttendanceRequest(BaseModel):
 
 class CorrectStudentAttendanceRequest(BaseModel):
     status: Literal["present", "absent", "late"]
-    reason: str | None = None
+    #: S25: required. A correction changes the class record families and
+    #: reports read; the reason is the audit trail's only explanation.
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("a reason is required to correct an attendance mark")
+        return cleaned
 
 
 class VoidStudentAttendanceRequest(BaseModel):
@@ -538,6 +548,8 @@ class AdminStudentAttendanceView(BaseModel):
     occurrence_id: str
     session_id: str
     student_id: str
+    #: S25: resolved inside the tenant; "Former student" when it no longer is.
+    student_name: str | None = None
     # "voided" (#554) is a read-only outcome of the void route; the correct
     # route still only accepts the three real marks.
     status: Literal["present", "absent", "late", "voided"]

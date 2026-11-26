@@ -644,7 +644,7 @@ export interface CorrectedAttendance {
 export function correctStudentAttendance(
   occurrenceId: string,
   studentId: string,
-  payload: { status: CorrectableAttendanceStatus; reason: string | null },
+  payload: { status: CorrectableAttendanceStatus; reason: string },
 ): Promise<CorrectedAttendance> {
   return apiFetch<CorrectedAttendance>(
     `/admin/session-occurrences/${encodeURIComponent(occurrenceId)}/attendance/${encodeURIComponent(studentId)}`,

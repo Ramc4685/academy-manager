@@ -105,6 +105,8 @@ export interface AdminStudentAttendanceView {
   attendance_id: string;
   occurrence_id: string;
   session_id: string;
+  /** S25: resolved server-side inside the tenant; "Former student" when gone. */
+  student_name?: string | null;
   student_id: string;
   /** "voided" is an admin annulment: the row stays, but counts as unmarked. */
   status: "present" | "absent" | "late" | "voided";

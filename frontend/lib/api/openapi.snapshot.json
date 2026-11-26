@@ -7493,6 +7493,17 @@
           "student_id": {
             "title": "Student Id",
             "type": "string"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
           }
         },
         "required": [
@@ -16141,15 +16152,8 @@
       "CorrectStudentAttendanceRequest": {
         "properties": {
           "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
+            "title": "Reason",
+            "type": "string"
           },
           "status": {
             "enum": [
@@ -16162,7 +16166,8 @@
           }
         },
         "required": [
-          "status"
+          "status",
+          "reason"
         ],
         "title": "CorrectStudentAttendanceRequest",
         "type": "object"
