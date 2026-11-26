@@ -19,6 +19,9 @@ from backend.v2.contexts.finance.application.use_cases.attendance_trends import 
 from backend.v2.contexts.finance.application.use_cases.coach_utilization import (
     GetCoachUtilization,
 )
+from backend.v2.contexts.finance.infrastructure.mongo_compliance_reader import (
+    MongoComplianceReader,
+)
 from backend.v2.contexts.finance.infrastructure.mongo_held_class_reader import (
     MongoHeldClassReader,
 )
@@ -150,6 +153,19 @@ async def test_coach_utilization_reads_held_hours_for_lead_substitute_and_assist
     assert by_coach["coach-2"].hours == Decimal("1.0000")
     assert by_coach["coach-sub"].hours == Decimal("0.5000")
     assert result.total_payout_minor == 12_000
+
+
+@pytest.mark.asyncio
+async def test_compliance_uses_the_same_academy_month_as_hours() -> None:
+    db = _db()
+    await _seed(db)
+
+    rows = await MongoComplianceReader(db).compliance_for_periods(
+        academy_id="acad", periods=["2026-05"]
+    )
+
+    # 03:00 UTC on June 1 is May 31 in Chicago: May, as for coach hours.
+    assert {row.coach_id: row.total_marked_count for row in rows}["coach-sub"] == 1
 
 
 @pytest.mark.asyncio
