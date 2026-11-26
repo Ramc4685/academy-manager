@@ -31,7 +31,9 @@ export function sessionTransferSide(session: AdminSessionView): TransferSide {
     schedule: formatWeeklyPattern(session) || formatSessionOccurrence(session, null),
     amountCents: session.amount_cents,
     unpriced: session.unpriced ?? session.amount_cents == null,
-    seats: `${session.enrolled_count} of ${session.capacity} seats taken`,
+    seats:
+      `${session.enrolled_count} of ${session.capacity} seats taken` +
+      (session.enrolled_count > session.capacity ? " (over capacity)" : ""),
   };
 }
 

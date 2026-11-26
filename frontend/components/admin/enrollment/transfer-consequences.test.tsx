@@ -1,11 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import type { AdminSessionView } from "@/lib/api/admin";
 import { formatLifecycleType } from "@/app/(admin)/admin/sessions/[id]/format";
 
 import {
   TransferConsequences,
   formatMonthlyPrice,
+  sessionTransferSide,
   transferNeedsAcknowledgement,
   type TransferSide,
 } from "./transfer-consequences";
@@ -21,6 +23,13 @@ const render = (to: TransferSide | null, acknowledged = false) =>
   );
 
 describe("transfer consequences (S27)", () => {
+  it("says when a class holds more students than its seats (F7)", () => {
+    const side = (enrolled_count: number) =>
+      sessionTransferSide({ title: "Junior Beginners", enrolled_count, capacity: 12 } as AdminSessionView).seats;
+    expect(side(18)).toBe("18 of 12 seats taken (over capacity)");
+    expect(side(12)).toBe("12 of 12 seats taken");
+  });
+
   it("prices a class per month, and says when none is set", () => {
     expect(formatMonthlyPrice(SAT)).toBe("$80.00/month");
     expect(formatMonthlyPrice(TUE_UNPRICED)).toBe("No price set");

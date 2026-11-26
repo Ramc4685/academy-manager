@@ -161,15 +161,24 @@ def _decide(matches: Sequence[DuplicateMatch], index: FamilyIndex) -> _Decision:
     by_id = {record.family_id: record for record in index.families}
     on_contact = [m for m in matches if {"email", "phone"} & set(m.matched_on)]
     family_ids = list(dict.fromkeys(m.record_id for m in on_contact if m.kind == "family"))
+    # The family the email or phone picks, when exactly one does: a name-only
+    # match must then not claim the row stays a separate family.
+    chosen = by_id.get(family_ids[0]) if len(family_ids) == 1 else None
     warnings: list[str] = []
     for match in matches:
         if match.kind == "inquiry":
             warnings.append(f"Matches the inquiry from {match.display_name}.")
         elif match.kind == "family" and match.matched_on == ("name",):
-            warnings.append(
-                f"A family named {match.display_name} already exists; the email and phone "
-                "differ, so this is kept as a separate family."
-            )
+            if chosen is not None:
+                warnings.append(
+                    f"A family named {match.display_name} also exists, but the email or "
+                    f"phone matches {chosen.parent_name or 'an existing family'}, so the child goes to that family."
+                )
+            else:
+                warnings.append(
+                    f"A family named {match.display_name} already exists; the email and phone "
+                    "differ, so this is kept as a separate family."
+                )
     if len(family_ids) > 1:
         return _Decision(
             errors=(
