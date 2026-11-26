@@ -86,7 +86,10 @@ async def _seed(db: Any, *, a_status: str = "active") -> None:
             doc: dict[str, Any] = {
                 "academy_id": academy,
                 "synthetic_marker": f"{academy}:{name}",
-                "created_at": _NOW,
+                # Wall-clock, not _NOW: collections with a TTL index on
+                # created_at (scheduler_run_markers, 60 days) would let the
+                # TTL monitor delete a fixed past date mid-test.
+                "created_at": datetime.now(UTC),
             }
             for field in unique_fields:
                 _set_path(doc, field, f"{academy}-{name}-{field}")
