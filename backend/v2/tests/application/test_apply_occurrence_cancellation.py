@@ -331,6 +331,39 @@ async def test_family_who_left_after_the_date_is_credited_from_their_invoice() -
 
 
 @pytest.mark.asyncio
+async def test_child_removed_and_re_added_is_credited_once() -> None:
+    """Review of #1209 item 1: an ended row and a live row for one child, one credit."""
+    left = _enrollment(
+        "enr-old", student_id="st-1", status="deleted", ended_at=DATES[1] + timedelta(days=3)
+    )
+    live = _enrollment("enr-new", student_id="st-1")
+    reader = FakeReader(enrollments=[live, left])
+    invoices = FakeInvoices({"enr-old": _invoice("enr-old", subtotal=12000)})
+    credits = FakeCredits()
+
+    result = await _build(reader, invoices, credits, FakeOverrides()).execute(_cmd())
+
+    outcomes = {d.enrollment_id: d.outcome for d in result.decisions}
+    assert outcomes == {"enr-old": "credited", "enr-new": "skipped:child_already_credited"}
+    assert len(credits.rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_refunded_invoice_credits_nothing() -> None:
+    left = _enrollment("enr-1", status="withdrawn", ended_at=DATES[1] + timedelta(days=3))
+    reader = FakeReader(enrollments=[left])
+    invoice = _invoice("enr-1", subtotal=12000).model_copy(update={"refunded_cents": 12000})
+    credits = FakeCredits()
+
+    result = await _build(
+        reader, FakeInvoices({"enr-1": invoice}), credits, FakeOverrides()
+    ).execute(_cmd())
+
+    assert result.decisions[0].outcome == "skipped:zero_amount"
+    assert credits.rows == []
+
+
+@pytest.mark.asyncio
 async def test_family_who_left_before_the_date_is_not_credited() -> None:
     left = _enrollment("enr-1", status="withdrawn", ended_at=DATES[1] - timedelta(hours=1))
     reader = FakeReader(enrollments=[left])

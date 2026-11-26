@@ -399,12 +399,29 @@ class ApplyOccurrenceCancellation:
 
         decisions: list[OccurrenceCreditDecision] = []
         fee_sized: list[_FeeSizedCredit] = []
-        for enrollment in await self._reader.enrollments_for_session(
+        enrollments = await self._reader.enrollments_for_session(
             cmd.session_id,
             period=period,
             today=now.astimezone(ZoneInfo(pricing.timezone)).date(),
             ended_after=target.start_at,
-        ):
+        )
+        # One credit per child per date (#1209 item 1 review): a child removed
+        # after the date and re-added holds an ended row AND a live row on the
+        # class, and both would otherwise be credited. A child already holding
+        # a credit for this date keeps it; otherwise the ended row (the one
+        # that was actually billed for the date) is decided first.
+        credited_students = await self._students_with_credit(cmd, enrollments)
+        enrollments = sorted(enrollments, key=lambda e: e.ended_at is None)
+        for enrollment in enrollments:
+            if enrollment.student_id and enrollment.student_id in credited_students:
+                if not await self._has_credit(cmd, enrollment):
+                    decisions.append(
+                        replace(
+                            _skip(enrollment, "child_already_credited"),
+                            student_id=enrollment.student_id,
+                        )
+                    )
+                    continue
             decision, sized = await self._decide(
                 enrollment=enrollment,
                 pricing=pricing,
@@ -415,6 +432,8 @@ class ApplyOccurrenceCancellation:
                 now=now,
             )
             decisions.append(decision)
+            if decision.outcome in _CREDITED_OUTCOMES and enrollment.student_id:
+                credited_students.add(enrollment.student_id)
             if sized is not None:
                 fee_sized.append(sized)
         # A dry run skips the re-size: a fee edit landing between preview and
@@ -431,6 +450,25 @@ class ApplyOccurrenceCancellation:
             override_written=not cmd.dry_run,
             decisions=tuple(decisions),
         )
+
+    async def _has_credit(
+        self, cmd: ApplyOccurrenceCancellationCommand, enrollment: BillableEnrollment
+    ) -> bool:
+        source_id = class_cancellation_source_id(
+            occurrence_id=cmd.occurrence_id, enrollment_id=enrollment.enrollment_id
+        )
+        found = await self._credits.find_by_source(
+            source_type=CLASS_CANCELLATION_SOURCE_TYPE, source_id=source_id
+        )
+        return found is not None
+
+    async def _students_with_credit(
+        self, cmd: ApplyOccurrenceCancellationCommand, enrollments: list[BillableEnrollment]
+    ) -> set[str]:
+        """Children already credited for this date under any of their rows."""
+        return {
+            e.student_id for e in enrollments if e.student_id and await self._has_credit(cmd, e)
+        }
 
     async def _settled_fence(self, session_id: str) -> Hashable | None:
         """The change fence once no owner edit holds it; ``None`` if one never let go."""
@@ -609,7 +647,9 @@ class ApplyOccurrenceCancellation:
 
         fee_based = False
         if invoice is not None:
-            charge = await self._tuition_cents(invoice)
+            # Money handed back on the invoice was never kept: a refunded
+            # month (a common way out for a family who left) credits nothing.
+            charge = max(await self._tuition_cents(invoice) - invoice.refunded_cents, 0)
         elif basis is not None and basis.calculation_type == "FIRST_MONTH_PRORATION":
             # The family paid their first month at registration checkout: the
             # proration snapshot is CONSUMED, the Payment carries no
