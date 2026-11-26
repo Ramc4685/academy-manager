@@ -47,6 +47,8 @@ A request returning **404** means "the route does not exist for you," regardless
 | Mark attendance for assigned session | Yes | Conditional: assigned to session | No |
 | Edit historical attendance | Yes | No | No |
 | View attendance for session | Yes | Conditional: assigned to session | Conditional: own child |
+| **Health (D-14)** | | | |
+| Read a class date's health notes, emergency contacts and parent phone | Yes (own academy) | Conditional: assigned to that class date (lead, cover or assistant) | No |
 | **Coaching** | | | |
 | Create lesson plan | Yes | Conditional: assigned sessions | No |
 | Edit lesson plan | Yes | Conditional: own plans | No |
@@ -114,6 +116,14 @@ This section is updated per wave as routes ship.
 |---|:---:|:---:|---|
 | Send message to the academy | ✅ parent, own thread | ✅ coach, admin | `backend/v2/tests/interface/test_parent_messages_routes.py` |
 | Admin reads and replies to family threads | ✅ every admin; private DMs stay private | n/a | `backend/v2/tests/interface/test_admin_academy_inbox.py`, `backend/v2/tests/contract/test_message_repo_tenant_isolation.py` |
+
+### Health notes (S49, decision D-14)
+
+| Action | Coach has access | Wrong persona returns 404 | Test file |
+|---|:---:|:---:|---|
+| Read a class date's health notes (`GET /coach/roster-health`) | ✅ assigned only | ✅ unassigned coach, assistant on another class, parent, student, other academy | `backend/v2/tests/interface/test_coach_roster_health.py` |
+
+Health notes are served only by their own routes, sent `Cache-Control: no-store`, excluded from the service worker cache (`frontend/app/sw.test.ts`) and the query persister (`frontend/lib/query/persistence.test.ts`), and never ride on the cached coach Today, sessions or plan payloads (schema test in the same file). They never go into lists, exports, digests, push, emails or AI input.
 
 ### Wave 1B, 2, 3 — Not yet started
 

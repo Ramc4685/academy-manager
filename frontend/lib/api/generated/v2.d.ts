@@ -5658,6 +5658,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/coach/roster-health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Health notes and emergency contacts for an assigned class date (never cached) */
+        get: operations["get_roster_health_api_v2_coach_roster_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/coach/sessions": {
         parameters: {
             query?: never;
@@ -13638,6 +13655,28 @@ export interface components {
             /** Min Age */
             min_age?: number | null;
         };
+        /** CoachChildHealthView */
+        CoachChildHealthView: {
+            /** Emergency Contact Name */
+            emergency_contact_name?: string | null;
+            /** Emergency Contact Phone */
+            emergency_contact_phone?: string | null;
+            /** Full Name */
+            full_name: string;
+            /** Note */
+            note?: string | null;
+            /** Parent Name */
+            parent_name?: string | null;
+            /** Parent Phone */
+            parent_phone?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "declared" | "none_declared" | "not_answered";
+            /** Student Id */
+            student_id: string;
+        };
         /** CoachDashboardResponse */
         CoachDashboardResponse: {
             /** Active Student Count */
@@ -14002,6 +14041,15 @@ export interface components {
             trial_outcome?: ("came" | "no_show") | null;
             /** Trial Request Id */
             trial_request_id?: string | null;
+        };
+        /** CoachRosterHealthResponse */
+        CoachRosterHealthResponse: {
+            /** Children */
+            children: components["schemas"]["CoachChildHealthView"][];
+            /** Declared Count */
+            declared_count: number;
+            /** Occurrence Id */
+            occurrence_id: string;
         };
         /** CoachScheduleEntry */
         CoachScheduleEntry: {
@@ -33444,6 +33492,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CoachPayResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_roster_health_api_v2_coach_roster_health_get: {
+        parameters: {
+            query: {
+                occurrence_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoachRosterHealthResponse"];
                 };
             };
             /** @description Validation Error */

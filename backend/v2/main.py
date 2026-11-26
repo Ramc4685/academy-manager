@@ -1211,6 +1211,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     from backend.v2.composition.dropoff_checkins import compose_dropoff_checkins
 
     app.state.dropoff_checkins = compose_dropoff_checkins(db, outbox, idempotency_store)
+    # S49 (D-14): children's health notes for assigned coaches, never cached.
+    from backend.v2.composition.coach_roster_health import compose_coach_roster_health
+
+    app.state.coach_roster_health = compose_coach_roster_health(db)
     # B5 month-close narrator (paid AI): the gated LlmPort over the month-close reader.
     from backend.v2.composition.ai_reports import compose_ai_reports
 

@@ -22,6 +22,7 @@ from .feedback_routes import router as feedback_router
 from .messages_routes import router as messages_router
 from .notes_routes import router as notes_router
 from .profile_routes import router as profile_router
+from .roster_health_routes import router as roster_health_router
 from .roster_routes import router as roster_router
 from .sessions_routes import router as sessions_router
 from .skill_routes import router as skill_router
@@ -40,6 +41,7 @@ router.include_router(attendance_router)
 router.include_router(dropoff_router)
 router.include_router(notes_router)
 router.include_router(roster_router)
+router.include_router(roster_health_router)
 router.include_router(feedback_router)
 router.include_router(skill_router)
 router.include_router(messages_router)

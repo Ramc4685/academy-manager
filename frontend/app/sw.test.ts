@@ -58,6 +58,13 @@ describe("service worker coach reads", () => {
     expect(handlerFor("GET", "/api/v2/coach/profile/pay?month=2026-11").constructor.name).toBe("NetworkOnly");
   });
 
+  it.each([
+    "/api/v2/coach/roster-health?occurrence_id=occ-1",
+    "/api/v2/admin/today/roster-health?occurrence_id=occ-1",
+  ])("never caches children's health notes: %s", (path) => {
+    expect(handlerFor("GET", path).constructor.name).toBe("NetworkOnly");
+  });
+
   it("sends coach attendance writes to the network", () => {
     expect(handlerFor("POST", "/api/v2/coach/attendance").constructor.name).toBe("NetworkOnly");
   });

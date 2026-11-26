@@ -57,6 +57,9 @@ export function shouldPersistQuery(queryKey: unknown, status: string): boolean {
   if (queryKey[1] === "skill-notes") return false;
   // A coach's pay is online-only (S60): no payslip on a shared device.
   if (queryKey[1] === "pay") return false;
+  // Children's health notes and emergency contacts (S49, D-14) are never
+  // stored on the device: online-only, like the service worker treats them.
+  if (queryKey[1] === "roster-health") return false;
   return status === "success";
 }
 

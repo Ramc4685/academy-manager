@@ -14524,6 +14524,90 @@
         "title": "CoachAgeBand",
         "type": "object"
       },
+      "CoachChildHealthView": {
+        "additionalProperties": false,
+        "properties": {
+          "emergency_contact_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emergency Contact Name"
+          },
+          "emergency_contact_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emergency Contact Phone"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "parent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Name"
+          },
+          "parent_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Phone"
+          },
+          "status": {
+            "enum": [
+              "declared",
+              "none_declared",
+              "not_answered"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "full_name",
+          "status"
+        ],
+        "title": "CoachChildHealthView",
+        "type": "object"
+      },
       "CoachDashboardResponse": {
         "properties": {
           "active_student_count": {
@@ -15517,6 +15601,33 @@
           "full_name"
         ],
         "title": "CoachRosterEntry",
+        "type": "object"
+      },
+      "CoachRosterHealthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/CoachChildHealthView"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "declared_count": {
+            "title": "Declared Count",
+            "type": "integer"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "declared_count",
+          "children"
+        ],
+        "title": "CoachRosterHealthResponse",
         "type": "object"
       },
       "CoachScheduleEntry": {
@@ -55985,6 +56096,50 @@
         "summary": "The current coach's classes taught and approved or paid payslip",
         "tags": [
           "coach"
+        ]
+      }
+    },
+    "/api/v2/coach/roster-health": {
+      "get": {
+        "operationId": "get_roster_health_api_v2_coach_roster_health_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoachRosterHealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Health notes and emergency contacts for an assigned class date (never cached)",
+        "tags": [
+          "coach.roster-health"
         ]
       }
     },
