@@ -9640,6 +9640,11 @@ export interface components {
             coach_name?: string | null;
             /** Currency */
             currency: string;
+            /**
+             * Generatable
+             * @default true
+             */
+            generatable: boolean;
             /** Period Id */
             period_id?: string | null;
             /** Session Count */

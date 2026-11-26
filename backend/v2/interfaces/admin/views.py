@@ -1529,6 +1529,9 @@ class AdminMonthlyPayrollRow(BaseModel):
     unresolved_unpaid_count: int = 0
     warning_count: int = 0
     warning_status: Literal["clear", "unresolved"] = "clear"
+    #: False for an active coach who taught nothing this month (D-04): listed
+    #: muted so the owner sees them, never offered Generate.
+    generatable: bool = True
 
 
 class AdminMonthlyPayrollView(BaseModel):

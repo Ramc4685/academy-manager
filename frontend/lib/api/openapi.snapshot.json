@@ -4054,6 +4054,11 @@
             "title": "Currency",
             "type": "string"
           },
+          "generatable": {
+            "default": true,
+            "title": "Generatable",
+            "type": "boolean"
+          },
           "period_id": {
             "anyOf": [
               {
