@@ -24,6 +24,7 @@ from backend.v2.composition.lifecycle_billing import (
     compose_enrollment_billing_sync,
 )
 from backend.v2.composition.occurrence_cancellation import StudentPresenceAdapter
+from backend.v2.composition.parent_money_summary import ParentMoney, compose_parent_money
 from backend.v2.composition.parent_registrations import (
     compose_list_parent_registrations,
 )
@@ -44,9 +45,7 @@ from backend.v2.composition.waitlist_offers import (
     compose_list_parent_waitlist,
 )
 from backend.v2.composition.waiver_receipt_email import compose_waiver_receipt_notifier
-from backend.v2.contexts.billing.application.autopay_eligibility import (
-    CHARGEABLE_INVOICE_STATUSES,
-)
+from backend.v2.contexts.billing.application.parent_money import invoice_is_due
 from backend.v2.contexts.billing.application.charge_route import resolve_charge_route
 from backend.v2.contexts.billing.application.ports import (
     ConnectedAccountDirectory,
@@ -422,6 +421,7 @@ class ParentComposition:
     decline_waitlist_offer: DeclineWaitlistOffer
     list_parent_waitlist: object  # callable(parent_id)
     list_parent_registrations: object  # callable(parent_id), S02
+    parent_money: ParentMoney  # S57: money summary + invoice/payment labels
     enroll_child: object
     cancel_billing_enrollment: object
     get_parent_waiver_requirement: GetParentWaiverRequirement
@@ -3089,11 +3089,7 @@ def compose_parent(
         # both gate on {open, partially_paid} AND a positive balance). A
         # `not in {paid, void}` negation would count `draft` invoices, and the
         # banner would then offer a Pay button for money no surface can take.
-        unpaid = [
-            inv
-            for inv in invoices
-            if str(inv.status) in CHARGEABLE_INVOICE_STATUSES and int(inv.balance_due_cents) > 0
-        ]
+        unpaid = [inv for inv in invoices if invoice_is_due(inv)]  # S57: shared with Payments
         amount_due_cents = sum(int(inv.balance_due_cents) for inv in unpaid)
         due_dates = [inv.due_date for inv in unpaid if inv.due_date]
         currency = next((str(inv.currency) for inv in unpaid if inv.currency), None)
@@ -3280,6 +3276,14 @@ def compose_parent(
         decline_waitlist_offer=compose_decline_waitlist_offer(db, promote=promote),
         list_parent_waitlist=compose_list_parent_waitlist(db),
         list_parent_registrations=compose_list_parent_registrations(db),
+        parent_money=compose_parent_money(
+            db,
+            list_invoices=list_invoices_for_parent,
+            get_lines=billing_ledger_repo.get_lines_for_invoice,
+            list_children=list_children_for_parent,
+            list_enrollments=list_enrollments_for_parent,
+            clock=clock,
+        ),
         enroll_child=enroll_child_uc.execute,
         cancel_billing_enrollment=cancel_billing_enrollment_uc.execute,
         get_parent_waiver_requirement=get_waiver_req,

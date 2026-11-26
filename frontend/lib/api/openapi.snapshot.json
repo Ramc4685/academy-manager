@@ -26110,6 +26110,17 @@
             "title": "Balance Due Cents",
             "type": "integer"
           },
+          "class_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Name"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -26135,6 +26146,11 @@
             ],
             "title": "Enrollment Id"
           },
+          "has_receipt": {
+            "default": false,
+            "title": "Has Receipt",
+            "type": "boolean"
+          },
           "invoice_id": {
             "title": "Invoice Id",
             "type": "string"
@@ -26157,6 +26173,29 @@
             "title": "Lines",
             "type": "array"
           },
+          "method_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method Label"
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On"
+          },
           "pdf_url": {
             "anyOf": [
               {
@@ -26175,6 +26214,17 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
           },
           "total_cents": {
             "title": "Total Cents",
@@ -26251,6 +26301,17 @@
             "title": "Balance Due Cents",
             "type": "integer"
           },
+          "class_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Name"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -26276,6 +26337,11 @@
             ],
             "title": "Enrollment Id"
           },
+          "has_receipt": {
+            "default": false,
+            "title": "Has Receipt",
+            "type": "boolean"
+          },
           "invoice_id": {
             "title": "Invoice Id",
             "type": "string"
@@ -26290,6 +26356,29 @@
               }
             ],
             "title": "Invoice Number"
+          },
+          "method_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method Label"
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On"
           },
           "pdf_url": {
             "anyOf": [
@@ -26309,6 +26398,17 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
           },
           "total_cents": {
             "title": "Total Cents",
@@ -26353,6 +26453,36 @@
           "invoices"
         ],
         "title": "ParentInvoicesResponse",
+        "type": "object"
+      },
+      "ParentLastPaymentView": {
+        "properties": {
+          "amount_cents": {
+            "title": "Amount Cents",
+            "type": "integer"
+          },
+          "method_label": {
+            "title": "Method Label",
+            "type": "string"
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On"
+          }
+        },
+        "required": [
+          "amount_cents",
+          "method_label"
+        ],
+        "title": "ParentLastPaymentView",
         "type": "object"
       },
       "ParentMarkMessageReadResponse": {
@@ -26462,6 +26592,165 @@
         "title": "ParentMessagesResponse",
         "type": "object"
       },
+      "ParentMoneyLineView": {
+        "properties": {
+          "amount_cents": {
+            "title": "Amount Cents",
+            "type": "integer"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "kind": {
+            "enum": [
+              "child",
+              "discount",
+              "paid"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "student_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Id"
+          }
+        },
+        "required": [
+          "kind",
+          "label",
+          "amount_cents"
+        ],
+        "title": "ParentMoneyLineView",
+        "type": "object"
+      },
+      "ParentMoneyPeriodView": {
+        "properties": {
+          "billed_cents": {
+            "title": "Billed Cents",
+            "type": "integer"
+          },
+          "due_cents": {
+            "title": "Due Cents",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "paid_cents": {
+            "title": "Paid Cents",
+            "type": "integer"
+          },
+          "period": {
+            "title": "Period",
+            "type": "string"
+          }
+        },
+        "required": [
+          "period",
+          "label",
+          "billed_cents",
+          "paid_cents",
+          "due_cents"
+        ],
+        "title": "ParentMoneyPeriodView",
+        "type": "object"
+      },
+      "ParentMoneySummaryView": {
+        "properties": {
+          "amount_due_cents": {
+            "title": "Amount Due Cents",
+            "type": "integer"
+          },
+          "can_pay_online": {
+            "title": "Can Pay Online",
+            "type": "boolean"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "days_overdue": {
+            "title": "Days Overdue",
+            "type": "integer"
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Date"
+          },
+          "last_payment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParentLastPaymentView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/ParentMoneyLineView"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "multiple_due_dates": {
+            "title": "Multiple Due Dates",
+            "type": "boolean"
+          },
+          "overdue": {
+            "title": "Overdue",
+            "type": "boolean"
+          },
+          "periods": {
+            "items": {
+              "$ref": "#/components/schemas/ParentMoneyPeriodView"
+            },
+            "title": "Periods",
+            "type": "array"
+          }
+        },
+        "required": [
+          "currency",
+          "amount_due_cents",
+          "overdue",
+          "days_overdue",
+          "multiple_due_dates",
+          "can_pay_online",
+          "lines",
+          "periods"
+        ],
+        "title": "ParentMoneySummaryView",
+        "type": "object"
+      },
       "ParentPaymentHistoryResponse": {
         "properties": {
           "payments": {
@@ -26515,6 +26804,17 @@
             ],
             "title": "Invoice Period"
           },
+          "method_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method Label"
+          },
           "payment_id": {
             "title": "Payment Id",
             "type": "string"
@@ -26559,6 +26859,13 @@
               }
             ],
             "title": "Stripe Payment Intent Id"
+          },
+          "student_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Student Names",
+            "type": "array"
           }
         },
         "required": [
@@ -58355,6 +58662,27 @@
         "summary": "Mark Message Read",
         "tags": [
           "parent.messages"
+        ]
+      }
+    },
+    "/api/v2/parent/money-summary": {
+      "get": {
+        "operationId": "get_money_summary_api_v2_parent_money_summary_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentMoneySummaryView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "What the family owes now, by child, with one due date",
+        "tags": [
+          "parent.invoices"
         ]
       }
     },

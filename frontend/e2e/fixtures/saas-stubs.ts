@@ -354,3 +354,30 @@ export async function stubAcademy(page: Page, academyId: string): Promise<void> 
     return fulfillJson(route, { deletions: [] });
   });
 }
+
+/**
+ * S57: Payments reads its one "you owe" figure from GET /parent/money-summary.
+ * Unstubbed it errors and the page shows its retry notice instead of the
+ * content a spec is checking. Defaults to nothing due.
+ */
+export async function stubParentMoneySummary(
+  page: Page,
+  overrides: Record<string, unknown> = {},
+): Promise<void> {
+  await page.route("**/api/v2/parent/money-summary", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fulfillJson(route, {
+      currency: "usd",
+      amount_due_cents: 0,
+      due_date: null,
+      overdue: false,
+      days_overdue: 0,
+      multiple_due_dates: false,
+      can_pay_online: true,
+      lines: [],
+      periods: [],
+      last_payment: null,
+      ...overrides,
+    });
+  });
+}

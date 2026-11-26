@@ -24,6 +24,7 @@ import {
   stubParentAcademy,
   stubParentMessages,
   stubParentProfile,
+  stubParentMoneySummary,
 } from "../fixtures/saas-stubs";
 
 type Surface =
@@ -260,6 +261,11 @@ test.describe("axe: parent payments", () => {
       ],
     });
 
+    await stubParentMoneySummary(page, {
+      amount_due_cents: 12000,
+      due_date: "2026-09-12",
+      lines: [{ kind: "child", student_id: "st-1", label: "Ava Sample", amount_cents: 12000 }],
+    });
     await page.goto("/parent/payments");
     await expect(page.getByTestId("parent-payments")).toBeVisible();
     await expect(page.getByTestId("pay-balance-reassurance")).toBeVisible();

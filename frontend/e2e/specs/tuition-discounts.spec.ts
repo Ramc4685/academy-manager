@@ -19,6 +19,7 @@ import {
   stubParentAcademy,
   stubParentMessages,
   stubParentProfile,
+  stubParentMoneySummary,
 } from "../fixtures/saas-stubs";
 
 type StudentDetail = Record<string, unknown> & {
@@ -329,6 +330,7 @@ async function stubAdminStudentDiscounts(page: Page, student: StudentDetail) {
 }
 
 async function stubParentInvoiceDiscounts(page: Page) {
+  await stubParentMoneySummary(page);
   await page.route("**/api/v2/parent/payments", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return fulfillJson(route, { payments: [] });

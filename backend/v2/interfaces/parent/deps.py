@@ -150,6 +150,8 @@ class ParentUseCases:
     fill_parent_profile_blanks: Any | None = None
     # S43: undo a reported absence before class starts. Defaulted for old fixtures.
     withdraw_absence_notice: WithdrawAbsenceNotice | None = None
+    # S57: money summary + invoice/payment labels (composition.parent_money_summary.ParentMoney).
+    parent_money: Any | None = None
 
 
 def get_parent_use_cases(request: Request) -> ParentUseCases:

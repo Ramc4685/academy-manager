@@ -178,6 +178,8 @@ async def list_payments(
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ParentPaymentHistoryResponse:
     payments = await use_cases.list_payments_for_parent(claims.user_id)  # type: ignore[operator]
+    money = getattr(use_cases, "parent_money", None)
+    extras = await money.payment_extras(claims.user_id, payments) if money else {}
     return ParentPaymentHistoryResponse(
         payments=[
             ParentPaymentView(
@@ -192,6 +194,7 @@ async def list_payments(
                 stripe_payment_intent_id=getattr(p, "stripe_payment_intent_id", None),
                 invoice_id=getattr(p, "invoice_id", None),
                 invoice_period=getattr(p, "invoice_period", None),
+                **extras.get(p.payment_id, {}),
             )
             for p in payments
         ]

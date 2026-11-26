@@ -7,6 +7,7 @@ import {
   stubMemberships,
   stubParentMessages,
   stubParentProfile,
+  stubParentMoneySummary,
 } from "../fixtures/saas-stubs";
 
 const draftApplication = {
@@ -39,6 +40,7 @@ function futureDateInput(daysAhead: number): string {
 }
 
 async function stubParentShell(page: Parameters<typeof stubMe>[0]) {
+  await stubParentMoneySummary(page);
   await stubMe(page, {
     user_id: "user-parent-qa",
     email: "parent@example.com",

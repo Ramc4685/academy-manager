@@ -10,6 +10,7 @@ import {
   stubParentAcademy,
   stubParentMessages,
   stubParentProfile,
+  stubParentMoneySummary,
 } from "../fixtures/saas-stubs";
 
 // The invoice email's "Pay invoice" button links to /parent/payments?pay=<id>
@@ -25,6 +26,11 @@ async function stubPaymentsPage(page: Page, payStatus: number) {
   await stubParentProfile(page);
   await stubParentMessages(page);
   await stubParentAcademy(page);
+  await stubParentMoneySummary(page, {
+    amount_due_cents: 9000,
+    due_date: "2026-11-15",
+    lines: [{ kind: "child", label: "Family", amount_cents: 9000 }],
+  });
   for (const [path, body] of [
     ["**/api/v2/parent/payments", { payments: [] }],
     ["**/api/v2/parent/enrollments", { enrollments: [] }],

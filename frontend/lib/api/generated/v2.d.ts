@@ -6787,6 +6787,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/parent/money-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What the family owes now, by child, with one due date */
+        get: operations["get_money_summary_api_v2_parent_money_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/parent/onboarding/start": {
         parameters: {
             query?: never;
@@ -17573,6 +17590,8 @@ export interface components {
         ParentInvoiceDetailView: {
             /** Balance Due Cents */
             balance_due_cents: number;
+            /** Class Name */
+            class_name?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -17587,18 +17606,29 @@ export interface components {
             due_date: string;
             /** Enrollment Id */
             enrollment_id?: string | null;
+            /**
+             * Has Receipt
+             * @default false
+             */
+            has_receipt: boolean;
             /** Invoice Id */
             invoice_id: string;
             /** Invoice Number */
             invoice_number?: string | null;
             /** Lines */
             lines: components["schemas"]["ParentInvoiceLineView"][];
+            /** Method Label */
+            method_label?: string | null;
+            /** Paid On */
+            paid_on?: string | null;
             /** Pdf Url */
             pdf_url?: string | null;
             /** Period */
             period: string;
             /** Status */
             status: string;
+            /** Student Name */
+            student_name?: string | null;
             /** Total Cents */
             total_cents: number;
             /** Void Reason */
@@ -17621,6 +17651,8 @@ export interface components {
         ParentInvoiceView: {
             /** Balance Due Cents */
             balance_due_cents: number;
+            /** Class Name */
+            class_name?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -17635,16 +17667,27 @@ export interface components {
             due_date: string;
             /** Enrollment Id */
             enrollment_id?: string | null;
+            /**
+             * Has Receipt
+             * @default false
+             */
+            has_receipt: boolean;
             /** Invoice Id */
             invoice_id: string;
             /** Invoice Number */
             invoice_number?: string | null;
+            /** Method Label */
+            method_label?: string | null;
+            /** Paid On */
+            paid_on?: string | null;
             /** Pdf Url */
             pdf_url?: string | null;
             /** Period */
             period: string;
             /** Status */
             status: string;
+            /** Student Name */
+            student_name?: string | null;
             /** Total Cents */
             total_cents: number;
             /** Void Reason */
@@ -17654,6 +17697,15 @@ export interface components {
         ParentInvoicesResponse: {
             /** Invoices */
             invoices: components["schemas"]["ParentInvoiceView"][];
+        };
+        /** ParentLastPaymentView */
+        ParentLastPaymentView: {
+            /** Amount Cents */
+            amount_cents: number;
+            /** Method Label */
+            method_label: string;
+            /** Paid On */
+            paid_on?: string | null;
         };
         /** ParentMarkMessageReadResponse */
         ParentMarkMessageReadResponse: {
@@ -17703,6 +17755,57 @@ export interface components {
             /** Messages */
             messages: components["schemas"]["ParentMessageView"][];
         };
+        /** ParentMoneyLineView */
+        ParentMoneyLineView: {
+            /** Amount Cents */
+            amount_cents: number;
+            /** Detail */
+            detail?: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "child" | "discount" | "paid";
+            /** Label */
+            label: string;
+            /** Student Id */
+            student_id?: string | null;
+        };
+        /** ParentMoneyPeriodView */
+        ParentMoneyPeriodView: {
+            /** Billed Cents */
+            billed_cents: number;
+            /** Due Cents */
+            due_cents: number;
+            /** Label */
+            label: string;
+            /** Paid Cents */
+            paid_cents: number;
+            /** Period */
+            period: string;
+        };
+        /** ParentMoneySummaryView */
+        ParentMoneySummaryView: {
+            /** Amount Due Cents */
+            amount_due_cents: number;
+            /** Can Pay Online */
+            can_pay_online: boolean;
+            /** Currency */
+            currency: string;
+            /** Days Overdue */
+            days_overdue: number;
+            /** Due Date */
+            due_date?: string | null;
+            last_payment?: components["schemas"]["ParentLastPaymentView"] | null;
+            /** Lines */
+            lines: components["schemas"]["ParentMoneyLineView"][];
+            /** Multiple Due Dates */
+            multiple_due_dates: boolean;
+            /** Overdue */
+            overdue: boolean;
+            /** Periods */
+            periods: components["schemas"]["ParentMoneyPeriodView"][];
+        };
         /** ParentPaymentHistoryResponse */
         ParentPaymentHistoryResponse: {
             /** Payments */
@@ -17723,6 +17826,8 @@ export interface components {
             invoice_id?: string | null;
             /** Invoice Period */
             invoice_period?: string | null;
+            /** Method Label */
+            method_label?: string | null;
             /** Payment Id */
             payment_id: string;
             /** Refunded Cents */
@@ -17735,6 +17840,8 @@ export interface components {
             stripe_invoice_id?: string | null;
             /** Stripe Payment Intent Id */
             stripe_payment_intent_id?: string | null;
+            /** Student Names */
+            student_names?: string[];
         };
         /**
          * ParentProfileGapsView
@@ -35185,6 +35292,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_money_summary_api_v2_parent_money_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParentMoneySummaryView"];
                 };
             };
         };

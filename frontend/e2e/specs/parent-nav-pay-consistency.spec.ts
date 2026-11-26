@@ -125,6 +125,19 @@ async function stubPayments(page: Page): Promise<void> {
   await stubGet(page, "**/api/v2/parent/invoices", {
     invoices: [OPEN_INVOICE, PAID_INVOICE],
   });
+  // S57: the summary figure is the backend's.
+  await stubGet(page, "**/api/v2/parent/money-summary", {
+    currency: "usd",
+    amount_due_cents: 12000,
+    due_date: "2026-09-12",
+    overdue: false,
+    days_overdue: 0,
+    multiple_due_dates: false,
+    can_pay_online: true,
+    lines: [{ kind: "child", student_id: "st-1", label: "Ava Kim", detail: "Junior Beginners · September", amount_cents: 12000 }],
+    periods: [],
+    last_payment: null,
+  });
   await stubGet(page, "**/api/v2/parent/credits", { balance_cents: 0, credits: [] });
   await stubGet(page, "**/api/v2/parent/pause-requests", { requests: [] });
   await stubGet(page, "**/api/v2/parent/enrollments", {
@@ -191,19 +204,19 @@ test.describe("parent shell — nav, pay style, touch targets (#843)", () => {
     expect(balancePay).toBe("rgb(37, 99, 235)");
   });
 
-  // Usability study retest: sign-in lands on Payments. With an unpaid invoice the
-  // balance and its pay action come first, and the next class is one tap away.
-  test("Payments leads with the balance due and links to the next class", async ({ page }) => {
+  // S57: Payments leads with one figure and its date; parents land on Home
+  // since S20, so the "next class" link is gone.
+  test("Payments leads with what the family owes and when", async ({ page }) => {
     await stubParentShell(page);
     await stubPayments(page);
     await page.goto("/parent/payments");
-    await expect(page.getByTestId("parent-payments")).toContainText("Balance due");
+    await expect(page.getByTestId("money-summary")).toContainText("You owe");
+    await expect(page.getByTestId("money-summary-amount")).toHaveText("$120.00");
+    await expect(page.getByTestId("money-summary-due")).toHaveText("Due Sat, Sep 12");
     const pay = page.getByTestId("pay-balance");
     await expect(pay).toBeVisible();
-    await expect(pay).toContainText("Pay balance");
-    const link = page.getByTestId("payments-next-class-link");
-    await expect(link).toHaveAttribute("href", "/parent/children");
-    await expect(link).toContainText("next class date and time");
+    await expect(pay).toContainText("Pay $120.00");
+    await expect(page.getByTestId("payments-next-class-link")).toHaveCount(0);
   });
 
   test("Billing portal and View detail meet the 44px touch target", async ({ page }) => {
@@ -240,6 +253,7 @@ test.describe("parent shell — nav, pay style, touch targets (#843)", () => {
 
     const manage = page.getByTestId("manage-enrollment-enr-1");
     await expect(manage).toHaveAttribute("href", "/parent/children");
+    await expect(manage).toHaveText("Change or pause in Children");
     // The pause form no longer lives on the money page.
     await expect(page.getByTestId("pause-enrollment-form")).toHaveCount(0);
   });

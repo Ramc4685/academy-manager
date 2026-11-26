@@ -6,9 +6,13 @@ import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ds/button";
+import { ErrorNotice } from "@/components/ds/error-notice";
+import { Skeleton } from "@/components/ds/skeleton";
+import { MoneySummaryCard } from "@/components/parent/money-summary-card";
 import {
   getParentAcademy,
   getParentInvoice,
+  getParentMoneySummary,
   getCheckoutStatus,
   listParentEnrollments,
   listParentCredits,
@@ -31,9 +35,10 @@ import {
   showAutopayOptinForBalance,
   showAutopayOptinForInvoice,
 } from "@/lib/parent-autopay-optin";
+import { creditCopy, paymentStatusWord } from "@/lib/parent/money-summary";
 import { autopayConfigurable, emptyInvoicesCopy } from "@/lib/parent/payments-page";
 import { queryKeys } from "@/lib/query/keys";
-import { formatAcademyStamp, formatInAcademyZone } from "@/lib/format/academy-time";
+import { academyDateISO, formatAcademyStamp, formatInAcademyZone } from "@/lib/format/academy-time";
 import { formatPlainDate } from "@/lib/format/plain-date";
 
 const AUTOPAY_START_FAILED =
@@ -235,6 +240,13 @@ export default function ParentPaymentsPage() {
     staleTime: returnedFromCheckout ? 0 : undefined,
     refetchOnMount: returnedFromCheckout ? "always" : undefined,
   });
+  // S57: the one amount owed, computed by the backend. Invalidated with invoices.
+  const moneySummaryQuery = useQuery({
+    queryKey: ["parent", "money-summary"],
+    queryFn: getParentMoneySummary,
+    staleTime: returnedFromCheckout ? 0 : undefined,
+    refetchOnMount: returnedFromCheckout ? "always" : undefined,
+  });
   const academyQuery = useQuery({
     queryKey: queryKeys.parent.academy(),
     queryFn: getParentAcademy,
@@ -391,6 +403,7 @@ export default function ParentPaymentsPage() {
     void queryClient.invalidateQueries({ queryKey: ["parent", "payments"] });
     void queryClient.invalidateQueries({ queryKey: ["parent", "enrollments"] });
     void queryClient.invalidateQueries({ queryKey: ["parent", "invoices"] });
+    void queryClient.invalidateQueries({ queryKey: ["parent", "money-summary"] });
   }, [queryClient, returnedFromCheckout]);
 
   // The poll gives up at the cap; past it the parent gets the honest "Stripe
@@ -410,6 +423,7 @@ export default function ParentPaymentsPage() {
     void queryClient.invalidateQueries({ queryKey: ["parent", "payments"] });
     void queryClient.invalidateQueries({ queryKey: ["parent", "enrollments"] });
     void queryClient.invalidateQueries({ queryKey: ["parent", "invoices"] });
+    void queryClient.invalidateQueries({ queryKey: ["parent", "money-summary"] });
   }, [checkoutStatusQuery.data?.status, queryClient]);
 
   const checkoutStatus = checkoutStatusQuery.data?.status;
@@ -445,25 +459,54 @@ export default function ParentPaymentsPage() {
   const pauseRequests = pauseRequestsQuery.data?.requests ?? [];
   const creditBalance = creditsQuery.data?.balance_cents ?? 0;
   const credits = creditsQuery.data?.credits ?? [];
-  const currentBalance = invoices
-    .filter((inv) => inv.status !== "void")
-    .reduce((total, inv) => total + inv.balance_due_cents, 0);
+  const moneySummary = moneySummaryQuery.data;
+  const periodHeader = new Map(
+    (moneySummary?.periods ?? []).map((p) => [
+      p.period,
+      p.due_cents > 0 ? `${p.label} · ${money(p.due_cents)} due` : `${p.label} · ${money(p.paid_cents)} paid`,
+    ]),
+  );
 
   const loading =
+    moneySummaryQuery.isLoading ||
     paymentsQuery.isLoading ||
     enrollmentsQuery.isLoading ||
     invoicesQuery.isLoading ||
     pauseRequestsQuery.isLoading ||
     creditsQuery.isLoading;
+  // The invoice list failing alone is a partial state (inline retry below);
+  // anything else hides the page so a stale or partial figure never shows.
   const error =
+    moneySummaryQuery.isError ||
     paymentsQuery.isError ||
     enrollmentsQuery.isError ||
-    invoicesQuery.isError ||
     pauseRequestsQuery.isError ||
     creditsQuery.isError;
 
-  if (loading) return <p className="p-4 text-sm text-rally-subtle">Loading...</p>;
-  if (error) return <p className="p-4 text-sm text-status-red-600">Could not load payments.</p>;
+  if (loading) {
+    return (
+      <section data-testid="parent-payments-loading" className="space-y-3" aria-busy="true">
+        <Skeleton variant="block" height="11rem" />
+        <Skeleton variant="line" lines={3} />
+      </section>
+    );
+  }
+  if (error || !moneySummary) {
+    return (
+      <ErrorNotice
+        testId="parent-payments-error"
+        message="We could not load your payments. Check your connection and try again."
+        onRetry={() => {
+          void moneySummaryQuery.refetch();
+          void paymentsQuery.refetch();
+          void enrollmentsQuery.refetch();
+          void invoicesQuery.refetch();
+          void pauseRequestsQuery.refetch();
+          void creditsQuery.refetch();
+        }}
+      />
+    );
+  }
 
   return (
     <section data-testid="parent-payments" className="space-y-4">
@@ -487,16 +530,6 @@ export default function ParentPaymentsPage() {
         </button>
         )}
       </div>
-      {/* Sign-in lands here; a tester hunted invoices for the next class (usability study). */}
-      <Link
-        href="/parent/children"
-        data-testid="payments-next-class-link"
-        className="flex min-h-touch items-center justify-between rounded-xl border border-rally-line bg-white px-4 text-sm font-semibold text-rally-cobalt-700"
-      >
-        <span>Looking for the next class date and time? See your children&apos;s classes</span>
-        <span aria-hidden="true">→</span>
-      </Link>
-
       {/* Status banners */}
       {settlementPending && !checkoutPollTimedOut && (
         <p
@@ -540,11 +573,38 @@ export default function ParentPaymentsPage() {
         </p>
       )}
 
+      <MoneySummaryCard
+        summary={moneySummary}
+        todayIso={academyDateISO(academyTimezone)}
+        hasInvoices={invoices.length > 0}
+        onPay={() =>
+          balancePaymentMutation.mutate({
+            enrollAutopay: showAutopayOptinForBalance(invoices, enrollments) && balanceAutopayOptin,
+          })
+        }
+        payPending={balancePaymentMutation.isPending}
+        paySettling={settlementPending && !checkoutPollTimedOut}
+        paymentInstructions={academyQuery.data?.payment_instructions}
+        payExtras={
+          showAutopayOptinForBalance(invoices, enrollments) ? (
+            <label data-testid="balance-autopay-optin" className="mt-2.5 flex items-center gap-2 text-xs text-rally-muted">
+              <input
+                type="checkbox"
+                checked={balanceAutopayOptin}
+                onChange={(e) => setBalanceAutopayOptin(e.target.checked)}
+                className="h-4 w-4 shrink-0 accent-rally-volt-400"
+              />
+              {AUTOPAY_OPTIN_LABEL}
+            </label>
+          ) : null
+        }
+      />
+
       {/* Credit card */}
       {creditBalance > 0 && (
         <div className="rounded-xl border border-status-green-500/30 bg-status-green-50 p-4">
           <p className="text-sm font-medium text-status-green-800">
-            {money(creditBalance)} credit applies automatically to your next invoice.
+            {creditCopy(creditBalance)}
           </p>
           {credits.length > 0 && (
             <ul className="mt-2 space-y-0.5 text-xs text-status-green-800">
@@ -559,69 +619,25 @@ export default function ParentPaymentsPage() {
         </div>
       )}
 
-      {/* Balance hero */}
-      {currentBalance > 0 && (
-        <div className="rounded-2xl p-4 bg-rally-night">
-          <p className="text-xs text-rally-subtle-ink">Balance due</p>
-          <p className="mt-1 text-3xl font-semibold text-white">{money(currentBalance)}</p>
-          <p className="mt-1.5 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium bg-rally-volt-400/10 text-rally-volt-400">
-            {invoices.filter((i) => i.balance_due_cents > 0 && i.status !== "void").length} open invoice
-            {invoices.filter((i) => i.balance_due_cents > 0 && i.status !== "void").length === 1 ? "" : "s"}
-            {" · "}
-            {enrollments.some((e) => e.payment_mode === "monthly" && e.autopay_enrollment_status === "active")
-              ? "autopay on"
-              : "autopay off"}
-          </p>
-          {/* #843: one pay style across the app — the DS primary. */}
-          <Button
-            type="button"
-            data-testid="pay-balance"
-            variant="primary"
-            size="lg"
-            full
-            onClick={() =>
-              balancePaymentMutation.mutate({
-                enrollAutopay:
-                  showAutopayOptinForBalance(invoices, enrollments) && balanceAutopayOptin,
-              })
-            }
-            disabled={balancePaymentMutation.isPending}
-            className="mt-4 rounded-xl disabled:opacity-60"
-          >
-            {balancePaymentMutation.isPending ? "Starting…" : `Pay balance · ${money(currentBalance)}`}
-          </Button>
-          {/* UI-4: rally-subtle is 4.0:1 on night; subtle-ink is the night-surface token (7.1:1). */}
-          <p className="mt-2 text-xs text-rally-subtle-ink" data-testid="pay-balance-reassurance">
-            Secure checkout via Stripe
-          </p>
-          {showAutopayOptinForBalance(invoices, enrollments) && (
-            <label
-              data-testid="balance-autopay-optin"
-              className="mt-2.5 flex items-center gap-2 text-xs text-rally-subtle-ink"
-            >
-              <input
-                type="checkbox"
-                checked={balanceAutopayOptin}
-                onChange={(e) => setBalanceAutopayOptin(e.target.checked)}
-                className="h-4 w-4 shrink-0 accent-rally-volt-400"
-              />
-              {AUTOPAY_OPTIN_LABEL}
-            </label>
-          )}
-        </div>
-      )}
-
       {/* Invoices */}
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-rally-subtle">Invoices</p>
-        {invoices.length === 0 ? (
+        {invoicesQuery.isError ? (
+          <div role="alert" data-testid="invoices-error" className="flex items-center justify-between gap-3 rounded-xl border border-status-red-500/30 bg-status-red-50 px-4 py-3 text-sm text-status-red-800">
+            <span>Could not load your invoices.</span>
+            <button type="button" onClick={() => void invoicesQuery.refetch()} className="min-h-touch rounded-lg px-2 font-semibold">
+              Retry
+            </button>
+          </div>
+        ) : invoices.length === 0 ? (
           <div data-testid="invoices-empty" className="rounded-xl border border-rally-line bg-white px-4 py-3">
             <p className="text-sm font-medium text-rally-ink">{emptyInvoices.title}</p>
             <p className="mt-0.5 text-xs text-rally-subtle">{emptyInvoices.body}</p>
           </div>
         ) : (
           <div className="space-y-2">
-            {invoices.map((invoice) => {
+            {invoices.map((invoice, index) => {
+              const showPeriodHeader = index === 0 || invoices[index - 1].period !== invoice.period;
               const paid = Math.max(invoice.total_cents - invoice.balance_due_cents, 0);
               const payable =
                 invoice.balance_due_cents > 0 &&
@@ -630,8 +646,13 @@ export default function ParentPaymentsPage() {
               const isPaid = invoice.status === "paid" || isVoid;
               const settling = settlingInvoiceIds.has(invoice.invoice_id) && invoice.balance_due_cents > 0;
               return (
+                <div key={invoice.invoice_id}>
+                {showPeriodHeader && periodHeader.get(invoice.period) && (
+                  <p data-testid={`invoice-period-${invoice.period}`} className="mb-1 mt-2 text-sm font-medium text-rally-ink">
+                    {periodHeader.get(invoice.period)}
+                  </p>
+                )}
                 <div
-                  key={invoice.invoice_id}
                   className="rounded-2xl border border-rally-line bg-white p-3"
                   style={{ opacity: isPaid ? 0.75 : 1 }}
                 >
@@ -640,7 +661,9 @@ export default function ParentPaymentsPage() {
                       <p className="text-sm font-medium text-rally-ink">{formatPeriodLabel(invoice.period)}</p>
                       {(() => {
                         const label = [
-                          invoice.enrollment_id ? childByEnrollment.get(invoice.enrollment_id) : undefined,
+                          invoice.student_name ??
+                            (invoice.enrollment_id ? childByEnrollment.get(invoice.enrollment_id) : undefined),
+                          invoice.class_name,
                           invoice.invoice_number,
                         ]
                           .filter(Boolean)
@@ -655,6 +678,12 @@ export default function ParentPaymentsPage() {
                         status={settling ? "processing" : invoice.status}
                         label={isVoid ? "Cancelled" : undefined}
                       />
+                      {invoice.status === "paid" && invoice.method_label && (
+                        <p data-testid={`invoice-paid-${invoice.invoice_id}`} className="mt-1 text-xs text-rally-subtle">
+                          {invoice.method_label}
+                          {invoice.paid_on ? ` · ${formatPlainDate(invoice.paid_on, { month: "short", day: "numeric" })}` : ""}
+                        </p>
+                      )}
                       {isVoid && invoice.void_reason && (
                         <p className="mt-1 text-xs text-rally-subtle">
                           {voidReasonText(invoice.void_reason)}
@@ -779,6 +808,7 @@ export default function ParentPaymentsPage() {
                     </div>
                   )}
                 </div>
+                </div>
               );
             })}
           </div>
@@ -875,7 +905,7 @@ export default function ParentPaymentsPage() {
                       data-testid={`manage-enrollment-${enrollment.enrollment_id}`}
                       className="inline-flex min-h-touch shrink-0 items-center justify-center rounded-xl border border-rally-line bg-white px-4 text-sm font-medium text-rally-ink hover:bg-rally-paper"
                     >
-                      Manage class
+                      Change or pause in Children
                     </Link>
                   </div>
                 </div>
@@ -939,23 +969,31 @@ export default function ParentPaymentsPage() {
                   <p className="text-sm font-medium text-rally-ink">
                     {money(payment.amount_cents, payment.currency.toUpperCase())}
                   </p>
-                  <StatusPill status={payment.status} />
+                  <StatusPill status={payment.status} label={paymentStatusWord(payment.status)} />
                 </div>
-                <p className="mt-1 text-xs text-rally-subtle">
-                  {payment.invoice_period
-                    ? `Tuition · ${formatPeriodLabel(payment.invoice_period)} · ${formatInAcademyZone(payment.created_at, academyTimezone)}`
-                    : formatAcademyStamp(payment.created_at, academyTimezone)}
+                {((payment.student_names?.length ?? 0) > 0 || payment.invoice_period) && (
+                  <p className="mt-1 text-xs text-rally-ink">
+                    {[
+                      payment.student_names?.join(", "),
+                      payment.invoice_period ? formatPeriodLabel(payment.invoice_period) : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                )}
+                <p className="mt-0.5 text-xs text-rally-subtle">
+                  {[
+                    payment.method_label,
+                    payment.invoice_period
+                      ? formatInAcademyZone(payment.created_at, academyTimezone)
+                      : formatAcademyStamp(payment.created_at, academyTimezone),
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </p>
                 {payment.refunded_cents > 0 && (
                   <p className="text-xs text-status-amber-800">
                     Refunded {money(payment.refunded_cents, payment.currency.toUpperCase())}
-                  </p>
-                )}
-                {(payment.stripe_invoice_id || payment.stripe_payment_intent_id) && (
-                  <p className="mt-1 truncate font-mono text-xs text-rally-subtle">
-                    {payment.stripe_invoice_id
-                      ? `Invoice ${payment.stripe_invoice_id}`
-                      : `PaymentIntent ${payment.stripe_payment_intent_id}`}
                   </p>
                 )}
               </li>

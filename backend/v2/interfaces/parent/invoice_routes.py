@@ -65,7 +65,14 @@ async def list_invoices(
     use_cases: ParentUseCases = Depends(get_parent_use_cases),
 ) -> ParentInvoicesResponse:
     invoices = await use_cases.list_invoices_for_parent(claims.user_id)  # type: ignore[operator]
-    return ParentInvoicesResponse(invoices=[_invoice_view(inv) for inv in invoices])
+    money = getattr(use_cases, "parent_money", None)
+    extras = await money.invoice_extras(claims.user_id, invoices) if money else {}
+    return ParentInvoicesResponse(
+        invoices=[
+            _invoice_view(inv).model_copy(update=extras.get(inv.invoice_id, {}))
+            for inv in invoices
+        ]
+    )
 
 
 @router.get(

@@ -259,6 +259,9 @@ class ParentPaymentView(BaseModel):
     # payment paid for; None for legacy/unallocated payments.
     invoice_id: str | None = None
     invoice_period: str | None = None
+    # S57: which children the payment covered and how it was paid, in words.
+    student_names: list[str] = Field(default_factory=list)
+    method_label: str | None = None
 
 
 class ParentPaymentHistoryResponse(BaseModel):
@@ -302,6 +305,12 @@ class ParentInvoiceView(BaseModel):
     void_reason: str | None = None
     #: e.g. ``DEMO-202611-0001``; None for invoices made before numbering.
     invoice_number: str | None = None
+    # S57: who and what the invoice is for, and how it was last paid.
+    student_name: str | None = None
+    class_name: str | None = None
+    paid_on: date | None = None
+    method_label: str | None = None
+    has_receipt: bool = False
 
 
 class ParentInvoicesResponse(BaseModel):

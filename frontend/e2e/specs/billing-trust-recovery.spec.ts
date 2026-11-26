@@ -86,6 +86,25 @@ test.describe("billing trust and recovery surfaces", () => {
         ],
       });
     });
+    // S57: the one figure is the backend's, never a client sum of invoices.
+    await page.route("**/api/v2/parent/money-summary", (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return fulfillJson(route, {
+        currency: "usd",
+        amount_due_cents: 4500,
+        due_date: "2026-06-15",
+        overdue: false,
+        days_overdue: 0,
+        multiple_due_dates: false,
+        can_pay_online: true,
+        lines: [
+          { kind: "child", student_id: "stu-1", label: "Alice Chen", detail: "Junior Badminton · June", amount_cents: 9000 },
+          { kind: "paid", label: "Already paid", amount_cents: -4500 },
+        ],
+        periods: [],
+        last_payment: null,
+      });
+    });
     await page.route("**/api/v2/parent/invoices/inv-open", (route) => {
       if (route.request().method() !== "GET") return route.fallback();
       return fulfillJson(route, {
@@ -155,10 +174,11 @@ test.describe("billing trust and recovery surfaces", () => {
     await page.goto("/parent/payments");
 
     await expect(page.getByTestId("parent-payments")).toBeVisible();
-    await expect(page.getByText("Balance due")).toBeVisible();
+    await expect(page.getByTestId("money-summary")).toContainText("You owe");
+    await expect(page.getByTestId("money-summary-amount")).toHaveText("$45.00");
     await expect(page.getByText("open", { exact: true })).toBeVisible();
     await expect(page.getByText("$45.00").first()).toBeVisible();
-    await expect(page.getByRole("button", { name: "Pay $45.00", exact: true })).toBeVisible();
+    await expect(page.getByTestId("pay-invoice-inv-open")).toHaveText("Pay $45.00");
     // Voided invoice renders $0 / Cancelled with its reason, and no Pay button
     // or autopay opt-in — the stale $90.00 ledger balance never surfaces.
     await expect(page.getByText("Cancelled", { exact: true })).toBeVisible();
@@ -167,20 +187,22 @@ test.describe("billing trust and recovery surfaces", () => {
     await expect(page.getByText("$90.00")).toHaveCount(0);
     await expect(page.getByRole("button", { name: /^Pay \$90/ })).toHaveCount(0);
     await expect(page.getByTestId("invoice-autopay-optin-inv-void")).toHaveCount(0);
-    // Balance hero excludes the voided invoice.
-    await expect(page.getByRole("button", { name: "Pay balance · $45.00" })).toBeVisible();
+    // The summary figure excludes the voided invoice.
+    await expect(page.getByTestId("pay-balance")).toHaveText("Pay $45.00");
     await expect(page.getByRole("button", { name: "Billing portal" })).toBeVisible();
     await expect(page.getByText("Autopay active, payment issue")).toBeVisible();
     await expect(
       page.getByText("The latest autopay attempt failed."),
     ).toBeVisible();
     await page.getByRole("button", { name: "Payment history" }).click();
-    await expect(page.getByText("Invoice in_test_paid_1")).toBeVisible();
+    // S57: plain status words, and no Stripe ids in the parent view.
+    await expect(page.getByTestId("payment-lp_ledger_1")).toContainText("Paid");
+    await expect(page.getByText("in_test_paid_1")).toHaveCount(0);
 
     await page.getByRole("button", { name: "View", exact: true }).click();
     await expect(page.getByText("Alice Chen monthly tuition × 1")).toBeVisible();
 
-    await page.getByRole("button", { name: "Pay $45.00", exact: true }).click();
+    await page.getByTestId("pay-invoice-inv-open").click();
     await expect.poll(() => retryRequests.length).toBe(1);
     expect(retryRequests[0]).toMatchObject({
       success_url: expect.stringContaining("/parent/payments?invoice=paid"),

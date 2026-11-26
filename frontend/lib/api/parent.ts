@@ -58,6 +58,10 @@ export interface ParentPayment {
   stripe_payment_intent_id?: string | null;
   invoice_id?: string | null;
   invoice_period?: string | null;
+  /** S57: children the payment covered; empty when unallocated. */
+  student_names?: string[];
+  /** S57: "Paid in cash" etc., written by the backend; null while not settled. */
+  method_label?: string | null;
 }
 
 export interface ParentCredit {
@@ -170,6 +174,34 @@ export interface ParentInvoice {
   void_reason?: string | null;
   /** e.g. "DEMO-202611-0001"; null for invoices made before numbering. */
   invoice_number?: string | null;
+  /** S57: who and what the invoice is for, and how it was last paid. */
+  student_name?: string | null;
+  class_name?: string | null;
+  paid_on?: string | null;
+  method_label?: string | null;
+  has_receipt?: boolean;
+}
+
+/** S57: GET /parent/money-summary. Every figure is computed by the backend. */
+export interface ParentMoneyLine {
+  kind: "child" | "discount" | "paid";
+  student_id?: string | null;
+  label: string;
+  detail?: string | null;
+  amount_cents: number;
+}
+
+export interface ParentMoneySummary {
+  currency: string;
+  amount_due_cents: number;
+  due_date: string | null;
+  overdue: boolean;
+  days_overdue: number;
+  multiple_due_dates: boolean;
+  can_pay_online: boolean;
+  lines: ParentMoneyLine[];
+  periods: { period: string; label: string; billed_cents: number; paid_cents: number; due_cents: number }[];
+  last_payment: { amount_cents: number; paid_on: string | null; method_label: string } | null;
 }
 
 export interface ParentInvoiceLine {
@@ -513,6 +545,10 @@ export function listParentPayments(): Promise<{ payments: ParentPayment[] }> {
 
 export function listParentInvoices(): Promise<{ invoices: ParentInvoice[] }> {
   return apiFetch("/parent/invoices", { method: "GET" });
+}
+
+export function getParentMoneySummary(): Promise<ParentMoneySummary> {
+  return apiFetch("/parent/money-summary", { method: "GET" });
 }
 
 export function getParentInvoice(invoiceId: string): Promise<ParentInvoiceDetail> {
