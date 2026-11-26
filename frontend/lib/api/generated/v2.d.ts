@@ -12197,6 +12197,11 @@ export interface components {
         };
         /** AttendancePeriodPointView */
         AttendancePeriodPointView: {
+            /**
+             * Cancelled Count
+             * @default 0
+             */
+            cancelled_count: number;
             /** Completed Count */
             completed_count: number;
             /** Completion Rate */

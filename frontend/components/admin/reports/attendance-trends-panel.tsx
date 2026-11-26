@@ -55,6 +55,7 @@ export function AttendanceTrendsPanel({ periods }: { periods: string[] }) {
                 <th className="px-2 py-2">Period</th>
                 <th className="px-2 py-2">Scheduled</th>
                 <th className="px-2 py-2">Held</th>
+                <th className="px-2 py-2">Cancelled</th>
                 <th className="px-2 py-2">Absent marks</th>
                 <th className="px-2 py-2">Held rate</th>
               </tr>
@@ -65,6 +66,7 @@ export function AttendanceTrendsPanel({ periods }: { periods: string[] }) {
                   <td className="px-2 py-2 font-medium text-rally-ink">{row.period}</td>
                   <td className="px-2 py-2 text-rally-muted">{formatInteger(row.scheduled_count)}</td>
                   <td className="px-2 py-2 text-rally-muted">{formatInteger(row.completed_count)}</td>
+                  <td className="px-2 py-2 text-rally-muted">{formatInteger(row.cancelled_count)}</td>
                   <td className="px-2 py-2 text-rally-muted">{formatInteger(row.no_show_count)}</td>
                   <td className="px-2 py-2 text-rally-muted">{formatPercent(row.completion_rate)}</td>
                 </tr>

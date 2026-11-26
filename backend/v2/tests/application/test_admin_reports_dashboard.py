@@ -277,7 +277,8 @@ async def test_reports_dashboard_composes_monthly_finance_attendance_and_capacit
         "empty": False,
     }
     assert dashboard["sessions"] == {
-        "scheduled_count": 1,
+        # Held plus still to come, as attendance trends count it.
+        "scheduled_count": 2,
         "completed_count": 1,
         "cancelled_count": 1,
         "enrolled_seats": 2,
@@ -1790,7 +1791,7 @@ async def test_completed_equals_held_class_dates_and_attendance_reads_by_class_d
     dashboard = await _dashboard(db)
 
     assert dashboard["sessions"]["completed_count"] == 3
-    assert dashboard["sessions"]["scheduled_count"] == 0
+    assert dashboard["sessions"]["scheduled_count"] == 3
     assert dashboard["sessions"]["enrolled_seats"] == 11
     assert dashboard["sessions"]["paying_seats"] == 9
     assert dashboard["attendance"]["recorded_count"] == 2

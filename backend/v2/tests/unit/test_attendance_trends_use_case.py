@@ -22,13 +22,24 @@ class _Counts:
     scheduled_count: int
     completed_count: int
     no_show_count: int
+    cancelled_count: int = 0
 
 
 def _snap(
-    session_id: str, period: str, scheduled: int, completed: int, no_show: int, **_: object
+    session_id: str,
+    period: str,
+    scheduled: int,
+    completed: int,
+    no_show: int,
+    cancelled: int = 0,
+    **_: object,
 ) -> _Counts:
     return _Counts(
-        period=period, scheduled_count=scheduled, completed_count=completed, no_show_count=no_show
+        period=period,
+        scheduled_count=scheduled,
+        completed_count=completed,
+        no_show_count=no_show,
+        cancelled_count=cancelled,
     )
 
 
@@ -125,3 +136,16 @@ async def test_overall_rate_zero_when_no_scheduled():
     assert len(result.periods) == 1
     assert result.periods[0].completion_rate == Decimal("0")
     assert result.overall_completion_rate == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_dates_lower_the_held_rate():
+    """A finished month with a cancelled date is not 100% held."""
+    result = await _use_case(
+        [_snap("sess-1", "2026-05", scheduled=4, completed=4, no_show=0, cancelled=1)]
+    ).execute(["2026-05"])
+
+    (point,) = result.periods
+    assert (point.scheduled_count, point.cancelled_count) == (4, 1)
+    assert point.completion_rate == Decimal("0.8000")
+    assert result.overall_completion_rate == Decimal("0.8000")

@@ -31,6 +31,7 @@ class _ClassCounts:
     scheduled_count: int
     completed_count: int
     no_show_count: int
+    cancelled_count: int
 
 
 @dataclass(frozen=True)
@@ -72,11 +73,12 @@ class MongoHeldClassReader:
         now = self._clock()
         rows: list[_ClassCounts] = []
         for period, start, end in await self._windows(academy_id, periods):
-            held = upcoming = 0
+            held = upcoming = cancelled = 0
             class_ids: list[str] = []
             async for occurrence in self._occurrences(academy_id, start, end):
                 state = class_state(occurrence, now=now)
                 if state == "cancelled":
+                    cancelled += 1
                     continue
                 if state == "held":
                     held += 1
@@ -99,6 +101,7 @@ class MongoHeldClassReader:
                     scheduled_count=held + upcoming,
                     completed_count=held,
                     no_show_count=no_show,
+                    cancelled_count=cancelled,
                 )
             )
         return rows
@@ -127,7 +130,12 @@ class MongoHeldClassReader:
                     minutes[coach_id] = minutes.get(coach_id, Decimal(0)) + length
             payout: dict[str, int] = {}
             async for doc in self._db["payout_periods"].find(
-                {"academy_id": academy_id, "period_start": {"$gte": start, "$lt": end}},
+                # Approved or paid only: a draft is not a payout yet.
+                {
+                    "academy_id": academy_id,
+                    "period_start": {"$gte": start, "$lt": end},
+                    "status": {"$in": ["approved", "paid"]},
+                },
                 {"coach_id": 1, "total_minor": 1},
             ):
                 coach_id = str(doc.get("coach_id") or "")

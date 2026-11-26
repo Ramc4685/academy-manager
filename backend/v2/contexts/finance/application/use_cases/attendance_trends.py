@@ -33,7 +33,9 @@ class AttendancePeriodPoint(BaseModel):
     scheduled_count: int
     completed_count: int
     no_show_count: int
-    completion_rate: Decimal  # 4dp; 0 when scheduled_count == 0
+    cancelled_count: int
+    #: held / (scheduled + cancelled), 4dp; 0 when the month has no class dates.
+    completion_rate: Decimal
 
 
 class AttendanceTrendsResult(BaseModel):
@@ -92,13 +94,14 @@ class GetAttendanceTrends:
 
         # Aggregate counts per period (a reader may return several rows each)
         totals: dict[str, dict[str, int]] = {
-            p: {"scheduled": 0, "completed": 0, "no_show": 0} for p in periods
+            p: {"scheduled": 0, "completed": 0, "no_show": 0, "cancelled": 0} for p in periods
         }
         for row in counts:
             if row.period in totals:
                 totals[row.period]["scheduled"] += row.scheduled_count
                 totals[row.period]["completed"] += row.completed_count
                 totals[row.period]["no_show"] += row.no_show_count
+                totals[row.period]["cancelled"] += row.cancelled_count
 
         period_points: list[AttendancePeriodPoint] = []
         grand_scheduled = 0
@@ -108,11 +111,14 @@ class GetAttendanceTrends:
             sched = totals[period]["scheduled"]
             comp = totals[period]["completed"]
             no_show = totals[period]["no_show"]
+            cancelled = totals[period]["cancelled"]
+            # Cancelled dates stay in the denominator so the rate shows them.
+            dates = sched + cancelled
 
-            if sched == 0:
+            if dates == 0:
                 rate = Decimal("0")
             else:
-                rate = (Decimal(comp) / Decimal(sched)).quantize(
+                rate = (Decimal(comp) / Decimal(dates)).quantize(
                     Decimal("0.0001"), rounding=ROUND_HALF_UP
                 )
 
@@ -122,10 +128,11 @@ class GetAttendanceTrends:
                     scheduled_count=sched,
                     completed_count=comp,
                     no_show_count=no_show,
+                    cancelled_count=cancelled,
                     completion_rate=rate,
                 )
             )
-            grand_scheduled += sched
+            grand_scheduled += dates
             grand_completed += comp
 
         if grand_scheduled == 0:

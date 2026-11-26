@@ -11121,6 +11121,11 @@
       },
       "AttendancePeriodPointView": {
         "properties": {
+          "cancelled_count": {
+            "default": 0,
+            "title": "Cancelled Count",
+            "type": "integer"
+          },
           "completed_count": {
             "title": "Completed Count",
             "type": "integer"

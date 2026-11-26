@@ -114,8 +114,11 @@ async def test_attendance_trends_count_held_classes_and_agree_with_the_dashboard
 
     may, june = trends.periods
     assert (may.scheduled_count, may.completed_count, may.no_show_count) == (5, 5, 2)
-    assert may.completion_rate == Decimal("1.0000")
+    # The cancelled May 30 date keeps the held rate under 100%.
+    assert may.cancelled_count == 1
+    assert may.completion_rate == Decimal("0.8333")
     assert may.completed_count == dashboard["sessions"]["completed_count"]
+    assert may.scheduled_count == dashboard["sessions"]["scheduled_count"]
     assert (june.scheduled_count, june.completed_count) == (0, 0)
 
 
@@ -150,12 +153,67 @@ async def test_coach_utilization_reads_held_hours_for_lead_substitute_and_assist
 
 
 @pytest.mark.asyncio
+async def test_coach_utilization_leaves_out_draft_payroll() -> None:
+    db = _db()
+    await _seed(db)
+    await db["payout_periods"].insert_one(
+        {
+            "period_id": "pp-draft",
+            "academy_id": "acad",
+            "coach_id": "coach-2",
+            "period_start": datetime(2026, 5, 1, 5, tzinfo=UTC),
+            "status": "draft",
+            "total_minor": 9_000,
+        }
+    )
+
+    result = await GetCoachUtilization(classes=MongoHeldClassReader(db), academy_id="acad").execute(
+        ["2026-05"]
+    )
+
+    assert result.total_payout_minor == 12_000
+
+
+@pytest.mark.asyncio
 async def test_held_class_reader_is_tenant_scoped() -> None:
     db = _db()
     await _seed(db)
+    # Another academy with a class, an absent mark and payroll in the same month.
+    await db["session_occurrences"].insert_one(
+        {
+            "academy_id": "other",
+            "session_id": "sess-x",
+            "occurrence_id": "occ-x",
+            "status": "scheduled",
+            "start_at": datetime(2026, 5, 9, 14, tzinfo=UTC),
+            "end_at": datetime(2026, 5, 9, 15, tzinfo=UTC),
+            "scheduled_coach_id": "coach-1",
+        }
+    )
+    await db["attendance"].insert_many(
+        [
+            # Its own mark, and one naming this academy's class id.
+            {"academy_id": "other", "occurrence_id": "occ-x", "status": "absent"},
+            {"academy_id": "other", "occurrence_id": "occ-2", "status": "absent"},
+        ]
+    )
+    await db["payout_periods"].insert_one(
+        {
+            "period_id": "pp-x",
+            "academy_id": "other",
+            "coach_id": "coach-1",
+            "period_start": datetime(2026, 5, 1, 5, tzinfo=UTC),
+            "status": "approved",
+            "total_minor": 50_000,
+        }
+    )
+    reader = MongoHeldClassReader(db)
 
-    trends = await GetAttendanceTrends(
-        classes=MongoHeldClassReader(db), academy_id="other"
-    ).execute(["2026-05"])
+    (may,) = (
+        await GetAttendanceTrends(classes=reader, academy_id="acad").execute(["2026-05"])
+    ).periods
+    usage = await GetCoachUtilization(classes=reader, academy_id="acad").execute(["2026-05"])
 
-    assert trends.periods[0].scheduled_count == 0
+    assert (may.scheduled_count, may.completed_count, may.no_show_count) == (5, 5, 2)
+    assert usage.total_payout_minor == 12_000
+    assert {p.coach_id: p.hours for p in usage.coaches}["coach-1"] == Decimal("4.0000")

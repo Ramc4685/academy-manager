@@ -48,6 +48,7 @@ _TRENDS_RESULT = AttendanceTrendsResult(
             scheduled_count=20,
             completed_count=18,
             no_show_count=2,
+            cancelled_count=0,
             completion_rate=Decimal("0.9000"),
         )
     ],
@@ -217,6 +218,7 @@ def test_attendance_trends_multiple_periods(analytics_client: TestClient) -> Non
                         scheduled_count=10,
                         completed_count=9,
                         no_show_count=1,
+                        cancelled_count=0,
                         completion_rate=Decimal("0.9000"),
                     ),
                     AttendancePeriodPoint(
@@ -224,6 +226,7 @@ def test_attendance_trends_multiple_periods(analytics_client: TestClient) -> Non
                         scheduled_count=8,
                         completed_count=6,
                         no_show_count=2,
+                        cancelled_count=0,
                         completion_rate=Decimal("0.7500"),
                     ),
                 ],

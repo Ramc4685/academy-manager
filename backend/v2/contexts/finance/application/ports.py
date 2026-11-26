@@ -273,6 +273,9 @@ class PeriodClassCounts(Protocol):
     @property
     def no_show_count(self) -> int: ...  # "absent" marks on those classes
 
+    @property
+    def cancelled_count(self) -> int: ...  # cancelled dates, the held rate's shortfall
+
 
 class CoachPeriodHours(Protocol):
     """One coach's held-class hours and payroll in one month."""

@@ -3362,6 +3362,8 @@ export interface AdminAttendanceTrendsPeriod {
   scheduled_count: number;
   completed_count: number;
   no_show_count: number;
+  cancelled_count: number;
+  /** Held over every class date, cancelled included. */
   completion_rate: number;
 }
 

@@ -2423,6 +2423,7 @@ class AdminReportsAttendanceSummary(BaseModel):
 
 
 class AdminReportsSessionsSummary(BaseModel):
+    #: Class dates held plus still to come (cancelled ones left out).
     scheduled_count: int = 0
     completed_count: int = 0
     cancelled_count: int = 0
@@ -2545,6 +2546,7 @@ class AttendancePeriodPointView(BaseModel):
     scheduled_count: int
     completed_count: int
     no_show_count: int
+    cancelled_count: int = 0
     completion_rate: float
 
 

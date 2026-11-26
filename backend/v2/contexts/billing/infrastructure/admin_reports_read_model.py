@@ -1057,7 +1057,8 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
                 "empty": recorded_count == 0,
             },
             "sessions": {
-                "scheduled_count": class_counts["upcoming"],
+                # Held plus still to come, the same meaning as attendance trends.
+                "scheduled_count": class_counts["held"] + class_counts["upcoming"],
                 "completed_count": class_counts["held"],
                 "cancelled_count": class_counts["cancelled"],
                 "enrolled_seats": enrolled_seats,

@@ -181,8 +181,9 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         name="reports_dashboard",
         description=(
             "The owner's monthly dashboard for one month: cash collected, amount billed, "
-            "collection rate, outstanding dues, attendance rate, sessions scheduled, completed "
-            "and cancelled, seat capacity and waitlist, expenses by category, overdue families "
+            "collection rate, outstanding dues, attendance rate, class dates (scheduled = held "
+            "plus still to come, completed = held, and cancelled), seat capacity and waitlist, "
+            "expenses by category, overdue families "
             "by age bucket, profit and loss, and coach payroll status. Money is in cents."
         ),
         args_model=PeriodArgs,
@@ -193,8 +194,9 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         description=(
             "Per class for one month: active enrollments, paid and unpaid students, monthly "
             "fee, expected revenue, paid and unpaid amounts, coach payroll, rent and other "
-            "expenses, expected profit and margin, plus an academy-wide summary. Use it to "
-            "see which classes make or lose money. Money is in cents."
+            "expenses, expected profit and margin, plus an academy-wide summary. Profit and "
+            "margin are null until payroll is final (see payroll_status). Use it to see which "
+            "classes make or lose money. Money is in cents."
         ),
         args_model=PeriodArgs,
         access="owner",
@@ -223,9 +225,11 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="attendance_trends",
         description=(
-            "Attendance per month for the months given: sessions scheduled, completed and "
-            "no-show counts and the completion rate for each month, plus the overall "
-            "completion rate. Use it to compare months; pass up to twelve."
+            "Attendance per month for the months given: class dates held and still to come "
+            "(scheduled_count), held (completed_count), cancelled, absent attendance marks "
+            "(no_show_count, not a count of no-shows) and the held rate (held over every class "
+            "date, cancelled included) for each month, plus the overall held rate. Use it to "
+            "compare months; pass up to twelve."
         ),
         args_model=PeriodsArgs,
         access="admin",
@@ -233,7 +237,8 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="coach_utilization",
         description=(
-            "Per coach and month for the months given: hours worked, payout, utilization rate "
+            "Per coach and month for the months given: hours worked, approved or paid payout "
+            "(drafts left out), utilization rate "
             "and the share of attendance recorded within 24 hours, plus the total payout. "
             "Coaches are identified by id. Payout is in cents."
         ),

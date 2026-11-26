@@ -705,7 +705,7 @@ export default function AdminMonthClosePage() {
               <Overline>Operations summary</Overline>
               <div className="mt-2">
                 <BigNum size={32}>
-                  {sessions ? formatInteger(sessions.scheduled_count + sessions.completed_count) : "No data"}
+                  {sessions ? formatInteger(sessions.scheduled_count) : "No data"}
                 </BigNum>
               </div>
               <p className="text-sm text-neutral-500 mt-1">
