@@ -11,14 +11,17 @@ import {
 } from "@/lib/api/curriculum";
 import { SkillBoardView, type SkillBoardActions } from "@/components/pathway/skill-board";
 import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
-import { todayISO } from "@/lib/coach/marking";
+import { dateFromOccurrenceId, sessionIdFromOccurrenceId, todayISO } from "@/lib/coach/marking";
 
 
 export default function CoachSessionProgressPage() {
-  const { id: sessionId } = useParams<{ id: string }>();
+  const { id } = useParams<{ id: string }>();
+  const routeId = decodeURIComponent(id);
+  // The board is per class; an occurrence-shaped id still names its class and date.
+  const sessionId = sessionIdFromOccurrenceId(routeId);
   const searchParams = useSearchParams();
   const programId = searchParams.get("program_id") ?? "";
-  const date = searchParams.get("date") ?? todayISO();
+  const date = searchParams.get("date") ?? dateFromOccurrenceId(routeId) ?? todayISO();
   const queryClient = useQueryClient();
 
   const boardKey = ["coach", "skill-board", sessionId, programId || "default"];
@@ -79,7 +82,7 @@ export default function CoachSessionProgressPage() {
   return (
     <section data-testid="coach-session-progress" className="space-y-4">
       <SessionDetailTabs
-        attendanceSkillsId={sessionId}
+        attendanceSkillsId={routeId}
         progressSessionId={sessionId}
         date={date}
         active="progress"
