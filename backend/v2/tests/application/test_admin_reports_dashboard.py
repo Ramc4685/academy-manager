@@ -749,7 +749,8 @@ async def test_session_economics_prorates_monthly_fee_and_allocates_costs() -> N
             "session_id": "sess-beginner",
             "academy_id": "acad",
             "title": "Wednesday 5:45 PM Beginner",
-            "coach_name": "Kishore",
+            "coach_id": "coach-kishore",
+            "assistant_coach_ids": ["coach-casey"],
             "amount_cents": 60_000,
             "capacity": 8,
             "status": "scheduled",
@@ -823,7 +824,7 @@ async def test_session_economics_prorates_monthly_fee_and_allocates_costs() -> N
             "coach_id": "coach-kishore",
             "period_start": datetime(2026, 4, 1, tzinfo=UTC),
             "period_end": datetime(2026, 5, 1, tzinfo=UTC),
-            "status": "draft",
+            "status": "approved",
             "currency": "USD",
             "total_minor": 18_000,
         }
@@ -843,6 +844,13 @@ async def test_session_economics_prorates_monthly_fee_and_allocates_costs() -> N
         ]
     )
 
+    await db["users"].insert_many(
+        [
+            {"user_id": "coach-kishore", "display_name": "Kishore"},
+            {"user_id": "coach-casey", "display_name": "Casey Newcoach"},
+        ]
+    )
+
     with tenant_scope("acad"):
         report = await reports_read_model.make_session_economics_report(db)("2026-04")
 
@@ -853,6 +861,8 @@ async def test_session_economics_prorates_monthly_fee_and_allocates_costs() -> N
         "coach_payroll_cents": 18_000,
         "rent_cents": 10_000,
         "other_expenses_cents": 5_000,
+        "payroll_status": "complete",
+        "payroll_blocked_by": None,
         "expected_profit_cents": 27_000,
         "profit_margin": 0.45,
     }
@@ -860,7 +870,7 @@ async def test_session_economics_prorates_monthly_fee_and_allocates_costs() -> N
         {
             "session_id": "sess-beginner",
             "title": "Wednesday 5:45 PM Beginner",
-            "coach_name": "Kishore",
+            "coach_name": "Kishore, Casey Newcoach",
             "active_enrollment_count": 1,
             "not_billed_enrollment_count": 0,
             "paid_student_count": 1,
@@ -874,6 +884,7 @@ async def test_session_economics_prorates_monthly_fee_and_allocates_costs() -> N
             "coach_payroll_cents": 18_000,
             "rent_cents": 10_000,
             "other_expenses_cents": 5_000,
+            "payroll_status": "complete",
             "expected_profit_cents": 27_000,
             "profit_margin": 0.45,
         }
@@ -1475,3 +1486,103 @@ async def test_month_counts_classes_that_meet_in_it_not_only_ones_that_began() -
     assert dashboard["sessions"]["scheduled_count"] == 1
     assert dashboard["sessions"]["capacity_utilization"] == 0.4
     assert dashboard["sessions"]["waitlist_count"] == 1
+
+
+async def _seed_economics_class(db, *, end_at: datetime) -> None:
+    await db["sessions"].insert_one(
+        {
+            "session_id": "sess-1",
+            "academy_id": "acad",
+            "title": "Junior Beginners",
+            "coach_id": "coach-1",
+            "amount_cents": 8_000,
+        }
+    )
+    await db["session_occurrences"].insert_one(
+        {
+            "occurrence_id": "occ-1",
+            "academy_id": "acad",
+            "session_id": "sess-1",
+            "status": "scheduled",
+            "scheduled_coach_id": "coach-1",
+            "start_at": datetime(2026, 5, 9, 14, tzinfo=UTC),
+            "end_at": end_at,
+        }
+    )
+    await db["enrollments"].insert_one(
+        {
+            "enrollment_id": "enr-1",
+            "academy_id": "acad",
+            "session_id": "sess-1",
+            "status": "active",
+        }
+    )
+    await db["users"].insert_one({"user_id": "coach-1", "display_name": "Demo Coach"})
+
+
+async def _economics(db) -> dict:
+    with tenant_scope("acad"):
+        return await reports_read_model.make_session_economics_report(db)("2026-05")
+
+
+@pytest.mark.asyncio
+async def test_session_economics_withholds_margin_until_payroll_is_generated() -> None:
+    db = _payroll_db()
+    await _seed_economics_class(db, end_at=datetime(2026, 5, 9, 15, tzinfo=UTC))
+
+    report = await _economics(db)
+
+    row = report["sessions"][0]
+    assert row["coach_name"] == "Demo Coach"
+    assert row["payroll_status"] == "needs_payroll"
+    assert row["expected_profit_cents"] is None
+    assert row["profit_margin"] is None
+    assert report["summary"]["payroll_status"] == "needs_payroll"
+    assert report["summary"]["expected_profit_cents"] is None
+    assert report["summary"]["profit_margin"] is None
+    assert report["summary"]["payroll_blocked_by"] == "No generated payout periods for this month."
+
+
+@pytest.mark.asyncio
+async def test_session_economics_withholds_margin_while_payroll_is_draft() -> None:
+    db = _payroll_db()
+    await _seed_economics_class(db, end_at=datetime(2026, 5, 9, 15, tzinfo=UTC))
+    await _seed_period(db, "pp-1", coach_id="coach-1", status="draft", total_minor=3_000)
+
+    report = await _economics(db)
+
+    assert report["sessions"][0]["payroll_status"] == "needs_payroll"
+    assert report["summary"]["profit_margin"] is None
+
+
+@pytest.mark.asyncio
+async def test_session_economics_shows_margin_once_payroll_is_approved() -> None:
+    db = _payroll_db()
+    await _seed_economics_class(db, end_at=datetime(2026, 5, 9, 15, tzinfo=UTC))
+    await _seed_period(db, "pp-1", coach_id="coach-1", status="approved", total_minor=3_000)
+    await db["payout_period_lines"].insert_one(
+        {"period_id": "pp-1", "academy_id": "acad", "occurrence_id": "occ-1", "amount_minor": 3_000}
+    )
+
+    report = await _economics(db)
+
+    row = report["sessions"][0]
+    assert row["payroll_status"] == "complete"
+    assert row["expected_profit_cents"] == 5_000
+    assert row["profit_margin"] == 0.625
+    assert report["summary"]["payroll_status"] == "complete"
+    assert report["summary"]["profit_margin"] == 0.625
+
+
+@pytest.mark.asyncio
+async def test_session_economics_withholds_margin_for_classes_not_yet_held() -> None:
+    db = _payroll_db()
+    # Ends in the future: nothing to pay yet, so no final margin.
+    await _seed_economics_class(db, end_at=datetime(2999, 5, 9, 15, tzinfo=UTC))
+
+    report = await _economics(db)
+
+    assert report["sessions"][0]["payroll_status"] == "needs_payroll"
+    assert report["summary"]["payroll_blocked_by"] == (
+        "Some classes this month have not been held yet."
+    )

@@ -1080,7 +1080,10 @@ export interface AdminSessionEconomicsSummary {
   coach_payroll_cents: number;
   rent_cents: number;
   other_expenses_cents: number;
-  expected_profit_cents: number;
+  /** "needs_payroll" until the month's coach payroll is final; profit is null then. */
+  payroll_status: "complete" | "needs_payroll";
+  payroll_blocked_by: string | null;
+  expected_profit_cents: number | null;
   profit_margin: number | null;
 }
 
@@ -1101,7 +1104,8 @@ export interface AdminSessionEconomicsRow {
   coach_payroll_cents: number;
   rent_cents: number;
   other_expenses_cents: number;
-  expected_profit_cents: number;
+  payroll_status: "complete" | "needs_payroll";
+  expected_profit_cents: number | null;
   profit_margin: number | null;
 }
 

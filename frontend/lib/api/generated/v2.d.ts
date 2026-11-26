@@ -10678,11 +10678,8 @@ export interface components {
              * @default 0
              */
             coach_payroll_cents: number;
-            /**
-             * Expected Profit Cents
-             * @default 0
-             */
-            expected_profit_cents: number;
+            /** Expected Profit Cents */
+            expected_profit_cents?: number | null;
             /**
              * Expected Revenue Cents
              * @default 0
@@ -10723,6 +10720,12 @@ export interface components {
              * @default 0
              */
             payable_occurrence_count: number;
+            /**
+             * Payroll Status
+             * @default needs_payroll
+             * @enum {string}
+             */
+            payroll_status: "complete" | "needs_payroll";
             /** Profit Margin */
             profit_margin?: number | null;
             /**
@@ -10752,11 +10755,8 @@ export interface components {
              * @default 0
              */
             coach_payroll_cents: number;
-            /**
-             * Expected Profit Cents
-             * @default 0
-             */
-            expected_profit_cents: number;
+            /** Expected Profit Cents */
+            expected_profit_cents?: number | null;
             /**
              * Expected Revenue Cents
              * @default 0
@@ -10772,6 +10772,14 @@ export interface components {
              * @default 0
              */
             paid_cents: number;
+            /** Payroll Blocked By */
+            payroll_blocked_by?: string | null;
+            /**
+             * Payroll Status
+             * @default needs_payroll
+             * @enum {string}
+             */
+            payroll_status: "complete" | "needs_payroll";
             /** Profit Margin */
             profit_margin?: number | null;
             /**

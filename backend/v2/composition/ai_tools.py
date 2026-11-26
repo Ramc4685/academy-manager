@@ -28,13 +28,13 @@ from backend.v2.interfaces.admin.people_reports_routes import (
     InquiryConversionView,
     MoneyOwedByAgeView,
 )
+from backend.v2.interfaces.admin.reports_views import AdminSessionEconomicsResponse
 from backend.v2.interfaces.admin.views import (
     AdminDepositSlipResponse,
     AdminProjectedIncomeResponse,
     AdminRefundsReportResponse,
     AdminReportsDashboardResponse,
     AdminRevenueByCategoryResponse,
-    AdminSessionEconomicsResponse,
     AttendanceTrendsResponse,
     CoachUtilizationResponse,
     EnrollmentFunnelResponse,

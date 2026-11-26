@@ -61,8 +61,18 @@ export default function AdminSessionEconomicsPage() {
         />
         <KpiCard
           label="Expected profit"
-          value={report ? formatCurrency(report.summary.expected_profit_cents) : loadingValue(economicsQuery.isLoading)}
-          detail={`Margin ${report ? formatNullablePercent(report.summary.profit_margin) : "pending"}.`}
+          value={
+            report
+              ? report.summary.expected_profit_cents == null
+                ? "Needs payroll"
+                : formatCurrency(report.summary.expected_profit_cents)
+              : loadingValue(economicsQuery.isLoading)
+          }
+          detail={
+            report?.summary.payroll_status === "needs_payroll"
+              ? (report.summary.payroll_blocked_by ?? "Coach payroll for this month is not final yet.")
+              : `Margin ${report ? formatNullablePercent(report.summary.profit_margin) : "pending"}.`
+          }
         />
       </div>
 
@@ -146,12 +156,18 @@ export default function AdminSessionEconomicsPage() {
                     <NumberCell value={formatCurrency(session.rent_cents)} />
                     <NumberCell value={formatCurrency(session.other_expenses_cents)} />
                     <td className="px-5 py-4">
-                      <div className={session.expected_profit_cents >= 0 ? "font-semibold text-emerald-700" : "font-semibold text-red-700"}>
-                        {formatCurrency(session.expected_profit_cents)}
-                      </div>
-                      <div className="mt-1 text-xs text-rally-muted">
-                        {formatNullablePercent(session.profit_margin)}
-                      </div>
+                      {session.expected_profit_cents == null ? (
+                        <div className="font-semibold text-amber-700">Needs payroll</div>
+                      ) : (
+                        <>
+                          <div className={session.expected_profit_cents >= 0 ? "font-semibold text-emerald-700" : "font-semibold text-red-700"}>
+                            {formatCurrency(session.expected_profit_cents)}
+                          </div>
+                          <div className="mt-1 text-xs text-rally-muted">
+                            {formatNullablePercent(session.profit_margin)}
+                          </div>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))

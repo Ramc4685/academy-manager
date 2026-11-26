@@ -9,13 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
+from backend.v2.interfaces.admin.reports_views import AdminSessionEconomicsResponse
 from backend.v2.interfaces.admin.views import (
     AdminDepositSlipResponse,
     AdminProjectedIncomeResponse,
     AdminRefundsReportResponse,
     AdminReportsDashboardResponse,
     AdminRevenueByCategoryResponse,
-    AdminSessionEconomicsResponse,
     AttendanceTrendsResponse,
     CoachUtilizationResponse,
     EnrollmentFunnelResponse,

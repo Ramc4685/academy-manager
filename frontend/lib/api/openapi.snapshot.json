@@ -6693,9 +6693,15 @@
             "type": "integer"
           },
           "expected_profit_cents": {
-            "default": 0,
-            "title": "Expected Profit Cents",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Profit Cents"
           },
           "expected_revenue_cents": {
             "default": 0,
@@ -6736,6 +6742,15 @@
             "default": 0,
             "title": "Payable Occurrence Count",
             "type": "integer"
+          },
+          "payroll_status": {
+            "default": "needs_payroll",
+            "enum": [
+              "complete",
+              "needs_payroll"
+            ],
+            "title": "Payroll Status",
+            "type": "string"
           },
           "profit_margin": {
             "anyOf": [
@@ -6787,9 +6802,15 @@
             "type": "integer"
           },
           "expected_profit_cents": {
-            "default": 0,
-            "title": "Expected Profit Cents",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Profit Cents"
           },
           "expected_revenue_cents": {
             "default": 0,
@@ -6805,6 +6826,26 @@
             "default": 0,
             "title": "Paid Cents",
             "type": "integer"
+          },
+          "payroll_blocked_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payroll Blocked By"
+          },
+          "payroll_status": {
+            "default": "needs_payroll",
+            "enum": [
+              "complete",
+              "needs_payroll"
+            ],
+            "title": "Payroll Status",
+            "type": "string"
           },
           "profit_margin": {
             "anyOf": [
