@@ -281,7 +281,8 @@ class CancelSessionOccurrence:
             families=tuple(
                 MissedClassFamily(
                     enrollment_id=str(f["enrollment_id"]),
-                    student_id=students.get(str(f["enrollment_id"])),
+                    # A family that left after the date has no live row (#1209).
+                    student_id=students.get(str(f["enrollment_id"])) or f.get("student_id"),
                     amount_cents=int(f.get("amount_cents") or 0),
                     outcome=str(f.get("outcome") or ""),
                 )

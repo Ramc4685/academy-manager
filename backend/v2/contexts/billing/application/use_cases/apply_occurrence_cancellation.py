@@ -62,7 +62,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Hashable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -120,6 +120,10 @@ class BillableEnrollment:
     #: or ``None``. A fee-sized credit for such a month hands back money that
     #: is never collected (#1209 item 6).
     not_invoiced_reason: str | None = None
+    #: When a dropped or removed enrollment stopped attending; ``None`` for a
+    #: live row. A family that left AFTER the called-off date still paid for
+    #: it and is credited (#1209 item 1, owner decision 2026-11-26).
+    ended_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -164,9 +168,15 @@ class OccurrenceCancellationReader(Protocol):
         ...
 
     async def enrollments_for_session(
-        self, session_id: str, *, period: str | None = None, today: date | None = None
+        self,
+        session_id: str,
+        *,
+        period: str | None = None,
+        today: date | None = None,
+        ended_after: datetime | None = None,
     ) -> list[BillableEnrollment]:
-        """``today`` (academy-local) decides whether a billing deferral is active."""
+        """``today`` (academy-local) decides whether a billing deferral is active.
+        ``ended_after`` also returns rows that ended after that instant."""
         ...
 
 
@@ -251,6 +261,8 @@ class OccurrenceCreditDecision:
     credit_id: str | None
     amount_cents: int
     outcome: str  # credited | already_credited | would_credit (dry run) | skipped:<reason>
+    #: The family's child, so a preview can name a family that has since left.
+    student_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -388,7 +400,10 @@ class ApplyOccurrenceCancellation:
         decisions: list[OccurrenceCreditDecision] = []
         fee_sized: list[_FeeSizedCredit] = []
         for enrollment in await self._reader.enrollments_for_session(
-            cmd.session_id, period=period, today=now.astimezone(ZoneInfo(pricing.timezone)).date()
+            cmd.session_id,
+            period=period,
+            today=now.astimezone(ZoneInfo(pricing.timezone)).date(),
+            ended_after=target.start_at,
         ):
             decision, sized = await self._decide(
                 enrollment=enrollment,
@@ -533,6 +548,7 @@ class ApplyOccurrenceCancellation:
             cmd=cmd,
             now=now,
         )
+        decision = replace(decision, student_id=enrollment.student_id or None)
         if fee_based and decision.outcome == "credited" and decision.credit_id:
             return decision, _FeeSizedCredit(
                 credit_id=decision.credit_id,
@@ -571,7 +587,8 @@ class ApplyOccurrenceCancellation:
                 False,
                 0,
             )
-        if enrollment.status not in {"active", "paused"}:
+        left = enrollment.status not in {"active", "paused"}
+        if left and (enrollment.ended_at is None or enrollment.ended_at <= target.start_at):
             return _skip(enrollment, "enrollment_not_active"), False, 0
         billing_start = enrollment.billing_start_at
         if billing_start is not None and target.start_at < billing_start:
@@ -603,6 +620,10 @@ class ApplyOccurrenceCancellation:
             # academy called off (#671).
             charge = max(basis.final_amount_cents, 0)
         else:
+            if left:
+                # The family left after the date, so the month will never be
+                # invoiced now: only a real invoice or snapshot is given back.
+                return _skip(enrollment, "left_not_invoiced"), False, 0
             if not enrollment.billed:
                 # No charge to give back. A real invoice above still wins: marking a
                 # child not billed never touches a month already charged.

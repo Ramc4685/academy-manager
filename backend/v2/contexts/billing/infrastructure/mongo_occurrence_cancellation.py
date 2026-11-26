@@ -52,6 +52,11 @@ from backend.v2.shared.time import LEGACY_FALLBACK_TIMEZONE
 #: Enrollment rows a cancelled date can affect. ``paused`` is here because a
 #: pause that started mid-month leaves a real invoice behind.
 _AFFECTED_STATUSES = ("active", "paused")
+#: Both #699 spellings of "dropped" and "removed". A row in one of these is
+#: read only when it ended after the called-off date (#1209 item 1).
+_ENDED_STATUSES = ("withdrawn", "dropped", "cancelled", "deleted")
+#: Where each ending writes its instant, in the order the lifecycle reads them.
+_ENDED_AT_FIELDS = ("withdrawal_date", "cancelled_at", "ended_at")
 
 
 class MongoOccurrenceOverrideRepository(TenantScopedRepository):
@@ -192,18 +197,40 @@ class MongoOccurrenceCancellationReader:
         )
 
     async def enrollments_for_session(
-        self, session_id: str, *, period: str | None = None, today: date | None = None
+        self,
+        session_id: str,
+        *,
+        period: str | None = None,
+        today: date | None = None,
+        ended_after: datetime | None = None,
     ) -> list[BillableEnrollment]:
         academy_id = current_academy_id()
+        status_filter: dict[str, Any] = {"status": {"$in": list(_AFFECTED_STATUSES)}}
+        if ended_after is not None:
+            status_filter = {
+                "$or": [
+                    status_filter,
+                    {
+                        "status": {"$in": list(_ENDED_STATUSES)},
+                        "$or": [{name: {"$gt": ended_after}} for name in _ENDED_AT_FIELDS],
+                    },
+                ]
+            }
         cursor = self._db["enrollments"].find(
             {
                 "academy_id": academy_id,
                 "session_id": session_id,
-                "status": {"$in": list(_AFFECTED_STATUSES)},
                 "is_deleted": {"$ne": True},
+                **status_filter,
             }
         )
-        rows = [doc async for doc in cursor]
+        rows = [
+            doc
+            async for doc in cursor
+            if ended_after is None
+            or str(doc.get("status") or "") in _AFFECTED_STATUSES
+            or ((ended := _ended_at(doc)) is not None and ended > ended_after)
+        ]
         if not rows:
             return []
         student_ids = sorted({str(row["student_id"]) for row in rows if row.get("student_id")})
@@ -245,6 +272,7 @@ class MongoOccurrenceCancellationReader:
                     # Same predicate as BILLED_ENROLLMENT_FILTER; kept in the
                     # read so the preview can say "free tuition" for the child.
                     billed=not is_not_billed(row),
+                    ended_at=_ended_at(row),
                     not_invoiced_reason=(
                         await _not_invoiced_reason(
                             self._db,
@@ -295,6 +323,17 @@ async def _not_invoiced_reason(
     if skip is None or skip[0] not in _NOT_INVOICED_REASONS:
         return None
     return str(skip[0])
+
+
+def _ended_at(row: dict[str, Any]) -> datetime | None:
+    """When an ended row stopped attending: the first ending field it carries."""
+    if str(row.get("status") or "") not in _ENDED_STATUSES:
+        return None
+    for name in _ENDED_AT_FIELDS:
+        value = _coerce_datetime(row.get(name))
+        if value is not None:
+            return value
+    return None
 
 
 def _coerce_datetime(value: Any) -> datetime | None:

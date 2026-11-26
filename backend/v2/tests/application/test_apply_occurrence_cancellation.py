@@ -78,7 +78,12 @@ class FakeReader:
         return self.bases.get(enrollment_id) or self.bases.get(f"{student_id}:{session_id}")
 
     async def enrollments_for_session(
-        self, session_id: str, *, period: str | None = None, today: Any = None
+        self,
+        session_id: str,
+        *,
+        period: str | None = None,
+        today: Any = None,
+        ended_after: Any = None,
     ) -> list[BillableEnrollment]:
         return list(self.enrollments)
 
@@ -308,6 +313,47 @@ async def test_month_the_run_never_invoices_is_not_credited_from_the_fee(reason:
 
     assert credits.rows == []
     assert result.decisions[0].outcome == f"skipped:{reason}_not_invoiced"
+
+
+@pytest.mark.asyncio
+async def test_family_who_left_after_the_date_is_credited_from_their_invoice() -> None:
+    """#1209 item 1 (owner decision): enrolled on the date, left since, still credited."""
+    left = _enrollment("enr-1", status="withdrawn", ended_at=DATES[1] + timedelta(days=3))
+    reader = FakeReader(enrollments=[left])
+    invoices = FakeInvoices({"enr-1": _invoice("enr-1", subtotal=12000)})
+    credits = FakeCredits()
+
+    result = await _build(reader, invoices, credits, FakeOverrides()).execute(_cmd())
+
+    assert result.decisions[0].outcome == "credited"
+    assert result.decisions[0].student_id == "st-enr-1"
+    assert len(credits.rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_family_who_left_before_the_date_is_not_credited() -> None:
+    left = _enrollment("enr-1", status="withdrawn", ended_at=DATES[1] - timedelta(hours=1))
+    reader = FakeReader(enrollments=[left])
+    invoices = FakeInvoices({"enr-1": _invoice("enr-1", subtotal=12000)})
+    credits = FakeCredits()
+
+    result = await _build(reader, invoices, credits, FakeOverrides()).execute(_cmd())
+
+    assert result.decisions[0].outcome == "skipped:enrollment_not_active"
+    assert credits.rows == []
+
+
+@pytest.mark.asyncio
+async def test_family_who_left_with_no_invoice_gets_no_fee_credit() -> None:
+    """The month will never be invoiced now, so there is nothing to give back."""
+    left = _enrollment("enr-1", status="dropped", ended_at=DATES[1] + timedelta(days=3))
+    reader = FakeReader(enrollments=[left])
+    credits = FakeCredits()
+
+    result = await _build(reader, FakeInvoices(), credits, FakeOverrides()).execute(_cmd())
+
+    assert result.decisions[0].outcome == "skipped:left_not_invoiced"
+    assert credits.rows == []
 
 
 @pytest.mark.asyncio

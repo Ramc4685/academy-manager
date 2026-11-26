@@ -302,3 +302,39 @@ async def test_a_first_month_paid_at_checkout_is_credited_despite_its_skip_perio
         )
 
         assert [(d.outcome, d.amount_cents) for d in result.decisions] == [("credited", 3000)]
+
+
+@pytest.mark.asyncio
+async def test_a_family_who_left_after_the_date_is_credited(db) -> None:
+    """#1209 item 1 (owner decision 2026-11-26): they paid for the date."""
+    await run_pending_migrations(db)
+    with tenant_scope(ACADEMY):
+        await _seed(
+            db,
+            invoiced=True,
+            status="withdrawn",
+            withdrawal_date=datetime(2026, 9, 14, tzinfo=UTC),
+        )
+
+        result = await compose_apply_occurrence_cancellation(db).execute(_cmd())
+
+        assert [(d.outcome, d.amount_cents, d.student_id) for d in result.decisions] == [
+            ("credited", 3000, "st-1")
+        ]
+
+
+@pytest.mark.asyncio
+async def test_a_family_who_left_before_the_date_is_not_read(db) -> None:
+    await run_pending_migrations(db)
+    with tenant_scope(ACADEMY):
+        await _seed(
+            db,
+            invoiced=True,
+            status="dropped",
+            withdrawal_date=datetime(2026, 9, 8, tzinfo=UTC),
+        )
+
+        result = await compose_apply_occurrence_cancellation(db).execute(_cmd())
+
+        assert result.decisions == ()
+        assert await MongoCreditLedgerRepository(db).list_for_parent("par-1") == []

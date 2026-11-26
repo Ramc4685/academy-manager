@@ -161,7 +161,7 @@ const SKIP_TEXT: Record<string, string> = {
   paused_not_invoiced: "paused and not charged that month",
   deferral_not_invoiced: "billing deferred and not charged that month",
   skip_period_not_invoiced: "month skipped and not charged",
-  pending_cancellation_not_invoiced: "leaving before that month and not charged",
+  left_not_invoiced: "left since and never charged that month",
   not_invoiced: "not invoiced for that month",
   free_tuition: "free tuition",
 };

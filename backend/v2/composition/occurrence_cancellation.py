@@ -117,6 +117,7 @@ class OccurrenceBillingSyncAdapter:
                     "enrollment_id": d.enrollment_id,
                     "amount_cents": d.amount_cents,
                     "outcome": d.outcome,
+                    "student_id": d.student_id,
                 }
                 for d in result.decisions
             ],
