@@ -138,6 +138,10 @@ const DYNAMIC_ROUTE_ENV_CONTRACT: Record<string, DynamicRouteEnvContract> = {
   "/parent/waivers/signatures/[signatureId]": {
     replacements: [["[signatureId]", "LOCAL_AUTH_ADMIN_WAIVER_SIGNATURE_ID"]],
   },
+  // No seeded invoice id: an id that is not this parent's paid invoice shows the receipt's not-found state.
+  "/parent/payments/receipt/[invoiceId]": {
+    replacements: [["[invoiceId]", "LOCAL_AUTH_ADMIN_PAYOUT_ID"]],
+  },
   "/parent/progress/certificates/[certId]": {
     replacements: [["[certId]", "LOCAL_AUTH_PARENT_CERT_ID"]],
     query: [["child", "LOCAL_AUTH_PARENT_CERT_STUDENT_ID"]],

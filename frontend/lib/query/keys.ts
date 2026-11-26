@@ -23,6 +23,8 @@ export const queryKeys = {
     profile: () => ["coach", "profile"] as const,
     academy: () => ["coach", "academy"] as const,
     pay: (month: string) => ["coach", "pay", month] as const,
+    // Health notes (S50, D-14): gcTime 0, never persisted; see health-alert.tsx.
+    rosterHealth: (occurrenceId: string) => ["coach", "roster-health", occurrenceId] as const,
     pathway: () => ["coach", "pathway"] as const,
     session: (sessionId: string) => ["coach", "session", sessionId] as const,
     sessionAnnouncements: (sessionId: string) =>

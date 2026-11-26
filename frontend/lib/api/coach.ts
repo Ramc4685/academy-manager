@@ -935,3 +935,14 @@ export type CoachPathway = components["schemas"]["CoachPathwayResponse"];
 export function getCoachPathway(): Promise<CoachPathway> {
   return apiFetch<CoachPathway>("/coach/pathway", { method: "GET" });
 }
+
+export type CoachRosterHealth = components["schemas"]["CoachRosterHealthResponse"];
+export type CoachChildHealth = components["schemas"]["CoachChildHealthView"];
+
+/** Health notes (S49, D-14): never cached by the browser, the SW or the persister. */
+export function getCoachRosterHealth(occurrenceId: string): Promise<CoachRosterHealth> {
+  return apiFetch<CoachRosterHealth>(
+    `/coach/roster-health?occurrence_id=${encodeURIComponent(occurrenceId)}`,
+    { method: "GET", cache: "no-store" },
+  );
+}
