@@ -12,7 +12,7 @@ if (!skill) {
     $setOnInsert:{introduced_at:new Date(+now - 14 * 864e5)},
     $set:{skill_progress_id:"kit_sp_alex_split_step", academy_id:A, student_id:S, skill_id:skill.skill_id,
       level_id:skill.level_id, program_id:level.program_id || skill.program_id || null, status:"PRACTICING",
-      coach_note:null, silent:false, tries:0, last_updated_at:new Date(+now - 3 * 864e5), last_updated_by:"demo_user_coach"}}, {upsert:true});
+      coach_note:null, silent:false, tries:0, last_updated_at:now, last_updated_by:"demo_user_coach"}}, {upsert:true});
   [["kit_note_alex_shared", "shared", "Split step is getting quicker; keep the small hop before each shot.", 4],
    ["kit_note_alex_private", "private", "Start the split step earlier on returns; check again next week.", 2]].forEach(([id, vis, body, daysAgo]) =>
     db.coach_skill_notes.updateOne({note_id:id}, {$set:{note_id:id, academy_id:A, student_id:S, skill_id:skill.skill_id,

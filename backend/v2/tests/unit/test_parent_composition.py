@@ -3309,22 +3309,56 @@ async def test_parent_home_milestone_falls_back_to_the_shared_note() -> None:
 
 
 @pytest.mark.asyncio
-async def test_parent_home_passed_skill_beats_a_newer_note() -> None:
-    """S18: only a PASSED skill is a milestone, and it outranks practice notes."""
+async def test_parent_home_newest_of_pass_practice_and_note_wins() -> None:
+    """S18: the newest of a pass, a skill in progress and a shared note shows,
+    labelled by its kind; an old pass never hides newer work."""
     mongomock_motor = pytest.importorskip("mongomock_motor")
-    db = mongomock_motor.AsyncMongoMockClient()["parent-home-pass-wins"]
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-newest-wins"]
     await _seed_home_db(db)
+    # The pass is older than the shared note (Sep 5) ...
     await db["student_skill_progress"].update_one(
         {"skill_progress_id": "sp-1"},
         {"$set": {"last_updated_at": datetime(2026, 9, 1, 15, 0, tzinfo=UTC)}},
     )
     parent = _compose_home_parent(db)
-
     with tenant_scope("acad"):
         home = await parent.get_parent_home(parent_id="parent-1")
+    assert home["children"][0]["latest_milestone"]["kind"] == "note"
 
-    assert home["children"][0]["latest_milestone"]["kind"] == "skill"
-    assert home["children"][0]["latest_milestone"]["label"] == "Backhand Lift"
+    # ... and a newer skill in progress outranks both.
+    await db["skills"].insert_one(
+        {
+            "academy_id": "acad",
+            "skill_id": "skill-2",
+            "level_id": "lvl-1",
+            "program_id": "prog-1",
+            "sequence": 2,
+            "name": "Split step",
+            "created_at": _HOME_NOW,
+            "updated_at": _HOME_NOW,
+            "created_by": "coach-1",
+        }
+    )
+    await db["student_skill_progress"].insert_one(
+        {
+            "academy_id": "acad",
+            "skill_progress_id": "sp-2",
+            "student_id": "st-1",
+            "skill_id": "skill-2",
+            "level_id": "lvl-1",
+            "program_id": "prog-1",
+            "status": "LEARNING",
+            "last_updated_at": datetime(2026, 9, 10, 15, 0, tzinfo=UTC),
+            "last_updated_by": "coach-1",
+        }
+    )
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+    assert home["children"][0]["latest_milestone"] == {
+        "kind": "working_on",
+        "label": "Split step",
+        "at": datetime(2026, 9, 10, 15, 0, tzinfo=UTC),
+    }
 
 
 @pytest.mark.asyncio

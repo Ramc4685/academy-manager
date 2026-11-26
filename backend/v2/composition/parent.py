@@ -2969,16 +2969,14 @@ def compose_parent(
             if sp_composition is None:
                 return None
             updates = await sp_composition.get_recent_skill_updates.execute(student_id)
-            working_on: dict[str, Any] | None = None
             for update in updates:
                 at = _as_utc(update.updated_at)
                 if at is None or update.status == "NOT_STARTED":
                     continue
-                row = {"label": _milestone_label(str(update.skill_name or "")), "at": at}
-                if update.status == "PASSED":
-                    return {"kind": "skill", **row}
-                working_on = working_on or {"kind": "working_on", **row}
-            return working_on
+                # Only a pass is a milestone; anything newer reads "Working on".
+                kind = "skill" if update.status == "PASSED" else "working_on"
+                return {"kind": kind, "label": _milestone_label(str(update.skill_name or "")), "at": at}
+            return None
 
         skill_results = await asyncio.gather(
             *(_newest_skill(student_id) for student_id in student_ids),
@@ -2996,9 +2994,6 @@ def compose_parent(
             else:
                 skill = outcome
             latest_note = newest_note.get(student_id)
-            if skill and skill["kind"] == "skill" and skill["label"]:
-                milestones[student_id] = skill
-                continue
             candidates: list[dict[str, Any]] = [
                 candidate for candidate in (latest_note, skill) if candidate and candidate["label"]
             ]
