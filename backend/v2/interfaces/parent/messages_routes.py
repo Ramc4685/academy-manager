@@ -44,7 +44,7 @@ async def send_message_to_academy(
 ) -> ParentMessageView:
     """Open or continue this family's thread with the academy (D-18).
 
-    No email or push goes to staff (decided); they see it in admin Messages.
+    Admins get one email per family per hour, without the message text.
     """
     if use_cases.send_academy_message is None:
         raise HTTPException(status_code=503, detail="Messages are not configured")

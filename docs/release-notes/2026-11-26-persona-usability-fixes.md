@@ -39,7 +39,7 @@ Six personas (owner, front desk, veteran coach, new coach, busy parent, new fami
   - A parent can undo an absence they reported, until class starts.
   - Home shows a "before your first class" card.
   - The Payments page shows one amount, one due date and a line per child, and a paid invoice has a printable receipt.
-  - Parents can message the academy. All admins see the family thread.
+  - Parents can message the academy. All admins see the family thread, and admins get one email per family per hour that names the family but never includes the message text.
   - The calendar offers an .ics download.
 - **Public page.**
   - Each class shows what to bring and its level, and the page links the refund policy.
@@ -51,7 +51,7 @@ Six personas (owner, front desk, veteran coach, new coach, busy parent, new fami
   - Creating or editing a class refuses a coach or assistant who isn't a member of the academy.
 
 ## Deploy notes
-None. There are no migrations and no new settings. The parent calendar feed already depended on `UNSUBSCRIBE_TOKEN_SECRET`; this change only adds a plain message when the feed is unavailable. The demo-academy seed is unchanged; the persona test data lives in `scripts/dev/persona_kit/`, which is local only and refuses non-localhost.
+One data migration, `0249_registration_lock_per_class`, applied by the release command. It rewrites the registration lock on enrollments made before this change from the child's id to child-and-class, so the existing unique index again stops two near-simultaneous registrations of one child into one class. It cannot collide (the old index allowed one live lock per child) and is safe to re-run. There are no new settings. The parent calendar feed already depended on `UNSUBSCRIBE_TOKEN_SECRET`; this change only adds a plain message when the feed is unavailable. The demo-academy seed is unchanged; the persona test data lives in `scripts/dev/persona_kit/`, which is local only and refuses non-localhost.
 
 ## Risk / rollback
 The change touches a lot of screens but stores little new data.
@@ -64,6 +64,6 @@ The change touches a lot of screens but stores little new data.
   - Unpriced classes vanish from parent sign-up.
   - Classes whose coach has left the academy can't be copied until a member coach is picked.
   - Withdrawing a reported absence deletes it and writes an audit row.
-- **Known gap:** for enrollments made before this change, the database no longer blocks two near-simultaneous registrations of one child into the same class. The registration checks still refuse them.
+- **Staff email:** a family's first message in an hour emails every admin and owner (notification category, so the email preference gate applies).
 
-Roll back by reverting the merge commit. None of the new data is read by older code.
+Roll back by reverting the merge commit. None of the new data is read by older code; older code compares locks only for equality, so rewritten locks are harmless to it.

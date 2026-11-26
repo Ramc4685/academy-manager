@@ -15,6 +15,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import OperationFailure
 
 from backend.v2.composition.absence_notifications import compose_absence_notifier
+from backend.v2.composition.academy_inbox import compose_send_academy_message
 from backend.v2.composition.ai_video_consent import compose_parent_ai_video_consent
 from backend.v2.composition.calendar_feed import compose_calendar_feed
 from backend.v2.composition.families import compose_system_family_autopay_pause
@@ -3305,9 +3306,11 @@ def compose_parent(
         curriculum=curriculum_composition,
         list_messages=list_messages,
         mark_message_read=mark_message_read,
-        send_academy_message=CommsService(
-            messages=messages_repo, academy_id=current_academy_id
-        ).send_to_academy,
+        send_academy_message=compose_send_academy_message(
+            db,
+            settings,
+            CommsService(messages=messages_repo, academy_id=current_academy_id).send_to_academy,
+        ),
         get_parent_profile=get_parent_profile,
         update_parent_profile=update_parent_profile,
         confirm_parent_email=confirm_parent_email,
