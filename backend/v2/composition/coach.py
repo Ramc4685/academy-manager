@@ -353,11 +353,12 @@ def _overdue_cents_by_student(db: Any) -> Any:
 
 
 def _coach_academy_info(db: Any) -> Any:
-    """Row 14: {name, logo_url, brand_color} for GET /coach/academy.
+    """Row 14: {name, logo_url, brand_color, contact_email, contact_phone} for GET /coach/academy.
 
     Deliberately its own tiny read, scoped to the request academy id the
     caller passes in (never a boot-time tenant) — a coach never gets the rest
-    of the academy profile parent/admin already expose.
+    of the academy profile parent/admin already expose. The contact pair is
+    the same one parents see, so a new coach knows who to call.
     """
 
     async def resolve(*, academy_id: str) -> dict[str, Any]:
@@ -368,6 +369,8 @@ def _coach_academy_info(db: Any) -> Any:
             "name": str(doc.get("display_name") or "Academy"),
             "logo_url": doc.get("logo_url"),
             "brand_color": doc.get("brand_color"),
+            "contact_email": doc.get("contact_email") or None,
+            "contact_phone": doc.get("contact_phone") or None,
         }
 
     return resolve

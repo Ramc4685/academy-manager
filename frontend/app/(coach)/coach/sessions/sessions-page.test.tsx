@@ -35,4 +35,24 @@ describe("coach Sessions list", () => {
     const plan = /<a[^>]*data-testid="session-plan-[^"]*"[^>]*>/.exec(html)?.[0] ?? "";
     expect(plan).toContain('href="/coach/today/plan?date=2026-12-01"');
   });
+
+  it("tells a coach with no classes what happens next and who to ask", () => {
+    const client = new QueryClient();
+    client.setQueryData(queryKeys.coach.schedule(), { sessions: [] });
+    client.setQueryData(queryKeys.coach.academy(), {
+      name: "Riverside",
+      logo_url: null,
+      brand_color: null,
+      contact_phone: "555-0100",
+      contact_email: "office@example.com",
+    });
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <CoachSessionsPage />
+      </QueryClientProvider>,
+    );
+    expect(html).toContain("Classes appear here once the academy assigns them.");
+    expect(html).toContain("Questions? Call 555-0100 or email office@example.com.");
+    expect(html).not.toContain("No upcoming sessions");
+  });
 });

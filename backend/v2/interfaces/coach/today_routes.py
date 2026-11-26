@@ -276,6 +276,9 @@ async def get_today(
             ],
             recap_saved=s.occurrence_id in recapped,
             age_band=age_band_view(getattr(s, "age_band", None)),
+            venue_address=getattr(s, "venue_address", None),
+            parking_notes=getattr(s, "parking_notes", None),
+            arrival_minutes_before=getattr(s, "arrival_minutes_before", None),
         )
         for s, roster, session_guests in zip(sessions, rosters, guests, strict=False)
     ]

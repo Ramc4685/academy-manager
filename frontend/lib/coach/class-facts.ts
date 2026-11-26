@@ -1,4 +1,4 @@
-import type { CoachAgeBand, CoachScheduleEntry } from "@/lib/api/coach";
+import type { CoachAgeBand, CoachScheduleEntry, CoachSession } from "@/lib/api/coach";
 
 /** "Ages 8–12", "Ages 13+", "Up to age 9"; null when the class has no age span. */
 export function ageBandLabel(band: CoachAgeBand | null | undefined): string | null {
@@ -34,4 +34,16 @@ export function classFacts(session: Pick<CoachScheduleEntry, "enrolled_count" | 
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/** Venue lines for the class page: address, parking, arrival time. Empty when the owner set none. */
+export function venueLines(
+  session: Pick<CoachSession, "venue_address" | "parking_notes" | "arrival_minutes_before">,
+): string[] {
+  const minutes = session.arrival_minutes_before;
+  return [
+    session.venue_address?.trim() ?? "",
+    session.parking_notes?.trim() ? `Parking: ${session.parking_notes.trim()}` : "",
+    typeof minutes === "number" && minutes > 0 ? `Arrive ${minutes} minutes before the start` : "",
+  ].filter(Boolean);
 }

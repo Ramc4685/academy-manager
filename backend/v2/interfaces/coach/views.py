@@ -145,6 +145,10 @@ class CoachSession(BaseModel):
     dropoff_window_opens_at: datetime | None = None
     dropoff_window_closes_at: datetime | None = None
     age_band: CoachAgeBand | None = None
+    # Venue facts the class already stores for families (#613); None when unset.
+    venue_address: str | None = None
+    parking_notes: str | None = None
+    arrival_minutes_before: int | None = None
 
 
 class CoachTodayResponse(BaseModel):
@@ -454,3 +458,6 @@ class CoachAcademyView(BaseModel):
     name: str
     logo_url: str | None = None
     brand_color: str | None = None
+    # Who a coach calls: the academy's public contact pair, as parents see it.
+    contact_email: str | None = None
+    contact_phone: str | None = None

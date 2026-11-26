@@ -10,6 +10,7 @@ import { queryKeys } from "@/lib/query/keys";
 import { Card } from "@/components/ds/card";
 import { Skeleton } from "@/components/ds/skeleton";
 import { RetryButton } from "@/components/coach/RetryButton";
+import { CoachEmptyState } from "@/components/coach/CoachEmptyState";
 import { CalendarTimeZoneUnavailable } from "@/components/calendar/CalendarTimeZoneUnavailable";
 
 // FullCalendar (~250 KB) is loaded client-side only, out of the initial
@@ -51,12 +52,10 @@ export default function CoachCalendarPage() {
         <Card p={16}>
           <Skeleton variant="block" height={280} />
         </Card>
-      ) : isError && !data ? null : timeZone.status === "ready" ? (
+      ) : isError && !data ? null : events.length === 0 ? (
+        <CoachEmptyState />
+      ) : timeZone.status === "ready" ? (
         <PersonaCalendarView events={events} timeZone={timeZone.timeZone} />
-      ) : events.length === 0 ? (
-        <Card p={16}>
-          <p className="text-sm text-rally-muted">No upcoming sessions.</p>
-        </Card>
       ) : (
         <CalendarTimeZoneUnavailable listHref="/coach/sessions" listLabel="Sessions" />
       )}

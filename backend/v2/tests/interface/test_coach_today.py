@@ -410,3 +410,20 @@ def test_age_in_years_counts_whole_birthdays():
     assert age_in_years("2015-12-01", date(2026, 12, 1)) == 11
     assert age_in_years(None, date(2026, 12, 1)) is None
     assert age_in_years("not a date", date(2026, 12, 1)) is None
+
+
+def test_coach_today_carries_the_class_venue_facts(seed):
+    seed["sessions"][0] = seed["sessions"][0].model_copy(
+        update={
+            "venue_address": "12 Court Lane, Normal IL",
+            "parking_notes": "Use the north lot",
+            "arrival_minutes_before": 10,
+        }
+    )
+    app = _make_app(_coach_claims(), _build_use_cases(seed))
+    with TestClient(app) as client:
+        first = client.get("/api/v2/coach/today?date=2026-05-16").json()["sessions"][0]
+
+    assert first["venue_address"] == "12 Court Lane, Normal IL"
+    assert first["parking_notes"] == "Use the north lot"
+    assert first["arrival_minutes_before"] == 10

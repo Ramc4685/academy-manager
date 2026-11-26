@@ -13,6 +13,7 @@ import { AppLockSetting } from "@/components/persona/app-lock-setting";
 import { DeleteAccountSection } from "@/components/persona/delete-account-section";
 import { PersonaLogoutButton } from "@/components/persona/logout-button";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
+import { AcademyContact } from "@/components/coach/CoachEmptyState";
 
 export default function CoachProfilePage() {
   const queryClient = useQueryClient();
@@ -74,6 +75,8 @@ export default function CoachProfilePage() {
         <h1 className="text-2xl font-semibold">Profile</h1>
         <p className="text-sm text-neutral-500">{assistant ? "Assistant coach access" : "Coach access"}</p>
       </header>
+
+      <AcademyContact className="mb-4 text-sm text-neutral-600 dark:text-neutral-300" />
 
       {isLoading && <p className="text-neutral-500">Loading profile...</p>}
 

@@ -35,7 +35,7 @@ import {
   type QueuedMark,
 } from "@/lib/offline/attendance-queue";
 import { CLASS_SYNC_LABELS, classSyncStatus } from "@/lib/offline/sync-status";
-import { ageBandLabel, rosterRowMeta } from "@/lib/coach/class-facts";
+import { ageBandLabel, rosterRowMeta, venueLines } from "@/lib/coach/class-facts";
 import { isBulkMarkEligible } from "@/lib/coach/bulk-eligibility";
 import { BulkMarkUndoWindow } from "@/lib/coach/bulk-mark-undo";
 import {
@@ -934,6 +934,13 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
               <span data-testid="session-age-band"> · {ageBandLabel(session.age_band)}</span>
             )}
           </p>
+          {venueLines(session).length > 0 && (
+            <ul data-testid="session-venue" className="mt-1 text-sm" style={{ color: "var(--rally-muted)" }}>
+              {venueLines(session).map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          )}
           {session.coach_name && (
             <p
               className="text-sm"

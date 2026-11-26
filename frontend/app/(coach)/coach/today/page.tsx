@@ -28,6 +28,7 @@ import { reportVitals } from "@/lib/pwa/vitals";
 import { formatSessionTimeRange, sessionDateKey } from "@/lib/time/session-time";
 import { formatPlainDate } from "@/lib/format/plain-date";
 import { RetryButton } from "@/components/coach/RetryButton";
+import { CoachEmptyState } from "@/components/coach/CoachEmptyState";
 import { useQueuedMarkCount } from "@/lib/offline/use-needs-review-count";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
 
@@ -154,6 +155,13 @@ export default function CoachTodayPage() {
         <p className="text-neutral-500" data-testid="empty-state">
           No sessions today.
         </p>
+      )}
+
+      {/* First day: nothing assigned anywhere yet, so say what happens next. */}
+      {emptyToday && schedule.isSuccess && !nextClass && (
+        <div className="mt-3">
+          <CoachEmptyState />
+        </div>
       )}
 
       {nextClass && (

@@ -118,6 +118,10 @@ export interface CoachSession {
   dropoff_window_opens_at?: string | null;
   dropoff_window_closes_at?: string | null;
   age_band?: CoachAgeBand | null;
+  /** Where to go: set per class by the owner. Any may be unset. */
+  venue_address?: string | null;
+  parking_notes?: string | null;
+  arrival_minutes_before?: number | null;
 }
 
 /** The coach sees the parent's name and the player's age only. */
@@ -829,6 +833,9 @@ export interface CoachAcademy {
   name: string;
   logo_url: string | null;
   brand_color: string | null;
+  /** Who a new coach calls with a question. Either may be unset. */
+  contact_email?: string | null;
+  contact_phone?: string | null;
 }
 
 export function getCoachAcademy(): Promise<CoachAcademy> {

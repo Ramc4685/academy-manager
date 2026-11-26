@@ -13386,6 +13386,10 @@ export interface components {
         CoachAcademyView: {
             /** Brand Color */
             brand_color?: string | null;
+            /** Contact Email */
+            contact_email?: string | null;
+            /** Contact Phone */
+            contact_phone?: string | null;
             /** Logo Url */
             logo_url?: string | null;
             /** Name */
@@ -13641,6 +13645,8 @@ export interface components {
         /** CoachSession */
         CoachSession: {
             age_band?: components["schemas"]["CoachAgeBand"] | null;
+            /** Arrival Minutes Before */
+            arrival_minutes_before?: number | null;
             /** Cancellation Reason */
             cancellation_reason?: string | null;
             /** Coach Id */
@@ -13660,6 +13666,8 @@ export interface components {
             location: string;
             /** Occurrence Id */
             occurrence_id: string;
+            /** Parking Notes */
+            parking_notes?: string | null;
             /**
              * Recap Saved
              * @default false
@@ -13689,6 +13697,8 @@ export interface components {
              * @default []
              */
             trial_guests: components["schemas"]["CoachTrialGuest"][];
+            /** Venue Address */
+            venue_address?: string | null;
         };
         /** CoachSessionAnnouncementList */
         CoachSessionAnnouncementList: {

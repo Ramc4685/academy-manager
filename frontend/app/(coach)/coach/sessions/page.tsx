@@ -9,6 +9,7 @@ import { classFacts, coachPlanHref } from "@/lib/coach/class-facts";
 import { queryKeys } from "@/lib/query/keys";
 import { formatSessionTimeRange, sessionDateKey } from "@/lib/time/session-time";
 import { RetryButton } from "@/components/coach/RetryButton";
+import { CoachEmptyState } from "@/components/coach/CoachEmptyState";
 
 export default function CoachSessionsPage() {
   const { data, isLoading, isError, refetch } = useQuery({
@@ -39,7 +40,7 @@ export default function CoachSessionsPage() {
       )}
 
       {!isLoading && !isError && sessions.length === 0 && (
-        <p className="text-neutral-500">No upcoming sessions.</p>
+        <CoachEmptyState />
       )}
 
       <div className="space-y-6">

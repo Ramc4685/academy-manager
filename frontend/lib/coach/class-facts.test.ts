@@ -6,6 +6,7 @@ import {
   coachPlanHref,
   headcountLabel,
   rosterRowMeta,
+  venueLines,
 } from "./class-facts";
 
 describe("class facts", () => {
@@ -33,5 +34,21 @@ describe("class facts", () => {
       "8 children · Ages 8–12",
     );
     expect(classFacts({ enrolled_count: null, age_band: null })).toBe("");
+  });
+});
+
+describe("venue lines", () => {
+  it("lists address, parking and arrival time the owner set", () => {
+    expect(
+      venueLines({
+        venue_address: "12 Court Lane, Normal IL",
+        parking_notes: "North lot",
+        arrival_minutes_before: 10,
+      }),
+    ).toEqual(["12 Court Lane, Normal IL", "Parking: North lot", "Arrive 10 minutes before the start"]);
+  });
+
+  it("is empty when the class has no venue details", () => {
+    expect(venueLines({ venue_address: null, parking_notes: " ", arrival_minutes_before: 0 })).toEqual([]);
   });
 });
