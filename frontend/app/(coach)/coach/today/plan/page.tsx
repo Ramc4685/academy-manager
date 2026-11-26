@@ -167,7 +167,7 @@ function SessionPlan({
           {session.groups.length === 0 && (
             <p data-testid="plan-all-unplaced" className="mb-2 text-sm text-neutral-600 dark:text-neutral-300">
               The plan lists the skills to work on for each level. Nobody in this class is placed
-              on a level yet, so there is nothing to plan; the academy office places children.
+              on a level yet, so there is nothing to plan. Start them on the first level from the Progress tab.
             </p>
           )}
           <ul className="space-y-1 text-sm text-neutral-600 dark:text-neutral-300">

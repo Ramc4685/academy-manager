@@ -46,6 +46,6 @@ describe("coach teaching plan (S15 persona follow-up)", () => {
     });
     expect(html).toContain("Tej Walkin");
     expect(html).toContain('data-testid="plan-all-unplaced"');
-    expect(html).toContain("the academy office places children");
+    expect(html).toContain("Start them on the first level from the Progress tab");
   });
 });
