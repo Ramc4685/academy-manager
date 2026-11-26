@@ -11,6 +11,7 @@ import {
 } from "@/lib/api/coach";
 import {
   getCoachSessionSkillBoard,
+  type SkillBoard,
   type SkillBoardCell,
   type SkillBoardLevelGroup,
 } from "@/lib/api/curriculum";
@@ -45,6 +46,12 @@ interface LevelUpNotice {
 
 function levelLabel(group: SkillBoardLevelGroup): string {
   return `Level ${group.sequence} · ${group.level_name}`;
+}
+
+/** Which slice of the class the tap list shows: it is one level, not the roster. */
+function levelScopeLine(group: SkillBoardLevelGroup, board: SkillBoard): string {
+  const inClass = board.groups.reduce((n, g) => n + g.students.length, 0) + board.unplaced.length;
+  return `Level ${group.sequence} · ${group.students.length} of ${inClass} in this class`;
 }
 
 /** First skill that someone in the level still needs: today's most likely lesson. */
@@ -269,6 +276,9 @@ export function TapSkillsWorkspace({
             </button>
           )}
         </div>
+        <p data-testid="coach-tap-level-scope" className="text-xs font-semibold text-status-slate-600">
+          {levelScopeLine(group, board)}
+        </p>
         <div data-testid="coach-tap-skill-rule" className="space-y-1 text-sm text-status-slate-600">
           <p className="font-semibold text-rally-ink">{passRuleLine(skill)}</p>
           {(skill.criteria ?? []).length > 0 && (

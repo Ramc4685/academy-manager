@@ -4,6 +4,8 @@ import {
   coachSessionHref,
   correctionWindowClosed,
   dateFromOccurrenceId,
+  emptyRosterCopy,
+  marksSummary,
   sessionIdFromOccurrenceId,
   isCancelled,
   latestUnfinishedRecap,
@@ -313,5 +315,25 @@ describe("latestUnfinishedRecap", () => {
       ]),
     ];
     expect(latestUnfinishedRecap(sessions, now)).toBeNull();
+  });
+});
+
+describe("emptyRosterCopy", () => {
+  it("does not blame the roster for a time lock", () => {
+    expect(emptyRosterCopy(true)).toContain("before it starts");
+    expect(emptyRosterCopy(true)).not.toContain("No students enrolled");
+    expect(emptyRosterCopy(false)).toBe("No students were on this class.");
+  });
+});
+
+describe("marksSummary", () => {
+  it("counts each mark in present, late, absent order", () => {
+    expect(marksSummary(["absent", "present", "late", "present", null, "present"])).toBe(
+      "3 present, 1 late, 1 absent",
+    );
+  });
+
+  it("is empty when nothing is marked", () => {
+    expect(marksSummary([null, undefined, "voided"])).toBe("");
   });
 });

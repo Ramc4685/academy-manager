@@ -102,6 +102,27 @@ export function markProgress(
   };
 }
 
+/**
+ * What an empty roster says. A class that has not opened yet is locked by
+ * time, not by its roster, so say both instead of a bare "No students
+ * enrolled" that read as the lock's cause.
+ */
+export function emptyRosterCopy(notOpenYet: boolean): string {
+  return notOpenYet
+    ? "No students on this class yet. Children added before it starts will show here."
+    : "No students were on this class.";
+}
+
+/** "3 present, 1 late, 1 absent" for the marks on screen; empty when none. */
+export function marksSummary(statuses: readonly (string | null | undefined)[]): string {
+  const order = ["present", "late", "absent"] as const;
+  return order
+    .map((status) => [status, statuses.filter((s) => s === status).length] as const)
+    .filter(([, n]) => n > 0)
+    .map(([status, n]) => `${n} ${status}`)
+    .join(", ");
+}
+
 /** True when this dated class was called off (#777 — it still shows, struck through). */
 export function isCancelled(session: { status?: string | null }): boolean {
   return session.status === "cancelled";

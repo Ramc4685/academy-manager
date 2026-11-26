@@ -40,7 +40,9 @@ import { BulkMarkUndoWindow } from "@/lib/coach/bulk-mark-undo";
 import {
   correctionWindowClosed,
   dateFromOccurrenceId,
+  emptyRosterCopy,
   isRecordedMark,
+  marksSummary,
   MARK_LEAD_TIME_MS,
   markingNotOpenYet,
   withoutUnconfirmedMark,
@@ -733,6 +735,16 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
     ]),
   );
 
+  // The same precedence RosterRow draws a mark with, so the line matches the buttons.
+  const summary = marksSummary(
+    roster.map(
+      (student) =>
+        localMarks[student.student_id]?.status ??
+        queuedMarks[student.student_id]?.status ??
+        recordedMark(student),
+    ),
+  );
+
   // Save a first mark on this phone (offline, or while an earlier queued mark
   // for the same student is still waiting — one queued mark per student).
   async function queueLocally(student_id: string, status: AttendanceStatus): Promise<void> {
@@ -995,6 +1007,11 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             )}
           </div>
         </div>
+        {summary && (
+          <p data-testid="marks-summary" className="mb-2 text-sm" style={{ color: "var(--rally-muted)" }}>
+            {summary}
+          </p>
+        )}
         {bulkError && (
           <p
             data-testid="bulk-attendance-error"
@@ -1006,7 +1023,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
         )}
         {roster.length === 0 ? (
           <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
-            No students enrolled.
+            {emptyRosterCopy(notOpenYet)}
           </p>
         ) : (
           <ul className="space-y-2" data-testid="roster">
