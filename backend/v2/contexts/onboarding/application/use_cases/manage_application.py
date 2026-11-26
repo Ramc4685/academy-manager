@@ -181,7 +181,14 @@ class StartApplication:
                 requested is not None
                 or await _open_duplicate(self._apps, existing, self._now()) is None
             ):
-                return existing
+                # Wave A follow-up: a draft started before the account had a
+                # name and phone (or by an older build) came back blank, so
+                # "Add a child" opened on an empty parent step.
+                filled = await self._fill_from_account(existing)
+                if filled is not existing:
+                    filled = filled.model_copy(update={"updated_at": self._now()})
+                    await self._apps.save(filled)
+                return filled
             # S02 persona follow-up: checkout already refused this draft as a
             # duplicate of an open registration, so "Add a child" handing it back
             # is a dead end. Retire it; the family's details carry over below.

@@ -400,3 +400,18 @@ async def test_typed_parent_details_are_never_overwritten_by_the_account():
     )
     assert (app.parent_profile.first_name, app.parent_profile.last_name) == ("Pat", "Typed")
     assert app.parent_profile.phone == "555-0103"
+
+
+@pytest.mark.asyncio
+async def test_a_blank_draft_handed_back_takes_the_parent_details_from_the_account():
+    """Wave A follow-up (F5): a returning parent's empty draft came back with a
+    blank parent profile, so Add a child opened on an empty parent step."""
+    repo = ManyAppRepo(_app("a-draft", "DRAFT", child="", session=None, age=1))
+    account = ParentProfile(first_name="Demo", last_name="Parent", phone="555-0103")
+    app = await _start(repo, account).execute(
+        StartApplicationCommand(parent_user_id="parent-1", parent_email="new.parent@example.com")
+    )
+    assert app.application_id == "a-draft"
+    assert (app.parent_profile.first_name, app.parent_profile.phone) == ("Demo", "555-0103")
+    # Persisted, so the PATCHes that follow build on the filled profile.
+    assert repo.apps["a-draft"].parent_profile.last_name == "Parent"
