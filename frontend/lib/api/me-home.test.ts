@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { homeForRoles, type UserRole } from "@/lib/api/me";
-import { decidePersonaRedirect, sanitizeReturnPath } from "@/lib/auth/persona-route-guard";
+import { homeForRoles, postLoginDestination, type UserRole } from "@/lib/api/me";
+import { decidePersonaRedirect } from "@/lib/auth/persona-route-guard";
 
 describe("homeForRoles", () => {
   it("lands a parent on Home, not Payments", () => {
@@ -23,9 +23,11 @@ describe("homeForRoles", () => {
   });
 
   it("lets a pending pay link from an email win over Home", () => {
-    // Mirrors app/post-login: returnTo ?? homeForRoles(roles).
-    const returnTo = sanitizeReturnPath("/parent/payments?pay=inv_1");
-    expect(returnTo ?? homeForRoles(["parent"])).toBe("/parent/payments?pay=inv_1");
-    expect(sanitizeReturnPath(null) ?? homeForRoles(["parent"])).toBe("/parent/dashboard");
+    // The function app/post-login calls to pick where to go.
+    expect(postLoginDestination("/parent/payments?pay=inv_1", ["parent"])).toBe(
+      "/parent/payments?pay=inv_1",
+    );
+    expect(postLoginDestination(null, ["parent"])).toBe("/parent/dashboard");
+    expect(postLoginDestination("https://evil.example/x", ["parent"])).toBe("/parent/dashboard");
   });
 });

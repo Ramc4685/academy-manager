@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import { sanitizeReturnPath } from "@/lib/auth/persona-route-guard";
 
 export type UserRole =
   | "admin"
@@ -95,4 +96,9 @@ export async function requestAccountDeletion(): Promise<AccountDeletion> {
     method: "POST",
     body: JSON.stringify({ confirm: "DELETE" }),
   });
+}
+
+/** Where login lands: a safe deep link (an emailed pay link) wins over the persona's home. */
+export function postLoginDestination(returnTo: string | null, roles: UserRole[]): string {
+  return sanitizeReturnPath(returnTo) ?? homeForRoles(roles);
 }
