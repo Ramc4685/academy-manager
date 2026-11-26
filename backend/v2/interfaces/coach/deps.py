@@ -157,6 +157,9 @@ class CoachUseCases:
     # Occurrence ids (of those given) whose class recap names a taught skill,
     # for ``recap_saved`` on /coach/today. Optional for fixtures that predate it.
     recapped_occurrence_ids: Callable[[Sequence[str]], Awaitable[set[str]]] | None = None
+    # Seat-holding enrollment count per class id, in one query, for the
+    # Sessions list headcount. Missing ids mean 0. Optional for fixtures.
+    enrolled_counts: Callable[[Sequence[str]], Awaitable[dict[str, int]]] | None = None
 
 
 log = logging.getLogger(__name__)

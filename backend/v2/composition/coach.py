@@ -103,6 +103,7 @@ from backend.v2.contexts.enrollment.domain.events import (
     StudentSessionTypeChanged,
     StudentSessionTypeChangedPayload,
 )
+from backend.v2.contexts.enrollment.domain.models import SEAT_HOLDING
 from backend.v2.contexts.enrollment.infrastructure.mongo_absence_notice_repo import (
     MongoAbsenceNoticeRepository,
 )
@@ -234,6 +235,8 @@ class CoachComposition:
     set_skill_note_visibility: SetSkillNoteVisibility | None = None
     # Today flags classes whose recap is saved (coach recap shortcut).
     recapped_occurrence_ids: Callable[[Sequence[str]], Awaitable[set[str]]] | None = None
+    # Sessions list headcount: seat-holding enrollments per class, one query.
+    enrolled_counts: Callable[[Sequence[str]], Awaitable[dict[str, int]]] | None = None
 
 
 class CoachAssignedSessionLookup:
@@ -696,4 +699,7 @@ def compose_coach(
         get_academy_info=_coach_academy_info(db),
         overdue_cents_by_student=_overdue_cents_by_student(db),
         recapped_occurrence_ids=_recapped_occurrence_ids(db),
+        enrolled_counts=lambda ids: sessions_repo._enrolled_counts_by_session(
+            list(ids), statuses=SEAT_HOLDING
+        ),
     )

@@ -70,6 +70,7 @@ from backend.v2.contexts.enrollment.application.use_cases.list_coach_occurrences
     ListCoachUpcomingOccurrences,
 )
 from backend.v2.contexts.enrollment.domain.models import (
+    SEAT_HOLDING,
     Enrollment,
     Session,
     SessionOccurrence,
@@ -140,6 +141,14 @@ class FakeEnrollmentQuery:
             e.session_id == session_id and e.student_id == student_id and e.status == "active"
             for e in self._enrollments
         )
+
+    async def seat_holding_counts(self, session_ids) -> dict[str, int]:
+        """Mirrors the real ``$group``: sessions with no seat-holders are absent."""
+        counts: dict[str, int] = {}
+        for e in self._enrollments:
+            if e.session_id in session_ids and e.status in SEAT_HOLDING:
+                counts[e.session_id] = counts.get(e.session_id, 0) + 1
+        return counts
 
     async def active_or_paused_for_student(self, student_id: str) -> list[Enrollment]:
         return [
@@ -927,6 +936,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         update_profile=_async_none,
         list_messages=_coach_messages_visible.list_messages,
         mark_message_read=_coach_messages_visible.mark_message_read,
+        enrolled_counts=enrollments.seat_holding_counts,
     )
     use_cases._messages_repo = _coach_messages_repo  # type: ignore[attr-defined]
     return use_cases

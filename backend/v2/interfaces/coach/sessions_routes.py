@@ -6,7 +6,7 @@ occurrence in the academy, each labelled with its coach.
 
 from __future__ import annotations
 
-import asyncio
+import logging
 
 from fastapi import APIRouter, Depends
 
@@ -22,6 +22,7 @@ from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import is_coach_supervisor, require_coach_surface
 
 router = APIRouter(tags=["coach"])
+log = logging.getLogger(__name__)
 
 
 @router.get(
@@ -43,10 +44,15 @@ async def get_sessions(
     academy_zone = await academy_zone_for_sessions(
         sessions, use_cases=use_cases, academy_id=claims.academy_id
     )
-    # One roster read per class, not per date: the list repeats a class weekly.
-    class_ids = sorted({s.session_id for s in sessions})
-    rosters = await asyncio.gather(*[use_cases.get_roster.execute(sid) for sid in class_ids])
-    counts = {sid: len(roster) for sid, roster in zip(class_ids, rosters, strict=True)}
+    counts: dict[str, int] | None = None
+    lookup = getattr(use_cases, "enrolled_counts", None)
+    if lookup is not None:
+        try:
+            # One grouped count for every class, not one roster read each.
+            counts = await lookup(sorted({s.session_id for s in sessions}))
+        except Exception:
+            # A headcount must not take the Sessions list, Calendar and Today down with it.
+            log.warning("coach session headcounts failed", exc_info=True)
     return CoachScheduleResponse(
         sessions=[
             CoachScheduleEntry(
@@ -59,7 +65,7 @@ async def get_sessions(
                 end_at=s.end_at,
                 coach_id=getattr(s, "coach_id", None),
                 coach_name=coach_names.get(getattr(s, "coach_id", None) or ""),
-                enrolled_count=counts.get(s.session_id),
+                enrolled_count=None if counts is None else counts.get(s.session_id, 0),
                 age_band=age_band_view(getattr(s, "age_band", None)),
             )
             for s in sessions
