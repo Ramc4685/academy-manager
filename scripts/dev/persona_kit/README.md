@@ -40,5 +40,6 @@ Rules for a new kit:
 | k12 | Venue address, parking note and arrive-early minutes on the Saturday and Wednesday classes, plus the academy phone 555-0142 and office@example.com. Casey has no classes unless k06 ran, so leave k06 out to see her first-day empty state with the contact line. |
 | k16 | Age ranges and levels on the Saturday (7–13, Mixed levels) and Wednesday (8–12, Beginner) classes. Ages on roster rows come from existing dates of birth (k00 and the base seed). |
 | k02 | Free Wednesday clinic; for Rosa Alvarez (sign her up first) a PENDING_APPROVAL Lucia in it and a CHECKOUT_PENDING Mateo in Junior Beginners. |
+| k09 | The busy parent owes this month's $80.00 for Alex (the base seed's paid invoice reopened, its cash payment dropped). |
 | k10 | Alex Demo: next Saturday class (48h+ out) with no absence reported, and a late mark on the latest past class this month. |
 | k11 | Alex Demo working on Split step (PRACTICING) with one shared and one private coach note. Partial: record the pass in the coach app during the re-test. |

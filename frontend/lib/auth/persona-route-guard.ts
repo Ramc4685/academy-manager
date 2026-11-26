@@ -58,7 +58,7 @@ const GUARDED_PREFIXES: readonly (readonly [string, PersonaHint])[] = [
 const PERSONA_HOMES: readonly (readonly [PersonaHint, string])[] = [
   ["admin", "/admin"],
   ["coach", "/coach/today"],
-  ["parent", "/parent/payments"],
+  ["parent", "/parent/dashboard"],
   ["student", "/student/dashboard"],
   ["owner", "/owner"],
   ["platform", "/platform"],

@@ -52,7 +52,7 @@ export function hasPlatformAccess(user: CurrentUser): boolean {
 export type RoleHome =
   | "/admin"
   | "/coach/today"
-  | "/parent/payments"
+  | "/parent/dashboard"
   | "/student/dashboard"
   | "/owner"
   | "/login";
@@ -71,7 +71,7 @@ export function homeForRoles(roles: UserRole[]): RoleHome {
   // Assistants land on the same shell as coaches; the shell scopes what they
   // see to the sessions they are listed on.
   if (roles.includes("assistant_coach")) return "/coach/today";
-  if (roles.includes("parent")) return "/parent/payments";
+  if (roles.includes("parent")) return "/parent/dashboard";
   // A user can hold both "parent" and "student" (UIM12 allows this by
   // design — persona routing follows the requested BFF, not an exclusive
   // account type). Parent wins when both are present since it's the richer,
