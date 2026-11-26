@@ -14112,6 +14112,8 @@ export interface components {
         CreateAbsenceNoticeRequest: {
             /** Occurrence Id */
             occurrence_id: string;
+            /** Reason */
+            reason?: string | null;
             /** Student Id */
             student_id: string;
         };
@@ -17482,6 +17484,11 @@ export interface components {
          *     the use case starts populating it.
          */
         ParentHomeNextSessionView: {
+            /**
+             * Absence Reported
+             * @default false
+             */
+            absence_reported: boolean;
             /** Coach Name */
             coach_name?: string | null;
             /**

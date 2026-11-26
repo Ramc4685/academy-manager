@@ -3490,6 +3490,7 @@ async def test_parent_home_next_session_is_the_next_upcoming_occurrence() -> Non
         # Always None today (decision 12) — kept for shape parity.
         "coach_name": None,
         "source": "regular",
+        "absence_reported": False,
     }
     # st-2 has no enrollment, so no upcoming session.
     assert home["children"][1]["next_session"] is None

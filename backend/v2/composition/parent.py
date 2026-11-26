@@ -2823,6 +2823,8 @@ def compose_parent(
                     # Always None today — see ParentHomeNextSessionView.
                     "coach_name": entry.coach_name,
                     "source": entry.source,
+                    # S17: Home shows "Absent (reported)" on the next class.
+                    "absence_reported": entry.absence_reported,
                 }
             return None
 

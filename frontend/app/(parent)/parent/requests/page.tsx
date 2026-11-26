@@ -12,6 +12,8 @@ import { WaitlistOffers } from "@/components/parent/waitlist-offers";
 import { AssignedClassDetails } from "@/components/parent/one-time-class";
 import { AbsenceMakeupStatus } from "@/components/parent/absence-makeup-status";
 import { queryKeys } from "@/lib/query/keys";
+import { TRIAL_SUCCESS, trialMissingField } from "@/lib/parent/trial-form";
+import { formatPlainDateRange } from "@/lib/format/plain-date";
 import {
   makeupCandidateKey,
   makeupCandidateLabel,
@@ -598,6 +600,7 @@ function TrialsPanel() {
 
   const submitMutation = useMutation({
     mutationFn: submitTrialRequest,
+    meta: { success: TRIAL_SUCCESS },
     onSuccess: () => {
       setStudentId("");
       setProspectiveName("");
@@ -615,16 +618,25 @@ function TrialsPanel() {
   const trials = trialsQuery.data?.trials ?? [];
   const trialNameById = new Map(children.map((c: ParentChild) => [c.student_id, c.full_name]));
 
-  const canSubmit = useMemo(() => {
-    if (!sessionId || !preferredStart || !preferredEnd) return false;
-    if (studentRef === "existing_student") return Boolean(studentId);
-    return Boolean(prospectiveName.trim());
-  }, [sessionId, preferredStart, preferredEnd, studentRef, studentId, prospectiveName]);
+  const missing = trialMissingField({
+    studentRef,
+    studentId,
+    prospectiveName,
+    sessionId,
+    preferredStart,
+    preferredEnd,
+  });
+  const canSubmit = missing === null;
 
   return (
     <div className="space-y-4">
       <Card p={16}>
-        <h2 className="text-sm font-bold mb-3 text-rally-ink">Request a trial class</h2>
+        <h2 className="text-sm font-bold mb-1 text-rally-ink">Request a trial class</h2>
+        <p className="mb-3 text-xs text-rally-muted">
+          A trial is one class to try before you register, so your child can meet the coach and
+          see the level. A regular class is the full term you register and pay for. Fields marked *
+          are required.
+        </p>
 
         {submitMutation.isError ? (
           <p role="alert" className="mb-3 rounded-md bg-status-red-50 p-3 text-sm text-status-red-800">
@@ -674,8 +686,9 @@ function TrialsPanel() {
 
           {studentRef === "existing_student" ? (
             <label className="block text-xs font-semibold text-rally-muted">
-              Child
+              Child *
               <select
+                required
                 className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
                 value={studentId}
                 onChange={(e) => setStudentId(e.target.value)}
@@ -691,8 +704,9 @@ function TrialsPanel() {
           ) : (
             <div className="space-y-3">
               <label className="block text-xs font-semibold text-rally-muted">
-                Child&apos;s name
+                Child&apos;s name *
                 <input
+                  required
                   type="text"
                   className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
                   value={prospectiveName}
@@ -713,8 +727,9 @@ function TrialsPanel() {
           )}
 
           <label className="block text-xs font-semibold text-rally-muted">
-            Session
+            Class *
             <select
+              required
               className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
               value={sessionId}
               onChange={(e) => setSessionId(e.target.value)}
@@ -733,8 +748,9 @@ function TrialsPanel() {
 
           <div className="grid grid-cols-2 gap-3">
             <label className="block text-xs font-semibold text-rally-muted">
-              Preferred start
+              First day that suits you *
               <input
+                required
                 type="date"
                 className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
                 value={preferredStart}
@@ -742,8 +758,10 @@ function TrialsPanel() {
               />
             </label>
             <label className="block text-xs font-semibold text-rally-muted">
-              Preferred end
+              Last day that suits you *
               <input
+                required
+                min={preferredStart || undefined}
                 type="date"
                 className="mt-1 min-h-touch w-full rounded-lg border border-rally-line px-3 text-sm"
                 value={preferredEnd}
@@ -751,7 +769,15 @@ function TrialsPanel() {
               />
             </label>
           </div>
+          <p className="text-xs text-rally-muted">
+            The academy picks one trial date between these two days and confirms it with you.
+          </p>
 
+          {missing && (
+            <p data-testid="trial-missing-field" aria-live="polite" className="text-xs font-semibold text-status-amber-800">
+              {missing}
+            </p>
+          )}
           <Button type="submit" variant="primary" full disabled={!canSubmit || submitMutation.isPending}>
             {submitMutation.isPending ? "Submitting…" : "Request trial"}
           </Button>
@@ -781,7 +807,7 @@ function TrialsPanel() {
                           "Existing child"}
                       </p>
                       <p className="mt-1 text-xs text-rally-muted">
-                        Requested {formatAcademyDate(t.created_at, academyTimezone)} · {t.preferred_start} – {t.preferred_end}
+                        Requested {formatAcademyDate(t.created_at, academyTimezone)} · {formatPlainDateRange(t.preferred_start, t.preferred_end)}
                       </p>
                       {t.status === "denied" && t.denial_reason && (
                         <p className="mt-1 text-xs text-status-red-600">{t.denial_reason}</p>

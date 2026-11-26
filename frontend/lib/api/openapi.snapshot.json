@@ -16421,6 +16421,18 @@
             "title": "Occurrence Id",
             "type": "string"
           },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
           "student_id": {
             "title": "Student Id",
             "type": "string"
@@ -25904,6 +25916,11 @@
       "ParentHomeNextSessionView": {
         "description": "The child's next upcoming occurrence.\n\n``coach_name`` is always ``None`` today \u2014 ``GetChildSchedule.execute``\nhardcodes it. The field is kept for shape parity with\n``ParentScheduleEntryView`` so the card can render a coach line the day\nthe use case starts populating it.",
         "properties": {
+          "absence_reported": {
+            "default": false,
+            "title": "Absence Reported",
+            "type": "boolean"
+          },
           "coach_name": {
             "anyOf": [
               {

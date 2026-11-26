@@ -26,6 +26,8 @@ export interface ParentHomeNextSession {
   coach_name: string | null;
   /** #1038: "makeup" / "trial" for a one-time approved class; optional for older payloads. */
   source?: "regular" | "makeup" | "trial";
+  /** S17: the family reported this class as an absence. */
+  absence_reported?: boolean;
 }
 
 export interface ParentHomeAttendance {

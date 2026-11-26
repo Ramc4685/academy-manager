@@ -704,3 +704,23 @@ async def test_submit_absence_notice_allowed_when_switch_on() -> None:
     )
 
     assert result.notice_id
+
+
+@pytest.mark.asyncio
+async def test_submit_absence_notice_keeps_the_optional_reason_trimmed() -> None:
+    """S17: the confirm sheet's optional reason is stored for the coach."""
+    occurrences = _FakeOccurrences([_occurrence(start_at=datetime(2026, 7, 10, 10, 0, tzinfo=UTC))])
+    use_case = SubmitAbsenceNotice(
+        students=_FakeStudents(),
+        occurrences=occurrences,
+        enrollments=_FakeEnrollments(),
+        notices=_FakeNotices(),
+        policies=_FakePolicies(),
+        clock=_now,
+    )
+    with_reason = await use_case.execute(
+        SubmitAbsenceNoticeCommand(
+            parent_id="parent-1", student_id="student-1", occurrence_id="occ-1", reason="  trip "
+        )
+    )
+    assert with_reason.reason == "trip"

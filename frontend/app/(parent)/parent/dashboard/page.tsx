@@ -57,7 +57,7 @@ import {
   OpenRegistrationsCard,
   useParentRegistrations,
 } from "@/components/parent/open-registrations";
-import { scheduleSourceLabel } from "@/lib/parent/schedule-events";
+import { ABSENT_REPORTED_CHIP, scheduleSourceLabel } from "@/lib/parent/schedule-events";
 
 const progressOverviewEnabled =
   process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
@@ -349,6 +349,7 @@ function ChildCard({
           meta={
             next
               ? [
+                  child.next_session?.absence_reported ? ABSENT_REPORTED_CHIP : null,
                   // #1038: say when the next class is a one-time make-up / trial.
                   oneTimeClassLabel(child.next_session?.source),
                   next.where,

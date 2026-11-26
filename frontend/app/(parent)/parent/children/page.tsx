@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ds/skeleton";
 import { FormField, fieldDescribedBy } from "@/components/ds/form-field";
 import { Chip } from "@/components/ds/chip";
 import { EmptyState } from "@/components/ds/empty-state";
+import { AbsenceConfirmDialog } from "@/components/parent/absence-confirm-dialog";
 import { useToast } from "@/components/ds/toast";
 import { PauseEnrollmentForm } from "@/components/parent/pause-enrollment-form";
 import { EnrollmentActions } from "@/components/parent/enrollment-actions";
@@ -356,8 +357,9 @@ function SessionRow({
   canReportAbsence: boolean;
 }) {
   const queryClient = useQueryClient();
-  const { toast } = useToast();
   const [submitted, setSubmitted] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [reason, setReason] = useState("");
   const whenStr = formatAcademyTimeRange(entry.start_at, entry.end_at, academyTimezone);
   // #671: a cancelled date is still returned by the child-schedule feed.
   // Showing it as a normal upcoming class contradicts the cancellation email
@@ -371,11 +373,15 @@ function SessionRow({
 
   const absenceMutation = useMutation({
     mutationFn: submitAbsenceNotice,
+    meta: { success: { title: "Absence reported", description: "The coach will see it." } },
     onSuccess: () => {
       setSubmitted(true);
-      toast({ kind: "success", title: "Absence reported" });
+      setConfirming(false);
+      // S17: Home and Calendar show the chip too, so refresh every reader.
       void queryClient.invalidateQueries({ queryKey: queryKeys.parent.absences() });
-      void queryClient.invalidateQueries({ queryKey: ["parent", "child-schedule", studentId] });
+      void queryClient.invalidateQueries({ queryKey: ["parent", "child-schedule"] });
+      void queryClient.invalidateQueries({ queryKey: ["parent", "home"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.parent.calendar() });
     },
   });
 
@@ -461,13 +467,28 @@ function SessionRow({
           variant="secondary"
           size="sm"
           disabled={absenceMutation.isPending}
-          onClick={() =>
-            absenceMutation.mutate({ student_id: studentId, occurrence_id: entry.occurrence_id })
-          }
+          onClick={() => setConfirming(true)}
         >
           {absenceMutation.isPending ? "Reporting…" : "Report absence"}
         </Button>
       )}
+      <AbsenceConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        childName={childName}
+        sessionTitle={entry.session_title}
+        when={whenStr}
+        reason={reason}
+        onReasonChange={setReason}
+        pending={absenceMutation.isPending}
+        onConfirm={() =>
+          absenceMutation.mutate({
+            student_id: studentId,
+            occurrence_id: entry.occurrence_id,
+            reason: reason.trim() || null,
+          })
+        }
+      />
     </li>
   );
 }
@@ -718,3 +739,4 @@ function AttendanceRow({
     </li>
   );
 }
+

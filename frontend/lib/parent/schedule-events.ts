@@ -34,6 +34,9 @@ export function noClassReason(entry: Pick<ParentScheduleEntry, "cancellation_rea
 /** A date that already carries an absence notice: shown, never offered again. */
 export const ALREADY_REPORTED_LABEL = "Already reported";
 
+/** S17: the chip a reported absence wears on Home and Calendar. */
+export const ABSENT_REPORTED_CHIP = "Absent (reported)";
+
 /**
  * Whether the academy has published `month` ("YYYY-MM") as final. An academy
  * that never publishes (`publishedThrough` null) shows every month as final,
@@ -50,7 +53,8 @@ export function scheduleEntryToEvent(
   const cancelled = entry.status === "cancelled";
   const sourceLabel = scheduleSourceLabel(entry.source);
   const base = `${childName} — ${entry.session_title}`;
-  const labelled = sourceLabel ? `${sourceLabel} — ${base}` : base;
+  const sourced = sourceLabel ? `${sourceLabel} — ${base}` : base;
+  const labelled = entry.absence_reported ? `${ABSENT_REPORTED_CHIP} — ${sourced}` : sourced;
   return {
     id: entry.occurrence_id,
     title: cancelled ? `No class (${noClassReason(entry)}) — ${labelled}` : labelled,

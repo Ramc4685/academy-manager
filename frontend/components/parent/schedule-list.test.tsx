@@ -99,3 +99,11 @@ describe("calendarSubscribeLinks", () => {
     expect(links.outlook).toContain("name=BLNO%20classes");
   });
 });
+
+describe("ScheduleList reported absence (S17)", () => {
+  it("shows the Absent (reported) chip instead of Class", () => {
+    const out = html([entry({ occurrence_id: "abs", absence_reported: true })], null);
+    expect(out).toContain("Absent (reported)");
+    expect(out).toContain("schedule-absent-abs");
+  });
+});

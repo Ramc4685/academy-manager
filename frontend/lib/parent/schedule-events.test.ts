@@ -94,3 +94,13 @@ describe("one-time classes (#1038)", () => {
     expect(scheduleSourceLabel("trial")).toBe("Trial");
   });
 });
+
+describe("scheduleEntryToEvent reported absence (S17)", () => {
+  it("leads the month-grid title with Absent (reported)", () => {
+    const event = scheduleEntryToEvent(entry({ absence_reported: true }), {
+      childName: "Alex",
+      color: "#2563eb",
+    });
+    expect(event.title.startsWith("Absent (reported) — Alex")).toBe(true);
+  });
+});

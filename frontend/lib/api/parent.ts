@@ -823,6 +823,8 @@ export function listParentAbsences(): Promise<{ notices: AbsenceNoticeView[] }> 
 export function submitAbsenceNotice(payload: {
   student_id: string;
   occurrence_id: string;
+  /** S17: optional note for the coach (max 200 characters). */
+  reason?: string | null;
 }): Promise<AbsenceNoticeView> {
   return apiFetch("/parent/absences", {
     method: "POST",

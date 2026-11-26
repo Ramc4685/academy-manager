@@ -770,6 +770,8 @@ class ParentHomeNextSessionView(BaseModel):
     # "regular" (standing enrollment) or "makeup" / "trial" for a one-time
     # approved attendance (issue #1038).
     source: Literal["regular", "makeup", "trial"] = "regular"
+    #: S17: the family already reported this class as an absence.
+    absence_reported: bool = False
 
 
 class ParentHomeAttendanceView(BaseModel):
