@@ -58,7 +58,8 @@ const CONVERTED_857: { name: string; src: () => string }[] = [
     src: () => source("components/admin/requests/request-queues.tsx"),
   },
   { name: "All invoices", src: () => appSource("(admin)/admin/payments/AllInvoicesTab.tsx") },
-  { name: "Payroll", src: () => appSource("(admin)/admin/payouts/page.tsx") },
+  // The coach rows moved out of the page into PayrollRows (muted no-class rows).
+  { name: "Payroll", src: () => appSource("(admin)/admin/payouts/_components/PayrollRows.tsx") },
   {
     name: "Payslips",
     src: () => appSource("(admin)/admin/payouts/_components/PayslipsPanel.tsx"),
