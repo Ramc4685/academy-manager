@@ -33,15 +33,21 @@ from backend.v2.contexts.coaching.application.ports import (
     AttendanceRepository,
     OccurrenceLookup,
 )
+from backend.v2.contexts.coaching.application.use_cases.mark_attendance import (
+    ensure_occurrence_started,
+)
 from backend.v2.contexts.coaching.domain.errors import (
     AttendanceNotFound,
     CorrectionWindowExpired,
     MarkVoided,
+    SessionCancelled,
     SessionNotAssigned,
 )
 from backend.v2.contexts.coaching.domain.events import (
     AttendanceCorrected,
     AttendanceCorrectedPayload,
+    AttendanceMarked,
+    AttendanceMarkedPayload,
 )
 from backend.v2.contexts.coaching.domain.models import Attendance
 from backend.v2.shared.events import Outbox
@@ -192,6 +198,20 @@ class CorrectAttendance:
         occurrence = await self._occurrences.get(cmd.occurrence_id)
         if occurrence is None:
             raise not_found
+        # Same date guards as MarkAttendance: no marks on a cancelled (already
+        # credited) date or on a date that has not started.
+        if occurrence.status == "cancelled":
+            raise SessionCancelled(
+                "session occurrence was cancelled",
+                session_id=occurrence.session_id,
+                occurrence_id=cmd.occurrence_id,
+            )
+        ensure_occurrence_started(
+            occurrence.starts_at,
+            now,
+            session_id=occurrence.session_id,
+            occurrence_id=cmd.occurrence_id,
+        )
         mark = Attendance(
             attendance_id=new_ulid(),
             academy_id=self._academy_id(),
@@ -210,6 +230,21 @@ class CorrectAttendance:
             update={"corrected_by": actor_id, "corrected_at": now, "correction_reason": cmd.reason}
         )
         await self._attendance.update_status(audited)
+        await self._outbox.append(
+            AttendanceMarked(
+                aggregate_id=mark.attendance_id,
+                academy_id=mark.academy_id,
+                payload=AttendanceMarkedPayload(
+                    attendance_id=mark.attendance_id,
+                    occurrence_id=mark.occurrence_id,
+                    session_id=mark.session_id,
+                    student_id=mark.student_id,
+                    marked_by=mark.marked_by,
+                    marked_at=mark.marked_at,
+                    status=mark.status,
+                ),
+            )
+        )
         return self._result(audited)
 
     @staticmethod

@@ -741,7 +741,7 @@ async def list_occurrence_student_attendance(
                 occurrence_id=row.occurrence_id,
                 session_id=row.session_id,
                 student_id=row.student_id,
-                student_name=getattr(row, "student_name", None),
+                student_name=row.student_name,
                 status=row.status,
                 previous_status=row.previous_status,
                 corrected_by=row.corrected_by,

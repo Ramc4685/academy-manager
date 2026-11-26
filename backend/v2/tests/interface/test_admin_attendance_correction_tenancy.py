@@ -198,22 +198,69 @@ def test_a_coach_cannot_use_the_admin_correction_route(db: Any) -> None:
     assert row is not None and row["status"] == "present"
 
 
-class OneOccurrence:
-    """Tenant A's ``occ-new`` only, standing in for the tenant-scoped lookup."""
+def _occurrence(
+    academy_id: str,
+    occurrence_id: str,
+    *,
+    start_at: datetime = NOW - timedelta(days=1),
+    **extra: Any,
+) -> dict[str, Any]:
+    return {
+        "academy_id": academy_id,
+        "occurrence_id": occurrence_id,
+        "session_id": "sess-1",
+        "start_at": start_at,
+        "end_at": start_at + timedelta(hours=1),
+        "scheduled_coach_id": "coach-1",
+        "status": "scheduled",
+        **extra,
+    }
+
+
+class RepoOccurrences:
+    """The admin occurrence lookup's shape over the REAL tenant-scoped repo,
+    so a first mark on another academy's date is refused by storage, not by
+    a fake that only knows one id."""
+
+    def __init__(self, db: Any) -> None:
+        from backend.v2.contexts.enrollment.infrastructure.mongo_occurrence_repo import (
+            MongoSessionOccurrenceRepository,
+        )
+
+        self._repo = MongoSessionOccurrenceRepository(db)
 
     async def get(self, occurrence_id: str) -> Any:
-        if occurrence_id != "occ-new":
+        occ = await self._repo.get(occurrence_id)
+        if occ is None:
             return None
-        return SimpleNamespace(occurrence_id="occ-new", session_id="sess-1")
+        return SimpleNamespace(
+            occurrence_id=occ.occurrence_id,
+            session_id=occ.session_id,
+            starts_at=occ.start_at,
+            status=occ.status,
+        )
 
 
 def _first_mark_client(db: Any, outbox: RecordingOutbox) -> TestClient:
     from backend.v2.composition.attendance_corrections import compose_attendance_corrections
 
+    asyncio.run(
+        db["session_occurrences"].insert_many(
+            [
+                _occurrence(ACADEMY_A, "occ-new"),
+                _occurrence(ACADEMY_A, "occ-cancelled", status="cancelled"),
+                # The composed use case runs on the real clock.
+                _occurrence(
+                    ACADEMY_A, "occ-future", start_at=datetime.now(UTC) + timedelta(days=30)
+                ),
+                _occurrence(ACADEMY_B, "occ-b"),
+            ]
+        )
+    )
     client = _client(db, roles=("admin",), outbox=outbox)
     composed = compose_attendance_corrections(
         db,
-        occurrence_lookup=OneOccurrence(),  # type: ignore[arg-type]
+        occurrence_lookup=RepoOccurrences(db),  # type: ignore[arg-type]
         outbox=outbox,  # type: ignore[arg-type]
         academy_id=lambda: ACADEMY_A,
     )
@@ -262,6 +309,34 @@ def test_an_admin_marks_a_child_the_register_missed(db: Any) -> None:
     assert row["correction_reason"] == "coach missed her on the register"
     assert listed.status_code == 200, listed.text
     assert [a["student_name"] for a in listed.json()["attendance"]] == ["Ana Unmarked"]
+    [event] = outbox.events
+    assert event.name == "Coaching.AttendanceMarked"
+    assert event.academy_id == ACADEMY_A
+    assert event.payload.student_id == "stu-unmarked"
+    assert event.payload.marked_by == "u-admin-a"
+
+
+@pytest.mark.parametrize(
+    ("occurrence_id", "code"),
+    [
+        ("occ-cancelled", "Coaching.SessionCancelled"),
+        ("occ-future", "Coaching.OccurrenceNotStarted"),
+    ],
+)
+def test_a_first_mark_on_a_cancelled_or_future_date_is_refused(
+    db: Any, occurrence_id: str, code: str
+) -> None:
+    asyncio.run(db["students"].insert_one(_student(ACADEMY_A, "stu-a3", "Ada Ours")))
+    outbox = RecordingOutbox()
+    with _first_mark_client(db, outbox) as client:
+        r = client.patch(
+            PATH.format(occ=occurrence_id, student="stu-a3"),
+            json={"status": "present", "reason": "register fix"},
+        )
+    assert r.status_code in {409, 422}, r.text
+    assert r.json()["error"]["code"] == code
+    assert outbox.events == []
+    assert _find(db, {"occurrence_id": occurrence_id, "student_id": "stu-a3"}) is None
 
 
 def test_a_first_mark_for_another_academys_student_is_refused(db: Any) -> None:

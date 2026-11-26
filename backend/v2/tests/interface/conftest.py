@@ -2426,6 +2426,15 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         academy_id=lambda: "acad",
         clock=lambda: datetime(2026, 6, 20, 10, 35, tzinfo=UTC),
     )
+
+    async def _named_attendance(occurrence_id: str) -> list[Any]:
+        # The real composition returns NamedAttendance; mirror it so the
+        # route's ``row.student_name`` read is exercised.
+        from backend.v2.composition.attendance_corrections import NamedAttendance
+
+        rows = await _student_attendance.list_for_occurrence(occurrence_id)
+        return [NamedAttendance(**r.model_dump(), student_name="Sam Student") for r in rows]
+
     void_attendance = VoidAttendance(
         attendance_repo=_student_attendance,
         outbox=outbox,
@@ -2864,7 +2873,7 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         mark_coach_attendance=mark_coach_attendance,
         correct_attendance=correct_attendance,
         void_attendance=void_attendance,
-        list_occurrence_attendance=_student_attendance.list_for_occurrence,
+        list_occurrence_attendance=_named_attendance,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
         list_audit_logs=list_audit_logs,
