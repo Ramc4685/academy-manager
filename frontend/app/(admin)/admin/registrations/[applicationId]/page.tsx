@@ -51,6 +51,7 @@ export default function AdminRegistrationDetailPage() {
       approveAdminRegistration(applicationId, {
         waiver_override_reason: overrideReason.trim() || null,
       }),
+    meta: { success: "Registration approved" },
     onSuccess: refresh,
     onError: (err: Error) => setError(err.message),
   });
@@ -59,6 +60,7 @@ export default function AdminRegistrationDetailPage() {
       waitlistAdminRegistration(applicationId, {
         reason: waitlistReason.trim() || "Registration waitlisted by admin",
       }),
+    meta: { success: "Moved to the waitlist" },
     onSuccess: refresh,
     onError: (err: Error) => setError(err.message),
   });
@@ -113,7 +115,17 @@ export default function AdminRegistrationDetailPage() {
             </Card>
           )}
 
-          {query.data.zero_quote_period && !query.data.payment_id && (
+          {decidedLine(query.data.status, studentName, sessionLabel) && (
+            <Card p={20} data-testid="admin-registration-decided" style={{ borderColor: "#bbf7d0", background: "#f0fdf4" }}>
+              <p role="status" className="text-sm font-semibold text-green-900">
+                {decidedLine(query.data.status, studentName, sessionLabel)}
+              </p>
+            </Card>
+          )}
+
+          {/* S02 persona follow-up: the pre-approval warning and the decision
+              cards only make sense while the registration is undecided. */}
+          {isUndecided(query.data.status) && query.data.zero_quote_period && !query.data.payment_id && (
             <Card
               data-testid="admin-registration-zero-quote-warning"
               p={20}
@@ -139,6 +151,8 @@ export default function AdminRegistrationDetailPage() {
             </Card>
           )}
 
+          {isUndecided(query.data.status) && (
+          <>
           <LaneHeader index="02" title="Decision" />
           <Card p={20}>
             {/* Issue #747: `grid-cols-1` and `min-w-0` (below) are load-bearing.
@@ -204,6 +218,8 @@ export default function AdminRegistrationDetailPage() {
             </div>
             {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
           </Card>
+          </>
+          )}
 
           <ConfirmActionDialog
             open={confirming === "approve"}
@@ -322,6 +338,19 @@ function RegistrationSummary({ registration }: { registration: AdminRegistration
       </Card>
     </div>
   );
+}
+
+/** Statuses that still wait on a staff decision (MANUAL_REVIEW keeps its own warning). */
+function isUndecided(status: string): boolean {
+  return !["APPROVED", "WAITLISTED", "DECLINED"].includes(status);
+}
+
+/** S02 persona follow-up: what happened, once the registration is decided. */
+function decidedLine(status: string, student: string, session: string): string | null {
+  if (status === "APPROVED") return `Approved. ${student} is enrolled in ${session} and the family has been emailed.`;
+  if (status === "WAITLISTED") return `On the waitlist for ${session}. The family has been emailed.`;
+  if (status === "DECLINED") return "Rejected. The family has been emailed.";
+  return null;
 }
 
 function ActionPanel({
