@@ -272,3 +272,33 @@ async def test_a_skipped_month_is_never_credited_from_the_class_fee(db) -> None:
 
         assert [d.outcome for d in result.decisions] == ["skipped:skip_period_not_invoiced"]
         assert await MongoCreditLedgerRepository(db).list_for_parent("par-1") == []
+
+
+@pytest.mark.asyncio
+async def test_a_first_month_paid_at_checkout_is_credited_despite_its_skip_period(db) -> None:
+    """#506 marks a month paid at checkout in ``skip_periods`` too: it still credits."""
+    await run_pending_migrations(db)
+    with tenant_scope(ACADEMY):
+        await _seed(db, invoiced=False, skip_periods=["2026-09"])
+        await db["billing_calculation_snapshots"].insert_one(
+            {
+                "academy_id": ACADEMY,
+                "snapshot_id": "snap-1",
+                "status": "CONSUMED",
+                "billing_period_label": "2026-09",
+                "calculation_type": "FIRST_MONTH_PRORATION",
+                "enrollment_id": None,
+                "student_id": "st-1",
+                "session_id": "sess-1",
+                "final_amount_cents": 12000,
+                "total_eligible_classes": 4,
+                "billable_remaining_classes": 4,
+                "calculated_at": datetime(2026, 8, 28, tzinfo=UTC),
+            }
+        )
+
+        result = await compose_apply_occurrence_cancellation(db, clock=lambda: _SEPT_NOW).execute(
+            _cmd()
+        )
+
+        assert [(d.outcome, d.amount_cents) for d in result.decisions] == [("credited", 3000)]

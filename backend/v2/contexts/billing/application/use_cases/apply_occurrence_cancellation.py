@@ -116,7 +116,7 @@ class BillableEnrollment:
     #: False for a NoCharge/Waived child (``shared.billing_type``): never charged, never credited.
     billed: bool = True
     #: Why the monthly run will never invoice this family for the period
-    #: (``monthly_skip_reason``: deferral, skip_period, pending_cancellation),
+    #: (``monthly_skip_reason``: deferral or skip_period),
     #: or ``None``. A fee-sized credit for such a month hands back money that
     #: is never collected (#1209 item 6).
     not_invoiced_reason: str | None = None
@@ -388,7 +388,7 @@ class ApplyOccurrenceCancellation:
         decisions: list[OccurrenceCreditDecision] = []
         fee_sized: list[_FeeSizedCredit] = []
         for enrollment in await self._reader.enrollments_for_session(
-            cmd.session_id, period=period, today=_local_day(now, pricing.timezone)
+            cmd.session_id, period=period, today=now.astimezone(ZoneInfo(pricing.timezone)).date()
         ):
             decision, sized = await self._decide(
                 enrollment=enrollment,
@@ -610,9 +610,11 @@ class ApplyOccurrenceCancellation:
             if enrollment.status == "paused":
                 return _skip(enrollment, "paused_not_invoiced"), False, 0
             if enrollment.not_invoiced_reason is not None:
-                # The monthly run skips this family for the period (a deferral,
-                # a skipped month, a pending end-of-period cancel), so the
-                # class fee is never charged and there is nothing to give back.
+                # The monthly run skips this family for the period (an open
+                # deferral or a skipped month) and nothing else charged it: an
+                # invoice or a checkout first-month snapshot is handled above,
+                # so a month paid at checkout (also in ``skip_periods``, #506)
+                # still gets its credit.
                 return _skip(enrollment, f"{enrollment.not_invoiced_reason}_not_invoiced"), False, 0
             if billing_start is not None and period_of(billing_start, pricing.timezone) == period:
                 # Nothing priced yet. Rule 1 handles this family: their
@@ -808,8 +810,3 @@ def _reason(*, local_day: str, note: str, invoice: LedgerInvoice | None) -> str:
     if invoice is not None:
         base = f"{base} (invoice {invoice.invoice_number or invoice.invoice_id})"
     return base[:500]
-
-
-def _local_day(now: datetime, timezone_name: str) -> date:
-    """``now`` as the academy-local calendar day."""
-    return now.astimezone(ZoneInfo(timezone_name)).date()

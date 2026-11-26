@@ -280,7 +280,9 @@ class MongoOccurrenceCancellationReader:
 
 #: ``monthly_skip_reason`` answers that mean the period is never invoiced.
 #: ``paused`` is left out: the use case already skips a paused family itself.
-_NOT_INVOICED_REASONS = frozenset({"deferral", "skip_period", "pending_cancellation"})
+#: ``pending_cancellation`` is left out too: the parent can undo the drop, the
+#: month is then invoiced in full, and a skipped date cannot be re-run.
+_NOT_INVOICED_REASONS = frozenset({"deferral", "skip_period"})
 
 
 async def _not_invoiced_reason(

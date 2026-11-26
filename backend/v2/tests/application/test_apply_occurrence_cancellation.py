@@ -298,7 +298,7 @@ async def test_paused_family_with_no_invoice_is_skipped() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("reason", ["deferral", "skip_period", "pending_cancellation"])
+@pytest.mark.parametrize("reason", ["deferral", "skip_period"])
 async def test_month_the_run_never_invoices_is_not_credited_from_the_fee(reason: str) -> None:
     """#1209 item 6: a deferred or skipped month is never charged, so no fee credit."""
     reader = FakeReader(enrollments=[_enrollment("enr-1", not_invoiced_reason=reason)])
