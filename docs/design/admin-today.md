@@ -135,7 +135,7 @@ Print (`Print roster`): one page, class title, date, time, coach, then a table: 
 |---|---|---|
 | **Absent** | existing `RecordAbsenceDialog` (`frontend/components/admin/requests/request-queues.tsx`; export it) | New optional props `initialStudentId`, `initialOccurrenceId`; today's classes listed first in its class select. No email is sent (its existing rule). |
 | **Running late** | new `RunningLateDialog` | Step 1: pick the child from today's rosters (search box over the Today data). Step 2: preview "Sam Demo is running late for Junior Beginners (4:30 PM)." with an optional "How late?" field (free text, 40 chars) and the line "This sends a message to Coach Demo. Attendance is not changed." Button `Tell the coach`. |
-| **Coach is sick** | cover flow | see `coach-sick.md` |
+| **Coach is sick** | cover flow | see `coach-sick.md`. Until S66 lands it opens the NOW/NEXT class's page (`/admin/sessions/<id>?cover=<occurrence_id>`), where the replacement-coach picker lives |
 | **New walk-in** | existing `QuickAddFamily` (`frontend/app/(admin)/admin/families/QuickAddFamily.tsx`), rendered here with its dialog opened by this button | Class select defaults to the class that is NOW or NEXT. |
 
 ### 4.5 Phone search (in `PeopleSearch`)
@@ -233,7 +233,7 @@ No new endpoint. `POST /api/v2/admin/messages/dm` (existing) once per coach on t
 
 ### 8.4 Phone search
 
-`GET /api/v2/admin/users` (in `directory_routes.py`) gains `phone: str | None`. Server strips non-digits and a leading country `1`; requires at least 4 digits (else 422); matches parents in the request academy whose stored phone, normalised the same way, **contains** the digits; returns at most 10, each with `children: [names]`. `PeopleSearch` calls it only when the trimmed input has 4+ digits and no letters.
+Built as `GET /api/v2/admin/phone-search?phone=` in `today_routes.py` (S65), not on `/admin/users`, whose rows carry neither phone nor children; the parents are this academy's by its own student rows. A leading `1` is stripped only from an 11-digit number. Server strips non-digits and a leading country `1`; requires at least 4 digits (else 422); matches parents in the request academy whose stored phone, normalised the same way, **contains** the digits; returns at most 10, each with `children: [names]`. `PeopleSearch` calls it only when the trimmed input has 4+ digits and no letters.
 
 ### 8.5 Existing reads kept
 

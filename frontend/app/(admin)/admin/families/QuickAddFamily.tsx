@@ -127,11 +127,22 @@ export async function runQuickAdd({
   return out;
 }
 
-export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
+export function QuickAddFamily({
+  onAdded,
+  initialOpen = false,
+  initialSessionId = "",
+  onClose,
+}: {
+  onAdded: () => void;
+  /** S65: the Today "New walk-in" button opens the form at once, on the current class. */
+  initialOpen?: boolean;
+  initialSessionId?: string;
+  onClose?: () => void;
+}) {
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
   const [form, setForm] = useState<QuickAddForm>(EMPTY);
-  const [sessionId, setSessionId] = useState("");
+  const [sessionId, setSessionId] = useState(initialSessionId);
   const [startLevelId, setStartLevelId] = useState("");
   const [invite, setInvite] = useState(true);
   const [checked, setChecked] = useState<ImportBatch | null>(null);
@@ -271,7 +282,7 @@ export function QuickAddFamily({ onAdded }: { onAdded: () => void }) {
         >
           {check.isPending ? "Checking..." : "Check details"}
         </Button>
-        <Button variant="secondary" onClick={() => setOpen(false)}>
+        <Button variant="secondary" onClick={() => (onClose ? onClose() : setOpen(false))}>
           Close
         </Button>
       </div>

@@ -92,6 +92,7 @@ def db() -> Any:
                     _at(26, 18, 10),
                     coach="coach-casey",
                     substitute_coach_id="coach-cover",
+                    assistant_coach_ids=["coach-asst"],
                 ),
                 _occ(
                     ACADEMY,
@@ -145,6 +146,13 @@ def db() -> Any:
                     "full_name": "Dev Patel",
                     "parent_id": "par-patel",
                 },
+                # Another academy's family with the same number (users are global).
+                {
+                    "academy_id": OTHER,
+                    "student_id": "stu-other",
+                    "full_name": "Other Child",
+                    "parent_id": "par-other",
+                },
             ]
         )
         await db["attendance"].insert_many(
@@ -166,6 +174,7 @@ def db() -> Any:
             [
                 {"user_id": "par-demo", "display_name": "Demo Parent", "phone": "(309) 555-0120"},
                 {"user_id": "par-patel", "display_name": "Asha Patel"},
+                {"user_id": "par-other", "display_name": "Other Parent", "phone": "+1 309 555 0120"},
                 {"user_id": "coach-demo", "display_name": "Coach Demo"},
                 {"user_id": "coach-casey", "display_name": "Coach Casey"},
                 {"user_id": "coach-cover", "display_name": "Coach Cover"},
@@ -243,6 +252,9 @@ def test_roster_has_parent_phone_attendance_and_counts(db: Any) -> None:
     ti = next(c for c in body["classes"] if c["occurrence_id"] == "occ-ti")
     assert ti["coach_name"] == "Coach Casey"
     assert ti["cover_coach_name"] == "Coach Cover"
+    # Running late (S65) tells everyone on the class date: lead, cover, assistants.
+    assert ti["staff_ids"] == ["coach-casey", "coach-cover", "coach-asst"]
+    assert jb["staff_ids"] == ["coach-demo"]
     assert ti["roster"] == []
 
 
@@ -290,3 +302,32 @@ def test_non_admin_personas_get_404(db: Any, roles: tuple[str, ...]) -> None:
         assert (
             client.get("/api/v2/admin/today/roster-health?occurrence_id=occ-jb").status_code == 404
         )
+
+
+def test_phone_search_finds_this_academys_parent_with_children(db: Any) -> None:
+    with _client(db) as client:
+        spaced = client.get("/api/v2/admin/phone-search", params={"phone": "555 0120"})
+        country = client.get("/api/v2/admin/phone-search", params={"phone": "+1 (309) 555-0120"})
+    assert spaced.status_code == 200
+    expected = [
+        {
+            "parent_id": "par-demo",
+            "name": "Demo Parent",
+            "phone": "(309) 555-0120",
+            "children": ["Alex Demo", "Sam Demo"],
+        }
+    ]
+    # Never the other academy's parent, though the number is the same.
+    assert spaced.json()["matches"] == expected
+    assert country.json()["matches"] == expected
+
+
+@pytest.mark.parametrize("phone", ["555", "12ab", "+1 55"])
+def test_phone_search_needs_four_digits(db: Any, phone: str) -> None:
+    with _client(db) as client:
+        assert client.get("/api/v2/admin/phone-search", params={"phone": phone}).status_code == 422
+
+
+def test_phone_search_is_admin_only(db: Any) -> None:
+    with _client(db, roles=("coach",)) as client:
+        assert client.get("/api/v2/admin/phone-search", params={"phone": "5550120"}).status_code == 404

@@ -28,6 +28,7 @@ function klass(overrides: Partial<AdminTodayClass> = {}): AdminTodayClass {
     coach_name: "Demo Coach",
     cover_coach_name: null,
     cover_requested: false,
+    staff_ids: ["coach-1"],
     enrolled_count: 3,
     here_count: 1,
     absent_count: 1,

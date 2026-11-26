@@ -3116,6 +3116,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/phone-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** This academy's parents by part of a phone number */
+        get: operations["phone_search_api_v2_admin_phone_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/pipeline/cards/{contact_id}/reply": {
         parameters: {
             query?: never;
@@ -19055,6 +19072,22 @@ export interface components {
              */
             payroll_missing_invoices: "block" | "pay_zero";
         };
+        /** PhoneMatch */
+        PhoneMatch: {
+            /** Children */
+            children: string[];
+            /** Name */
+            name?: string | null;
+            /** Parent Id */
+            parent_id: string;
+            /** Phone */
+            phone: string;
+        };
+        /** PhoneSearchResponse */
+        PhoneSearchResponse: {
+            /** Matches */
+            matches: components["schemas"]["PhoneMatch"][];
+        };
         /** PipelineBoardCardView */
         PipelineBoardCardView: {
             /** Card Id */
@@ -21985,6 +22018,11 @@ export interface components {
             roster: components["schemas"]["TodayRosterRow"][];
             /** Session Id */
             session_id: string;
+            /**
+             * Staff Ids
+             * @default []
+             */
+            staff_ids: string[];
             /**
              * Start At
              * Format: date-time
@@ -28730,6 +28768,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DuplicateCheckResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    phone_search_api_v2_admin_phone_search_get: {
+        parameters: {
+            query: {
+                phone: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PhoneSearchResponse"];
                 };
             };
             /** @description Validation Error */

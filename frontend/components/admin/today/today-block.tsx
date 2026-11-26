@@ -2,7 +2,7 @@
 
 /**
  * S64: the Today block that leads the admin dashboard: the academy date,
- * today's classes and the roster sheet. `/admin?class=<occurrence_id>` opens
+ * the quick actions (S65), today's classes and the roster sheet. `/admin?class=<occurrence_id>` opens
  * a class's roster; closing it drops the param.
  */
 
@@ -19,6 +19,7 @@ import { Card } from "@/components/ds/card";
 import { Overline } from "@/components/ds/typography";
 
 import { normalizeToday, todayDateLabel } from "./format";
+import { QuickActions } from "./quick-actions";
 import { RosterSheet } from "./roster-sheet";
 import { LiveHealthCount, TodayClassesView } from "./today-classes";
 
@@ -31,7 +32,7 @@ export function TodayHeader({ date, actions }: { date: string; actions?: ReactNo
   );
 }
 
-export function TodayBlock({ actions }: { actions?: ReactNode }) {
+export function TodayBlock() {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -56,7 +57,8 @@ export function TodayBlock({ actions }: { actions?: ReactNode }) {
 
   return (
     <Card p={20} data-testid="admin-today">
-      <TodayHeader date={data?.date ?? fallbackDate} actions={actions} />
+      {/* Quick actions render at once and keep working if the classes fail to load. */}
+      <TodayHeader date={data?.date ?? fallbackDate} actions={<QuickActions today={data} />} />
       <TodayClassesView
         data={data}
         isLoading={todayQuery.isLoading}

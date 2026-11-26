@@ -1047,20 +1047,33 @@ function AbsencesList({ absences }: { absences: AbsenceNoticeAdminRow[] }) {
  * one the transfer dialog uses) for the class, and the session's dated
  * occurrences for the date — past dates are allowed, which is the point.
  */
-function RecordAbsenceDialog({
+/** S65: the Today "Absent" button opens this with today's classes listed first. */
+export function RecordAbsenceDialog({
   pending,
   error,
   onCancel,
   onConfirm,
+  initialOccurrenceId = "",
+  todayClasses = [],
 }: {
   pending: boolean;
   error: Error | null;
   onCancel: () => void;
-  onConfirm: (payload: { student_id: string; occurrence_id: string; counts_toward_makeup: boolean }) => void;
+  onConfirm: (
+    payload: { student_id: string; occurrence_id: string; counts_toward_makeup: boolean },
+    studentName?: string,
+  ) => void;
+  initialOccurrenceId?: string;
+  /** Today's class dates; picking one of these classes preselects today's date. */
+  todayClasses?: { session_id: string; occurrence_id: string }[];
 }) {
+  const todayOccurrence = new Map(todayClasses.map((c) => [c.session_id, c.occurrence_id]));
   const [studentId, setStudentId] = useState("");
-  const [sessionId, setSessionId] = useState("");
-  const [occurrenceId, setOccurrenceId] = useState("");
+  const [studentName, setStudentName] = useState<string>();
+  const [sessionId, setSessionId] = useState(
+    () => todayClasses.find((c) => c.occurrence_id === initialOccurrenceId)?.session_id ?? "",
+  );
+  const [occurrenceId, setOccurrenceId] = useState(initialOccurrenceId);
   const [countsTowardMakeup, setCountsTowardMakeup] = useState(true);
 
   const sessionsQuery = useQuery({
@@ -1073,7 +1086,10 @@ function RecordAbsenceDialog({
     enabled: sessionId !== "",
   });
 
-  const sessions = sessionsQuery.data?.sessions ?? [];
+  // Today's classes first, then the rest in their usual order.
+  const sessions = [...(sessionsQuery.data?.sessions ?? [])].sort(
+    (a, b) => Number(todayOccurrence.has(b.session_id)) - Number(todayOccurrence.has(a.session_id)),
+  );
   // Newest first: an admin recording a phone call is usually looking for a
   // date that has just passed.
   const occurrences = [...(occurrencesQuery.data?.occurrences ?? [])].sort((a, b) =>
@@ -1092,7 +1108,10 @@ function RecordAbsenceDialog({
         Student
         <StudentSearchPicker
           value={studentId}
-          onChange={(student) => setStudentId(student.student_id)}
+          onChange={(student) => {
+            setStudentId(student.student_id);
+            setStudentName(student.full_name);
+          }}
           selectClassName={selectClass}
           testId="record-absence-student-select"
         />
@@ -1104,7 +1123,7 @@ function RecordAbsenceDialog({
           value={sessionId}
           onChange={(e) => {
             setSessionId(e.target.value);
-            setOccurrenceId("");
+            setOccurrenceId(todayOccurrence.get(e.target.value) ?? "");
           }}
           disabled={sessionsQuery.isLoading}
           data-testid="record-absence-session-select"
@@ -1118,7 +1137,7 @@ function RecordAbsenceDialog({
           </option>
           {sessions.map((s) => (
             <option key={s.session_id} value={s.session_id}>
-              {s.title}
+              {todayOccurrence.has(s.session_id) ? `${s.title} (today)` : s.title}
             </option>
           ))}
         </select>
@@ -1171,7 +1190,10 @@ function RecordAbsenceDialog({
           size="sm"
           disabled={pending || !studentId || !occurrenceId}
           onClick={() =>
-            onConfirm({ student_id: studentId, occurrence_id: occurrenceId, counts_toward_makeup: countsTowardMakeup })
+            onConfirm(
+              { student_id: studentId, occurrence_id: occurrenceId, counts_toward_makeup: countsTowardMakeup },
+              studentName,
+            )
           }
           data-testid="record-absence-submit"
         >

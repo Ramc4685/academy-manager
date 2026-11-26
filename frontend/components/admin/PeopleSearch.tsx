@@ -25,11 +25,17 @@ import type { Route } from "next";
 import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 
-import { fetchBillingSetup, listAdminStudents, listAdminUsers } from "@/lib/api/admin";
+import {
+  fetchBillingSetup,
+  listAdminStudents,
+  listAdminUsers,
+  searchParentsByPhone,
+} from "@/lib/api/admin";
 import {
   PEOPLE_SEARCH_LIMIT,
   PEOPLE_SEARCH_MIN_CHARS,
   peopleSearchGroups,
+  phoneSearchDigits,
 } from "@/lib/admin/people-search";
 import { queryKeys } from "@/lib/query/keys";
 
@@ -66,6 +72,15 @@ export function PeopleSearch() {
     queryFn: () => listAdminUsers(),
     enabled: open && ready,
   });
+
+  // S65: "555 0120" also finds the parent by phone, with their children.
+  const phoneDigits = phoneSearchDigits(query);
+  const phoneQuery = useQuery({
+    queryKey: queryKeys.admin.phoneSearch(phoneDigits ?? ""),
+    queryFn: () => searchParentsByPhone(phoneDigits ?? ""),
+    enabled: open && phoneDigits !== null,
+  });
+  const phoneMatches = phoneDigits ? (phoneQuery.data?.matches ?? []) : [];
 
   const groups = peopleSearchGroups({
     query,
@@ -126,7 +141,7 @@ export function PeopleSearch() {
               </p>
             ) : loading ? (
               <p className="px-1 py-6 text-center text-sm text-rally-muted">Searching…</p>
-            ) : groups.length === 0 ? (
+            ) : groups.length === 0 && phoneMatches.length === 0 ? (
               <p
                 data-testid="admin-people-search-empty"
                 className="px-1 py-6 text-center text-sm text-rally-muted"
@@ -134,7 +149,39 @@ export function PeopleSearch() {
                 No students, families or staff match “{query}”.
               </p>
             ) : (
-              groups.map((group) => (
+              <>
+              {phoneMatches.length > 0 && (
+                <section className="py-1">
+                  <h3
+                    data-testid="admin-people-search-group-phone"
+                    className="px-1 pb-1 font-mono text-[10px] font-bold uppercase tracking-overline text-rally-muted"
+                  >
+                    Phone matches
+                  </h3>
+                  <ul role="list" className="divide-y divide-rally-line">
+                    {phoneMatches.map((match) => (
+                      <li key={`phone-${match.parent_id}`}>
+                        <Link
+                          href={`/admin/families/${encodeURIComponent(match.parent_id)}` as Route}
+                          data-testid={`admin-people-search-hit-phone-${match.parent_id}`}
+                          onClick={close}
+                          className="flex min-h-touch flex-col justify-center rounded px-1 py-2 hover:bg-rally-paper focus:outline-none focus:ring-2 focus:ring-rally-cobalt-600"
+                        >
+                          <span className="text-sm font-semibold text-rally-base">
+                            {match.name ?? "Parent"} · {match.phone}
+                          </span>
+                          {match.children.length > 0 && (
+                            <span className="break-words text-[13px] text-rally-muted">
+                              {match.children.join(", ")}
+                            </span>
+                          )}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+              {groups.map((group) => (
                 <section key={group.id} className="py-1">
                   <h3
                     data-testid={`admin-people-search-group-${group.id}`}
@@ -164,7 +211,8 @@ export function PeopleSearch() {
                     ))}
                   </ul>
                 </section>
-              ))
+              ))}
+              </>
             )}
           </div>
         </div>

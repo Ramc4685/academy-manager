@@ -4883,3 +4883,13 @@ export function getAdminTodayRosterHealth(occurrenceId: string): Promise<AdminRo
     { method: "GET", cache: "no-store" },
   );
 }
+
+export type AdminPhoneMatch = components["schemas"]["PhoneMatch"];
+
+/** S65: this academy's parents whose phone contains `digits` (4 or more). */
+export function searchParentsByPhone(digits: string): Promise<{ matches: AdminPhoneMatch[] }> {
+  return apiFetch<{ matches: AdminPhoneMatch[] }>(
+    `/admin/phone-search?phone=${encodeURIComponent(digits)}`,
+    { method: "GET" },
+  );
+}

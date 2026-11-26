@@ -129,3 +129,19 @@ describe("peopleSearchGroups (#865)", () => {
     expect(groups[0].hits[0].href).toBe("/admin/students/a%20b");
   });
 });
+
+describe("phoneSearchDigits (S65)", () => {
+  it("reads a typed phone, ignoring formatting and a leading +1", async () => {
+    const { phoneSearchDigits } = await import("./people-search");
+    expect(phoneSearchDigits("555 0120")).toBe("5550120");
+    expect(phoneSearchDigits("(309) 555-0120")).toBe("3095550120");
+    expect(phoneSearchDigits("+1 309 555 0120")).toBe("3095550120");
+  });
+
+  it("is not a phone search for names, emails or under four digits", async () => {
+    const { phoneSearchDigits } = await import("./people-search");
+    expect(phoneSearchDigits("Sam 555")).toBeNull();
+    expect(phoneSearchDigits("a1234@example.com")).toBeNull();
+    expect(phoneSearchDigits("555")).toBeNull();
+  });
+});

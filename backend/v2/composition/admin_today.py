@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
+from bson import ObjectId
 from pydantic import BaseModel
 
 from backend.v2.composition.coach_roster_health import (
@@ -78,6 +80,8 @@ class TodayClass(BaseModel):
     coach_id: str | None = None
     coach_name: str | None = None
     cover_coach_name: str | None = None
+    #: Lead, cover and assistants: who "Running late" messages (S65).
+    staff_ids: list[str] = []
     #: Filled by the coach cover flow (S67); false until it lands.
     cover_requested: bool = False
     enrolled_count: int
@@ -90,6 +94,19 @@ class TodayClass(BaseModel):
 class TodayTomorrow(BaseModel):
     class_count: int
     first_start_at: datetime | None = None
+
+
+class PhoneMatch(BaseModel):
+    parent_id: str
+    name: str | None = None
+    phone: str
+    children: list[str]
+
+
+def phone_digits(raw: str) -> str:
+    """Digits of a typed phone, without a leading North American ``1``."""
+    digits = re.sub(r"\D", "", raw)
+    return digits[1:] if len(digits) == 11 and digits.startswith("1") else digits
 
 
 class AdminToday(BaseModel):
@@ -201,6 +218,8 @@ class AdminTodayReader:
             occ = staff.get(c.occurrence_id)
             lead = (occ.actual_coach_id or occ.scheduled_coach_id) if occ else c.coach_id
             cover = occ.substitute_coach_id if occ else None
+            assistants = list(occ.assistant_coach_ids) if occ else []
+            staff_ids = list(dict.fromkeys(uid for uid in (lead, cover, *assistants) if uid))
             rows: list[TodayRosterRow] = []
             for r in roster:
                 parent_id = parents_of.get(r.student_id) or None
@@ -235,6 +254,7 @@ class AdminTodayReader:
                     coach_id=lead,
                     coach_name=people.get(lead or "", {}).get("name"),
                     cover_coach_name=people.get(cover, {}).get("name") if cover else None,
+                    staff_ids=staff_ids,
                     enrolled_count=len(rows),
                     here_count=sum(1 for row in rows if row.attendance in ("present", "late")),
                     absent_count=sum(1 for row in rows if row.attendance == "absent"),
@@ -252,6 +272,55 @@ class AdminTodayReader:
                 first_start_at=tomorrow_starts[0] if tomorrow_starts else None,
             ),
         )
+
+    async def parents_by_phone(self, digits: str, *, limit: int = 10) -> list[PhoneMatch]:
+        """Parents of this academy's students whose phone contains ``digits``.
+
+        Users are global, so the academy's own student rows decide who counts
+        as one of its parents; the phone filter then runs on those ids only.
+        """
+        children: dict[str, list[str]] = {}
+        cursor = self.db["students"].find(
+            {"academy_id": current_academy_id()},
+            {"full_name": 1, "first_name": 1, "last_name": 1, "parent_id": 1, "parent_user_id": 1},
+        )
+        async for doc in cursor:
+            parent_id = parent_ref(doc)
+            name = str(doc.get("full_name") or "").strip() or (
+                f"{doc.get('first_name') or ''} {doc.get('last_name') or ''}".strip()
+            )
+            if parent_id and name:
+                children.setdefault(parent_id, []).append(name)
+        if not children:
+            return []
+        ids = list(children)
+        object_ids = [ObjectId(uid) for uid in ids if ObjectId.is_valid(uid)]
+        # Digits only, so the pattern is safe; \D* skips the stored formatting.
+        pattern = r"\D*".join(digits)
+        users = self.db["users"].find(
+            {
+                "$or": [{"user_id": {"$in": ids}}, {"_id": {"$in": object_ids}}],
+                "phone": {"$regex": pattern},
+            },
+            {"user_id": 1, "display_name": 1, "first_name": 1, "last_name": 1, "phone": 1},
+        )
+        matches: list[PhoneMatch] = []
+        async for user in users:
+            key = str(user.get("user_id") or user.get("_id"))
+            kids = children.get(key) or children.get(str(user.get("_id")), [])
+            name = str(user.get("display_name") or "").strip() or (
+                f"{user.get('first_name') or ''} {user.get('last_name') or ''}".strip()
+            )
+            matches.append(
+                PhoneMatch(
+                    parent_id=key,
+                    name=name or None,
+                    phone=str(user.get("phone") or ""),
+                    children=sorted(set(kids), key=str.casefold),
+                )
+            )
+        matches.sort(key=lambda m: ((m.name or "").casefold(), m.parent_id))
+        return matches[:limit]
 
     async def _parent_ids(self, student_ids: list[str]) -> dict[str, str]:
         if not student_ids:

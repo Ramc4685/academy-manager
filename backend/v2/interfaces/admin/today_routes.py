@@ -6,6 +6,10 @@
 * ``GET /admin/today/roster-health?occurrence_id=...``: the health marker for
   one class date, read through the coach S49 reader. ``Cache-Control:
   no-store``; 404 for a class date of another academy.
+* ``GET /admin/phone-search?phone=...`` (S65): this academy's parents whose
+  phone contains the typed digits, each with their children's names. A
+  separate read, because ``/admin/users`` rows carry neither phone nor
+  children.
 
 ``require_persona("admin")`` (admins and owners). Services at
 ``app.state.admin_today`` (``composition/admin_today.py``).
@@ -18,7 +22,12 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict
 
-from backend.v2.composition.admin_today import AdminToday, AdminTodayReader
+from backend.v2.composition.admin_today import (
+    AdminToday,
+    AdminTodayReader,
+    PhoneMatch,
+    phone_digits,
+)
 from backend.v2.composition.coach_roster_health import HealthStatus
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
@@ -88,3 +97,26 @@ async def get_today_roster_health(
             for c in children
         ],
     )
+
+
+class PhoneSearchResponse(BaseModel):
+    matches: list[PhoneMatch]
+
+
+PHONE_SEARCH_MIN_DIGITS = 4
+
+
+@router.get(
+    "/phone-search",
+    response_model=PhoneSearchResponse,
+    summary="This academy's parents by part of a phone number",
+)
+async def phone_search(
+    phone: str = Query(min_length=1, max_length=40),
+    _claims: AuthClaims = Depends(require_persona("admin")),
+    reader: AdminTodayReader = Depends(get_admin_today),
+) -> PhoneSearchResponse:
+    digits = phone_digits(phone)
+    if len(digits) < PHONE_SEARCH_MIN_DIGITS:
+        raise HTTPException(status_code=422, detail="Type at least 4 digits of the phone number")
+    return PhoneSearchResponse(matches=await reader.parents_by_phone(digits))

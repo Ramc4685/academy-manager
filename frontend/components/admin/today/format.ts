@@ -72,3 +72,22 @@ export function normalizeToday(raw: AdminToday | undefined, fallbackDate: string
     health_enabled: raw.health_enabled ?? false,
   };
 }
+
+/** The live class a quick action defaults to: the one on now, else the next one. */
+export function liveClass(classes: AdminTodayClass[]): AdminTodayClass | undefined {
+  return classes.find((c) => c.phase === "now") ?? classes.find((c) => c.phase === "next");
+}
+
+export const HOW_LATE_MAX = 40;
+
+/** 8.3: exactly this and nothing else about the child goes to the coach. */
+export function runningLateMessage(
+  childName: string,
+  cls: Pick<AdminTodayClass, "title" | "start_at">,
+  timezone: string | null,
+  howLate: string,
+): string {
+  const base = `${childName} is running late for ${cls.title} (${classClock(cls.start_at, timezone)}).`;
+  const extra = howLate.trim().slice(0, HOW_LATE_MAX);
+  return extra ? `${base} ${extra}` : base;
+}

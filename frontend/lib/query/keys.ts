@@ -55,6 +55,7 @@ export const queryKeys = {
     // Health notes (D-14): gcTime 0, never persisted; see roster-sheet.tsx.
     todayRosterHealth: (occurrenceId: string) =>
       ["admin", "today", "roster-health", occurrenceId] as const,
+    phoneSearch: (digits: string) => ["admin", "phone-search", digits] as const,
     coachSessions: (coachId: string) =>
       ["admin", "sessions", "coach", coachId] as const,
     users: (role?: string) => ["admin", "users", role ?? "all"] as const,

@@ -29578,6 +29578,59 @@
         "title": "PayrollSettingsView",
         "type": "object"
       },
+      "PhoneMatch": {
+        "properties": {
+          "children": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "parent_id": {
+            "title": "Parent Id",
+            "type": "string"
+          },
+          "phone": {
+            "title": "Phone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent_id",
+          "phone",
+          "children"
+        ],
+        "title": "PhoneMatch",
+        "type": "object"
+      },
+      "PhoneSearchResponse": {
+        "properties": {
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/PhoneMatch"
+            },
+            "title": "Matches",
+            "type": "array"
+          }
+        },
+        "required": [
+          "matches"
+        ],
+        "title": "PhoneSearchResponse",
+        "type": "object"
+      },
       "PipelineBoardCardView": {
         "properties": {
           "card_id": {
@@ -37692,6 +37745,14 @@
           "session_id": {
             "title": "Session Id",
             "type": "string"
+          },
+          "staff_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Staff Ids",
+            "type": "array"
           },
           "start_at": {
             "format": "date-time",
@@ -49291,6 +49352,50 @@
         "tags": [
           "admin.families",
           "admin.people"
+        ]
+      }
+    },
+    "/api/v2/admin/phone-search": {
+      "get": {
+        "operationId": "phone_search_api_v2_admin_phone_search_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "phone",
+            "required": true,
+            "schema": {
+              "maxLength": 40,
+              "minLength": 1,
+              "title": "Phone",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhoneSearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "This academy's parents by part of a phone number",
+        "tags": [
+          "admin.today"
         ]
       }
     },
