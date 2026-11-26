@@ -7,12 +7,10 @@ composition layer and exposed here as a ``Protocol``.
 Two families of ports:
 
 1. **Storage** — ``PayoutPeriodRepository`` for the persisted payout
-   periods + lines (Stream J), plus snapshot repositories for the
-   reporting read models (Stream M).
-2. **External read models** — ``PayoutCalculator``, ``BillingLedgerReader``,
-   ``SessionOccurrenceReader`` and ``AttendanceReader`` — these are
-   implemented by adapters in the composition layer that translate from
-   their owning context's types to local DTOs.
+   periods + lines (Stream J).
+2. **Read models** — ``PayoutCalculator`` and the reporting readers
+   (``HeldClassReader`` and friends); the calculator is implemented by a
+   composition-layer adapter that translates coaching types to local DTOs.
 
 Keeping these as Protocols means tests can supply fakes without dragging
 in Mongo or other contexts.
@@ -31,11 +29,6 @@ from backend.v2.contexts.finance.domain.payout_period import (
     PayoutWarning,
     PersistedPayoutLine,
     PersistedUnpaidOccurrence,
-)
-from backend.v2.contexts.finance.domain.reporting_snapshots import (
-    AcademyRevenueSnapshot,
-    CoachPayoutSnapshot,
-    SessionAttendanceSnapshot,
 )
 
 # ---------------------------------------------------------------------------
@@ -138,28 +131,6 @@ class PayoutAuditLog(Protocol):
     async def list_for_period(self, period_id: str) -> list[PayoutAuditEntry]: ...
 
 
-class AcademyRevenueSnapshotRepository(Protocol):
-    async def find(self, *, academy_id: str, period: str) -> AcademyRevenueSnapshot | None: ...
-
-    async def upsert(self, snapshot: AcademyRevenueSnapshot) -> AcademyRevenueSnapshot: ...
-
-
-class SessionAttendanceSnapshotRepository(Protocol):
-    async def find(
-        self, *, academy_id: str, session_id: str, period: str
-    ) -> SessionAttendanceSnapshot | None: ...
-
-    async def upsert(self, snapshot: SessionAttendanceSnapshot) -> SessionAttendanceSnapshot: ...
-
-
-class CoachPayoutSnapshotRepository(Protocol):
-    async def find(
-        self, *, academy_id: str, coach_id: str, period: str
-    ) -> CoachPayoutSnapshot | None: ...
-
-    async def upsert(self, snapshot: CoachPayoutSnapshot) -> CoachPayoutSnapshot: ...
-
-
 # ---------------------------------------------------------------------------
 # External read-model ports (implemented by composition-layer adapters)
 # ---------------------------------------------------------------------------
@@ -219,55 +190,6 @@ class PayoutCalculator(Protocol):
         ...
 
 
-class BillingLedgerReader(Protocol):
-    """Aggregated billing facts for a reporting period.
-
-    Implemented by a composition-layer adapter over the billing context's
-    repositories. ``period`` is an opaque string like ``2026-05`` —
-    semantics belong to the caller.
-    """
-
-    async def revenue_for_period(
-        self, *, academy_id: str, period_start: datetime, period_end: datetime
-    ) -> BillingPeriodTotals: ...
-
-
-class BillingPeriodTotals(Protocol):
-    @property
-    def gross_minor(self) -> int: ...
-    @property
-    def refunded_minor(self) -> int: ...
-    @property
-    def outstanding_minor(self) -> int: ...
-    @property
-    def currency(self) -> str: ...
-
-
-class SessionOccurrenceReader(Protocol):
-    """Counts session occurrences in a window.
-
-    Implemented by a composition-layer adapter over enrollment.
-    """
-
-    async def counts_for_session(
-        self,
-        *,
-        academy_id: str,
-        session_id: str,
-        period_start: datetime,
-        period_end: datetime,
-    ) -> SessionOccurrenceCounts: ...
-
-
-class SessionOccurrenceCounts(Protocol):
-    @property
-    def scheduled_count(self) -> int: ...
-    @property
-    def completed_count(self) -> int: ...
-    @property
-    def no_show_count(self) -> int: ...
-
-
 class ApplicationFunnelReader(Protocol):
     """Read application funnel counts from the onboarding store.
 
@@ -282,23 +204,6 @@ class ApplicationFunnelReader(Protocol):
     """
 
     async def get_funnel_counts(self, academy_id: str, period: str | None) -> dict[str, int]: ...
-
-
-class AttendanceSnapshotReader(Protocol):
-    """Read ``SessionAttendanceSnapshot`` records for a set of periods.
-
-    The implementor queries the ``session_attendance_snapshots`` collection
-    and returns all snapshot documents that match the given academy and
-    periods.  The finance context uses this to build trend reports without
-    knowing Mongo internals.
-
-    Returns all matching snapshots (one per session per period).  An
-    unknown period or an academy with no data returns an empty list.
-    """
-
-    async def list_snapshots_for_periods(
-        self, *, academy_id: str, periods: list[str]
-    ) -> list[SessionAttendanceSnapshot]: ...
 
 
 class CoachMonthOccurrences(Protocol):
@@ -322,23 +227,6 @@ class MonthlyCoachOccurrenceReader(Protocol):
     async def coaches_with_occurrences(
         self, *, academy_id: str, period_start: datetime, period_end: datetime
     ) -> list[CoachMonthOccurrences]: ...
-
-
-class CoachPayoutSnapshotReader(Protocol):
-    """Read ``CoachPayoutSnapshot`` records for a set of periods.
-
-    The implementor queries the ``coach_payout_snapshots`` collection
-    and returns all snapshot documents that match the given academy and
-    periods.  The finance context uses this to build utilization reports
-    without knowing Mongo internals.
-
-    Returns all matching snapshots (one per coach per period).  An
-    unknown period or an academy with no data returns an empty list.
-    """
-
-    async def list_snapshots_for_periods(
-        self, *, academy_id: str, periods: list[str]
-    ) -> list[CoachPayoutSnapshot]: ...
 
 
 class CoachComplianceCounts(Protocol):
@@ -417,15 +305,9 @@ class HeldClassReader(Protocol):
 
 
 __all__ = [
-    "AcademyRevenueSnapshotRepository",
     "ApplicationFunnelReader",
-    "AttendanceSnapshotReader",
-    "BillingLedgerReader",
-    "BillingPeriodTotals",
     "CoachComplianceCounts",
     "CoachMonthOccurrences",
-    "CoachPayoutSnapshotReader",
-    "CoachPayoutSnapshotRepository",
     "CoachPeriodHours",
     "HeldClassReader",
     "MarkedWithin24hReader",
@@ -435,7 +317,4 @@ __all__ = [
     "PayoutCalculator",
     "PayoutPeriodRepository",
     "PeriodClassCounts",
-    "SessionAttendanceSnapshotRepository",
-    "SessionOccurrenceCounts",
-    "SessionOccurrenceReader",
 ]

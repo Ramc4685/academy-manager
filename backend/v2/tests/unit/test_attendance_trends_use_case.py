@@ -32,7 +32,7 @@ def _snap(
     )
 
 
-class StubSnapshotReader:
+class StubHeldClassReader:
     """Stub ``HeldClassReader`` returning fixed per-period rows."""
 
     def __init__(self, rows: list[_Counts]) -> None:
@@ -48,7 +48,7 @@ class StubSnapshotReader:
 
 
 def _use_case(rows: list[_Counts]) -> GetAttendanceTrends:
-    return GetAttendanceTrends(classes=StubSnapshotReader(rows), academy_id="test-academy")
+    return GetAttendanceTrends(classes=StubHeldClassReader(rows), academy_id="test-academy")
 
 
 @pytest.mark.asyncio

@@ -30,7 +30,7 @@ def _snap(coach_id: str, period: str, hours: str, payout_minor: int) -> _Hours:
     return _Hours(coach_id=coach_id, period=period, hours=Decimal(hours), payout_minor=payout_minor)
 
 
-class StubSnapshotReader:
+class StubHeldClassReader:
     """Stub ``HeldClassReader`` returning fixed coach-hour rows."""
 
     def __init__(self, rows: list[_Hours]) -> None:
@@ -45,7 +45,7 @@ class StubSnapshotReader:
 
 def _use_case(rows: list[_Hours], max_hours: int = 40) -> GetCoachUtilization:
     return GetCoachUtilization(
-        classes=StubSnapshotReader(rows),
+        classes=StubHeldClassReader(rows),
         academy_id="test-academy",
         max_hours=max_hours,
     )
@@ -130,7 +130,9 @@ class StubComplianceReader:
 async def test_compliance_within_24h_rate_from_reader():
     """compliance_within_24h_rate = marked_within_24h_count / total_marked_count, 4dp."""
     uc = GetCoachUtilization(
-        classes=StubSnapshotReader([_snap("coach-1", "2026-05", hours="20.0", payout_minor=80000)]),
+        classes=StubHeldClassReader(
+            [_snap("coach-1", "2026-05", hours="20.0", payout_minor=80000)]
+        ),
         compliance_reader=StubComplianceReader([_ComplianceRow("coach-1", 3, 4)]),
         academy_id="test-academy",
     )
@@ -153,7 +155,9 @@ async def test_compliance_within_24h_rate_none_without_reader():
 async def test_compliance_within_24h_rate_none_when_no_marks_yet():
     """A coach with zero marked occurrences yet has no rate to report (avoid 0/0)."""
     uc = GetCoachUtilization(
-        classes=StubSnapshotReader([_snap("coach-1", "2026-05", hours="20.0", payout_minor=80000)]),
+        classes=StubHeldClassReader(
+            [_snap("coach-1", "2026-05", hours="20.0", payout_minor=80000)]
+        ),
         compliance_reader=StubComplianceReader([_ComplianceRow("coach-1", 0, 0)]),
         academy_id="test-academy",
     )

@@ -169,7 +169,6 @@ TENANT_OWNED_COLLECTIONS = {
     "billing_products",
     "billing_reconciliation_runs",
     "billing_settings",
-    "academy_revenue_snapshots",
     "stripe_invoice_processing",
     "unretired_checkout_sessions",
     # Family billing state and consents
@@ -186,13 +185,11 @@ TENANT_OWNED_COLLECTIONS = {
     # Coaching, attendance and payroll
     "session_feedback",
     "session_types",
-    "session_attendance_snapshots",
     "occurrence_roster_entries",
     "coach_attendance",
     "coach_attendance_audit_log",
     "coach_rates",
     "coach_rate_audit_log",
-    "coach_payout_snapshots",
     "payout_periods",
     "payout_period_lines",
     "payout_audit_log",
