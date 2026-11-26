@@ -103,7 +103,8 @@ test.describe("returning family re-enrolment (#827)", () => {
     const { patches } = await stubOnboarding(page, [EXISTING_CHILD]);
 
     await page.goto(`/parent/onboarding?child=${STUDENT_ID}`);
-    await page.getByTestId("parent-onboarding").getByRole("button", { name: "Next" }).click();
+    // S21: the parent's details are already on the draft, so it opens at Child.
+    await expect(page.getByRole("heading", { name: "Your child" })).toBeVisible();
 
     await expect(page.getByTestId("onboarding-existing-child-picker")).toBeVisible();
     await expect(

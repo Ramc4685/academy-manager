@@ -82,9 +82,11 @@ const SESSION = {
 async function stubOnboarding(
   page: Page,
   classFirst: boolean,
+  parentPhone?: string,
 ): Promise<{ waiverRequests: string[] }> {
   const waiverRequests: string[] = [];
   const application = draftApplication(classFirst);
+  if (parentPhone !== undefined) application.parent_profile.phone = parentPhone;
   await stubMe(page, {
     user_id: "user-parent-class-first",
     email: "parent@example.com",
@@ -170,12 +172,11 @@ function stepLabels(page: Page) {
   return page.getByTestId("onboarding-progress").locator("li button span:last-child");
 }
 
-/** Parent step, then the child step (the returning child is pre-filled). */
+/** The child step (the returning child is pre-filled). */
 async function throughParentAndChild(page: Page) {
   const next = page.getByTestId("parent-onboarding").getByRole("button", { name: "Next" });
   await page.goto(`/parent/onboarding?child=${STUDENT_ID}`);
-  await expect(page.getByRole("heading", { name: "Your details" })).toBeVisible();
-  await next.click();
+  // S21: the parent's details are already on the draft, so it opens at Child.
   await expect(page.getByRole("heading", { name: "Your child" })).toBeVisible();
   await page.getByRole("radio", { name: "beginner" }).click();
   await next.click();
@@ -225,7 +226,8 @@ test.describe("referral code on the parent step", () => {
   const KEY = "courtmastr.referral_code";
 
   async function startWithStoredCode(page: Page): Promise<string[]> {
-    await stubOnboarding(page, false);
+    // A new parent: no phone on the account yet, so the wizard opens at Your details.
+    await stubOnboarding(page, false, "");
     await page.addInitScript(
       ([key, value]) => {
         if (!sessionStorage.getItem("seeded")) {
@@ -243,6 +245,7 @@ test.describe("referral code on the parent step", () => {
     });
     await page.goto("/parent/onboarding");
     await expect(page.getByRole("heading", { name: "Your details" })).toBeVisible();
+    await page.getByLabel("Your phone").fill("+1 555 0100");
     return patches;
   }
 
