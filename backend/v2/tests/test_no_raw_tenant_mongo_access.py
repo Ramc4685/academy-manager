@@ -149,6 +149,68 @@ TENANT_OWNED_COLLECTIONS = {
     "referrals",
     # Parent drop-off check-ins (migration 0246), one per child per class.
     "dropoff_checkins",
+    # Billing ledger money rows (GAPS #2 follow-up, 2026-11-26). These were
+    # unregistered, so raw access to them anywhere in v2 went unchecked while
+    # prod serves several academies (#1212). Every existing access already
+    # filters on academy_id; registering them keeps it that way.
+    "ledger_payments",
+    "payment_allocations",
+    "payment_allocation_reversals",
+    "payment_attempts",
+    "invoice_lines",
+    "credit_applications",
+    "billing_artifacts",
+    "billing_audit_log",
+    "billing_counters",
+    "billing_products",
+    "billing_reconciliation_runs",
+    "billing_settings",
+    "academy_revenue_snapshots",
+    "stripe_invoice_processing",
+    "unretired_checkout_sessions",
+    # Family billing state and consents
+    "student_billing_enrollments",
+    "parent_billing_customers",
+    "autopay_consents",
+    "enrollment_billing_deferrals",
+    "enrollment_discounts",
+    "enrollment_departure_policies",
+    "parent_self_service_policies",
+    "pause_requests",
+    "scheduled_enrollment_actions",
+    "makeup_requests",
+    # Coaching, attendance and payroll
+    "session_feedback",
+    "session_types",
+    "session_attendance_snapshots",
+    "occurrence_roster_entries",
+    "coach_attendance",
+    "coach_attendance_audit_log",
+    "coach_rates",
+    "coach_rate_audit_log",
+    "coach_payout_snapshots",
+    "payout_periods",
+    "payout_period_lines",
+    "payout_audit_log",
+    "class_recaps",
+    "class_recap_reports",
+    "class_plan_links",
+    "calendar_feed_links",
+    # Waivers
+    "waiver_templates",
+    "waiver_signatures",
+    "waiver_artifacts",
+    "waiver_share_links",
+    # Family communications and their send claims
+    "absence_notices",
+    "absence_notice_sends",
+    "enrollment_hold_notice_sends",
+    "win_back_notice_sends",
+    "family_contact_log",
+    "message_campaigns",
+    "message_deliveries",
+    "email_preferences",
+    "trial_requests",
 }
 
 # Global / cross-tenant collections. These intentionally span academies (or are
@@ -173,6 +235,40 @@ GLOBAL_COLLECTIONS = {
 
 assert not (TENANT_OWNED_COLLECTIONS & GLOBAL_COLLECTIONS), (
     "A collection cannot be both tenant-owned and global"
+)
+
+# Platform-plane and infrastructure collections: not owned by one academy, and
+# not identity rows either, so they sit in neither set above. Listing them here
+# changes no check (a repository's own-collection mutations are still
+# inspected); it only records that someone looked. A collection literal that is
+# in none of the three sets fails ``test_every_collection_literal_is_classified``,
+# so a new per-academy collection cannot ship without being registered above.
+PLATFORM_AND_INFRA_COLLECTIONS = {
+    # Event plumbing, drained by workers that set the tenant per event.
+    "outbox_events",
+    "dead_letter_events",
+    # Auth throttles and magic-link tokens, looked up before a tenant scope
+    # exists (token hash / email keyed).
+    "login_attempts",
+    "verification_email_cooldowns",
+    "parent_magic_links",
+    # Provider-level email state keyed by address or provider message id.
+    "email_suppressions",
+    "email_provider_events",
+    # Platform operator plane (/api/v2/platform/*), cross-tenant by design.
+    "platform_audit_events",
+    "platform_governance_audit_logs",
+    "platform_plans",
+    "platform_tenant_subscriptions",
+    "support_access_grants",
+    "support_impersonation_requests",
+    "tenant_deletion_requests",
+    "tenant_export_requests",
+    "student_data_deletion_requests",
+}
+
+assert not (PLATFORM_AND_INFRA_COLLECTIONS & (TENANT_OWNED_COLLECTIONS | GLOBAL_COLLECTIONS)), (
+    "A platform/infra collection cannot also be tenant-owned or global"
 )
 
 MONGO_METHODS = {
@@ -293,6 +389,55 @@ def test_no_unapproved_raw_mongo_access_to_tenant_owned_collections() -> None:
         "TenantScopedRepository. Fix the call site or add a documented entry — "
         "do not re-add a directory blanket.\n" + "\n".join(access.format() for access in violations)
     )
+
+
+def test_every_collection_literal_is_classified() -> None:
+    """Every Mongo collection named in v2 code is tenant-owned, global, or
+    platform/infra. An unclassified collection is invisible to the raw-access
+    check above, which is how the ledger money collections went unwatched
+    until 2026-11-26 (GAPS #2)."""
+    known = TENANT_OWNED_COLLECTIONS | GLOBAL_COLLECTIONS | PLATFORM_AND_INFRA_COLLECTIONS
+    unclassified: dict[str, str] = {}
+    for path in sorted(V2_ROOT.rglob("*.py")):
+        rel_path = path.relative_to(V2_ROOT)
+        if "tests" in rel_path.parts or "migrations" in rel_path.parts:
+            continue
+        for name, line in _collection_literals(path):
+            if name not in known:
+                unclassified.setdefault(name, f"{rel_path}:{line}")
+    assert not unclassified, (
+        "Classify each collection in TENANT_OWNED_COLLECTIONS (per academy), "
+        "GLOBAL_COLLECTIONS (identity spanning academies) or "
+        "PLATFORM_AND_INFRA_COLLECTIONS, with a reason:\n"
+        + "\n".join(f"{name} (first seen {where})" for name, where in sorted(unclassified.items()))
+    )
+
+
+def test_collection_classifier_sees_subscripts_and_declarations(tmp_path) -> None:
+    path = tmp_path / "probe.py"
+    path.write_text(
+        "class Repo(TenantScopedRepository):\n"
+        '    collection_name = "zz_declared"\n'
+        "async def f(db):\n"
+        '    return await db["zz_subscripted"].find_one({})\n',
+        encoding="utf-8",
+    )
+    assert {name for name, _ in _collection_literals(path)} == {
+        "zz_declared",
+        "zz_subscripted",
+    }
+
+
+def test_money_collections_are_registered_as_tenant_owned() -> None:
+    assert {
+        "ledger_payments",
+        "payment_allocations",
+        "payment_attempts",
+        "invoice_lines",
+        "credit_applications",
+        "student_billing_enrollments",
+        "parent_billing_customers",
+    } <= TENANT_OWNED_COLLECTIONS
 
 
 def test_composition_exceptions_are_explicit_and_documented() -> None:
@@ -555,6 +700,31 @@ def _is_approved_path(rel_path: Path) -> bool:
     return (
         rel_path in APPROVED_COMPOSITION_EXCEPTIONS or rel_path in APPROVED_CROSS_TENANT_EXCEPTIONS
     )
+
+
+def _collection_literals(path: Path) -> list[tuple[str, int]]:
+    """``(name, line)`` for each ``x["name"]`` subscript on a db-like value and
+    each literal ``collection_name = "name"`` declaration in the file."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and _is_db_value(node.value):
+            name = _constant_slice_value(node.slice)
+            if name is not None:
+                found.append((name, node.lineno))
+        elif isinstance(node, ast.ClassDef):
+            name = _declared_collection_name(node)
+            if name is not None:
+                found.append((name, node.lineno))
+    return found
+
+
+def _is_db_value(node: ast.AST) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id in {"db", "database", "_db"}
+    if isinstance(node, ast.Attribute):
+        return node.attr in {"db", "_db", "database"}
+    return False
 
 
 def _raw_mongo_accesses(path: Path, rel_path: Path) -> list[RawMongoAccess]:
