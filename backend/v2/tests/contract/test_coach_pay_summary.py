@@ -152,3 +152,37 @@ def test_month_range_is_the_last_two_years() -> None:
     for bad in ("2024-11", "2026-12", "2026-13", "2026-00", "26-11"):
         with pytest.raises(InvalidPayMonth):
             allowed_month(bad, today=today)
+
+
+@pytest.mark.asyncio
+async def test_a_neighbouring_period_that_only_grazes_the_month_is_not_its_payslip(
+    db: Any, acad: str
+) -> None:
+    """Periods stored on UTC month bounds overlap the academy's month by a few
+    hours on each side; October must show October's payslip, not November's."""
+    await _seed(db)
+    await db["payout_periods"].delete_many({"coach_id": "casey"})
+    await db["payout_periods"].insert_many(
+        [
+            _period(
+                "casey",
+                "approved",
+                datetime(2026, 10, 1, tzinfo=UTC),
+                datetime(2026, 11, 1, tzinfo=UTC),
+                total_minor=1000,
+            ),
+            _period(
+                "casey",
+                "approved",
+                datetime(2026, 11, 1, tzinfo=UTC),
+                datetime(2026, 12, 1, tzinfo=UTC),
+                total_minor=2000,
+                payout_period_id="pp_nov_utc",
+            ),
+        ]
+    )
+    use_case = _use_case(db)
+    october = await use_case.execute(academy_id=ACADEMY, coach_id="casey", month="2026-10")
+    november = await use_case.execute(academy_id=ACADEMY, coach_id="casey", month="2026-11")
+    assert october.payslip is not None and october.payslip.total_cents == 1000
+    assert november.payslip is not None and november.payslip.total_cents == 2000

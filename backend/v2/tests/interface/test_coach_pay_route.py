@@ -100,3 +100,22 @@ def test_parent_gets_404(seed):
     client, reader = _client(seed, _parent_claims())
     assert client.get("/api/v2/coach/profile/pay").status_code == 404
     assert reader.asked == []
+
+
+def test_no_route_names_another_coach(seed):
+    client, reader = _client(seed)
+    for path in (
+        "/api/v2/coach/profile/pay/demo-coach",
+        "/api/v2/coach/pay",
+        "/api/v2/coach/payroll",
+    ):
+        assert client.get(path).status_code == 404, path
+    assert reader.asked == []
+
+
+def test_security_matrix_lists_the_self_only_pay_read():
+    from pathlib import Path
+
+    matrix = (Path(__file__).resolve().parents[4] / "docs/security-matrix.md").read_text()
+    row = next(line for line in matrix.splitlines() if "GET /coach/profile/pay" in line)
+    assert "Self only" in row and "No (404)" in row

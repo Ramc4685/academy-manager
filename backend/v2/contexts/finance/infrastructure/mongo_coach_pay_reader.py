@@ -119,12 +119,22 @@ class MongoCoachPayReader:
                 _PAYSLIP_FIELDS,
             )
             .sort("period_start", -1)
-            .limit(1)
+            .limit(5)
         )
         docs = [doc async for doc in cursor]
         if not docs:
             return None
-        doc = docs[0]
+
+        def overlap(doc: dict[str, Any]) -> timedelta:
+            lo, hi = as_utc(doc.get("period_start")), as_utc(doc.get("period_end"))
+            if lo is None or hi is None:
+                return timedelta(0)
+            return min(hi, end) - max(lo, start)
+
+        # A neighbouring month stored on other bounds (UTC, say) grazes this
+        # window by hours; the period that covers most of the month is its
+        # payslip. max() keeps the latest start on a tie (docs are newest first).
+        doc = max(docs, key=overlap)
         zone = report_zone(await self.academy_timezone(academy_id))
 
         def local_day(value: object, *, exclusive: bool = False) -> date | None:
