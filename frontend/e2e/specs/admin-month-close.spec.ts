@@ -791,7 +791,7 @@ test.describe("admin reports: attendance risk and families lost", () => {
       "Testcoach One",
     );
     await expect(page.getByTestId("people-report-attendance-risk-total")).toContainText(
-      "2 students at risk of 4 students",
+      "2 students at risk of 4 enrolled",
     );
 
     await expect(page.getByTestId("people-report-families-lost-table")).toBeVisible();

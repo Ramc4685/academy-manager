@@ -228,6 +228,7 @@ test.describe("admin session creation and billing-rules settings UI", () => {
         charged_cents: 6000,
         fee_set: true,
         students: 0,
+        paying_students: 0,
         plan_id: "plan-group",
         matching_plan_ids: ["plan-group"],
         stale_link: false,
