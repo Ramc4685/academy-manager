@@ -129,7 +129,9 @@ test.describe("push deep links", () => {
     await page.goto("/parent/messages?message=m-not-yours");
 
     await expect(page.getByTestId("parent-message-missing")).toBeVisible();
-    await expect(page.getByTestId("message-row")).toHaveCount(3);
+    // S62: the two announcements list as rows; the DM sits in the academy thread.
+    await expect(page.getByTestId("message-row")).toHaveCount(2);
+    await expect(page.getByTestId("academy-bubble")).toHaveCount(1);
     await expect(page.locator('[data-highlighted="true"]')).toHaveCount(0);
     await page.screenshot({ path: info.outputPath("parent-messages-missing.png"), fullPage: true });
   });

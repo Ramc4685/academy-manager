@@ -192,14 +192,16 @@ test.describe("parent messages inbox", () => {
     await page.goto("/parent/messages");
 
     await expect(page.getByTestId("parent-messages")).toBeVisible();
-    await expect(page.getByTestId("parent-message-list")).toContainText(DM_BODY);
+    // S62: direct messages live in the academy thread; the list keeps announcements.
+    await expect(page.getByTestId("academy-thread")).toContainText(DM_BODY);
+    await expect(page.getByTestId("parent-message-list")).not.toContainText(DM_BODY);
     await expect(page.getByTestId("parent-message-list")).toContainText(ANNOUNCEMENT_BODY);
 
     await expect.poll(() => readCalls).toEqual(["m-dm-1"]);
     await expect(page.getByTestId("unread-dot")).toHaveCount(0);
 
     await page.reload();
-    await expect(page.getByTestId("parent-message-list")).toContainText(DM_BODY);
+    await expect(page.getByTestId("academy-thread")).toContainText(DM_BODY);
     await expect(page.getByTestId("unread-dot")).toHaveCount(0);
     expect(readCalls).toEqual(["m-dm-1"]);
   });
