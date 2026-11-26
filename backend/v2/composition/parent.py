@@ -2880,8 +2880,35 @@ def compose_parent(
                     "source": entry.source,
                     # S17: Home shows "Absent (reported)" on the next class.
                     "absence_reported": entry.absence_reported,
+                    **await _next_class_family_info(entry.session_id, entry.occurrence_id),
                 }
             return None
+
+        async def _next_class_family_info(session_id: str, occurrence_id: str) -> dict[str, Any]:
+            """S45: where to go, what to bring and who coaches, from the class as stored.
+
+            Only reached for an entry ``get_child_schedule`` already proved is
+            this parent's child; both reads are tenant-scoped.
+            """
+            session = await sessions_query.get(session_id)
+            occurrence = await occurrences_query.get(occurrence_id)
+            if occurrence is not None:
+                coach_id = (
+                    occurrence.substitute_coach_id
+                    or occurrence.actual_coach_id
+                    or occurrence.scheduled_coach_id
+                )
+            else:
+                coach_id = getattr(session, "coach_id", None)
+            return {
+                "coach_name": await _resolve_coach_name(coach_id),
+                "venue_address": getattr(session, "venue_address", None)
+                or academy.get("address")
+                or None,
+                "parking_notes": getattr(session, "parking_notes", None),
+                "what_to_bring": getattr(session, "what_to_bring", None),
+                "arrival_minutes_before": getattr(session, "arrival_minutes_before", None),
+            }
 
         schedule_results = await asyncio.gather(
             *(_next_session(student_id) for student_id in student_ids),
@@ -2932,6 +2959,17 @@ def compose_parent(
                 }
 
         milestone_by_student = await _parent_home_milestones(parent_id, student_ids)
+        # S45: "Before your first class" shows until a child is first marked in class.
+        attended = set(
+            await db["attendance"].distinct(
+                "student_id",
+                {
+                    "academy_id": academy_id,
+                    "student_id": {"$in": student_ids},
+                    "status": {"$in": ["present", "late"]},
+                },
+            )
+        )
 
         return {
             "children": [
@@ -2941,6 +2979,7 @@ def compose_parent(
                     "next_session": next_session_by_student.get(student_id),
                     "attendance_this_month": attendance_by_student[student_id],
                     "latest_milestone": milestone_by_student.get(student_id),
+                    "first_class_pending": student_id not in attended,
                 }
                 for child, student_id in zip(children, student_ids, strict=True)
             ],

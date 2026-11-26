@@ -58,6 +58,7 @@ import {
   useParentRegistrations,
 } from "@/components/parent/open-registrations";
 import { ABSENT_REPORTED_CHIP, scheduleSourceLabel } from "@/lib/parent/schedule-events";
+import { nextClassDetails } from "@/lib/parent/next-class-details";
 
 const progressOverviewEnabled =
   process.env.NEXT_PUBLIC_SKILL_PROGRESS_OVERVIEW === "1";
@@ -290,8 +291,9 @@ function ChildCardList({
   return (
     <ul data-testid="parent-child-cards" className="space-y-3 stagger-children">
       {items.map((child) => (
-        <li key={child.student_id}>
+        <li key={child.student_id} className="space-y-2">
           <ChildCard child={child} timezone={timezone} />
+          <NextClassInfo child={child} />
         </li>
       ))}
     </ul>
@@ -374,6 +376,63 @@ function ChildCard({
         />
       </dl>
     </Link>
+  );
+}
+
+/**
+ * S45: where to go, what to bring and who coaches. Sits below the card, not
+ * inside it: the card is one link, and a link inside a link is invalid.
+ * Until the child's first attended class it is an open "Before your first
+ * class" card; after that a collapsed disclosure.
+ */
+function NextClassInfo({ child }: { child: ParentHomeChild }) {
+  const details = nextClassDetails(child.next_session, child.first_class_pending);
+  if (!details) return null;
+  const list = details.rows.length > 0 && (
+    <dl className="mt-2 space-y-1.5">
+      {details.rows.map((row) => (
+        <div key={row.label}>
+          <dt className="text-[10px] font-bold uppercase tracking-widest text-rally-subtle">{row.label}</dt>
+          <dd className="text-sm text-rally-ink">{row.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+  const directions = details.directionsHref && (
+    <a
+      href={details.directionsHref}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mt-2 inline-flex min-h-touch items-center text-sm font-semibold text-rally-cobalt-700 underline"
+    >
+      Get directions
+    </a>
+  );
+  if (details.firstClass) {
+    return (
+      <section
+        aria-labelledby={`first-class-${child.student_id}`}
+        data-testid={`first-class-${child.student_id}`}
+        className="rounded-2xl border border-rally-cobalt-100 bg-rally-cobalt-50 p-4"
+      >
+        <h3 id={`first-class-${child.student_id}`} className="text-sm font-bold text-rally-ink">
+          Before {child.full_name.split(" ")[0]}&apos;s first class
+        </h3>
+        {list}
+        {directions}
+      </section>
+    );
+  }
+  return (
+    <div className="rounded-2xl border border-rally-line bg-white px-4 py-2">
+      <details>
+        <summary className="min-h-touch cursor-pointer py-2 text-sm font-semibold text-rally-ink">
+          What to bring and parking
+        </summary>
+        {list}
+      </details>
+      {directions}
+    </div>
   );
 }
 

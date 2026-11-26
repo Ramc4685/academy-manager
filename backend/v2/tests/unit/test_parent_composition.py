@@ -3601,13 +3601,74 @@ async def test_parent_home_next_session_is_the_next_upcoming_occurrence() -> Non
         "location": "Court 2",
         "start_at": now + timedelta(days=1),
         "end_at": now + timedelta(days=1, hours=1),
-        # Always None today (decision 12) — kept for shape parity.
+        # S45: no users row for coach-1 in this seed, so no name.
         "coach_name": None,
         "source": "regular",
         "absence_reported": False,
+        "venue_address": None,
+        "parking_notes": None,
+        "what_to_bring": None,
+        "arrival_minutes_before": None,
     }
     # st-2 has no enrollment, so no upcoming session.
     assert home["children"][1]["next_session"] is None
+
+
+@pytest.mark.asyncio
+async def test_parent_home_next_class_carries_family_info_and_first_class_flag() -> None:
+    """S45: address, parking, what to bring and the coach of that date, read
+    from the caller's own child's class; another family's class never shows."""
+    mongomock_motor = pytest.importorskip("mongomock_motor")
+    db = mongomock_motor.AsyncMongoMockClient()["parent-home-family-info"]
+    await _seed_home_db(db)
+    now = datetime.now(UTC).replace(microsecond=0)
+    await _seed_home_schedule(db, now)
+    await db["sessions"].update_one(
+        {"session_id": "sess-1"},
+        {
+            "$set": {
+                "venue_address": "100 Example Gym Rd, Normal IL",
+                "parking_notes": "North lot",
+                "what_to_bring": "Water and non-marking shoes",
+                "arrival_minutes_before": 15,
+            }
+        },
+    )
+    await db["session_occurrences"].update_one(
+        {"occurrence_id": "occ-next"}, {"$set": {"substitute_coach_id": "coach-sub"}}
+    )
+    await db["users"].insert_many(
+        [
+            {"academy_id": "acad", "user_id": "coach-sub", "full_name": "Casey Cover"},
+            {"academy_id": "acad", "user_id": "coach-1", "full_name": "Pat Regular"},
+        ]
+    )
+    # Another family's class in the same academy, with its own venue facts.
+    await db["sessions"].insert_one(
+        {
+            "academy_id": "acad",
+            "session_id": "sess-other",
+            "title": "Other Family Class",
+            "venue_address": "9 Elsewhere St",
+            "coach_id": "coach-1",
+        }
+    )
+    parent = _compose_home_parent(db, now=now)
+
+    with tenant_scope("acad"):
+        home = await parent.get_parent_home(parent_id="parent-1")
+
+    asha, dev = home["children"]
+    nxt = asha["next_session"]
+    assert nxt["venue_address"] == "100 Example Gym Rd, Normal IL"
+    assert nxt["parking_notes"] == "North lot"
+    assert nxt["what_to_bring"] == "Water and non-marking shoes"
+    assert nxt["arrival_minutes_before"] == 15
+    assert nxt["coach_name"] == "Casey Cover"
+    assert "9 Elsewhere St" not in repr(home)
+    # Asha has present marks in the seed; Dev was only ever marked absent.
+    assert asha["first_class_pending"] is False
+    assert dev["first_class_pending"] is True
 
 
 @pytest.mark.asyncio

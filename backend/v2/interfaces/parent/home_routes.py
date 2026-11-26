@@ -61,6 +61,7 @@ async def get_parent_home(
                     **child["attendance_this_month"],
                 ),
                 latest_milestone=_milestone_view(child.get("latest_milestone")),
+                first_class_pending=bool(child.get("first_class_pending", False)),
             )
             for child in result["children"]
         ],

@@ -759,10 +759,9 @@ class UpdateParentChildRequest(BaseModel):
 class ParentHomeNextSessionView(BaseModel):
     """The child's next upcoming occurrence.
 
-    ``coach_name`` is always ``None`` today — ``GetChildSchedule.execute``
-    hardcodes it. The field is kept for shape parity with
-    ``ParentScheduleEntryView`` so the card can render a coach line the day
-    the use case starts populating it.
+    S45: ``coach_name`` is who coaches that date (substitute, else actual,
+    else scheduled coach), and the family-info fields come from the class as
+    stored (address falls back to the academy's).
     """
 
     occurrence_id: str
@@ -777,6 +776,10 @@ class ParentHomeNextSessionView(BaseModel):
     source: Literal["regular", "makeup", "trial"] = "regular"
     #: S17: the family already reported this class as an absence.
     absence_reported: bool = False
+    venue_address: str | None = None
+    parking_notes: str | None = None
+    what_to_bring: str | None = None
+    arrival_minutes_before: int | None = None
 
 
 class ParentHomeAttendanceView(BaseModel):
@@ -803,6 +806,8 @@ class ParentHomeChildView(BaseModel):
     next_session: ParentHomeNextSessionView | None = None
     attendance_this_month: ParentHomeAttendanceView
     latest_milestone: ParentHomeMilestoneView | None = None
+    #: S45: never marked present or late yet, so Home shows "Before your first class".
+    first_class_pending: bool = False
 
 
 class ParentHomeBalanceView(BaseModel):
