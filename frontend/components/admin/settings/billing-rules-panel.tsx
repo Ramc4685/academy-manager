@@ -16,6 +16,7 @@ import {
   isChoiceRow,
   isListRow,
   toForm,
+  changesLateFee,
   turnsLateFeeOn,
   type BillingRuleGroup,
   type BillingRuleRow,
@@ -57,9 +58,11 @@ export function BillingRulesPanel() {
   }, [query.data]);
 
   const diff = useMemo(() => diffForm(query.data, form, MONEY), [query.data, form]);
-  // Money audit X4: switching the fee on starts real charges on the next
-  // hourly run, so the owner must acknowledge it before Save is enabled.
-  const needsLateFeeAck = turnsLateFeeOn(query.data, diff);
+  // Money audit X4 / S31: switching the fee on or changing its amount changes
+  // real charges from the next hourly run, so the owner must acknowledge it
+  // before Save is enabled.
+  const needsLateFeeAck = changesLateFee(query.data, diff);
+  const lateFeeTurnsOn = turnsLateFeeOn(query.data, diff);
   const saveEnabled = canSaveRules(diff, needsLateFeeAck, lateFeeAcknowledged);
   // The tick is the only thing standing between the owner and Save: point at it.
   const ackIsBlocker = needsLateFeeAck && !lateFeeAcknowledged && canSave(diff);
@@ -117,7 +120,9 @@ export function BillingRulesPanel() {
           className="max-w-3xl rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
           data-testid="billing-rules-late-fee-warning"
         >
-          <p className="font-semibold">You are turning on a late fee.</p>
+          <p className="font-semibold">
+            {lateFeeTurnsOn ? "You are turning on a late fee." : "You are changing the late fee."}
+          </p>
           <p className="mt-1">
             From the next hourly run, the fee is added once to each unpaid invoice whose grace
             period ends today or later. Invoices that are already overdue are not charged. Autopay

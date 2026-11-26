@@ -15,6 +15,7 @@ import {
   isChoiceRow,
   rowToInput,
   toForm,
+  changesLateFee,
   turnsLateFeeOn,
 } from "./billing-rules-form.ts";
 import { formatCents, parseDollarsToCents } from "./money.ts";
@@ -338,6 +339,20 @@ test("a late fee turned on without the acknowledgement is still refused (S31)", 
   const grace = diffForm(view(), { ...toForm(view()), grace_days: "9" }, MONEY);
   assert.equal(canSaveRules(grace, turnsLateFeeOn(view(), grace), false), true);
   assert.match(panel, /canSaveRules\(diff, needsLateFeeAck, lateFeeAcknowledged\)/);
+});
+
+test("changing a late fee that is already on needs the tick too (S31 follow-up)", () => {
+  // view() stores a fee above $0; the persona changed 5 -> 6 and it saved at once.
+  const raised = diffForm(view(), { ...toForm(view()), late_fee_cents: "30.00" }, MONEY);
+  assert.equal(changesLateFee(view(), raised), true);
+  assert.equal(canSaveRules(raised, changesLateFee(view(), raised), false), false);
+  assert.equal(canSaveRules(raised, changesLateFee(view(), raised), true), true);
+  // Turning it off charges nobody, and a save that leaves the fee alone never asks.
+  const off = diffForm(view(), { ...toForm(view()), late_fee_cents: "0" }, MONEY);
+  assert.equal(changesLateFee(view(), off), false);
+  const grace = diffForm(view(), { ...toForm(view()), grace_days: "9" }, MONEY);
+  assert.equal(changesLateFee(view(), grace), false);
+  assert.match(panel, /const needsLateFeeAck = changesLateFee\(/);
 });
 
 test("turning a fee on needs an explicit acknowledgement before Save is enabled", () => {

@@ -330,7 +330,8 @@ export function changedRulesText(diff: BillingRulesDiff): string {
 
 /**
  * The rules Save gate: something valid changed and, when this save turns a
- * late fee on, the owner ticked the acknowledgement (money audit X4).
+ * late fee on or changes its amount, the owner ticked the acknowledgement
+ * (money audit X4, S31).
  */
 export function canSaveRules(
   diff: BillingRulesDiff,
@@ -346,6 +347,22 @@ export function canSaveRules(
  * the panel asks the owner to acknowledge what that means before Save is
  * enabled (money audit X4).
  */
+/**
+ * True when this save sets the late fee to a new amount above $0: turning it
+ * on, or changing a fee that is already on (S31). Either way parents are
+ * charged the new amount, so the owner ticks the acknowledgement first.
+ * Turning the fee off charges nobody and needs no tick.
+ */
+export function changesLateFee(
+  view: BillingRulesView | null | undefined,
+  diff: BillingRulesDiff,
+): boolean {
+  const next = diff.payload.late_fee_cents;
+  if (typeof next !== "number" || next <= 0) return false;
+  const stored = editableRows(view).find((row) => row.key === "late_fee_cents")?.value ?? 0;
+  return next !== stored;
+}
+
 export function turnsLateFeeOn(
   view: BillingRulesView | null | undefined,
   diff: BillingRulesDiff,
