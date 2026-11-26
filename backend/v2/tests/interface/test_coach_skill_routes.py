@@ -630,6 +630,9 @@ def _build_real_router_app(
         assigned_sessions=assigned_sessions,
         list_today=_SpyUseCase([today_session]),
         get_passport=_SpyUseCase([_Dumpable(skill_id=SKILL_ID)]),
+        get_pathway_placement=_SpyUseCase(
+            SimpleNamespace(level_name="Grip & Control", level_sequence=2)
+        ),
         update_skill_status=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
         record_test_attempt=_SpyUseCase(_Dumpable(student_id=STUDENT_ID, skill_id=SKILL_ID)),
         recommend_level_up=_SpyUseCase(_Dumpable(student_id=STUDENT_ID)),
@@ -663,6 +666,7 @@ def _build_real_router_app(
     )
     student_progress = SimpleNamespace(
         get_passport=spies.get_passport,
+        get_pathway_placement=spies.get_pathway_placement,
         update_skill_status=spies.update_skill_status,
         record_test_attempt=spies.record_test_attempt,
         recommend_level_up=spies.recommend_level_up,
@@ -793,7 +797,17 @@ _ASSIGNED_SKILL_ENDPOINTS = [
         None,
         200,
         "get_passport",
-        {"passport": [{"skill_id": SKILL_ID}]},
+        {
+            "student_id": STUDENT_ID,
+            "student_name": "Student One",
+            "placed": True,
+            "level_name": "Grip & Control",
+            "level_sequence": 2,
+            "passed_count": 0,
+            "total_count": 1,
+            "required_remaining": 1,
+            "passport": [{"skill_id": SKILL_ID}],
+        },
     ),
     (
         "POST",
@@ -2233,3 +2247,67 @@ def test_bulk_status_and_test_bodies_are_validated_at_the_edge(
 
     assert response.status_code == 422, response.text
     assert spies.update_skill_status.calls == 0
+
+
+def test_passport_for_an_unplaced_child_is_200_placed_false_with_the_name() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    spies.get_passport.result = None
+
+    async def not_placed(*_args: object, **_kwargs: object) -> object:
+        raise StudentNotPlaced("student has no active level", student_id=STUDENT_ID)
+
+    spies.get_passport.execute = not_placed
+    client = TestClient(app)
+
+    response = client.get(f"/api/v2/coach/students/{STUDENT_ID}/passport?program_id={PROGRAM_ID}")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["placed"] is False
+    assert body["student_name"] == "Student One"
+    assert body["level_name"] is None
+    assert body["passport"] == []
+    assert spies.get_pathway_placement.calls == 0
+
+
+def test_passport_counts_passed_total_and_required_remaining() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    spies.get_passport.result = [
+        _Dumpable(skill_id="a", status="PASSED", is_required=True),
+        _Dumpable(skill_id="b", status="PRACTICING", is_required=True),
+        _Dumpable(skill_id="c", status="NOT_STARTED", is_required=False),
+    ]
+    client = TestClient(app)
+
+    body = client.get(
+        f"/api/v2/coach/students/{STUDENT_ID}/passport?program_id={PROGRAM_ID}"
+    ).json()
+
+    assert (body["level_name"], body["level_sequence"]) == ("Grip & Control", 2)
+    assert (body["passed_count"], body["total_count"]) == (1, 3)
+    assert body["required_remaining"] == 1
+
+
+def test_passport_unassigned_coach_gets_the_same_404_as_an_unknown_id() -> None:
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids=set(),
+    )
+    client = TestClient(app)
+
+    other_coachs_child = client.get(
+        f"/api/v2/coach/students/{STUDENT_ID}/passport?program_id={PROGRAM_ID}"
+    )
+    unknown = client.get(f"/api/v2/coach/students/no-such-child/passport?program_id={PROGRAM_ID}")
+
+    assert other_coachs_child.status_code == unknown.status_code == 404
+    assert other_coachs_child.json() == unknown.json()
+    # Nothing about the child is read before the assignment check fails.
+    assert spies.get_roster.calls == 0
+    assert spies.get_passport.calls == 0

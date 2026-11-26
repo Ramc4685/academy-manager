@@ -58,8 +58,8 @@ export function shouldPersistQuery(queryKey: unknown, status: string): boolean {
   return status === "success";
 }
 
-/** Bumped when the coach cache policy changes, so stale persisted copies are dropped. */
-export const PERSISTER_BUSTER = "coach-revalidate-v2";
+/** Bumped when the coach cache policy or a persisted read's shape changes, so stale copies are dropped. */
+export const PERSISTER_BUSTER = "coach-passport-header-v3";
 
 /**
  * Coach reads paint from the persisted copy but always revalidate on mount:

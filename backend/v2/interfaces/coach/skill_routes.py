@@ -18,6 +18,9 @@ from backend.v2.contexts.student_progress.application.errors import StudentNotPl
 from backend.v2.contexts.student_progress.application.use_cases.get_passport import (
     GetStudentPassportCommand,
 )
+from backend.v2.contexts.student_progress.application.use_cases.get_pathway_placement import (
+    StudentPathwayPlacementRequest,
+)
 from backend.v2.contexts.student_progress.application.use_cases.get_progress_summary import (
     ProgressSummaryRequest,
 )
@@ -586,17 +589,47 @@ async def get_passport(
     claims: AuthClaims = Depends(require_coach_surface()),
     use_cases: CoachUseCases = Depends(get_coach_use_cases),
 ) -> object:
-    await _require_assigned_to_student(use_cases, claims.user_id, student_id)
+    # The assignment check runs first, so an unassigned coach gets the same
+    # 404 as for an unknown id and never learns the child exists.
+    session_id = await _require_assigned_to_student(use_cases, claims.user_id, student_id)
     resolved_program_id = await _resolve_program_id(use_cases, program_id)
     if use_cases.student_progress is None:
         raise HTTPException(status_code=503, detail="Student progress service not configured")
+    roster = await use_cases.get_roster.execute(str(session_id))
+    student_name = next((e.full_name for e in roster if e.student_id == student_id), "")
+    header: dict[str, object] = {
+        "student_id": student_id,
+        "student_name": student_name,
+        "placed": False,
+        "level_name": None,
+        "level_sequence": None,
+        "passed_count": 0,
+        "total_count": 0,
+        "required_remaining": 0,
+    }
     try:
         entries = await use_cases.student_progress.get_passport.execute(
             GetStudentPassportCommand(student_id=student_id, program_id=resolved_program_id)
         )
-    except StudentNotPlaced as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"passport": [e.model_dump() for e in entries]}
+    except StudentNotPlaced:
+        # Not placed is a state the page explains, not a missing child.
+        return {**header, "passport": []}
+    placement = await use_cases.student_progress.get_pathway_placement.execute(
+        StudentPathwayPlacementRequest(student_id=student_id, program_id=resolved_program_id)
+    )
+    passport = [e.model_dump() for e in entries]
+    return {
+        **header,
+        "placed": True,
+        "level_name": placement.level_name,
+        "level_sequence": placement.level_sequence,
+        "passed_count": sum(1 for e in passport if e.get("status") == "PASSED"),
+        "total_count": len(passport),
+        "required_remaining": sum(
+            1 for e in passport if e.get("is_required", True) and e.get("status") != "PASSED"
+        ),
+        "passport": passport,
+    }
 
 
 @router.post("/students/{student_id}/skills/{skill_id}/status")

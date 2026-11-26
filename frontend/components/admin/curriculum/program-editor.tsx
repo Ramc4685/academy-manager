@@ -540,9 +540,15 @@ function LevelAccordion({
                       checked={skillRequired}
                       onChange={(e) => setSkillRequired(e.target.checked)}
                       className="rounded"
+                      aria-describedby="skill-required-hint"
                     />
                     Required
                   </label>
+                  <span id="skill-required-hint" className="text-xs text-neutral-600">
+                    {skillRequired
+                      ? "A child needs this skill to move up a level."
+                      : "Not required: a child can move up without this skill."}
+                  </span>
                   <select
                     value={skillScoringType}
                     onChange={(e) => setSkillScoringType(e.target.value as SkillScoringType)}

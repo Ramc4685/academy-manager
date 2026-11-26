@@ -155,7 +155,7 @@ test.describe("Assistant coach shell", () => {
       created_at: new Date().toISOString(),
       visibility: "private",
     });
-    await page.goto("/coach/students/st1/passport?student_name=Alice");
+    await page.goto("/coach/students/st1/passport");
     await expect(page.getByTestId("coach-student-passport")).toBeVisible();
     await page
       .getByTestId("passport-skill-skill-backhand")

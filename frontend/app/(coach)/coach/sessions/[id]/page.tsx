@@ -1387,11 +1387,8 @@ function RosterRow({
     voided ||
     windowClosed ||
     notOpenYet;
-  const passportParams = new URLSearchParams({
-    from_session: sessionId,
-    student_name: student.full_name,
-  });
-  const passportHref = `/coach/students/${encodeURIComponent(student.student_id)}/passport?${passportParams.toString()}`;
+  // The name comes from the passport API, never the URL (it would land in history and logs).
+  const passportHref = `/coach/students/${encodeURIComponent(student.student_id)}/passport`;
   const noteBody = noteText.trim();
   // A parent said "I've arrived": staff confirm with one tap. Manual marks still work.
   const dropoffState = student.checkin?.state;

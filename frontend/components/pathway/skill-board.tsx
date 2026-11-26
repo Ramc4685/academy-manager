@@ -145,7 +145,7 @@ export function SkillBoardView({
   return (
     <div className="space-y-6" data-testid="skill-board">
       {board.groups.length === 0 && board.unplaced.length === 0 && (
-        <p className="text-sm text-neutral-500">No students on this roster.</p>
+        <p className="text-sm text-neutral-600">No students on this class yet. Children show here once they are enrolled.</p>
       )}
 
       {board.groups.length > 0 && <SkillStatusLegend />}
@@ -168,7 +168,7 @@ export function SkillBoardView({
 
       {board.unplaced.length > 0 && (
         <div className="rounded-xl border border-dashed border-neutral-300 p-4 dark:border-neutral-700">
-          <p className="mb-2 text-sm font-semibold text-neutral-600">Not placed in a level</p>
+          <p className="mb-2 text-sm font-semibold text-neutral-600">Not placed in a level yet</p>
           <ul className="space-y-2">
             {board.unplaced.map((s) => (
               <li

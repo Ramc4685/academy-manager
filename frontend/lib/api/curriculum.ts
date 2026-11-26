@@ -823,14 +823,26 @@ export function getParentProgressSummary(
 // Coach
 // ---------------------------------------------------------------------------
 
+/** A coach's view of one child's passport; `placed: false` means no level yet. */
+export interface CoachPassport {
+  student_id: string;
+  student_name: string;
+  placed: boolean;
+  level_name: string | null;
+  level_sequence: number | null;
+  passed_count: number;
+  total_count: number;
+  required_remaining: number;
+  passport: SkillPassportEntry[];
+}
+
 export function getStudentPassport(
   studentId: string,
   programId?: string,
-): Promise<SkillPassportEntry[]> {
-  return apiFetch<{ passport: SkillPassportEntry[] }>(
-    coachStudentPassportPath(studentId, programId),
-    { method: "GET" },
-  ).then((d) => d.passport);
+): Promise<CoachPassport> {
+  return apiFetch<CoachPassport>(coachStudentPassportPath(studentId, programId), {
+    method: "GET",
+  });
 }
 
 export function updateSkillStatus(
