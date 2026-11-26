@@ -798,17 +798,6 @@ export async function setLevelUpRule(
   }
 }
 
-export function getCoachSessionStudentsProgress(
-  sessionId: string,
-  programId?: string,
-): Promise<StudentProgressOverview[]> {
-  const q = programId ? `?program_id=${encodeURIComponent(programId)}` : "";
-  return apiFetch<{ rows: StudentProgressOverview[] }>(
-    `/coach/sessions/${encodeURIComponent(sessionId)}/students-progress${q}`,
-    { method: "GET" },
-  ).then((d) => d.rows);
-}
-
 export function getParentProgressSummary(
   programId?: string,
 ): Promise<StudentProgressOverview[]> {

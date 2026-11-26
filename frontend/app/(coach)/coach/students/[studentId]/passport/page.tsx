@@ -114,7 +114,7 @@ export default function CoachStudentPassportPage() {
         <SkeletonList />
       ) : isError ? null : !placed ? (
         <p data-testid="passport-not-placed" className="rounded-md bg-neutral-50 p-3 text-sm text-neutral-700">
-          Not placed in a level yet. The academy owner places children on a level; once{" "}
+          Not placed in a level yet. The academy office places children on a level; once{" "}
           {data?.student_name || "this child"} is placed, their skills show here.
         </p>
       ) : skills.length === 0 ? (

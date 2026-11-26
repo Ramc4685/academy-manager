@@ -107,7 +107,7 @@ describe("TapSkillsWorkspace", () => {
   it("says who places children when nobody is on a level, without pointing at another tab", () => {
     const out = html(board({ groups: [], unplaced: [{ student_id: "s3", student_name: "C" }] }));
     expect(out).toContain("No one in this class is on a level yet");
-    expect(out).toContain("The academy owner places children on a level");
+    expect(out).toContain("The academy office places children on a level");
     expect(out).not.toContain("Progress tab");
   });
 });

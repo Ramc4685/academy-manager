@@ -189,7 +189,7 @@ export function TapSkillsWorkspace({
   if (!group || !skill) {
     return (
       <p className="rounded-md bg-neutral-50 p-3 text-sm text-neutral-600">
-        No one in this class is on a level yet. The academy owner places children on a level, and their skills show here once they are placed.
+        No one in this class is on a level yet. The academy office places children on a level, and their skills show here once they are placed.
       </p>
     );
   }
