@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
@@ -32,6 +32,9 @@ _EXPORT_REPORTS = frozenset(
         "revenue-by-category",
         "deposit-slip",
         "quickbooks",
+        # S41: the period's invoices and the aging drill-down.
+        "invoices",
+        "aging",
     }
 )
 
@@ -167,6 +170,7 @@ async def get_deposit_slip_report(
 @router.get("/reports/{report_name}.csv")
 async def export_report_csv(
     report_name: str,
+    request: Request,
     period: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}$")] = None,
     _claims: AuthClaims = Depends(require_owner()),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
@@ -175,7 +179,10 @@ async def export_report_csv(
         raise HTTPException(status_code=404, detail="Report export not found")
     if period is not None:
         _validated_month(period)
-    csv_text = await use_cases.export_report_csv(report_name, period)  # type: ignore[operator]
+    billing_exports = getattr(request.app.state, "report_exports", None)
+    csv_text = await billing_exports(report_name, period) if billing_exports else None
+    if csv_text is None:
+        csv_text = await use_cases.export_report_csv(report_name, period)  # type: ignore[operator]
     filename = f"{report_name}-{period}.csv" if period else f"{report_name}.csv"
     return Response(
         content=csv_text,

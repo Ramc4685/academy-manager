@@ -77,6 +77,7 @@ from backend.v2.composition.public_page_read import compose_public_page_read
 from backend.v2.composition.public_trial_requests import compose_public_trial_requests
 from backend.v2.composition.push import _build_push_sender, compose_message_push
 from backend.v2.composition.referrals import compose_referrals
+from backend.v2.composition.report_exports import compose_report_exports
 from backend.v2.composition.student import compose_student
 from backend.v2.composition.waitlist_offers import (
     compose_decline_waitlist_offer,
@@ -1166,6 +1167,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Owner's merged Audit log over every audit trail (S39).
     app.state.admin_audit_log = compose_admin_audit_log(db)
     app.state.admin_month_close = compose_admin_month_close(db)
+    app.state.report_exports = compose_report_exports(db)
     # Academy admin's read-only view of the processing markup (Phase 2 A1).
     app.state.admin_platform_fee = compose_admin_platform_fee(db)
     # Automated late fees, driven from the dunning tick below (#552).

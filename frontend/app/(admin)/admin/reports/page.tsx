@@ -164,6 +164,13 @@ export default function AdminMonthClosePage() {
     onSuccess: (csv) => downloadCsv(`deposit-slip-${period}`, csv),
   });
 
+  // S41: the month's invoices and the aging drill-down, from the same rows as
+  // the billed, outstanding and aging figures on this page.
+  const billingExportMutation = useMutation({
+    mutationFn: (report: "invoices" | "aging") => exportAdminReportCsv(report, period),
+    onSuccess: (csv, report) => downloadCsv(`${report}-${period}`, csv),
+  });
+
   // Normalized, so a partial payload renders zeros instead of crashing the page.
   const close = useMemo(
     () => normalizeMonthClose(monthCloseQuery.data, period),
@@ -281,14 +288,40 @@ export default function AdminMonthClosePage() {
                 >
                   {depositSlipMutation.isPending ? "Exporting..." : "Deposit slip"}
                 </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => billingExportMutation.mutate("invoices")}
+                  disabled={billingExportMutation.isPending}
+                  data-testid="export-invoices"
+                >
+                  {billingExportMutation.isPending && billingExportMutation.variables === "invoices"
+                    ? "Exporting..."
+                    : "Invoices CSV"}
+                </Button>
               </>
             )}
           </div>
         </div>
 
-        {(quickbooksMutation.isError || depositSlipMutation.isError) && (
+        {(quickbooksMutation.isError ||
+          depositSlipMutation.isError ||
+          billingExportMutation.isError) && (
           <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
             Could not export that report.
+          </p>
+        )}
+
+        {!isNativeApp && (
+          <p className="text-[12px] text-rally-muted" data-testid="month-close-more-exports">
+            More CSV exports:{" "}
+            <Link href="/admin/reports/refunds" className="underline">
+              Refunds &amp; credits
+            </Link>
+            {" · "}
+            <Link href="/admin/reports/revenue-by-category" className="underline">
+              Revenue by category
+            </Link>
+            {" · "}QuickBooks journal and deposit slip are the buttons above.
           </p>
         )}
 
@@ -756,7 +789,21 @@ export default function AdminMonthClosePage() {
           </Card>
 
           <Card p={24}>
-            <Overline>Collections risk</Overline>
+            <div className="flex items-center justify-between gap-3">
+              <Overline>Collections risk</Overline>
+              {!isNativeApp && (
+                <Button
+                  variant="secondary"
+                  onClick={() => billingExportMutation.mutate("aging")}
+                  disabled={billingExportMutation.isPending}
+                  data-testid="export-aging"
+                >
+                  {billingExportMutation.isPending && billingExportMutation.variables === "aging"
+                    ? "Exporting..."
+                    : "Export aging"}
+                </Button>
+              )}
+            </div>
             <dl className="mt-4 grid gap-3 sm:grid-cols-2">
               <DashboardTerm label="Families due" value={collectionsRisk ? formatInteger(collectionsRisk.overdue_family_count) : "No data"} />
               <DashboardTerm label="Amount due" value={collectionsRisk ? formatMoney(collectionsRisk.overdue_cents) : "No data"} />

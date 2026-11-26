@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  exportAdminReportCsv,
   listAdminSessions,
   listAdminPayments,
   undoPaymentPaid,
@@ -91,6 +92,19 @@ export function AllInvoicesTab() {
   const [showVoided, setShowVoided] = useState(false);
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
+  // S41: owner-only CSV of one billing month, the same rows as Month close.
+  const [exportPeriod, setExportPeriod] = useState(() => new Date().toISOString().slice(0, 7));
+  const exportMutation = useMutation({
+    mutationFn: () => exportAdminReportCsv("invoices", exportPeriod),
+    onSuccess: (csv) => {
+      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `invoices-${exportPeriod}.csv`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    },
+  });
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -172,6 +186,27 @@ export function AllInvoicesTab() {
   return (
     <div className="space-y-5" data-testid="payments-all-invoices">
       <div className="flex flex-wrap items-center justify-end gap-2">
+        {isOwner && (
+          <>
+            <input
+              type="month"
+              aria-label="Month to export"
+              value={exportPeriod}
+              onChange={(event) => setExportPeriod(event.target.value || exportPeriod)}
+              className="h-8 rounded-md border border-rally-line bg-white px-2 text-sm text-rally-ink dark:bg-neutral-950"
+              data-testid="invoices-export-period"
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => exportMutation.mutate()}
+              disabled={exportMutation.isPending}
+              data-testid="invoices-export"
+            >
+              {exportMutation.isPending ? "Exporting..." : "Export CSV"}
+            </Button>
+          </>
+        )}
         <Button
           variant="secondary"
           size="sm"
@@ -186,6 +221,12 @@ export function AllInvoicesTab() {
           Generate monthly
         </Button>
       </div>
+
+      {exportMutation.isError && (
+        <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+          Could not export that month.
+        </p>
+      )}
 
       {isOwner && (
         <p className="text-sm text-rally-subtle" data-testid="billing-health-pointer">

@@ -16,7 +16,7 @@ import csv
 import io
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -690,6 +690,150 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+_PAYMENT_RISK_PROJECTION = {
+    "payment_id": 1,
+    "invoice_id": 1,
+    "invoice_number": 1,
+    "stripe_invoice_id": 1,
+    "stripe_payment_intent_id": 1,
+    "stripe_checkout_session_id": 1,
+    "status": 1,
+    "parent_id": 1,
+    "family_id": 1,
+    "student_id": 1,
+    "due_date": 1,
+    "due_at": 1,
+    "created_at": 1,
+    "amount_cents": 1,
+    "final_amount_cents": 1,
+    "gross_amount_cents": 1,
+    "paid_amount_cents": 1,
+    "amount_received_cents": 1,
+    "balance_due_cents": 1,
+    "refunded_cents": 1,
+}
+
+
+async def period_billing_rows(
+    db: AsyncIOMotorDatabase[Any],
+    *,
+    academy_id: str,
+    period: str,
+    month_end: date,
+    as_of: date,
+) -> list[dict[str, Any]]:
+    """One row per billed item in ``period``: live invoices, then legacy payment
+    rows no invoice covers. The dashboard's billed, outstanding and aging
+    figures are sums over these rows, and the S41 CSVs export them as-is.
+    """
+    rows: list[dict[str, Any]] = []
+    invoice_keys: set[str] = set()
+    invoices_cursor = db["invoices"].find(
+        {
+            "academy_id": academy_id,
+            "period": period,
+            "status": {"$nin": ["void", "waived", "cancelled"]},
+            "is_deleted": {"$ne": True},
+        }
+    )
+    async for invoice in invoices_cursor:
+        invoice_keys.update(invoice_provider_keys(invoice))
+        outstanding = invoice_outstanding_cents(invoice)
+        paid = invoice_paid_cents(invoice)
+        due = invoice_due_date(invoice, month_end)
+        rows.append(
+            {
+                "source": "invoice",
+                "id": str(invoice.get("invoice_id") or invoice.get("_id") or ""),
+                "invoice_number": invoice.get("invoice_number"),
+                "family_id": str(
+                    invoice.get("parent_id")
+                    or invoice.get("family_id")
+                    or invoice.get("student_id")
+                    or invoice.get("invoice_id")
+                    or ""
+                ),
+                "status": str(invoice.get("status") or ""),
+                "due_date": due,
+                "billed_cents": paid + outstanding,
+                "paid_cents": paid,
+                "outstanding_cents": outstanding,
+                "aging": aging_label(max((as_of - due).days, 0)),
+            }
+        )
+
+    payments_cursor = db["payments"].find(
+        {"academy_id": academy_id, "period": period, "is_deleted": {"$ne": True}},
+        _PAYMENT_RISK_PROJECTION,
+    )
+    async for payment in payments_cursor:
+        if payment_provider_keys(payment) & invoice_keys:
+            continue
+        outstanding = payment_outstanding_cents(payment)
+        collected = payment_collected_cents(payment)
+        due = payment_due_date(payment, month_end)
+        rows.append(
+            {
+                "source": "payment",
+                "id": str(payment.get("payment_id") or payment.get("_id") or ""),
+                "invoice_number": payment.get("invoice_number"),
+                "family_id": str(
+                    payment.get("parent_id")
+                    or payment.get("family_id")
+                    or payment.get("student_id")
+                    or payment.get("payment_id")
+                    or ""
+                ),
+                "status": str(payment.get("status") or ""),
+                "due_date": due,
+                "billed_cents": collected + outstanding,
+                "paid_cents": collected,
+                "outstanding_cents": outstanding,
+                "aging": aging_label(max((as_of - due).days, 0)),
+            }
+        )
+    return rows
+
+
+async def family_display_names(
+    db: AsyncIOMotorDatabase[Any], *, academy_id: str, family_ids: set[str]
+) -> dict[str, str]:
+    """Display names for family ids. parent_id may be a user_id, a firebase uid,
+    or a raw ObjectId depending on the writer, so match all three (same lookup
+    the billing/finance paths use)."""
+    family_names: dict[str, str] = {}
+    if not family_ids:
+        return family_names
+    id_list = sorted(family_ids)
+    oid_ids = [BsonObjectId(p) for p in id_list if BsonObjectId.is_valid(p)]
+    or_filter: list[dict[str, Any]] = [
+        {"user_id": {"$in": id_list}},
+        {"firebase_uid": {"$in": id_list}},
+    ]
+    if oid_ids:
+        or_filter.append({"_id": {"$in": oid_ids}})
+    users_cursor = db["users"].find(
+        {"academy_id": academy_id, "$or": or_filter},
+        {"user_id": 1, "firebase_uid": 1, "display_name": 1, "first_name": 1, "last_name": 1},
+    )
+    async for user in users_cursor:
+        display = str(
+            user.get("display_name")
+            or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+            or ""
+        )
+        if not display:
+            continue
+        for key in (
+            str(user.get("user_id") or ""),
+            str(user.get("firebase_uid") or ""),
+            str(user["_id"]),
+        ):
+            if key and key in family_ids:
+                family_names[key] = display
+    return family_names
+
+
 def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
     """Returns an async callable for the owner finance/operations dashboard."""
     from backend.v2.shared.tenancy import current_academy_id
@@ -718,38 +862,23 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
             label: {"amount_cents": 0, "family_ids": set(), "family_amounts": {}}
             for label in ("Current", "1-30", "31-60", "60+")
         }
-        # Rebuilt here for the ``risk_payments`` pass below only; the cash
-        # reader keeps its own copy because its legacy dedup depends on it.
-        invoice_keys: set[str] = set()
-        invoices_cursor = db["invoices"].find(
-            {
-                "academy_id": academy_id,
-                "period": period,
-                "status": {"$nin": ["void", "waived", "cancelled"]},
-                "is_deleted": {"$ne": True},
-            }
-        )
-        async for invoice in invoices_cursor:
-            invoice_keys.update(invoice_provider_keys(invoice))
-            if str(invoice.get("status") or "") == "partially_paid":
+        # S41: the same rows back the invoices and aging CSVs, so a file's
+        # totals can never drift from this dashboard.
+        for row in await period_billing_rows(
+            db, academy_id=academy_id, period=period, month_end=end.date(), as_of=aging_as_of
+        ):
+            if row["status"] == "partially_paid":
                 partial_payment_count += 1
-            outstanding = invoice_outstanding_cents(invoice)
+            elif row["status"] == "failed" and row["source"] == "payment":
+                failed_payment_count += 1
+            outstanding = row["outstanding_cents"]
             outstanding_dues_cents += outstanding
-            billed_cents += invoice_paid_cents(invoice) + outstanding
+            billed_cents += row["billed_cents"]
             if outstanding:
-                family_id = str(
-                    invoice.get("parent_id")
-                    or invoice.get("family_id")
-                    or invoice.get("student_id")
-                    or invoice.get("invoice_id")
-                    or ""
-                )
+                family_id = row["family_id"]
                 if family_id:
                     collection_family_ids.add(family_id)
-                due_date = invoice_due_date(invoice, end.date())
-                days_late = max((aging_as_of - due_date).days, 0)
-                label = aging_label(days_late)
-                bucket = aging_totals[label]
+                bucket = aging_totals[row["aging"]]
                 bucket["amount_cents"] = int(bucket["amount_cents"]) + outstanding
                 family_ids = bucket["family_ids"]
                 if isinstance(family_ids, set) and family_id:
@@ -766,68 +895,6 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         )
         async for _attempt in failed_attempts_cursor:
             failed_payment_count += 1
-
-        risk_payments_cursor = db["payments"].find(
-            {
-                "academy_id": academy_id,
-                "period": period,
-                "is_deleted": {"$ne": True},
-            },
-            {
-                "payment_id": 1,
-                "invoice_id": 1,
-                "invoice_number": 1,
-                "stripe_invoice_id": 1,
-                "stripe_payment_intent_id": 1,
-                "stripe_checkout_session_id": 1,
-                "status": 1,
-                "parent_id": 1,
-                "family_id": 1,
-                "student_id": 1,
-                "due_date": 1,
-                "due_at": 1,
-                "created_at": 1,
-                "amount_cents": 1,
-                "final_amount_cents": 1,
-                "gross_amount_cents": 1,
-                "paid_amount_cents": 1,
-                "amount_received_cents": 1,
-                "balance_due_cents": 1,
-                "refunded_cents": 1,
-            },
-        )
-        async for payment in risk_payments_cursor:
-            payment_keys = payment_provider_keys(payment)
-            if payment_keys & invoice_keys:
-                continue
-            status = str(payment.get("status") or "")
-            if status == "failed":
-                failed_payment_count += 1
-            elif status == "partially_paid":
-                partial_payment_count += 1
-            outstanding = payment_outstanding_cents(payment)
-            outstanding_dues_cents += outstanding
-            billed_cents += payment_collected_cents(payment) + outstanding
-            if outstanding:
-                family_id = str(
-                    payment.get("parent_id")
-                    or payment.get("family_id")
-                    or payment.get("student_id")
-                    or payment.get("payment_id")
-                    or ""
-                )
-                if family_id:
-                    collection_family_ids.add(family_id)
-                due_date = payment_due_date(payment, end.date())
-                days_late = max((aging_as_of - due_date).days, 0)
-                label = aging_label(days_late)
-                bucket = aging_totals[label]
-                bucket["amount_cents"] = int(bucket["amount_cents"]) + outstanding
-                family_ids = bucket["family_ids"]
-                if isinstance(family_ids, set) and family_id:
-                    family_ids.add(family_id)
-                    family_amounts = bucket["family_amounts"]
-                    family_amounts[family_id] = int(family_amounts.get(family_id, 0)) + outstanding
 
         session_ids: list[str] = []
         capacity = 0
@@ -976,49 +1043,15 @@ def make_reports_dashboard(db: AsyncIOMotorDatabase[Any]) -> object:
         if payout_period_rows == 0:
             empty_states.append("No payout periods generated for this month.")
 
-        # Resolve display names for aging drill-down. parent_id may be a
-        # user_id, a firebase uid, or a raw ObjectId depending on the writer,
-        # so match all three (same lookup the billing/finance paths use).
-        all_family_ids = {
-            family_id
-            for label in aging_totals
-            for family_id in aging_totals[label]["family_amounts"]
-        }
-        family_names: dict[str, str] = {}
-        if all_family_ids:
-            id_list = sorted(all_family_ids)
-            oid_ids = [BsonObjectId(p) for p in id_list if BsonObjectId.is_valid(p)]
-            or_filter: list[dict[str, Any]] = [
-                {"user_id": {"$in": id_list}},
-                {"firebase_uid": {"$in": id_list}},
-            ]
-            if oid_ids:
-                or_filter.append({"_id": {"$in": oid_ids}})
-            users_cursor = db["users"].find(
-                {"academy_id": academy_id, "$or": or_filter},
-                {
-                    "user_id": 1,
-                    "firebase_uid": 1,
-                    "display_name": 1,
-                    "first_name": 1,
-                    "last_name": 1,
-                },
-            )
-            async for user in users_cursor:
-                display = str(
-                    user.get("display_name")
-                    or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
-                    or ""
-                )
-                if not display:
-                    continue
-                for key in (
-                    str(user.get("user_id") or ""),
-                    str(user.get("firebase_uid") or ""),
-                    str(user["_id"]),
-                ):
-                    if key and key in all_family_ids:
-                        family_names[key] = display
+        family_names = await family_display_names(
+            db,
+            academy_id=academy_id,
+            family_ids={
+                family_id
+                for label in aging_totals
+                for family_id in aging_totals[label]["family_amounts"]
+            },
+        )
 
         aging_buckets = [
             {
@@ -2236,3 +2269,98 @@ def make_list_enrollment_events(
         return results, next_cursor
 
     return list_enrollment_events
+
+
+BILLING_EXPORT_REPORTS = frozenset({"invoices", "aging"})
+
+
+def make_billing_exports_csv(db: AsyncIOMotorDatabase[Any]) -> object:
+    """S41: the period's invoices and the aging drill-down as CSV.
+
+    Both read ``period_billing_rows``, the rows behind the reports dashboard's
+    billed, outstanding and aging figures, so a file's totals match the page.
+    Returns ``None`` for any other report name.
+    """
+
+    async def billing_export_csv(report_name: str, period: str | None = None) -> str | None:
+        if report_name not in BILLING_EXPORT_REPORTS:
+            return None
+        academy_id = current_academy_id()
+        timezone_name = await _reporting_timezone(db, academy_id)
+        zone = ZoneInfo(timezone_name)
+        effective_period = period or _now().astimezone(zone).strftime("%Y-%m")
+        _, end = month_bounds(effective_period, timezone_name)
+        rows = await period_billing_rows(
+            db,
+            academy_id=academy_id,
+            period=effective_period,
+            month_end=end.date(),
+            as_of=_now().astimezone(zone).date(),
+        )
+        names = await family_display_names(
+            db,
+            academy_id=academy_id,
+            family_ids={row["family_id"] for row in rows if row["family_id"]},
+        )
+        out = io.StringIO()
+        writer = csv.writer(out)
+        if report_name == "invoices":
+            writer.writerow(
+                [
+                    "period",
+                    "invoice_number",
+                    "record_id",
+                    "family_id",
+                    "family_name",
+                    "status",
+                    "due_date",
+                    "billed_cents",
+                    "paid_cents",
+                    "outstanding_cents",
+                ]
+            )
+            for row in rows:
+                writer.writerow(
+                    [
+                        effective_period,
+                        _csv_safe(row["invoice_number"]),
+                        row["id"],
+                        row["family_id"],
+                        _csv_safe(names.get(row["family_id"])),
+                        row["status"],
+                        row["due_date"].isoformat(),
+                        row["billed_cents"],
+                        row["paid_cents"],
+                        row["outstanding_cents"],
+                    ]
+                )
+        else:
+            writer.writerow(
+                [
+                    "bucket",
+                    "family_id",
+                    "family_name",
+                    "invoice_number",
+                    "due_date",
+                    "outstanding_cents",
+                ]
+            )
+            order = {"Current": 0, "1-30": 1, "31-60": 2, "60+": 3}
+            owing = sorted(
+                (row for row in rows if row["outstanding_cents"]),
+                key=lambda row: (order[row["aging"]], -row["outstanding_cents"], row["id"]),
+            )
+            for row in owing:
+                writer.writerow(
+                    [
+                        row["aging"],
+                        row["family_id"],
+                        _csv_safe(names.get(row["family_id"])),
+                        _csv_safe(row["invoice_number"]),
+                        row["due_date"].isoformat(),
+                        row["outstanding_cents"],
+                    ]
+                )
+        return out.getvalue()
+
+    return billing_export_csv
