@@ -160,6 +160,8 @@ class CoachUseCases:
     # Seat-holding enrollment count per class id, in one query, for the
     # Sessions list headcount. Missing ids mean 0. Optional for fixtures.
     enrolled_counts: Callable[[Sequence[str]], Awaitable[dict[str, int]]] | None = None
+    # Child display names by student id (the passport header). Optional for fixtures.
+    student_names: Callable[[Sequence[str]], Awaitable[dict[str, str]]] | None = None
 
 
 log = logging.getLogger(__name__)

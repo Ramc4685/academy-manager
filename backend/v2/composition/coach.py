@@ -237,6 +237,8 @@ class CoachComposition:
     recapped_occurrence_ids: Callable[[Sequence[str]], Awaitable[set[str]]] | None = None
     # Sessions list headcount: seat-holding enrollments per class, one query.
     enrolled_counts: Callable[[Sequence[str]], Awaitable[dict[str, int]]] | None = None
+    # Child display names by student id (the passport header). Optional for fixtures.
+    student_names: Callable[[Sequence[str]], Awaitable[dict[str, str]]] | None = None
 
 
 class CoachAssignedSessionLookup:
@@ -351,6 +353,13 @@ def _overdue_cents_by_student(db: Any) -> Any:
                 continue
             totals[student_id] = totals.get(student_id, 0) + int(doc.get("balance_due_cents") or 0)
         return totals
+
+    return resolve
+
+
+def _student_names(students: MongoStudentRepository) -> Any:
+    async def resolve(student_ids: Sequence[str]) -> dict[str, str]:
+        return {s.student_id: s.full_name for s in await students.by_ids(list(student_ids))}
 
     return resolve
 
@@ -702,4 +711,5 @@ def compose_coach(
         enrolled_counts=lambda ids: sessions_repo._enrolled_counts_by_session(
             list(ids), statuses=SEAT_HOLDING
         ),
+        student_names=_student_names(students_repo),
     )

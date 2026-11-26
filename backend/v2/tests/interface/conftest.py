@@ -848,6 +848,9 @@ def _build_use_cases(seed_data) -> CoachUseCases:
 
     _overdue_cents_by_student.seed = _overdue_seed  # type: ignore[attr-defined]
 
+    async def _student_names(ids):
+        return {s.student_id: s.full_name for s in await students.by_ids(list(ids))}
+
     use_cases = CoachUseCases(
         list_today=ListCoachOccurrencesForDate(occurrences=occurrences, sessions=sessions),
         get_roster=_get_roster,
@@ -937,6 +940,7 @@ def _build_use_cases(seed_data) -> CoachUseCases:
         list_messages=_coach_messages_visible.list_messages,
         mark_message_read=_coach_messages_visible.mark_message_read,
         enrolled_counts=enrollments.seat_holding_counts,
+        student_names=_student_names,
     )
     use_cases._messages_repo = _coach_messages_repo  # type: ignore[attr-defined]
     return use_cases

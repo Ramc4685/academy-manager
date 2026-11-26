@@ -697,6 +697,9 @@ def _build_real_router_app(
             return []
         return [SimpleNamespace(session_id=session_id) for session_id in student_session_ids]
 
+    async def _student_names(ids: object) -> dict[str, str]:
+        return {STUDENT_ID: "Student One"} if STUDENT_ID in ids else {}  # type: ignore[operator]
+
     use_cases = CoachUseCases(
         list_today=spies.list_today,  # type: ignore[arg-type]
         get_roster=get_roster,  # type: ignore[arg-type]
@@ -725,6 +728,7 @@ def _build_real_router_app(
         create_skill_note=spies.create_skill_note,
         list_skill_notes=spies.list_skill_notes,
         set_skill_note_visibility=spies.set_skill_note_visibility,
+        student_names=_student_names,
     )
     use_cases.curriculum = curriculum
 
@@ -2311,3 +2315,18 @@ def test_passport_unassigned_coach_gets_the_same_404_as_an_unknown_id() -> None:
     # Nothing about the child is read before the assignment check fails.
     assert spies.get_roster.calls == 0
     assert spies.get_passport.calls == 0
+
+
+def test_passport_names_a_paused_child_the_roster_hides() -> None:
+    # The assignment check admits active or paused; the roster lists active and held only.
+    app, spies = _build_real_router_app(
+        student_session_ids=[SESSION_ID],
+        assigned_session_ids={SESSION_ID},
+    )
+    spies.get_roster.result = []
+    body = (
+        TestClient(app)
+        .get(f"/api/v2/coach/students/{STUDENT_ID}/passport?program_id={PROGRAM_ID}")
+        .json()
+    )
+    assert body["student_name"] == "Student One"
