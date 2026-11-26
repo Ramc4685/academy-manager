@@ -335,13 +335,22 @@ class CreateSession:
         academy_id: AcademyIdSource,
         get_academy_timezone: AcademyTimezoneReader,
         audit: AuditTrail | None = None,
+        staff_eligibility: AssistantEligibilityCheck | None = None,
     ) -> None:
         self._sessions = sessions
         self._academy_id = academy_id
         self._get_academy_timezone = get_academy_timezone
         self._audit = audit
+        # Same membership vetting EditSession runs: a new class must not name a
+        # coach or assistant who is not on this academy's staff.
+        self._staff_eligibility = staff_eligibility
 
     async def execute(self, cmd: CreateSessionCommand) -> Session:
+        assistants = _normalize_assistant_ids(cmd.assistant_coach_ids)
+        if self._staff_eligibility is not None:
+            await self._staff_eligibility(
+                session_id="new", assistant_coach_ids=assistants, coach_id=cmd.coach_id
+            )
         start_at = cmd.start_at
         end_at = cmd.end_at
         # Resolve ONCE: the duplicate check, the instant arithmetic and the
@@ -384,7 +393,7 @@ class CreateSession:
             days_of_week=cmd.days_of_week,
             start_time=cmd.start_time,
             end_time=cmd.end_time,
-            assistant_coach_ids=_normalize_assistant_ids(cmd.assistant_coach_ids),
+            assistant_coach_ids=assistants,
             # Persist the EFFECTIVE zone, never None. `start_at`/`end_at` above
             # were already computed with this zone, and every downstream reader
             # (occurrence synthesis, monthly billing, payroll) re-derives
@@ -462,7 +471,8 @@ _CLEARABLE_SESSION_FIELDS: frozenset[str] = frozenset({"amount_cents", *COMMUNIC
 
 
 class AssistantEligibilityCheck(Protocol):
-    """Raises when an id may not be listed as a session assistant.
+    """Raises when an id may not be listed as a session assistant (or, given
+    ``coach_id``, as its primary coach).
 
     Implemented in composition (``admin_session_staff``), because deciding it
     means reading academy memberships — identity state this context is not
@@ -470,7 +480,13 @@ class AssistantEligibilityCheck(Protocol):
     all-or-nothing: a partially-vetted list must never reach the write.
     """
 
-    async def __call__(self, *, session_id: str, assistant_coach_ids: tuple[str, ...]) -> None: ...
+    async def __call__(
+        self,
+        *,
+        session_id: str,
+        assistant_coach_ids: tuple[str, ...],
+        coach_id: str | None = None,
+    ) -> None: ...
 
 
 class EditSession:
@@ -547,6 +563,17 @@ class EditSession:
                     session_id=cmd.session_id, assistant_coach_ids=assistants
                 )
             update["assistant_coach_ids"] = assistants
+        # A new primary coach gets the same vetting; an unchanged one is not
+        # re-checked, so the editor's full-form resubmit still saves.
+        new_coach = update.get("coach_id")
+        if (
+            self._assistant_eligibility is not None
+            and new_coach is not None
+            and new_coach != current.coach_id
+        ):
+            await self._assistant_eligibility(
+                session_id=cmd.session_id, assistant_coach_ids=(), coach_id=str(new_coach)
+            )
 
         recurring_values = {
             "days_of_week": update.get("days_of_week", current.days_of_week),

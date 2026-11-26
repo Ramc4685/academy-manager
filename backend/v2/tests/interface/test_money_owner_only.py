@@ -17,6 +17,7 @@ see ``test_admin_self_service_policies.py``.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -34,6 +35,7 @@ from backend.v2.tests.interface.test_admin_session_types import _install_session
 from backend.v2.tests.interface.test_admin_sessions import (
     _FrozenAdminDateTime,
     _mongo_admin_app,
+    _seed_coach_members,
 )
 
 _ADMIN = "/api/v2/admin"
@@ -128,7 +130,9 @@ _CLASS = {
 def mongo_db(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(admin_composition, "datetime", _FrozenAdminDateTime)
     mongomock_motor = pytest.importorskip("mongomock_motor")
-    return mongomock_motor.AsyncMongoMockClient()["money-owner-only"]
+    db = mongomock_motor.AsyncMongoMockClient()["money-owner-only"]
+    asyncio.run(_seed_coach_members(db, "coach-fee"))
+    return db
 
 
 def _create_class(db: Any, **extra: Any) -> dict[str, Any]:

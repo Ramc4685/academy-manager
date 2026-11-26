@@ -803,11 +803,13 @@ def compose_admin(
 
     session_tz = request_scoped_academy_timezone(db, request_academy_id)
     audit_trail = MongoAuditTrail(db)  # S40: best-effort "who did what" rows
+    staff_check = compose_assistant_eligibility_check(db, users_r, request_academy_id)
     create_session = CreateSession(
         sessions=sessions_w,
         academy_id=request_academy_id,
         get_academy_timezone=session_tz,
         audit=audit_trail,
+        staff_eligibility=staff_check,
     )
     edit_session = EditSession(
         sessions=sessions_w,
@@ -815,7 +817,7 @@ def compose_admin(
         # #783: the capacity guard counts the roster, not the seat counter.
         enrollments=enrollments_w,
         # #785: the PATCH route runs SetSessionAssistants' own vetting too.
-        assistant_eligibility=compose_assistant_eligibility_check(db, users_r, request_academy_id),
+        assistant_eligibility=staff_check,
     )
     # #613 welcome email + #612 roster alerts (composition/roster_notifications.py).
     notifiers = compose_enrollment_notifiers(db, settings, users=users_r)

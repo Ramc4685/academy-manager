@@ -151,8 +151,12 @@ async def ensure_assistant_eligible(
     session_id: str,
     users: _UserLookup,
     memberships: _MembershipLookup,
+    role_label: str = "assistant",
 ) -> None:
     """Raise unless ``user_id`` may be listed as an assistant on this session.
+
+    ``role_label="coach"`` runs the same check for the primary coach, so a
+    session can never name someone from another academy (or a parent).
 
     A free function so `EditSession` can run the identical check (#785): it
     used to write ``assistant_coach_ids`` straight through, which made
@@ -167,13 +171,13 @@ async def ensure_assistant_eligible(
     membership = await memberships.get_membership(academy_id, user_id, aliases=aliases)
     if membership is None or not membership.is_active():
         raise InvalidSessionAssistant(
-            "assistant must be an active member of this academy",
+            f"{role_label} must be an active member of this academy",
             session_id=session_id,
             user_id=user_id,
         )
     if not any(role in ASSISTANT_ELIGIBLE_ROLES for role in membership.roles):
         raise InvalidSessionAssistant(
-            "assistant must hold the coach or assistant_coach role",
+            f"{role_label} must hold the coach or assistant_coach role",
             session_id=session_id,
             user_id=user_id,
         )
@@ -261,7 +265,7 @@ async def attach_session_staff_names(db: Any, rows: list[dict[str, Any]]) -> Non
 def compose_assistant_eligibility_check(
     db: Any, users: _UserLookup, academy_id: Callable[[], str]
 ) -> Callable[..., Any]:
-    """The `EditSession` hook for the same vetting `SetSessionAssistants` does.
+    """The `CreateSession` / `EditSession` hook for the vetting `SetSessionAssistants` does.
 
     Positional and self-contained (it builds its own membership repository) to
     keep `composition/admin.py` — already at its wiring budget — to one line.
@@ -270,8 +274,19 @@ def compose_assistant_eligibility_check(
     """
     memberships = MongoMembershipRepository(db)
 
-    async def check(*, session_id: str, assistant_coach_ids: Sequence[str]) -> None:
+    async def check(
+        *, session_id: str, assistant_coach_ids: Sequence[str], coach_id: str | None = None
+    ) -> None:
         resolved = academy_id()
+        if coach_id:
+            await ensure_assistant_eligible(
+                resolved,
+                coach_id,
+                session_id=session_id,
+                users=users,
+                memberships=memberships,
+                role_label="coach",
+            )
         for user_id in assistant_coach_ids:
             await ensure_assistant_eligible(
                 resolved,
