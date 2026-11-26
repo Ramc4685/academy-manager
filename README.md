@@ -40,8 +40,10 @@ system for owners, coaches, and parents.
 
 ### Live Service
 
-- **Web app:** <https://academy.courtmastr.com>
+- **Web app:** <https://academy.courtmastr.com> (each academy also has its own
+  host, e.g. `blno-academy.courtmastr.com`, `demo-academy.courtmastr.com`)
 - **API:** <https://api.academy.courtmastr.com>
+- **Mobile:** iOS and Android apps (Capacitor shell in `mobile/`)
 - **Status / health:** `GET https://api.academy.courtmastr.com/api/v2/healthz`
 
 ---
