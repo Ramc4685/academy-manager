@@ -71,6 +71,9 @@ class ApplicationView(BaseModel):
     # True when some live waiver is assigned to a program: the stepper then
     # asks for the class before the waiver. False for a single-waiver academy.
     waiver_class_first: bool = False
+    # S47: False when there is no required waiver to sign (none published, or
+    # only the starter placeholder); the stepper then skips the waiver step.
+    waiver_to_sign: bool = True
     expires_at: datetime
 
 

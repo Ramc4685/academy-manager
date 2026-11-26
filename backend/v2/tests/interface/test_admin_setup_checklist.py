@@ -15,11 +15,8 @@ from backend.v2.contexts.identity.application.get_academy_use_case import GetAca
 from backend.v2.contexts.identity.application.use_cases.admin_directory import (
     AdminUserSummary,
 )
-from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
-    DEFAULT_WAIVER_BODY,
-    is_starter_waiver_body,
-)
 from backend.v2.interfaces.admin.setup_checklist_routes import build_setup_checklist
+from backend.v2.shared.starter_waiver import DEFAULT_WAIVER_BODY, is_starter_waiver_body
 
 URL = "/api/v2/admin/setup-checklist"
 

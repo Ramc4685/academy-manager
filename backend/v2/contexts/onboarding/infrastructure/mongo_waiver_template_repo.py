@@ -27,6 +27,7 @@ from backend.v2.contexts.onboarding.domain.waiver_assignment import (
 from backend.v2.contexts.onboarding.infrastructure.mongo_waiver_program_lookup import (
     MongoWaiverProgramLookup,
 )
+from backend.v2.shared.starter_waiver import is_starter_waiver_body
 from backend.v2.shared.tenancy import TenantScopedRepository, current_academy_id
 
 #: The raw ``waiver_templates.status`` spellings that mean "this row can be the
@@ -193,7 +194,9 @@ class MongoWaiverTemplateRepository(TenantScopedRepository):
                 sort=[("assigned_at", -1), ("effective_from", -1)],
             )
         ]
-        return [self._to_record(doc) for doc in docs if assignment_from_document(doc).required]
+        # S47 / D-11: a live starter placeholder is not a waiver families sign.
+        records = [self._to_record(doc) for doc in docs if assignment_from_document(doc).required]
+        return [record for record in records if not is_starter_waiver_body(record.body)]
 
     async def list_templates(self) -> list[AdminWaiverTemplateRecord]:
         cursor = self._find_many(sort=[("updated_at", -1)])

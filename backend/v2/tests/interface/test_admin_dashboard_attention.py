@@ -9,9 +9,11 @@ from backend.v2.contexts.enrollment.application.use_cases.pause_requests import 
     PauseRequest,
 )
 from backend.v2.contexts.onboarding.application.use_cases.admin_waivers import (
+    AdminWaiverDocument,
     AdminWaiverReport,
     AdminWaiverSummary,
 )
+from backend.v2.shared.starter_waiver import DEFAULT_WAIVER_BODY
 
 
 def _dt(value: str) -> datetime:
@@ -448,6 +450,49 @@ def test_unpriced_classes_sharing_a_title_say_which_is_which(admin_client):
     detail = next(i for i in r.json()["items"] if i["kind"] == "unpriced_classes")["detail"]
     assert "Tuesday Intermediate, Tue 09:00 (2 students)" in detail
     assert "Tuesday Intermediate, Tue 17:30 (2 students)" in detail
+
+
+def test_starter_waiver_is_an_attention_item_until_a_real_one_is_published(admin_client):
+    """S47 / D-11: families are not asked to sign the starter, so no "pending"."""
+    starter = AdminWaiverDocument(waiver_id="wt-starter", version="1", body=DEFAULT_WAIVER_BODY)
+    summary = AdminWaiverSummary(
+        total_students=3, signed_count=0, current_count=0, pending_count=3, outdated_count=0
+    )
+    admin_client.seed["waivers"].report = AdminWaiverReport(
+        summary=summary, active_waiver=starter, rows=[], live_waivers=[starter]
+    )
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert r.status_code == 200, r.text
+    items = [i for i in r.json()["items"] if i["kind"] == "waivers"]
+    assert [i["attention_id"] for i in items] == ["starter-waiver"]
+    assert items[0]["href"] == "/admin/settings?panel=family-policies"
+
+    real = AdminWaiverDocument(waiver_id="wt-real", version="2", body="Our participation waiver.")
+    admin_client.seed["waivers"].report = AdminWaiverReport(
+        summary=summary, active_waiver=real, rows=[], live_waivers=[real]
+    )
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+    items = [i for i in r.json()["items"] if i["kind"] == "waivers"]
+    assert [(i["attention_id"], i["count"]) for i in items] == [("waiver-status", 3)]
+
+
+def test_an_optional_starter_waiver_is_not_an_attention_item(admin_client):
+    starter = AdminWaiverDocument(
+        waiver_id="wt-starter", version="1", body=DEFAULT_WAIVER_BODY, required=False
+    )
+    admin_client.seed["waivers"].report = AdminWaiverReport(
+        summary=AdminWaiverSummary(
+            total_students=0, signed_count=0, current_count=0, pending_count=0, outdated_count=0
+        ),
+        rows=[],
+        live_waivers=[starter],
+    )
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    assert not [i for i in r.json()["items"] if i["attention_id"] == "starter-waiver"]
 
 
 class _Unbilled:

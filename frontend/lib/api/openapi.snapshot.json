@@ -10893,6 +10893,11 @@
             "default": false,
             "title": "Waiver Class First",
             "type": "boolean"
+          },
+          "waiver_to_sign": {
+            "default": true,
+            "title": "Waiver To Sign",
+            "type": "boolean"
           }
         },
         "required": [

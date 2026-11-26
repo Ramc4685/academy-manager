@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { OnboardingApplication } from "@/lib/api/parent";
-import { firstIncompleteStep, onboardingSearch, resumeStep } from "@/lib/parent/onboarding-steps";
+import {
+  firstIncompleteStep,
+  nextStep,
+  onboardingOrder,
+  onboardingSearch,
+  resumeStep,
+} from "@/lib/parent/onboarding-steps";
 
 const parent = { first_name: "Rosa", last_name: "Alvarez", phone: "555-0142", heard_from: "", referral_code: "" };
 const child = {
@@ -52,6 +58,19 @@ describe("onboarding resume step", () => {
   it("follows the class-first order", () => {
     const classFirst = app({ parent_profile: parent, child_profile: child, waiver_class_first: true });
     expect(firstIncompleteStep(classFirst)).toBe("session");
+  });
+
+  it("skips the waiver step when there is no waiver to sign (S47)", () => {
+    const noWaiver = app({ parent_profile: parent, child_profile: child, waiver_to_sign: false });
+    expect(onboardingOrder(noWaiver)).toEqual(["parent", "child", "session", "review"]);
+    expect(firstIncompleteStep(noWaiver)).toBe("session");
+    expect(resumeStep(noWaiver, "waiver")).toBe("session");
+    expect(nextStep(noWaiver, "child")).toBe("session");
+    // Class-first: the session's patch can drop the step while the parent is on it.
+    const classFirst = { ...noWaiver, waiver_class_first: true };
+    expect(nextStep(classFirst, "session")).toBe("review");
+    expect(nextStep(classFirst, "waiver")).toBe("review");
+    expect(nextStep(app({ waiver_to_sign: true }), "child")).toBe("waiver");
   });
 
   it("keeps other query params when writing the step", () => {

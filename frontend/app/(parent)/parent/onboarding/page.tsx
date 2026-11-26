@@ -45,6 +45,7 @@ import {
   reEnrollChildId,
 } from "@/lib/parent/re-enroll";
 import {
+  nextStep,
   onboardingOrder,
   onboardingSearch,
   resumeStep,
@@ -209,8 +210,8 @@ export default function OnboardingStepperPage() {
   const order = onboardingOrder(app);
 
   function advance() {
-    const i = order.indexOf(step);
-    if (i < order.length - 1) setStep(order[i + 1]);
+    const next = nextStep(app, step);
+    if (next) setStep(next);
   }
 
   async function goToCheckout() {
@@ -793,13 +794,18 @@ function WaiverStep({
 
   const waiver = waiverQuery.data;
   if (!waiver?.configured) {
+    // S47 / D-11: no waiver to sign yet (none published, or only the starter
+    // placeholder). The family continues; the academy collects it later.
     return (
       <div className="space-y-4">
         <StepHeading>Waiver</StepHeading>
-        <p className="text-sm" style={{ color: "var(--rally-muted)" }}>
-          Waiver not configured yet — an academy admin must publish a waiver template and
-          assign it to registration.
+        <p className="text-sm" style={{ color: "var(--rally-muted)" }} data-testid="onboarding-waiver-later">
+          There is no waiver to sign right now. The academy will ask you to sign one later from
+          your Waivers page.
         </p>
+        <Button onClick={onContinue} disabled={saving} variant="primary" full>
+          Continue →
+        </Button>
       </div>
     );
   }

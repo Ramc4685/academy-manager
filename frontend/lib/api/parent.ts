@@ -41,6 +41,8 @@ export interface OnboardingApplication {
   waiver_accepted: boolean;
   /** True when a waiver is assigned to a program: the stepper asks for the class first. */
   waiver_class_first?: boolean;
+  /** S47: false when there is no waiver to sign yet; the stepper skips the step. */
+  waiver_to_sign?: boolean;
   expires_at: string;
 }
 

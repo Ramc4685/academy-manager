@@ -12117,6 +12117,11 @@ export interface components {
              * @default false
              */
             waiver_class_first: boolean;
+            /**
+             * Waiver To Sign
+             * @default true
+             */
+            waiver_to_sign: boolean;
         };
         /** ApplyPaymentDiscountRequest */
         ApplyPaymentDiscountRequest: {

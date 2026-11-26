@@ -5,7 +5,7 @@
 // emulator UI, then sign in; auth links the account by email.
 const A = "acad_fresh_local", SLUG = "fresh", DOMAIN = "fresh.localhost";
 const OWNER = "kit_k07_user_owner", EMAIL = "fresh.owner@example.com", now = new Date();
-// Must stay byte-equal to DEFAULT_WAIVER_BODY in bootstrap_academy.py.
+// Must stay byte-equal to DEFAULT_WAIVER_BODY in backend/v2/shared/starter_waiver.py.
 const STARTER = "Default academy participation waiver. Replace this template before " +
   "accepting student registrations.";
 

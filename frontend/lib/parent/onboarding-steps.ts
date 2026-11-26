@@ -10,8 +10,23 @@ export const ONBOARDING_ORDER: OnboardingStep[] = ["parent", "child", "waiver", 
  */
 export const CLASS_FIRST_ORDER: OnboardingStep[] = ["parent", "child", "session", "waiver", "review"];
 
-export function onboardingOrder(app: Pick<OnboardingApplication, "waiver_class_first">): OnboardingStep[] {
+type OrderFields = Pick<OnboardingApplication, "waiver_class_first" | "waiver_to_sign">;
+
+function fullOrder(app: OrderFields): OnboardingStep[] {
   return app.waiver_class_first ? CLASS_FIRST_ORDER : ONBOARDING_ORDER;
+}
+
+/** S47: with no waiver to sign (none published, or only the starter), the step is skipped. */
+export function onboardingOrder(app: OrderFields): OnboardingStep[] {
+  const order = fullOrder(app);
+  return app.waiver_to_sign === false ? order.filter((step) => step !== "waiver") : order;
+}
+
+/** The step after `step`, even when `step` itself was just dropped from the order. */
+export function nextStep(app: OrderFields, step: OnboardingStep): OnboardingStep | null {
+  const full = fullOrder(app);
+  const order = onboardingOrder(app);
+  return full.slice(full.indexOf(step) + 1).find((s) => order.includes(s)) ?? null;
 }
 
 const filled = (value: string | null | undefined) => Boolean(value && value.trim());

@@ -19,12 +19,10 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
-    is_starter_waiver_body,
-)
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
+from backend.v2.shared.starter_waiver import is_starter_waiver_body
 
 router = APIRouter(tags=["admin.setup-checklist"])
 log = logging.getLogger(__name__)

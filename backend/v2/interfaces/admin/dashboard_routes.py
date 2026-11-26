@@ -22,6 +22,7 @@ from backend.v2.interfaces.admin.views import (
 )
 from backend.v2.shared.auth.claims import AuthClaims
 from backend.v2.shared.http import require_persona
+from backend.v2.shared.starter_waiver import is_starter_waiver_body
 
 router = APIRouter(tags=["admin.dashboard"])
 log = logging.getLogger(__name__)
@@ -393,9 +394,36 @@ async def dashboard_attention(
             )
         )
 
+    # S47 / D-11: while a required live waiver is still the starter, families
+    # are not asked to sign it; say so, and do not count families "pending" on it.
+    live = list(_field(waiver_report, "live_waivers", None) or [])
+    if not live and _field(waiver_report, "active_waiver", None) is not None:
+        live = [_field(waiver_report, "active_waiver")]
+    starter_live = any(
+        is_starter_waiver_body(_field(w, "body", None)) and _field(w, "required", True) is not False
+        for w in live
+    )
+    if starter_live:
+        items.append(
+            AdminAttentionItemView(
+                attention_id="starter-waiver",
+                kind="waivers",
+                title="Your waiver is still the starter template",
+                detail=(
+                    "New families are not asked to sign a waiver until you publish your own. "
+                    "Edit the starter text and publish it; families then sign it from their "
+                    "Waivers page."
+                ),
+                severity="high",
+                href="/admin/settings?panel=family-policies",
+                count=1,
+            )
+        )
+    primary = _field(waiver_report, "active_waiver", None) if waiver_report is not None else None
     waiver_count = (
         waiver_report.summary.pending_count + waiver_report.summary.outdated_count
         if waiver_report is not None
+        and not (primary is not None and is_starter_waiver_body(_field(primary, "body", None)))
         else 0
     )
     if waiver_count:
