@@ -3,7 +3,7 @@
 import { ReactNode, useEffect, useState } from "react";
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import { handleGlobalMutationError } from "@/lib/query/mutation-errors";
+import { handleGlobalMutationError, handleGlobalMutationSuccess } from "@/lib/query/mutation-errors";
 import { attachPersistence } from "@/lib/query/persistence";
 
 /**
@@ -16,11 +16,15 @@ export function Providers({ children }: { children: ReactNode }) {
   const [client] = useState(
     () =>
       new QueryClient({
-        // Global mutation error feedback (#509): any mutation without its own
-        // onError surfaces failures via the mounted ToastProvider.
+        // Global mutation feedback (#509): any mutation without its own
+        // onError surfaces failures, and `meta.success` toasts a success, via
+        // the mounted ToastProvider.
         mutationCache: new MutationCache({
           onError: (error, _variables, _context, mutation) => {
             handleGlobalMutationError(error, mutation);
+          },
+          onSuccess: (_data, _variables, _context, mutation) => {
+            handleGlobalMutationSuccess(mutation);
           },
         }),
         defaultOptions: {

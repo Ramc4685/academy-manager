@@ -4,9 +4,10 @@ import { MutationCache, MutationObserver, QueryClient } from "@tanstack/react-qu
 import {
   describeMutationError,
   handleGlobalMutationError,
-  registerMutationErrorSink,
+  handleGlobalMutationSuccess,
+  registerMutationToastSink,
   shouldNotifyGlobally,
-  type MutationErrorNotice,
+  type MutationToastNotice,
 } from "./mutation-errors";
 
 function makeApiError(status: number, message: string): Error & { status: number } {
@@ -21,6 +22,9 @@ function makeClient(): QueryClient {
     mutationCache: new MutationCache({
       onError: (error, _variables, _context, mutation) => {
         handleGlobalMutationError(error, mutation);
+      },
+      onSuccess: (_data, _variables, _context, mutation) => {
+        handleGlobalMutationSuccess(mutation);
       },
     }),
     defaultOptions: { mutations: { retry: false } },
@@ -52,10 +56,12 @@ describe("describeMutationError", () => {
     expect(notice.description).toBe("Seat already taken");
   });
 
-  it("maps a 5xx ApiError to a server-error title", () => {
-    const notice = describeMutationError(makeApiError(500, "boom"));
+  it("maps a 5xx ApiError to a plain sentence, never the server's text", () => {
+    const notice = describeMutationError(makeApiError(500, "Internal Server Error"));
     expect(notice.title).toBe("Something went wrong");
-    expect(notice.description).toBe("boom");
+    expect(notice.description).toBe(
+      "That didn't go through on our side. Please try again in a moment.",
+    );
   });
 
   it("maps the 20s client abort to a timeout message", () => {
@@ -66,11 +72,16 @@ describe("describeMutationError", () => {
   });
 
   it("appends the first 8 chars of the request id as a support reference", () => {
-    const err = makeApiError(500, "boom") as Error & { status: number; requestId?: string };
+    const err = makeApiError(500, "Internal Server Error") as Error & {
+      status: number;
+      requestId?: string;
+    };
     err.requestId = "0f3a9c2e-7b1d-4e55-9a10-abcdef012345";
     const notice = describeMutationError(err);
     expect(notice.title).toBe("Something went wrong");
-    expect(notice.description).toBe("boom Reference: 0f3a9c2e");
+    expect(notice.description).toBe(
+      "That didn't go through on our side. Please try again in a moment. Reference: 0f3a9c2e",
+    );
   });
 
   it("shows the reference even when there is no server message", () => {
@@ -78,7 +89,7 @@ describe("describeMutationError", () => {
     err.requestId = "abcdefghijk";
     const notice = describeMutationError(err);
     expect(notice.description).toBe(
-      "The server hit an unexpected error. Please try again. Reference: abcdefgh"
+      "That didn't go through on our side. Please try again in a moment. Reference: abcdefgh"
     );
   });
 
@@ -119,19 +130,20 @@ describe("MutationCache onError default (providers wiring)", () => {
   });
 
   it("pushes an error notice to the registered sink when a mutation fails", async () => {
-    const notices: MutationErrorNotice[] = [];
-    unregister = registerMutationErrorSink((n) => notices.push(n));
+    const notices: MutationToastNotice[] = [];
+    unregister = registerMutationToastSink((n) => notices.push(n));
 
     await runFailingMutation(makeClient());
 
     expect(notices).toHaveLength(1);
+    expect(notices[0].kind).toBe("error");
     expect(notices[0].title).toBe("Action failed");
     expect(notices[0].description).toBe("Session already has active enrollments");
   });
 
   it("does not double-notify when the mutation has a contextual onError", async () => {
-    const notices: MutationErrorNotice[] = [];
-    unregister = registerMutationErrorSink((n) => notices.push(n));
+    const notices: MutationToastNotice[] = [];
+    unregister = registerMutationToastSink((n) => notices.push(n));
     const contextual = vi.fn();
 
     await runFailingMutation(makeClient(), { onError: contextual });
@@ -141,8 +153,8 @@ describe("MutationCache onError default (providers wiring)", () => {
   });
 
   it("respects meta.suppressGlobalError", async () => {
-    const notices: MutationErrorNotice[] = [];
-    unregister = registerMutationErrorSink((n) => notices.push(n));
+    const notices: MutationToastNotice[] = [];
+    unregister = registerMutationToastSink((n) => notices.push(n));
 
     await runFailingMutation(makeClient(), { meta: { suppressGlobalError: true } });
 
@@ -161,8 +173,8 @@ describe("MutationCache onError default (providers wiring)", () => {
   });
 
   it("unregistering restores the console fallback", async () => {
-    const notices: MutationErrorNotice[] = [];
-    const un = registerMutationErrorSink((n) => notices.push(n));
+    const notices: MutationToastNotice[] = [];
+    const un = registerMutationToastSink((n) => notices.push(n));
     un();
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
@@ -172,5 +184,48 @@ describe("MutationCache onError default (providers wiring)", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("MutationCache onSuccess default (meta.success)", () => {
+  let unregister: (() => void) | null = null;
+
+  afterEach(() => {
+    unregister?.();
+    unregister = null;
+  });
+
+  async function runOk(meta?: Record<string, unknown>): Promise<void> {
+    const observer = new MutationObserver(makeClient(), { mutationFn: async () => "ok", meta });
+    await observer.mutate();
+  }
+
+  it("toasts a string meta.success exactly once", async () => {
+    const notices: MutationToastNotice[] = [];
+    unregister = registerMutationToastSink((n) => notices.push(n));
+
+    await runOk({ success: "Class saved" });
+
+    expect(notices).toEqual([{ kind: "success", title: "Class saved" }]);
+  });
+
+  it("toasts a title plus description", async () => {
+    const notices: MutationToastNotice[] = [];
+    unregister = registerMutationToastSink((n) => notices.push(n));
+
+    await runOk({ success: { title: "Invoice sent", description: "Parents get it by email." } });
+
+    expect(notices).toEqual([
+      { kind: "success", title: "Invoice sent", description: "Parents get it by email." },
+    ]);
+  });
+
+  it("stays quiet when the mutation declares no success", async () => {
+    const notices: MutationToastNotice[] = [];
+    unregister = registerMutationToastSink((n) => notices.push(n));
+
+    await runOk();
+
+    expect(notices).toHaveLength(0);
   });
 });
