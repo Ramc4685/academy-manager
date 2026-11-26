@@ -130,7 +130,7 @@ export default function AdminLeavingReportPage() {
                     </td>
                     <td className="px-2 py-2 text-rally-muted">{row.reason ?? "—"}</td>
                     <td className="px-2 py-2 text-rally-muted">
-                      {row.is_system_action ? "System" : row.actor_id ? "Staff" : "—"}
+                      {row.is_system_action ? "System" : row.actor_id ? "Staff or family" : "—"}
                     </td>
                     <td className="px-2 py-2 font-medium text-rally-ink">
                       {row.monthly_revenue_effect_cents != null
