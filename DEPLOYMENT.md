@@ -399,10 +399,15 @@ owner-only restore-to-production procedure are in
 `docs/runbooks/backup-restore.md`. The weekly `Restore Drill` workflow proves
 the round trip on a throwaway database.
 
-## Startup Migrations
+## Migrations
 
-The backend can run versioned, idempotent v2 Mongo migrations on startup
-through `backend/v2/migrations/runner.py` when `V2_RUN_MIGRATIONS_ON_BOOT=true`.
+Production does **not** run migrations on boot (`V2_RUN_MIGRATIONS_ON_BOOT=false`
+in `backend/fly.toml`). The `migrate-production` job in
+`.github/workflows/production.yml` dry-runs them, and the Fly `[deploy]
+release_command` applies them on the new image before traffic moves
+(`docs/runbooks/migrations-rollout.md`). Local and sandbox environments can
+still run them on startup through `backend/v2/migrations/runner.py` with
+`V2_RUN_MIGRATIONS_ON_BOOT=true`.
 Index and validator changes live under `backend/v2/migrations/`. Backfills
 that need production operator judgment should still ship with explicit
 dry-run-first scripts and a runbook entry.
