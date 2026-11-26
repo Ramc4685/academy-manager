@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   coachSessionHref,
   correctionWindowClosed,
+  dateFromOccurrenceId,
+  sessionIdFromOccurrenceId,
   isCancelled,
   latestUnfinishedRecap,
   markingNotOpenYet,
@@ -93,6 +95,39 @@ describe("coachSessionHref", () => {
 
   it("omits the query when no date can be resolved", () => {
     expect(coachSessionHref("occ-1")).toBe("/coach/sessions/occ-1");
+  });
+
+  it("falls back to the date in the occurrence id", () => {
+    expect(coachSessionHref("sess_sat:2026-12-01:09:00")).toBe(
+      "/coach/sessions/sess_sat%3A2026-12-01%3A09%3A00?date=2026-12-01",
+    );
+  });
+});
+
+describe("dateFromOccurrenceId", () => {
+  it("reads the local date from a dated occurrence id", () => {
+    expect(dateFromOccurrenceId("sess_sat:2026-12-01:09:00")).toBe("2026-12-01");
+    expect(dateFromOccurrenceId("sess_sat:2026-11-21")).toBe("2026-11-21");
+  });
+
+  it("converts an instant-shaped id to the device's local date", () => {
+    const instant = "2026-11-21T15:00:00+00:00";
+    const local = new Date(instant);
+    const expected = `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, "0")}-${String(local.getDate()).padStart(2, "0")}`;
+    expect(dateFromOccurrenceId(`sess_sat:${instant}`)).toBe(expected);
+  });
+
+  it("returns null for a bare session id or junk", () => {
+    expect(dateFromOccurrenceId("sess_sat")).toBeNull();
+    expect(dateFromOccurrenceId("sess_sat:not-a-date")).toBeNull();
+    expect(dateFromOccurrenceId("sess_sat:2026-13-99Tjunk")).toBeNull();
+  });
+});
+
+describe("sessionIdFromOccurrenceId", () => {
+  it("keeps the session half and passes bare ids through", () => {
+    expect(sessionIdFromOccurrenceId("sess_sat:2026-12-01:09:00")).toBe("sess_sat");
+    expect(sessionIdFromOccurrenceId("sess_sat")).toBe("sess_sat");
   });
 });
 

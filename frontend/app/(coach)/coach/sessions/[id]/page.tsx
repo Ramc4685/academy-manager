@@ -39,11 +39,13 @@ import { isBulkMarkEligible } from "@/lib/coach/bulk-eligibility";
 import { BulkMarkUndoWindow } from "@/lib/coach/bulk-mark-undo";
 import {
   correctionWindowClosed,
+  dateFromOccurrenceId,
   isRecordedMark,
   MARK_LEAD_TIME_MS,
   markingNotOpenYet,
   withoutUnconfirmedMark,
   markProgress,
+  todayISO,
 } from "@/lib/coach/marking";
 import { useCoachSurface } from "@/components/coach/coach-surface-context";
 import { onSync, syncNow } from "@/lib/offline/sync";
@@ -62,13 +64,6 @@ const CLIENT_APP_VERSION = "v2-w1b";
 
 const NO_STUDENTS: ReadonlySet<string> = new Set();
 
-function todayISO(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -161,14 +156,11 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   // Admins covering a class have no correction window (#632).
   const { supervisor } = useCoachSurface();
 
-  const date = dateParam ?? todayISO();
+  const date = dateParam ?? dateFromOccurrenceId(decodedId) ?? todayISO();
   const { data: today, isLoading, isError, dataUpdatedAt } = useQuery({
     queryKey: queryKeys.coach.today(date),
     queryFn: () => getCoachToday(date),
     // While this class's drop-off window is open, pick up new parent reports.
-    // shortcut: the service worker answers coach/today stale-while-revalidate
-    // (kept for the offline roster), so a report shows on the second poll
-    // (<= 60 s), not the first; bypass the SW cache if that proves too slow.
     refetchInterval: (query) =>
       dropoffRefetchInterval(
         (query.state.data?.sessions ?? [])
@@ -194,8 +186,7 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
 
   // Write saved marks into the cached Today so a trip back to Today (or a
   // reopen of this class) shows them at once, instead of the 5-minute-fresh
-  // copy from before the save (#1039). No refetch: the service worker's
-  // stale-while-revalidate would hand back that same stale copy.
+  // copy from before the save (#1039), without waiting on a refetch.
   const patchTodayMarks = useCallback(
     (marks: { student_id: string; status: AttendanceStatus }[]) => {
       const byStudent = new Map(marks.map((m) => [m.student_id, m.status]));

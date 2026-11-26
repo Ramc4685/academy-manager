@@ -11,13 +11,8 @@ import {
 } from "@/lib/api/curriculum";
 import { SkillBoardView, type SkillBoardActions } from "@/components/pathway/skill-board";
 import { SessionDetailTabs } from "@/components/coach/SessionDetailTabs";
+import { todayISO } from "@/lib/coach/marking";
 
-function todayISO(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
-    now.getDate(),
-  ).padStart(2, "0")}`;
-}
 
 export default function CoachSessionProgressPage() {
   const { id: sessionId } = useParams<{ id: string }>();

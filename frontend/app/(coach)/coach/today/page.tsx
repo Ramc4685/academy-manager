@@ -19,23 +19,17 @@ import {
   markProgress,
   nextUpcomingClass,
   recentUnmarkedSessions,
+  todayISO,
 } from "@/lib/coach/marking";
 import { coachScheduleEntryHref } from "@/lib/coach/schedule-links";
 import { queryKeys } from "@/lib/query/keys";
 import { reportVitals } from "@/lib/pwa/vitals";
 import { formatSessionTimeRange, sessionDateKey } from "@/lib/time/session-time";
+import { formatPlainDate } from "@/lib/format/plain-date";
 import { RetryButton } from "@/components/coach/RetryButton";
 import { useQueuedMarkCount } from "@/lib/offline/use-needs-review-count";
 import { useIsAssistantCoach } from "@/components/coach/coach-surface-context";
 
-function todayISO(offset = 0): string {
-  const d = new Date();
-  d.setDate(d.getDate() + offset);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
 
 export default function CoachTodayPage() {
   const [date, setDate] = useState<string>(() => todayISO());
@@ -102,8 +96,8 @@ export default function CoachTodayPage() {
     <section data-testid="coach-today">
       <header className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Today</h1>
-          <p className="text-sm text-neutral-500">{date}</p>
+          <h1 className="text-2xl font-semibold">{viewingToday ? "Today" : formatPlainDate(date)}</h1>
+          {viewingToday && <p className="text-sm text-neutral-500">{formatPlainDate(date)}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {/*
