@@ -231,7 +231,9 @@ class MongoPaymentRepository(TenantScopedRepository):
         sort: list[tuple[str, int]] | None = None,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
-        cursor = self._db["ledger_payments"].find(self._ledger_legacy_shape_query(query))
+        cursor = self._db["ledger_payments"].find(
+            self._scoped(self._ledger_legacy_shape_query(query))
+        )
         if sort:
             cursor = cursor.sort(sort)
         if limit:
@@ -743,7 +745,7 @@ class MongoPaymentRepository(TenantScopedRepository):
         if doc is not None:
             return doc, "legacy"
         ledger_doc = await self._db["ledger_payments"].find_one(
-            self._ledger_legacy_shape_query({"payment_id": payment_id})
+            self._scoped(self._ledger_legacy_shape_query({"payment_id": payment_id}))
         )
         if ledger_doc is not None:
             return ledger_doc, "ledger"
@@ -761,7 +763,7 @@ class MongoPaymentRepository(TenantScopedRepository):
                     str(set_fields["status"]), set_fields["status"]
                 )
             await self._db["ledger_payments"].update_one(
-                self._ledger_legacy_shape_query({"payment_id": payment_id}),
+                self._scoped(self._ledger_legacy_shape_query({"payment_id": payment_id})),
                 {**update, "$set": set_fields} if set_fields else update,
             )
             return

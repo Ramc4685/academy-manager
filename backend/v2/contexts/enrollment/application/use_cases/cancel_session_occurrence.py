@@ -270,18 +270,13 @@ class CancelSessionOccurrence:
             occurrence_id, self._now(), missed=True
         )
         quote = await self._quote(occurrence, session_id)
-        students = {
-            row.enrollment_id: row.student_id
-            for row in await self._enrollments.for_session_in_statuses(
-                session_id, sorted(_AFFECTED_STATUSES)
-            )
-        }
         return MissedClassPreview(
             occurrence=occurrence,
             families=tuple(
                 MissedClassFamily(
                     enrollment_id=str(f["enrollment_id"]),
-                    student_id=students.get(str(f["enrollment_id"])),
+                    # Billing names the child, including a family that left (#1209).
+                    student_id=f.get("student_id"),
                     amount_cents=int(f.get("amount_cents") or 0),
                     outcome=str(f.get("outcome") or ""),
                 )

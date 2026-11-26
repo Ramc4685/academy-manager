@@ -705,6 +705,11 @@ class CreditMissedClassResponse(BaseModel):
     #: Preview only: billing never laid out this date; confirming is refused.
     schedule_changed: bool = False
     billing_result: str | None = None
+    #: Confirm only: one-time seats (make-ups, trials) the date no longer holds
+    #: and the requests reopened so the family can book again (#1209 item 4).
+    roster_entries_removed: int = 0
+    makeups_reopened: int = 0
+    trials_reopened: int = 0
 
 
 class CloseAcademyDatesRequest(BaseModel):

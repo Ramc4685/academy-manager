@@ -159,6 +159,10 @@ const SKIP_TEXT: Record<string, string> = {
   covered_by_free_classes: "the month's free extra class covered it",
   first_month_proration_excludes_date: "not invoiced yet, so the date is left out of their first month's price",
   paused_not_invoiced: "paused and not charged that month",
+  deferral_not_invoiced: "billing deferred and not charged that month",
+  skip_period_not_invoiced: "month skipped and not charged",
+  left_not_invoiced: "left since and never charged that month",
+  child_already_credited: "already credited under another enrollment",
   not_invoiced: "not invoiced for that month",
   free_tuition: "free tuition",
 };

@@ -22,7 +22,7 @@ never a composition-time capture (#532).
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -34,7 +34,10 @@ from backend.v2.contexts.billing.application.use_cases.apply_occurrence_cancella
 )
 from backend.v2.contexts.billing.domain.proration import ClassOccurrence
 from backend.v2.contexts.billing.domain.tuition_discount import monthly_discount_cents
-from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import session_amount_cents
+from backend.v2.contexts.billing.infrastructure.mongo_monthly_billing import (
+    monthly_skip_reason,
+    session_amount_cents,
+)
 from backend.v2.contexts.billing.infrastructure.mongo_payment_repo import MongoPaymentRepository
 from backend.v2.contexts.billing.infrastructure.mongo_plan_price_changes import (
     class_fee_cents_for_period,
@@ -49,6 +52,11 @@ from backend.v2.shared.time import LEGACY_FALLBACK_TIMEZONE
 #: Enrollment rows a cancelled date can affect. ``paused`` is here because a
 #: pause that started mid-month leaves a real invoice behind.
 _AFFECTED_STATUSES = ("active", "paused")
+#: Both #699 spellings of "dropped" and "removed". A row in one of these is
+#: read only when it ended after the called-off date (#1209 item 1).
+_ENDED_STATUSES = ("withdrawn", "dropped", "cancelled", "deleted")
+#: Where each ending writes its instant, in the order the lifecycle reads them.
+_ENDED_AT_FIELDS = ("withdrawal_date", "cancelled_at", "ended_at")
 
 
 class MongoOccurrenceOverrideRepository(TenantScopedRepository):
@@ -189,18 +197,40 @@ class MongoOccurrenceCancellationReader:
         )
 
     async def enrollments_for_session(
-        self, session_id: str, *, period: str | None = None
+        self,
+        session_id: str,
+        *,
+        period: str | None = None,
+        today: date | None = None,
+        ended_after: datetime | None = None,
     ) -> list[BillableEnrollment]:
         academy_id = current_academy_id()
+        status_filter: dict[str, Any] = {"status": {"$in": list(_AFFECTED_STATUSES)}}
+        if ended_after is not None:
+            status_filter = {
+                "$or": [
+                    status_filter,
+                    {
+                        "status": {"$in": list(_ENDED_STATUSES)},
+                        "$or": [{name: {"$gt": ended_after}} for name in _ENDED_AT_FIELDS],
+                    },
+                ]
+            }
         cursor = self._db["enrollments"].find(
             {
                 "academy_id": academy_id,
                 "session_id": session_id,
-                "status": {"$in": list(_AFFECTED_STATUSES)},
                 "is_deleted": {"$ne": True},
+                **status_filter,
             }
         )
-        rows = [doc async for doc in cursor]
+        rows = [
+            doc
+            async for doc in cursor
+            if ended_after is None
+            or str(doc.get("status") or "") in _AFFECTED_STATUSES
+            or ((ended := _ended_at(doc)) is not None and ended > ended_after)
+        ]
         if not rows:
             return []
         student_ids = sorted({str(row["student_id"]) for row in rows if row.get("student_id")})
@@ -213,6 +243,7 @@ class MongoOccurrenceCancellationReader:
             [str(row["enrollment_id"]) for row in rows]
         )
 
+        timezone_name = pricing.timezone if pricing is not None else await self._academy_timezone()
         out: list[BillableEnrollment] = []
         for row in rows:
             enrollment_id = str(row["enrollment_id"])
@@ -241,6 +272,18 @@ class MongoOccurrenceCancellationReader:
                     # Same predicate as BILLED_ENROLLMENT_FILTER; kept in the
                     # read so the preview can say "free tuition" for the child.
                     billed=not is_not_billed(row),
+                    ended_at=_ended_at(row),
+                    not_invoiced_reason=(
+                        await _not_invoiced_reason(
+                            self._db,
+                            row=row,
+                            period=period,
+                            today=today,
+                            timezone_name=timezone_name,
+                        )
+                        if period is not None and today is not None
+                        else None
+                    ),
                 )
             )
         return out
@@ -261,6 +304,36 @@ class MongoOccurrenceCancellationReader:
     async def _academy_timezone(self) -> str:
         doc = await self._db["academies"].find_one({"academy_id": current_academy_id()})
         return str((doc or {}).get("timezone") or "") or LEGACY_FALLBACK_TIMEZONE
+
+
+#: ``monthly_skip_reason`` answers that mean the period is never invoiced.
+#: ``paused`` is left out: the use case already skips a paused family itself.
+#: ``pending_cancellation`` is left out too: the parent can undo the drop, the
+#: month is then invoiced in full, and a skipped date cannot be re-run.
+_NOT_INVOICED_REASONS = frozenset({"deferral", "skip_period"})
+
+
+async def _not_invoiced_reason(
+    db: Any, *, row: dict[str, Any], period: str, today: date, timezone_name: str
+) -> str | None:
+    """The monthly run's own predicate, so a credit never outlives the invoice (#1209)."""
+    skip = await monthly_skip_reason(
+        db, enrollment=row, period=period, today=today, academy_timezone=timezone_name
+    )
+    if skip is None or skip[0] not in _NOT_INVOICED_REASONS:
+        return None
+    return str(skip[0])
+
+
+def _ended_at(row: dict[str, Any]) -> datetime | None:
+    """When an ended row stopped attending: the first ending field it carries."""
+    if str(row.get("status") or "") not in _ENDED_STATUSES:
+        return None
+    for name in _ENDED_AT_FIELDS:
+        value = _coerce_datetime(row.get(name))
+        if value is not None:
+            return value
+    return None
 
 
 def _coerce_datetime(value: Any) -> datetime | None:

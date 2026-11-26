@@ -66,8 +66,8 @@ records verification in the PR and final response instead.
 
 ## Project Context Docs
 
-- **PROJECT.md** (repo root) — architecture, data flow, design decisions, critical paths. Read before structural changes. Last refreshed July 2026; verify against code.
-- **GAPS.md** (repo root) — known weaknesses ordered by severity, each with a scoped fix. Check before "discovering" a bug. Last refreshed July 2026; many items have since shipped.
+- **PROJECT.md** (repo root) — architecture, data flow, design decisions, critical paths. Read before structural changes. Re-verified 2026-11-26; verify against code.
+- **GAPS.md** (repo root) — known weaknesses ordered by severity, each with a scoped fix and a status table. Check before "discovering" a bug. Re-verified 2026-11-26.
 
 ---
 
@@ -160,7 +160,7 @@ For ticketed work, map the plan to the ticket ID and acceptance criteria.
 
 ## Architecture Rules
 
-- **The ONLY backend is `backend.v2.main:app`** (FastAPI, all routes `/api/v2/*`). The legacy backend was deleted (commit `7228e5de`); `backend/routers/` and `backend/services/` contain only orphaned `.pyc` — never read them as source.
+- **The ONLY backend is `backend.v2.main:app`** (FastAPI, all routes `/api/v2/*`). The legacy backend was deleted (commit `7228e5de`), including its leftover `backend/routers/` and `backend/services/` bytecode; never recreate them.
 - v2 DDD contexts live under `backend/v2/contexts/`.
 - v2 BFF routes live under `backend/v2/interfaces/<persona>/`.
 - Frontend route groups live under `frontend/app/`; the frontend is a Next.js app on a Cloudflare Worker via OpenNext, calling same-origin `/api/v2/*` proxied by `frontend/app/api/v2/[...path]/route.ts`.
@@ -168,7 +168,7 @@ For ticketed work, map the plan to the ticket ID and acceptance criteria.
 - Domain owns business rules.
 - Infrastructure owns MongoDB, Firebase, Stripe, Resend, and external adapters.
 - Interfaces/BFF own HTTP, persona shaping, auth dependencies, and DTOs.
-- Production runs single-academy mode (BLNO); the code is SaaS-shaped. Two tenancy regimes coexist — see PROJECT.md §3.3.
+- Production runs multi-academy SaaS mode since PR #1212 (BLNO, the house academy, plus the Demo Academy); the host picks the academy. The single-academy regime survives in code for local dev and tests — see PROJECT.md §3.3.
 
 ---
 

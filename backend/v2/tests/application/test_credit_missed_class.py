@@ -58,8 +58,18 @@ class FakeBillingWithPreview:
     matched: bool = True
 
     _families: tuple[dict[str, Any], ...] = (
-        {"enrollment_id": "enr-1", "amount_cents": 3000, "outcome": "would_credit"},
-        {"enrollment_id": "enr-2", "amount_cents": 0, "outcome": "skipped:covered_by_free_classes"},
+        {
+            "enrollment_id": "enr-1",
+            "amount_cents": 3000,
+            "outcome": "would_credit",
+            "student_id": "st-1",
+        },
+        {
+            "enrollment_id": "enr-2",
+            "amount_cents": 0,
+            "outcome": "skipped:covered_by_free_classes",
+            "student_id": "st-2",
+        },
     )
 
     async def apply(self, *, dry_run: bool = False, **kwargs: Any) -> dict[str, Any]:

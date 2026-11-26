@@ -62,8 +62,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Hashable
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import dataclass, field, replace
+from datetime import UTC, date, datetime
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
@@ -115,6 +115,15 @@ class BillableEnrollment:
     monthly_discount_cents: int = 0
     #: False for a NoCharge/Waived child (``shared.billing_type``): never charged, never credited.
     billed: bool = True
+    #: Why the monthly run will never invoice this family for the period
+    #: (``monthly_skip_reason``: deferral or skip_period),
+    #: or ``None``. A fee-sized credit for such a month hands back money that
+    #: is never collected (#1209 item 6).
+    not_invoiced_reason: str | None = None
+    #: When a dropped or removed enrollment stopped attending; ``None`` for a
+    #: live row. A family that left AFTER the called-off date still paid for
+    #: it and is credited (#1209 item 1, owner decision 2026-11-26).
+    ended_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -159,8 +168,16 @@ class OccurrenceCancellationReader(Protocol):
         ...
 
     async def enrollments_for_session(
-        self, session_id: str, *, period: str | None = None
-    ) -> list[BillableEnrollment]: ...
+        self,
+        session_id: str,
+        *,
+        period: str | None = None,
+        today: date | None = None,
+        ended_after: datetime | None = None,
+    ) -> list[BillableEnrollment]:
+        """``today`` (academy-local) decides whether a billing deferral is active.
+        ``ended_after`` also returns rows that ended after that instant."""
+        ...
 
 
 class OccurrenceOverrideWriter(Protocol):
@@ -244,6 +261,8 @@ class OccurrenceCreditDecision:
     credit_id: str | None
     amount_cents: int
     outcome: str  # credited | already_credited | would_credit (dry run) | skipped:<reason>
+    #: The family's child, so a preview can name a family that has since left.
+    student_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -380,7 +399,29 @@ class ApplyOccurrenceCancellation:
 
         decisions: list[OccurrenceCreditDecision] = []
         fee_sized: list[_FeeSizedCredit] = []
-        for enrollment in await self._reader.enrollments_for_session(cmd.session_id, period=period):
+        enrollments = await self._reader.enrollments_for_session(
+            cmd.session_id,
+            period=period,
+            today=now.astimezone(ZoneInfo(pricing.timezone)).date(),
+            ended_after=target.start_at,
+        )
+        # One credit per child per date (#1209 item 1 review): a child removed
+        # after the date and re-added holds an ended row AND a live row on the
+        # class, and both would otherwise be credited. A child already holding
+        # a credit for this date keeps it; otherwise the ended row (the one
+        # that was actually billed for the date) is decided first.
+        credited_students = await self._students_with_credit(cmd, enrollments)
+        enrollments = sorted(enrollments, key=lambda e: e.ended_at is None)
+        for enrollment in enrollments:
+            if enrollment.student_id and enrollment.student_id in credited_students:
+                if not await self._has_credit(cmd, enrollment):
+                    decisions.append(
+                        replace(
+                            _skip(enrollment, "child_already_credited"),
+                            student_id=enrollment.student_id,
+                        )
+                    )
+                    continue
             decision, sized = await self._decide(
                 enrollment=enrollment,
                 pricing=pricing,
@@ -391,6 +432,8 @@ class ApplyOccurrenceCancellation:
                 now=now,
             )
             decisions.append(decision)
+            if decision.outcome in _CREDITED_OUTCOMES and enrollment.student_id:
+                credited_students.add(enrollment.student_id)
             if sized is not None:
                 fee_sized.append(sized)
         # A dry run skips the re-size: a fee edit landing between preview and
@@ -407,6 +450,25 @@ class ApplyOccurrenceCancellation:
             override_written=not cmd.dry_run,
             decisions=tuple(decisions),
         )
+
+    async def _has_credit(
+        self, cmd: ApplyOccurrenceCancellationCommand, enrollment: BillableEnrollment
+    ) -> bool:
+        source_id = class_cancellation_source_id(
+            occurrence_id=cmd.occurrence_id, enrollment_id=enrollment.enrollment_id
+        )
+        found = await self._credits.find_by_source(
+            source_type=CLASS_CANCELLATION_SOURCE_TYPE, source_id=source_id
+        )
+        return found is not None
+
+    async def _students_with_credit(
+        self, cmd: ApplyOccurrenceCancellationCommand, enrollments: list[BillableEnrollment]
+    ) -> set[str]:
+        """Children already credited for this date under any of their rows."""
+        return {
+            e.student_id for e in enrollments if e.student_id and await self._has_credit(cmd, e)
+        }
 
     async def _settled_fence(self, session_id: str) -> Hashable | None:
         """The change fence once no owner edit holds it; ``None`` if one never let go."""
@@ -524,6 +586,7 @@ class ApplyOccurrenceCancellation:
             cmd=cmd,
             now=now,
         )
+        decision = replace(decision, student_id=enrollment.student_id or None)
         if fee_based and decision.outcome == "credited" and decision.credit_id:
             return decision, _FeeSizedCredit(
                 credit_id=decision.credit_id,
@@ -562,7 +625,8 @@ class ApplyOccurrenceCancellation:
                 False,
                 0,
             )
-        if enrollment.status not in {"active", "paused"}:
+        left = enrollment.status not in {"active", "paused"}
+        if left and (enrollment.ended_at is None or enrollment.ended_at <= target.start_at):
             return _skip(enrollment, "enrollment_not_active"), False, 0
         billing_start = enrollment.billing_start_at
         if billing_start is not None and target.start_at < billing_start:
@@ -583,7 +647,9 @@ class ApplyOccurrenceCancellation:
 
         fee_based = False
         if invoice is not None:
-            charge = await self._tuition_cents(invoice)
+            # Money handed back on the invoice was never kept: a refunded
+            # month (a common way out for a family who left) credits nothing.
+            charge = max(await self._tuition_cents(invoice) - invoice.refunded_cents, 0)
         elif basis is not None and basis.calculation_type == "FIRST_MONTH_PRORATION":
             # The family paid their first month at registration checkout: the
             # proration snapshot is CONSUMED, the Payment carries no
@@ -594,12 +660,23 @@ class ApplyOccurrenceCancellation:
             # academy called off (#671).
             charge = max(basis.final_amount_cents, 0)
         else:
+            if left:
+                # The family left after the date, so the month will never be
+                # invoiced now: only a real invoice or snapshot is given back.
+                return _skip(enrollment, "left_not_invoiced"), False, 0
             if not enrollment.billed:
                 # No charge to give back. A real invoice above still wins: marking a
                 # child not billed never touches a month already charged.
                 return _skip(enrollment, "free_tuition"), False, 0
             if enrollment.status == "paused":
                 return _skip(enrollment, "paused_not_invoiced"), False, 0
+            if enrollment.not_invoiced_reason is not None:
+                # The monthly run skips this family for the period (an open
+                # deferral or a skipped month) and nothing else charged it: an
+                # invoice or a checkout first-month snapshot is handled above,
+                # so a month paid at checkout (also in ``skip_periods``, #506)
+                # still gets its credit.
+                return _skip(enrollment, f"{enrollment.not_invoiced_reason}_not_invoiced"), False, 0
             if billing_start is not None and period_of(billing_start, pricing.timezone) == period:
                 # Nothing priced yet. Rule 1 handles this family: their
                 # first-month proration reads the overlay and excludes the

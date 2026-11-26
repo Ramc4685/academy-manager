@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -81,3 +82,28 @@ def test_other_personas_get_404(coach_on_admin_client, parent_on_admin_client):
     for client in (coach_on_admin_client, parent_on_admin_client):
         r = client.post(f"{BASE}/occ-admin-missed/credit-missed", json={"reason": "x"})
         assert r.status_code == 404
+
+
+class _OneSeatRoster:
+    async def remove_for_occurrence(self, occurrence_id: str) -> list[SimpleNamespace]:
+        return [SimpleNamespace(student_id="st-makeup")]
+
+
+class _TwoMakeups:
+    async def reopen_for_target_occurrence(self, occurrence_id: str, **_: object) -> int:
+        return 2
+
+
+def test_confirm_reports_the_seat_changes_it_made(admin_client):
+    """#1209 item 4: one-time seats removed and make-ups reopened are not dropped."""
+    cancel = admin_client.use_cases.cancel_session_occurrence
+    cancel._roster = _OneSeatRoster()
+    cancel._makeups = _TwoMakeups()
+
+    r = admin_client.post(f"{BASE}/occ-admin-missed/credit-missed", json={"reason": "gym closed"})
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["roster_entries_removed"] == 1
+    assert body["makeups_reopened"] == 2
+    assert body["trials_reopened"] == 0

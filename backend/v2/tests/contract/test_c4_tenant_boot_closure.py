@@ -575,6 +575,141 @@ async def test_list_enrollments_returns_only_request_tenant_rows(db) -> None:
     assert [row["enrollment_id"] for row in rows] == ["enr-b"]
 
 
+async def _seed_same_ids_in_both_tenants(db) -> None:
+    """One family whose ids collide across academies (GAPS #2).
+
+    Ids are not globally unique, so only the academy_id filter keeps academy
+    A's attendance and notes out of academy B's parent portal.
+    """
+    for academy, name, title in (
+        (BOOT, "Boot Kid", "Boot Class"),
+        (REQUEST, "Request Kid", "Request Class"),
+    ):
+        await db["students"].insert_one(
+            {
+                "academy_id": academy,
+                "student_id": "st-1",
+                "parent_id": "par-1",
+                "full_name": name,
+                "status": "active",
+            }
+        )
+        await db["sessions"].insert_one(
+            {"academy_id": academy, "session_id": "sess-1", "title": title}
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_attendance_returns_only_request_tenant_rows(db) -> None:
+    await _seed_same_ids_in_both_tenants(db)
+    await db["attendance"].insert_many(
+        [
+            {
+                "academy_id": academy,
+                "attendance_id": f"att-{academy}",
+                "student_id": "st-1",
+                "session_id": "sess-1",
+                "status": "present",
+                "marked_at": FIXED_NOW,
+            }
+            for academy in (BOOT, REQUEST)
+        ]
+    )
+    parent = _compose_parent(db)
+    with tenant_scope(REQUEST):
+        rows, total = await parent.list_attendance_for_parent("par-1")
+    assert total == 1
+    assert [row["attendance_id"] for row in rows] == [f"att-{REQUEST}"]
+    assert rows[0]["student_name"] == "Request Kid"
+    assert rows[0]["session_title"] == "Request Class"
+
+
+@pytest.mark.asyncio
+async def test_list_progress_returns_only_request_tenant_rows(db) -> None:
+    await _seed_same_ids_in_both_tenants(db)
+    for academy in (BOOT, REQUEST):
+        await db["progress_notes"].insert_one(
+            {
+                "academy_id": academy,
+                "note_id": f"note-{academy}",
+                "student_id": "st-1",
+                "session_id": "sess-1",
+                "visibility": "shared",
+                "body": f"note from {academy}",
+                "created_at": FIXED_NOW,
+            }
+        )
+        await db["session_feedback"].insert_one(
+            {
+                "academy_id": academy,
+                "feedback_id": f"fb-{academy}",
+                "student_id": "st-1",
+                "session_id": "sess-1",
+                "body": f"feedback from {academy}",
+                "created_at": FIXED_NOW,
+            }
+        )
+    parent = _compose_parent(db)
+    with tenant_scope(REQUEST):
+        rows, total = await parent.list_progress_for_parent("par-1")
+    assert total == 2
+    assert sorted(row["note_id"] for row in rows) == [f"fb-{REQUEST}", f"note-{REQUEST}"]
+    assert all(BOOT not in row["body"] for row in rows)
+    assert {row["session_title"] for row in rows} == {"Request Class"}
+
+
+@pytest.mark.asyncio
+async def test_parent_reads_see_nothing_when_the_family_lives_in_another_tenant(db) -> None:
+    """The family exists only in academy A. Under academy B's scope every
+    parent read model answers empty, never A's rows."""
+    await db["students"].insert_one(
+        {
+            "academy_id": BOOT,
+            "student_id": "st-a",
+            "parent_id": "par-1",
+            "full_name": "Boot Kid",
+            "status": "active",
+        }
+    )
+    await db["attendance"].insert_one(
+        {
+            "academy_id": BOOT,
+            "attendance_id": "att-a",
+            "student_id": "st-a",
+            "session_id": "sess-1",
+            "status": "present",
+            "marked_at": FIXED_NOW,
+        }
+    )
+    await db["progress_notes"].insert_one(
+        {
+            "academy_id": BOOT,
+            "note_id": "note-a",
+            "student_id": "st-a",
+            "visibility": "shared",
+            "body": "boot note",
+            "created_at": FIXED_NOW,
+        }
+    )
+    await db["enrollments"].insert_one(
+        {
+            "academy_id": BOOT,
+            "enrollment_id": "enr-a",
+            "student_id": "st-a",
+            "session_id": "sess-1",
+            "status": "active",
+            "created_at": FIXED_NOW,
+        }
+    )
+    parent = _compose_parent(db)
+    with tenant_scope(REQUEST):
+        assert await parent.list_children_for_parent("par-1") == []
+        assert await parent.list_enrollments_for_parent("par-1") == []
+        assert await parent.list_attendance_for_parent("par-1") == ([], 0)
+        assert await parent.list_progress_for_parent("par-1") == ([], 0)
+        assert await parent.list_progress_for_parent("par-1", student_id="st-a") == ([], 0)
+
+
 # --- reads fail closed without tenant context --------------------------------
 
 

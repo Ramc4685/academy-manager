@@ -6,10 +6,16 @@
 **What it is:** a config change shipped as a reviewed PR and an approved deploy.
 It is never a console edit or a `fly secrets set` of the tenancy flags.
 
-Production today runs `APP_TENANCY_MODE=single_academy` with
+> **Status (2026-11-26):** done. Production switched in PR #1212
+> (2026-11-18): `APP_TENANCY_MODE=multi_academy`, `V2_SAAS_MODE=true`,
+> `ENABLE_PLATFORM_ROUTES=true`, with BLNO and the Demo Academy live. Keep this
+> runbook for rollback and for new environments. The "today" column below
+> describes production before the switch.
+
+Before the switch, production ran `APP_TENANCY_MODE=single_academy` with
 `PRIMARY_ACADEMY_ID=acad_blno_badminton` and `ENABLE_PLATFORM_ROUTES=false`
-(`backend/fly.toml`). Every request is BLNO's, and requests for any other
-academy are refused.
+(`backend/fly.toml`). Every request was BLNO's, and requests for any other
+academy were refused.
 
 ## What changes when you switch
 
