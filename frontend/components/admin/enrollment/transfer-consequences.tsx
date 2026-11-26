@@ -7,7 +7,9 @@
  * The billing sentence claims only what the transfer route guarantees: the
  * move commits first, then billing is asked to follow it, and a billing
  * failure is recorded on the enrollment's history instead of failing the move
- * (`_sync_move_billing` in enrollment `admin_writes.py`).
+ * (`_sync_move_billing` in enrollment `admin_writes.py`). The email sentence
+ * names the one family email a move can send: a stale autopay notice resent
+ * when the price rises (`apply_enrollment_move.py`, `notice_resender`).
  */
 
 import type { AdminSessionView } from "@/lib/api/admin";
@@ -101,7 +103,9 @@ export function TransferConsequences({
         </label>
       )}
       <p className="text-xs text-rally-subtle">
-        Emailed: the coaches of both classes and the academy&apos;s admins. The family is not emailed.
+        Emailed: the coaches of both classes and the academy&apos;s admins. The family gets no
+        transfer email; if this month&apos;s invoice was already sent and the price goes up, they
+        get a corrected payment notice.
       </p>
       <p className="text-xs text-rally-subtle">
         The move happens first. Billing is then asked to move this month&apos;s invoice to the new

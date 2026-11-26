@@ -49,7 +49,9 @@ describe("transfer consequences (S27)", () => {
   it("names who is emailed and does not promise the invoice is adjusted", () => {
     const html = render(null);
     expect(html).toContain("coaches of both classes");
-    expect(html).toContain("The family is not emailed");
+    expect(html).toContain("The family gets no transfer email");
+    expect(html).toContain("they get a corrected payment notice");
+    expect(html).not.toContain("The family is not emailed");
     expect(html).toContain("the failure is recorded in the enrollment history");
     expect(html).not.toContain("it is not charged again");
   });

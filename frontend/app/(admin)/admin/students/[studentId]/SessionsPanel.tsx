@@ -263,7 +263,6 @@ function SessionsPanel({
     title: moving?.session_title ?? "",
     schedule: (moving && formatWeeklyPattern(moving)) || movingFrom?.schedule || "",
     amountCents: moving?.amount_cents,
-    unpriced: moving?.amount_cents == null,
   };
   const moveTarget = availableSessions.find((s) => s.session_id === targetSessionId);
   const moveToSide = moveTarget ? sessionTransferSide(moveTarget) : null;
