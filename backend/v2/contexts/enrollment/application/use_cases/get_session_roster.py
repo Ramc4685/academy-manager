@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import date
 
 from backend.v2.contexts.enrollment.application.ports import (
@@ -21,11 +20,9 @@ class GetSessionRoster:
         self,
         enrollments: EnrollmentQuery,
         students: StudentQuery,
-        today: Callable[[], date] = date.today,
     ) -> None:
         self._enrollments = enrollments
         self._students = students
-        self._today = today
 
     async def execute(self, session_id: str) -> list[RosterEntry]:
         # Issue #697 (contract §2.4 T1 roster visibility): a held row stays
@@ -38,7 +35,7 @@ class GetSessionRoster:
         students = await self._students.by_ids([e.student_id for e in active])
         by_id = {s.student_id: s for s in students}
         out: list[RosterEntry] = []
-        today = self._today()
+        today = date.today()
         for e in active:
             s = by_id.get(e.student_id)
             if s is None:
