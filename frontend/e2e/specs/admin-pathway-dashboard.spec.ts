@@ -187,7 +187,7 @@ test.describe("admin pathway dashboard", () => {
     await expect(page).toHaveURL(/\/admin\/messages\?dm=par-e&draft=/);
     await expect(page.getByTestId("dm-new-conversation")).toContainText("Omar Lee");
     await expect(body).toHaveValue(
-      /Ethan has passed 2 of 6 skills in Level 2 \(Net & Movement\), and the last new skill was 7 weeks ago\..*offer Ethan a 1-on-1 session/,
+      /^Hi! Ethan has passed 2 of 6 skills in Level 2 \(Net & Movement\), and the last new skill was 7 weeks ago\..*offer Ethan a 1-on-1 class/,
     );
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: "test-results/pathway-offer-1on1.png" });

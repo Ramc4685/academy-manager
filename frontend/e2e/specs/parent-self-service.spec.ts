@@ -242,7 +242,10 @@ test.describe("parent self-service — absences", () => {
     await absenceForm.getByRole("combobox").nth(1).selectOption("occ-100");
     await page.getByRole("button", { name: "Report absence" }).click();
 
-    await expect(page.getByRole("status")).toContainText("Absence notice submitted.");
+    // The inline confirmation; the success toast is a second status region.
+    await expect(
+      page.getByRole("status").filter({ hasText: "Absence notice submitted." }),
+    ).toBeVisible();
   });
 
   test("a date that already has a notice is shown as Already reported and cannot be picked", async ({

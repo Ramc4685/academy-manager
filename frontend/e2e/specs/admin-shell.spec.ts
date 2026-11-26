@@ -1041,7 +1041,9 @@ test.describe("Rally admin shell", () => {
       await expect(nav.getByTestId("admin-nav-month-close")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-coach-payouts")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-audit-logs")).toBeVisible();
-      await expect(nav.getByTestId("admin-nav-billing-health")).toBeVisible();
+      // S29: Billing Health moved under Settings > Integrations, out of the nav.
+      await expect(nav.getByTestId("admin-nav-billing-health")).toHaveCount(0);
+      await expect(nav.getByTestId("admin-nav-settings")).toBeVisible();
       await expect(nav.getByTestId("admin-nav-pricing")).toBeVisible();
 
       await page.goto("/admin/reports");

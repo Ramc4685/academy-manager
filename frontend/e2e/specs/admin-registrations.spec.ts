@@ -170,7 +170,8 @@ test("successful approval stays successful without a redundant detail refetch", 
   // #838: the decision now goes through a confirm dialog naming the student.
   await page.getByTestId("confirm-action-submit").click();
 
-  await expect(page.getByText("APPROVED")).toBeVisible();
+  // The status badge; the success line and toast also say "approved".
+  await expect(page.getByText("APPROVED", { exact: true })).toBeVisible();
   await expect(page.getByText("Could not load registration.")).toHaveCount(0);
   expect(detailGets).toBe(1);
 });
