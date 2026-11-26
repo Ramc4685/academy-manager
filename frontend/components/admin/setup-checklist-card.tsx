@@ -6,6 +6,10 @@
  * academy already keeps (nothing to tick by hand). The card disappears once
  * every step is done. Owner-only steps (billing rules, Stripe) show their
  * status to every admin but link only for owners.
+ *
+ * S09: it sits below "Needs your attention", collapsed to one line, and
+ * lists only the steps still open, so it never pushes today's work off a
+ * phone screen.
  */
 
 import Link from "next/link";
@@ -55,41 +59,48 @@ export function SetupChecklistCard() {
   const data = query.data;
   if (!data || !shouldShowSetupChecklist(data)) return null;
 
+  const rows = setupChecklistRows(data, isOwner);
   return (
-    <Card p={20} data-testid="dashboard-setup-checklist">
-      <LaneHeader title="Set up your academy" />
-      <p className="mb-3 text-sm text-rally-muted" data-testid="dashboard-setup-checklist-progress">
-        {setupChecklistProgress(data)}
-      </p>
-      <ul className="divide-y divide-rally-line" data-testid="dashboard-setup-checklist-list">
-        {setupChecklistRows(data, isOwner).map((row) => {
-          const body = (
-            <>
-              <span className="min-w-0">
-                <span className="block text-sm font-medium text-rally-ink">{row.label}</span>
-                <span className="block text-xs text-rally-muted">
-                  {row.link === null ? `${row.detail} The owner finishes this step.` : row.detail}
+    <Card p={16} data-testid="dashboard-setup-checklist">
+      <details data-testid="dashboard-setup-checklist-details">
+        <summary className="flex min-h-touch cursor-pointer list-none flex-wrap items-center justify-between gap-2 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-rally-cobalt-600">
+          <span className="font-display text-[15px] font-semibold text-rally-ink">
+            Set up your academy
+          </span>
+          <span className="text-sm text-rally-muted" data-testid="dashboard-setup-checklist-progress">
+            {setupChecklistProgress(data)}
+          </span>
+        </summary>
+        <ul className="mt-2 divide-y divide-rally-line" data-testid="dashboard-setup-checklist-list">
+          {rows.map((row) => {
+            const body = (
+              <>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-rally-ink">{row.label}</span>
+                  <span className="block text-xs text-rally-muted">
+                    {row.link === null ? `${row.detail} The owner finishes this step.` : row.detail}
+                  </span>
                 </span>
-              </span>
-              <Chip variant={STATUS_CHIP[row.status] ?? "expired"} label={row.statusLabel.toUpperCase()} />
-            </>
-          );
-          return (
-            <li key={row.key} className="py-2" data-testid={`setup-step-${row.key}`} data-status={row.status}>
-              {row.link === null ? (
-                <div className="flex flex-wrap items-center justify-between gap-2">{body}</div>
-              ) : (
-                <Link
-                  href={row.link as Route}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-rally-cobalt-600"
-                >
-                  {body}
-                </Link>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+                <Chip variant={STATUS_CHIP[row.status] ?? "expired"} label={row.statusLabel.toUpperCase()} />
+              </>
+            );
+            return (
+              <li key={row.key} className="py-2" data-testid={`setup-step-${row.key}`} data-status={row.status}>
+                {row.link === null ? (
+                  <div className="flex flex-wrap items-center justify-between gap-2">{body}</div>
+                ) : (
+                  <Link
+                    href={row.link as Route}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-rally-cobalt-600"
+                  >
+                    {body}
+                  </Link>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </details>
     </Card>
   );
 }

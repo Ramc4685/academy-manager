@@ -384,9 +384,13 @@ async def dashboard_attention(
                 attention_id="waiver-status",
                 kind="waivers",
                 title="Waivers need review",
+                # Name the next step: families sign the current version from
+                # their own Waivers page; the admin sees who is still due here.
                 detail=(
                     f"{waiver_report.summary.pending_count} pending, "
-                    f"{waiver_report.summary.outdated_count} outdated."
+                    f"{waiver_report.summary.outdated_count} outdated. Families sign "
+                    "the current version from their Waivers page; open Family "
+                    "policies to see who is still due."
                 ),
                 severity="medium",
                 href="/admin/settings?panel=family-policies",

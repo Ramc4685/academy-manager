@@ -40,6 +40,8 @@ import { Card } from "@/components/ds/card";
 import { ErrorNotice } from "@/components/ds/error-notice";
 import { Chip, type ChipVariant } from "@/components/ds/chip";
 import { LaneHeader } from "@/components/ds/lane";
+import { PhoneList, PhoneListRow } from "@/components/ds/phone-row";
+import { useIsPhone } from "@/lib/use-is-phone";
 import { BigNum, Overline } from "@/components/ds/typography";
 
 const RevenueChart = dynamic(() => import("@/components/admin/RevenueChart"), {
@@ -55,6 +57,7 @@ export default function AdminDashboardPage() {
   const timezone = useAcademyTimezone();
   const today = academyDateISO(timezone);
   const isOwner = useIsOwner();
+  const isPhone = useIsPhone();
 
   const sessionsQuery = useQuery({
     queryKey: queryKeys.admin.sessions(today),
@@ -118,10 +121,6 @@ export default function AdminDashboardPage() {
 
   return (
     <section data-testid="admin-dashboard" className="space-y-6">
-      {/* Roadmap L7: a new academy's setup steps, derived from its settings.
-          Renders nothing once every step is done. */}
-      <SetupChecklistCard />
-
       {/* Issue #842: attention leads the dashboard, above the KPI strip — the
           items that need a decision matter more than the tiles that just
           report a number. */}
@@ -174,6 +173,11 @@ export default function AdminDashboardPage() {
           <EmptyState message="No attention items right now." />
         )}
       </Card>
+
+      {/* Roadmap L7: a new academy's setup steps, derived from its settings.
+          S09: below attention and collapsed, so today's work leads on a
+          phone. Renders nothing once every step is done. */}
+      <SetupChecklistCard />
 
       {/* People CRM Phase 4a: the signed-in staff member's follow-ups that
           are overdue or due today. */}
@@ -244,7 +248,9 @@ export default function AdminDashboardPage() {
           data-testid="dashboard-tile-needs-action"
         >
           <KpiCard
-            label="Needs action"
+            // S09: named for what it counts. "Needs action 0" beside a "Paused
+            // billing needs review" attention card read as a contradiction.
+            label="Failed or past due"
             value={statText(collectionsQuery, () => String(collectionsTotals.needs_action_count))}
             loading={collectionsQuery.isLoading}
             hint={statHint(collectionsQuery, () => "failed autopay · past due")}
@@ -291,6 +297,36 @@ export default function AdminDashboardPage() {
           />
         ) : recentPayments.length === 0 ? (
           <EmptyState message="No payments received yet." />
+        ) : isPhone ? (
+          // S09: one two-line row per payment below md, no sideways scroll.
+          <PhoneList aria-label="Recent payments" data-testid="admin-dashboard-recent-payments">
+            {recentPayments.map((p) => {
+              const chip = statusChip(p.status);
+              const method = paymentMethodLabel(p.payment_method);
+              const netCents = Math.max(p.amount_cents - p.refunded_cents, 0);
+              return (
+                <PhoneListRow
+                  key={p.payment_id}
+                  title={p.parent_name ?? "Family on file"}
+                  primary={
+                    <span className="font-mono font-semibold tabular-nums text-rally-ink">
+                      {formatCents(netCents)}
+                    </span>
+                  }
+                  secondary={
+                    <span className="flex flex-wrap items-center gap-2">
+                      <Chip variant={chip.variant} label={chip.label} />
+                      {method && (
+                        <Chip variant={method === "STRIPE" ? "autopayOn" : "manual"} label={method} />
+                      )}
+                      <span>{new Date(p.paid_at).toLocaleDateString()}</span>
+                      {p.refunded_cents > 0 && <span>{formatCents(p.refunded_cents)} refunded</span>}
+                    </span>
+                  }
+                />
+              );
+            })}
+          </PhoneList>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm" data-testid="admin-dashboard-recent-payments">

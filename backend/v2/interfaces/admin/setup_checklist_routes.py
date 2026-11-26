@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from backend.v2.contexts.identity.application.use_cases.bootstrap_academy import (
-    DEFAULT_WAIVER_BODY,
+    is_starter_waiver_body,
 )
 from backend.v2.interfaces.admin.deps import AdminUseCases, get_admin_use_cases
 from backend.v2.shared.auth.claims import AuthClaims
@@ -119,21 +119,26 @@ def _is_staff(user: Any) -> bool:
 
 
 def _waiver_done(report: Any) -> bool:
-    """At least one live waiver that is not still the bootstrap placeholder.
+    """The academy has its own live waiver and families no longer sign the starter.
 
-    Any lineage counts, required or not: an academy with only a program-scoped
-    waiver has still written its own. A report that predates ``live_waivers``
-    is read through its single ``active_waiver``.
+    Done needs both: at least one live waiver (any lineage, required or not)
+    that is not the bootstrap placeholder, and no *required* live waiver that
+    still is. A custom photo waiver beside a required starter is not done:
+    families still sign the starter text. A waiver without a ``required``
+    field reads as required, the way ``AdminWaiverDocument`` defaults it. A
+    report that predates ``live_waivers`` is read through ``active_waiver``.
     """
     live = _field(report, "live_waivers")
     if not live:
         active = _field(report, "active_waiver")
         live = [] if active is None else [active]
-    for waiver in live:
-        body = _field(waiver, "body")
-        if not (isinstance(body, str) and body.strip() == DEFAULT_WAIVER_BODY):
-            return True
-    return False
+    starter = [is_starter_waiver_body(_field(waiver, "body")) for waiver in live]
+    if all(starter):
+        return False
+    return not any(
+        is_starter and _field(waiver, "required", True) is not False
+        for waiver, is_starter in zip(live, starter, strict=True)
+    )
 
 
 def build_setup_checklist(

@@ -35,6 +35,8 @@ const CONVERTED: { name: string; src: () => string }[] = [
   { name: "Families", src: () => appSource("(admin)/admin/families/page.tsx") },
   { name: "Users", src: () => source("components/admin/AdminUsersDirectory.tsx") },
   { name: "Sessions", src: () => appSource("(admin)/admin/sessions/page.tsx") },
+  // S09: the dashboard's Recent payments table clipped status and date at 375px.
+  { name: "Dashboard recent payments", src: () => appSource("(admin)/admin/page.tsx") },
 ];
 
 /**
