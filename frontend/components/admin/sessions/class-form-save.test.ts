@@ -11,7 +11,7 @@ import {
   classFormFromSession,
   type ClassFormValues,
 } from "./class-form-logic";
-import { saveClassCreate, saveClassEdit } from "./class-form-save";
+import { publishCreatedClass, saveClassCreate, saveClassEdit } from "./class-form-save";
 
 function session(overrides: Partial<AdminSessionView> = {}): AdminSessionView {
   return {
@@ -293,5 +293,34 @@ describe("saveClassCreate", () => {
       "The class was created, but it was not linked to the plan",
     );
     expect(result.warning).toContain("network down");
+  });
+});
+
+describe("publishCreatedClass (S55)", () => {
+  const base = { created: session({ session_id: "s-new" }), pricingTouched: false };
+
+  it("does nothing when the switch is off", async () => {
+    const setPublished = vi.fn();
+    expect(await publishCreatedClass(base, false, setPublished)).toBe(base);
+    expect(setPublished).not.toHaveBeenCalled();
+  });
+
+  it("publishes the created class", async () => {
+    const setPublished = vi.fn().mockResolvedValue({});
+    expect(await publishCreatedClass(base, true, setPublished)).toBe(base);
+    expect(setPublished).toHaveBeenCalledWith("s-new");
+  });
+
+  it("keeps the class and warns when publishing fails", async () => {
+    const setPublished = vi.fn().mockRejectedValue(new Error(""));
+    const result = await publishCreatedClass(
+      { ...base, warning: "Plan link failed." },
+      true,
+      setPublished,
+    );
+    expect(result.created.session_id).toBe("s-new");
+    expect(result.warning).toBe(
+      "Plan link failed. The class was created but is not on the public page: switch it on from the class page.",
+    );
   });
 });

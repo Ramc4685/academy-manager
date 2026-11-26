@@ -8,6 +8,7 @@ import {
   archiveAdminProgram,
   assignAdminClassProgram,
   createAdminProgram,
+  getAdminAcademy,
   getAdminPublicPageSettings,
   listAdminClassPublicProfiles,
   listAdminPrograms,
@@ -27,6 +28,7 @@ import {
   parseSeatsThreshold,
   TRIAL_GUEST_CAP_MAX,
   programOptions,
+  publicPageGaps,
   publicPagePayload,
   toPublicPageForm,
   viewPageHref,
@@ -65,6 +67,7 @@ export function PublicPagePanel() {
   return (
     <section data-testid="admin-settings-public-page" className="space-y-6">
       <PageSettingsCard />
+      <CompletenessCard />
       <PublicPageContentCard />
       <ProgramsCard />
       <ClassesCard />
@@ -494,6 +497,42 @@ type RowChange =
   | { kind: "fields"; sessionId: string; fields: UpdateAdminClassPublicFieldsRequest }
   | { kind: "program"; sessionId: string; programId: string | null };
 
+/** S55: what a new family still cannot find; hidden once nothing is missing. */
+function CompletenessCard() {
+  const classes = useQuery({
+    queryKey: queryKeys.admin.classPublicProfiles(),
+    queryFn: listAdminClassPublicProfiles,
+  });
+  const programs = useQuery({
+    queryKey: queryKeys.admin.programsWithArchived(),
+    queryFn: () => listAdminPrograms({ includeArchived: true }),
+  });
+  const academy = useQuery({ queryKey: queryKeys.admin.academy(), queryFn: getAdminAcademy });
+  if (!classes.data || !programs.data || !academy.data) return null;
+  const gaps = publicPageGaps({
+    classes: classes.data.classes ?? [],
+    programs: programs.data.programs ?? [],
+    address: academy.data.address,
+    refundPolicyUrl: academy.data.refund_policy_url,
+  });
+  if (gaps.length === 0) return null;
+  return (
+    <Card p={20} className="max-w-3xl" data-testid="public-page-completeness">
+      <Overline>What families still cannot find</Overline>
+      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-rally-ink">
+        {gaps.map((gap) => (
+          <li key={gap}>{gap}</li>
+        ))}
+      </ul>
+      <p className="mt-3 text-sm">
+        <Link href="/admin/settings?panel=academy" className="font-medium text-rally-cobalt underline">
+          Open Academy profile
+        </Link>
+      </p>
+    </Card>
+  );
+}
+
 function ClassesCard() {
   const queryClient = useQueryClient();
   const classes = useQuery({
@@ -539,7 +578,8 @@ function ClassesCard() {
       <div className="p-6 pb-3">
         <Overline>Classes on the page</Overline>
         <p className="mt-1 text-sm text-rally-muted">
-          Classes are private until you switch them on. Each change saves right away.
+          A new class is shown once your page is published, unless you switch it off when you
+          create it; you can also switch any class from its class page. Each change saves right away.
         </p>
       </div>
       {classes.isPending ? (
@@ -554,7 +594,7 @@ function ClassesCard() {
         <EmptyState
           data-testid="public-page-classes-empty"
           title="No classes yet"
-          description="Classes you create under Sessions appear here, private until you switch them on."
+          description="Classes you create under Sessions appear here."
         />
       ) : (
         <div className="overflow-x-auto">

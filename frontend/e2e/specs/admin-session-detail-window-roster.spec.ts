@@ -283,7 +283,7 @@ test.describe("admin session detail — class dates window and roster tabs (#711
     page,
   }) => {
     const labels = await page.locator('[data-testid^="session-tab-"]').allInnerTexts();
-    expect(labels).toEqual(["Roster", "Class dates", "Waitlist", "Teaching plan", "Welcome email"]);
+    expect(labels).toEqual(["Roster", "Class dates", "Waitlist", "Teaching plan", "What families need to know"]);
     await expect(page.getByTestId("session-staff")).toContainText("Coach One");
   });
 
@@ -334,7 +334,7 @@ test.describe("admin session detail — class dates window and roster tabs (#711
       // The admin shell already loaded (and cached) the academy before these
       // stubs existed, so load the page again to read the stubbed defaults.
       await page.reload();
-      await page.getByRole("button", { name: "Welcome email", exact: true }).click();
+      await page.getByRole("button", { name: "What families need to know", exact: true }).click();
       const venue = page.getByTestId("welcome-row-venue_address");
       await expect(venue).toContainText("123 Court St");
       await expect(venue).toContainText("(academy default)");

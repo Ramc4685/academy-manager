@@ -134,7 +134,7 @@ describe("WelcomeEmailFields", () => {
     const out = renderToStaticMarkup(
       <WelcomeEmailFields values={EMPTY_WELCOME_EMAIL} onChange={() => {}} defaults={{}} />,
     );
-    expect(out).toContain("Welcome email (optional)");
+    expect(out).toContain("What families need to know (optional)");
     expect(out).not.toContain("WhatsApp group link");
   });
 

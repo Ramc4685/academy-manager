@@ -49,6 +49,7 @@ import { HoldEnrollmentDialog, ReturnFromHoldDialog } from "@/components/admin/e
 import { ConfirmActionDialog } from "@/components/ds/confirm-action-dialog";
 import { ClassRecapDialog } from "@/components/admin/ClassReportHandoffsCard";
 
+import { ClassPublicPageCard } from "@/components/admin/sessions/class-public-page";
 import { UnpricedClassBanner } from "@/components/admin/sessions/unpriced-class";
 import { refreshAfterEnrollmentChange } from "@/lib/admin/refresh-after-enrollment-change";
 import { AddToRosterDialog, RemoveEnrollmentDialog, TransferEnrollmentDialog, WithdrawalCreditDialog } from "./dialogs";
@@ -71,7 +72,7 @@ const DETAIL_TABS = [
   { id: "dates", label: "Class dates" },
   { id: "waitlist", label: "Waitlist" },
   { id: "teaching-plan", label: "Teaching plan" },
-  { id: "welcome", label: "Welcome email" },
+  { id: "welcome", label: "What families need to know" },
 ] as const;
 type DetailTab = (typeof DETAIL_TABS)[number]["id"];
 
@@ -471,6 +472,8 @@ export default function AdminSessionDetailPage() {
       {session && (
         <CoachingStaffStrip session={session} onEditAssistants={() => setAssistantsOpen(true)} />
       )}
+
+      {session && <ClassPublicPageCard sessionId={session.session_id} />}
 
       <div className="flex flex-wrap gap-2 border-b border-rally-line">
         {DETAIL_TABS.map((tab) => (

@@ -266,7 +266,7 @@ test.describe("admin session creation and billing-rules settings UI", () => {
     // A plan sets the fee, so there is no fee box to type in.
     await expect(dialog.getByTestId("create-session-monthly-fee")).toHaveCount(0);
 
-    await dialog.getByRole("button", { name: "Welcome email (optional)" }).click();
+    await dialog.getByRole("button", { name: "What families need to know (optional)" }).click();
     // The academy's absence default shows as a placeholder, not a value.
     const absence = dialog.getByLabel("Absence & make-up policy");
     await expect(absence).toHaveAttribute(
