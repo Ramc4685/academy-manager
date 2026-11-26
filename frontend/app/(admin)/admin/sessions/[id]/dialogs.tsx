@@ -124,7 +124,7 @@ export function AddToRosterDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="Add to roster"
-      description="Directly enroll a student into this session."
+      description="Directly enroll a student into this class."
       overline="Roster"
     >
       {error && <DialogError message={error} />}

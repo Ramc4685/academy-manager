@@ -186,7 +186,7 @@ test.describe("Assistant coach shell", () => {
     await page.goto("/coach/profile");
     await expect(page.getByTestId("coach-profile")).toBeVisible();
     await expect(page.getByText("Asha Assistant")).toBeVisible();
-    await expect(page.getByText("Assistant coach access")).toBeVisible();
+    await expect(page.getByText("Assistant coach: your details and what we teach")).toBeVisible();
     await expect(page.getByText("Pay & statements")).toHaveCount(0);
   });
 

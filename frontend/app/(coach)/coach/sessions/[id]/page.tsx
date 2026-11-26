@@ -103,12 +103,12 @@ const ATTENDANCE_ERROR_MESSAGES: Record<string, string> = {
   "Coaching.ConflictAttendanceExists":
     "Attendance for this student was already recorded (maybe from another device). Refresh to see it.",
   "Coaching.StudentNotEnrolled":
-    "This student isn't actively enrolled in this session and has no approved make-up or trial for today, so attendance can't be saved. Ask the admin to check their roster status.",
+    "This student isn't actively enrolled in this class and has no approved make-up or trial for today, so attendance can't be saved. Ask the admin to check their roster status.",
   "Coaching.BulkStudentNotEnrolled":
     "Nothing was saved: someone on this roster isn't eligible for attendance today. Refresh the roster and mark the class again.",
   "Coaching.SessionNotAssigned":
-    "This session isn't assigned to your coach account for today.",
-  "Coaching.SessionCancelled": "This session occurrence was cancelled.",
+    "This class isn't assigned to your coach account for today.",
+  "Coaching.SessionCancelled": "This class date was cancelled.",
   "Coaching.CorrectionWindowExpired":
     "This mark is older than 48 hours, so it can only be changed by an admin.",
   "Coaching.MarkVoided": "An admin voided this mark, so only an admin can change it.",
@@ -128,7 +128,7 @@ function formatApiError(err: unknown): string {
     return ATTENDANCE_ERROR_MESSAGES[apiError.code];
   }
   if (apiError.status === 404) {
-    return "This session or student is not available to your coach account.";
+    return "This class or student is not available to your coach account.";
   }
   if (apiError.status === 409) {
     return apiError.message || "Attendance could not be saved because of a conflict. Refresh and retry.";
@@ -859,14 +859,14 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   }
 
   if (isLoading)
-    return <div className="text-neutral-500">Loading session…</div>;
+    return <div className="text-neutral-500">Loading class…</div>;
 
   if (isError) {
     return (
       <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-        Could not load session.{" "}
+        Could not load class.{" "}
         <Link className="underline" href="/coach/sessions">
-          Back to sessions
+          Back to classes
         </Link>
       </div>
     );
@@ -875,9 +875,9 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
   if (!session) {
     return (
       <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-        Session not found.{" "}
+        Class not found.{" "}
         <Link className="underline" href="/coach/sessions">
-          Back to sessions
+          Back to classes
         </Link>
       </div>
     );
@@ -1034,6 +1034,12 @@ export default function SessionDetailPage({ params, searchParams }: PageProps) {
             )}
           </div>
         </div>
+        {!supervisor && (
+          <p data-testid="attendance-window-help" className="mb-2 text-xs" style={{ color: "var(--rally-muted)" }}>
+            Attendance opens an hour before class starts. You can change a mark for 48 hours
+            after you make it; after that, ask an admin.
+          </p>
+        )}
         <div className="mb-2">
           <HealthStrip state={health} />
         </div>

@@ -167,7 +167,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
               color: "var(--rally-ink)",
             }}
           >
-            <span className="font-semibold">Admin coverage.</span> You can see every session in
+            <span className="font-semibold">Admin coverage.</span> You can see every class in
             the academy and mark attendance for any of them. Marks are recorded under your name.
           </p>
         )}
@@ -181,7 +181,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
               color: "var(--rally-ink)",
             }}
           >
-            <span className="font-semibold">Assistant coach.</span> You see the sessions
+            <span className="font-semibold">Assistant coach.</span> You see the classes
             you&apos;re assigned to and can mark attendance, update skills and add notes.
           </p>
         )}
@@ -195,7 +195,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
       >
         <div className="mx-auto flex max-w-md">
           <BottomTab href="/coach/today" label="Today" active={pathname?.startsWith("/coach/today") ?? false} />
-          <BottomTab href="/coach/sessions" label="Sessions" active={pathname?.startsWith("/coach/sessions") ?? false} />
+          <BottomTab href="/coach/sessions" label="Classes" active={pathname?.startsWith("/coach/sessions") ?? false} />
           <BottomTab
             href="/coach/calendar"
             label="Calendar"

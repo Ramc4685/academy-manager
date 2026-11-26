@@ -618,7 +618,7 @@ export function EditClassDialog({
       setError(null);
       onSaved(saved);
     },
-    onError: (err: unknown) => setError(errorMessage(err, "Failed to update session.")),
+    onError: (err: unknown) => setError(errorMessage(err, "Failed to update class.")),
   });
 
   const onChange = <K extends keyof ClassFormValues>(key: K, value: ClassFormValues[K]) =>
@@ -847,7 +847,7 @@ export function CreateClassDialog({
       setError(null);
       onCreated(created, warning);
     },
-    onError: (err: unknown) => setError(errorMessage(err, "Failed to create session.")),
+    onError: (err: unknown) => setError(errorMessage(err, "Failed to create class.")),
   });
 
   const onChange = <K extends keyof ClassFormValues>(key: K, value: ClassFormValues[K]) => {
@@ -870,7 +870,7 @@ export function CreateClassDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="Create class"
-      description="Create a weekly recurring session."
+      description="Create a weekly class."
       overline="New class"
     >
       {error && <DialogError message={error} />}

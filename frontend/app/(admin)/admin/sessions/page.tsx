@@ -225,7 +225,7 @@ export default function AdminSessionsPage() {
       {isError && (
         <Card p={16} style={{ borderColor: "#fecaca", background: "#fef2f2" }}>
           <div role="alert" className="flex items-center justify-between gap-3">
-            <p className="text-sm text-red-800">Failed to load sessions.</p>
+            <p className="text-sm text-red-800">Failed to load classes.</p>
             <Button variant="secondary" size="sm" onClick={() => void refetch()}>
               Retry
             </Button>

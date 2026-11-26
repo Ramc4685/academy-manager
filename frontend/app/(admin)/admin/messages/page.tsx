@@ -1039,7 +1039,7 @@ function EmailCampaignComposer() {
               className="max-h-56 divide-y divide-rally-line overflow-y-auto rounded-md border border-rally-line bg-white"
             >
               {sessions.length === 0 && (
-                <li className="px-3 py-2 text-sm text-rally-subtle">No upcoming sessions.</li>
+                <li className="px-3 py-2 text-sm text-rally-subtle">No upcoming classes.</li>
               )}
               {sessions.map((s) => (
                 <li key={s.session_id}>
@@ -1061,7 +1061,7 @@ function EmailCampaignComposer() {
             </ul>
             <p className="text-[12px] text-rally-subtle" data-testid="campaign-selected-sessions">
               {selectedSessions.length === 0
-                ? "Select one or more sessions."
+                ? "Select one or more classes."
                 : `Selected: ${selectedSessions.map((s) => s.title).join(", ")}`}
             </p>
           </div>

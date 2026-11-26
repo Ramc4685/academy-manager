@@ -24,18 +24,18 @@ export default function CoachSessionsPage() {
   return (
     <section data-testid="coach-sessions">
       <header className="mb-4">
-        <h1 className="text-2xl font-semibold">Sessions</h1>
+        <h1 className="text-2xl font-semibold">Classes</h1>
         <p className="text-sm text-neutral-500">Your upcoming schedule</p>
       </header>
 
-      {isLoading && <p className="text-neutral-500">Loading sessions...</p>}
+      {isLoading && <p className="text-neutral-500">Loading classes...</p>}
 
       {isError && (
         <div
           role="alert"
           className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
         >
-          <p>Couldn&apos;t load sessions.</p>
+          <p>Couldn&apos;t load classes.</p>
           <RetryButton onClick={() => void refetch()} className="mt-2" />
         </div>
       )}

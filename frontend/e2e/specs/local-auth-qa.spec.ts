@@ -67,7 +67,7 @@ test.describe("local authenticated QA defect coverage", () => {
     await signIn(page, COACH_EMAIL, COACH_PASSWORD, /\/coach\/today/);
 
     await page.goto("/coach/sessions");
-    await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Classes" })).toBeVisible();
   });
 
   test("seeded coach can open an upcoming session from schedule", async ({ page }) => {
@@ -86,7 +86,7 @@ test.describe("local authenticated QA defect coverage", () => {
     await seededSession.click();
 
     await expect(page.getByTestId("session-detail")).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText("Session not found.")).toHaveCount(0);
+    await expect(page.getByText("Class not found.")).toHaveCount(0);
   });
 
   test("seeded coach blocker routes render content instead of stale loading states", async ({

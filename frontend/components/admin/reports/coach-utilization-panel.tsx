@@ -60,7 +60,7 @@ export function CoachUtilizationPanel({ periods }: { periods: string[] }) {
         <EmptyState
           className="mt-4"
           title="No coach activity recorded"
-          description="Utilization will appear here once coaches run sessions."
+          description="Utilization will appear here once coaches run classes."
         />
       ) : (
         <div className="mt-4 overflow-x-auto">

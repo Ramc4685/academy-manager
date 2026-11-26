@@ -82,7 +82,7 @@ export default function CoachTeachingPlanPage() {
 
       {!isError && data && sessions.length === 0 && (
         <p className="text-neutral-500" data-testid="plan-empty-state">
-          {date === todayISO() ? "No sessions today." : `No sessions on ${formatPlainDate(date)}.`}
+          {date === todayISO() ? "No classes today." : `No classes on ${formatPlainDate(date)}.`}
         </p>
       )}
 
@@ -123,7 +123,7 @@ function SessionPlan({
       <header className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
         <div className="min-w-0">
           <h2 className="text-lg font-semibold">
-            {session.title || "Session"}
+            {session.title || "Class"}
           </h2>
           {session.location && (
             <p className="text-sm text-neutral-500">{session.location}</p>

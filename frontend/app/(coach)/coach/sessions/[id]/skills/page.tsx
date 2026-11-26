@@ -70,7 +70,7 @@ export default function CoachSessionSkillsPage({ params, searchParams }: PagePro
           >[0]["href"]}
           className="text-sm font-medium text-blue-600"
         >
-          Back to session
+          Back to class
         </Link>
         <div>
           <h1 className="text-xl font-semibold">Skill updates</h1>
@@ -200,7 +200,7 @@ function BySkillWorkspace({
   });
 
   if (!group) {
-    return <p className="text-sm text-neutral-500">No grouped skill gaps for this session.</p>;
+    return <p className="text-sm text-neutral-500">No grouped skill gaps for this class.</p>;
   }
 
   return (

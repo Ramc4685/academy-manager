@@ -150,6 +150,11 @@ export function AnnouncementsPanel({
           />
           Urgent — email families now
         </label>
+        <p data-testid="announcement-audience" className="text-xs text-rally-subtle">
+          Goes to the app inbox of every family with a child on this class, including children on
+          hold. Urgent also emails them straight away. Either way, families who turned on phone
+          notifications get one.
+        </p>
         <p className="text-xs text-rally-subtle">{NO_EDIT_HELP}</p>
         <div className="flex items-center gap-3">
           <Button

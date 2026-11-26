@@ -74,7 +74,7 @@ export default function CoachProfilePage() {
     <section data-testid="coach-profile">
       <header className="mb-4">
         <h1 className="text-2xl font-semibold">Profile</h1>
-        <p className="text-sm text-neutral-500">{assistant ? "Assistant coach access" : "Coach access"}</p>
+        <p className="text-sm text-neutral-500">{assistant ? "Assistant coach: your details and what we teach" : "Your details, pay and what we teach"}</p>
       </header>
 
       <AcademyContact className="mb-4 text-sm text-neutral-600 dark:text-neutral-300" />

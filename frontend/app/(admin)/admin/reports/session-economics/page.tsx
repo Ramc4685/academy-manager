@@ -53,7 +53,7 @@ export default function AdminSessionEconomicsPage() {
         <KpiCard
           label="Paid"
           value={report ? formatCurrency(report.summary.paid_cents) : loadingValue(economicsQuery.isLoading)}
-          detail="Attributable collected tuition for these sessions."
+          detail="Attributable collected tuition for these classes."
         />
         <KpiCard
           label="Yet to pay"
@@ -99,7 +99,7 @@ export default function AdminSessionEconomicsPage() {
         <div className="border-b border-rally-line px-5 py-4">
           <Overline>Class economics</Overline>
           <p className="mt-1 text-sm text-rally-subtle">
-            {formatMonth(period)} revenue and cost by recurring session.
+            {formatMonth(period)} revenue and cost by class.
           </p>
         </div>
         <div className="overflow-x-auto">

@@ -698,7 +698,7 @@ function PayLog({
                       {replaced
                         ? attributedCoach
                           ? `Attributed to ${attributedCoach} instead.`
-                          : "A replacement coach was attributed to this session."
+                          : "A replacement coach was attributed to this class date."
                         : occ.reason
                           ? occ.message || occ.detail || unpaidReasonGuidance(occ.reason)
                           : "No pay line was created."}

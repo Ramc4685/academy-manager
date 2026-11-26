@@ -163,7 +163,7 @@ function PayoutsContent() {
                 <strong>
                   {warningRows.length} coach{warningRows.length > 1 ? "es" : ""}
                 </strong>{" "}
-                have unresolved payroll warnings or unpaid occurrences. Open each payout, repair the
+                have unresolved payroll warnings or unpaid class dates. Open each payout, repair the
                 class fee or coach rate, then recompute before approval.
               </div>
             )}

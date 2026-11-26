@@ -2876,7 +2876,7 @@ test.describe("Rally admin shell", () => {
     await page.evaluate((url) => window.location.replace(url), target);
     await page.waitForURL(target);
     expect(await page.evaluate(() => window.history.length)).toBe(1);
-    await expect(page.getByText("Session not found.")).toBeVisible();
+    await expect(page.getByText("Class not found.")).toBeVisible();
     const back = page.getByTestId("shell-back-button");
     await expect(back).toBeVisible();
     await back.click();

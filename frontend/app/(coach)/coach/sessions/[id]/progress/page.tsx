@@ -101,7 +101,7 @@ export default function CoachSessionProgressPage() {
       />
 
       <div>
-        <h1 className="text-xl font-semibold">Session skill board</h1>
+        <h1 className="text-xl font-semibold">Class skill board</h1>
         <p className="text-sm text-neutral-500">{board?.program_name ?? ""}</p>
       </div>
 

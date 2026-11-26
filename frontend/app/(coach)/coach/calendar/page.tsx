@@ -57,7 +57,7 @@ export default function CoachCalendarPage() {
       ) : timeZone.status === "ready" ? (
         <PersonaCalendarView events={events} timeZone={timeZone.timeZone} />
       ) : (
-        <CalendarTimeZoneUnavailable listHref="/coach/sessions" listLabel="Sessions" />
+        <CalendarTimeZoneUnavailable listHref="/coach/sessions" listLabel="Classes" />
       )}
     </section>
   );

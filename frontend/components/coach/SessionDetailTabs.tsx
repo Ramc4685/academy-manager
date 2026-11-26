@@ -61,7 +61,7 @@ export function SessionDetailTabs({
   return (
     <div
       role="tablist"
-      aria-label="Session detail sections"
+      aria-label="Class detail sections"
       className="mb-4 flex gap-1 overflow-x-auto border-b border-neutral-200"
     >
       {tabs.map((tab) => {
