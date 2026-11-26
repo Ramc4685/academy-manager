@@ -29,6 +29,7 @@ import { getCoachAcademy, getCoachPay, type CoachPay } from "@/lib/api/coach";
 import { academyMonthKey, formatAcademyClock, formatAcademyDate } from "@/lib/format/academy-time";
 import { formatCents, formatDateOnly } from "@/lib/money";
 import { queryKeys } from "@/lib/query/keys";
+import { formatTaught } from "./format-taught";
 
 /** The month stepper goes back to the current month and the 23 before it. */
 const MONTHS_BACK = 23;
@@ -36,11 +37,6 @@ const MONTHS_BACK = 23;
 const ROLE_LABEL = { lead: "Lead", cover: "Cover", assistant: "Assistant" } as const;
 
 /** "9 h 30 min"; "45 min" under an hour. */
-export function formatTaught(minutes: number): string {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return h ? `${h} h${m ? ` ${m} min` : ""}` : `${m} min`;
-}
 
 function spokenTaught(minutes: number): string {
   const h = Math.floor(minutes / 60);

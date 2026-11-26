@@ -13,7 +13,8 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-import CoachPayPage, { formatTaught } from "./page";
+import CoachPayPage from "./page";
+import { formatTaught } from "./format-taught";
 
 const BASE: CoachPay = {
   month: "2026-11",
