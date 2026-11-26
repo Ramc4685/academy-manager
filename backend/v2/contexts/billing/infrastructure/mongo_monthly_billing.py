@@ -116,8 +116,11 @@ MONTHLY_KEY_STATUS_REVIEWED = "reviewed"
 #: What the monthly run decides for one enrollment before pricing it:
 #: ``skip`` (paused, deferred, cancelling, skipped month), ``not_billed``
 #: (NoCharge/Waived), ``existing`` (a legacy payment row for the month), or
-#: ``to_bill`` (priced and invoiced by the generator).
-MonthlyBillingKind = Literal["skip", "not_billed", "existing", "to_bill"]
+#: ``candidate``: passed to pricing, NOT a verdict that it will be invoiced. A
+#: candidate may already hold this month's ledger invoice (the generator stopped
+#: writing legacy payment rows), price to zero, or have no parent; a reader that
+#: needs "would invoice" must also check ``_existing_period_invoice_id``.
+MonthlyBillingKind = Literal["skip", "not_billed", "existing", "candidate"]
 
 
 @dataclass(frozen=True)
@@ -1093,7 +1096,7 @@ class MongoMonthlyBillingGenerator:
 
         Reads only (students, deferrals, legacy payments). Pricing stays in the
         generator because ``resolve_monthly_charge`` persists calculation
-        snapshots, so a ``to_bill`` row can still be skipped there for a zero
+        snapshots, so a ``candidate`` row can still be skipped there for a zero
         charge, a missing parent or an invoice already on the ledger.
         """
         enrollment_id = str(enrollment.get("enrollment_id") or enrollment.get("_id"))
@@ -1135,7 +1138,7 @@ class MongoMonthlyBillingGenerator:
         )
         if existing is not None:
             return outcome("existing")
-        return outcome("to_bill")
+        return outcome("candidate")
 
     async def classify_monthly_enrollments(
         self, period: str, *, now: datetime, academy_timezone: str
@@ -1179,7 +1182,8 @@ class MongoMonthlyBillingGenerator:
             session_id = classified.session_id
             student_id = classified.student_id
             student_doc = classified.student_doc
-            if classified.kind == "skip" and classified.skip is not None:
+            # The reason is the source of truth: never let a skip fall through to pricing.
+            if classified.skip is not None:
                 skipped_paused += 1
                 skipped_details.append(
                     self._skip_detail(

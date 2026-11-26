@@ -153,9 +153,37 @@ async def test_classifier_is_read_only_and_matches_the_run(real_db, acad) -> Non
     await _seed(real_db)
     generator = MongoMonthlyBillingGenerator(_repo(real_db))
 
-    async def snapshot() -> dict[str, int]:
+    # A legacy payment row for the month (pre-ledger shape) classifies "existing".
+    await real_db["payments"].insert_one(
+        {
+            "academy_id": ACAD,
+            "payment_id": "pay-legacy",
+            "enrollment_id": "enr-legacy",
+            "period": PERIOD,
+            "amount_cents": 10_000,
+            "status": "pending",
+        }
+    )
+    await real_db["enrollments"].insert_one(
+        {
+            "academy_id": ACAD,
+            "enrollment_id": "enr-legacy",
+            "student_id": "kid-0",
+            "session_id": "sess-1",
+            "parent_id": "parent-0",
+            "status": "active",
+            "billing_type": "Standard",
+            "billing_start_at": datetime(2026, 1, 1, tzinfo=UTC),
+            "created_at": datetime(2026, 1, 2, tzinfo=UTC),
+        }
+    )
+
+    async def snapshot() -> dict[str, list[str]]:
+        # Full content, not counts: an in-place $set must show up too.
         return {
-            name: await real_db[name].count_documents({})
+            name: sorted(
+                repr(sorted(doc.items())) for doc in await real_db[name].find({}).to_list(None)
+            )
             for name in await real_db.list_collection_names()
             if not name.startswith("system.")
         }
@@ -168,12 +196,13 @@ async def test_classifier_is_read_only_and_matches_the_run(real_db, acad) -> Non
         )
     }
     assert await snapshot() == before
-    # enr-invoiced is "to_bill" here: its ledger invoice is found later, at the
-    # (writing) invoice-key step, which is what keeps the run's counts intact.
+    # enr-invoiced is only a "candidate": its ledger invoice is found later, at
+    # the (writing) invoice-key step, which is what keeps the run's counts intact.
     assert kinds == {
-        "enr-bill-1": "to_bill",
-        "enr-bill-2": "to_bill",
+        "enr-bill-1": "candidate",
+        "enr-bill-2": "candidate",
         "enr-paused": "skip",
         "enr-free": "not_billed",
-        "enr-invoiced": "to_bill",
+        "enr-invoiced": "candidate",
+        "enr-legacy": "existing",
     }
