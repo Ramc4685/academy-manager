@@ -62,6 +62,7 @@ def _unpriced_label(session: Any, titles: list[str]) -> str:
     )
     return f"{title}, {when}" if when else title
 
+
 def _oldest_pending_days(rows: list[Any]) -> int:
     """Age in whole days of the longest-waiting request (0 when none is datable).
 
