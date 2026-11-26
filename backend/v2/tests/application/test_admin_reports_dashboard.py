@@ -7,7 +7,25 @@ from datetime import UTC, datetime
 import pytest
 
 import backend.v2.contexts.billing.infrastructure.admin_reports_read_model as reports_read_model
+from backend.v2.composition.admin_session_staff import attach_session_staff_names
 from backend.v2.shared.tenancy.context import tenant_scope
+
+
+def _economics_report(db):
+    """Session economics wired with the admin sessions staff-name resolver,
+    the way ``composition/admin.py`` wires it."""
+    return reports_read_model.make_session_economics_report(
+        db, staff_names=lambda rows: attach_session_staff_names(db, rows)
+    )
+
+
+async def _seed_members(db, *user_ids: str, academy_id: str = "acad") -> None:
+    await db["academy_memberships"].insert_many(
+        [
+            {"academy_id": academy_id, "user_id": uid, "roles": ["coach"], "status": "active"}
+            for uid in user_ids
+        ]
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -885,9 +903,10 @@ async def test_session_economics_prorates_monthly_fee_and_allocates_costs() -> N
             {"user_id": "coach-casey", "display_name": "Casey Newcoach"},
         ]
     )
+    await _seed_members(db, "coach-kishore", "coach-casey")
 
     with tenant_scope("acad"):
-        report = await reports_read_model.make_session_economics_report(db)("2026-04")
+        report = await _economics_report(db)("2026-04")
 
     assert report["summary"] == {
         "expected_revenue_cents": 60_000,
@@ -1562,11 +1581,43 @@ async def _seed_economics_class(db, *, end_at: datetime) -> None:
         }
     )
     await db["users"].insert_one({"user_id": "coach-1", "display_name": "Demo Coach"})
+    await _seed_members(db, "coach-1")
 
 
 async def _economics(db) -> dict:
     with tenant_scope("acad"):
-        return await reports_read_model.make_session_economics_report(db)("2026-05")
+        return await _economics_report(db)("2026-05")
+
+
+@pytest.mark.asyncio
+async def test_session_economics_never_names_a_coach_from_another_academy() -> None:
+    db = _payroll_db()
+    await _seed_economics_class(db, end_at=datetime(2026, 5, 9, 15, tzinfo=UTC))
+    await db["sessions"].update_one({"session_id": "sess-1"}, {"$set": {"coach_id": "outsider"}})
+    await db["users"].insert_one({"user_id": "outsider", "display_name": "Other Academy Person"})
+    await _seed_members(db, "outsider", academy_id="other")
+
+    report = await _economics(db)
+
+    assert report["sessions"][0]["coach_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_session_economics_names_a_coach_keyed_by_mongo_id() -> None:
+    from bson import ObjectId
+
+    db = _payroll_db()
+    await _seed_economics_class(db, end_at=datetime(2026, 5, 9, 15, tzinfo=UTC))
+    oid = ObjectId()
+    await db["users"].insert_one(
+        {"_id": oid, "user_id": "coach-oid", "display_name": "Object Id Coach"}
+    )
+    await db["sessions"].update_one({"session_id": "sess-1"}, {"$set": {"coach_id": str(oid)}})
+    await _seed_members(db, "coach-oid")
+
+    report = await _economics(db)
+
+    assert report["sessions"][0]["coach_name"] == "Object Id Coach"
 
 
 @pytest.mark.asyncio

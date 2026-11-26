@@ -4337,7 +4337,9 @@ def compose_admin(
         get_refunds_report=get_refunds_report,
         get_revenue_by_category_report=get_revenue_by_category_report,
         get_deposit_slip_report=get_deposit_slip_report,
-        get_session_economics=make_session_economics_report(db),
+        get_session_economics=make_session_economics_report(
+            db, staff_names=lambda rows: attach_session_staff_names(db, rows)
+        ),
         get_projected_income=make_projected_income_report(db),
         list_enrollment_events=make_list_enrollment_events(db),
         comms=comms,

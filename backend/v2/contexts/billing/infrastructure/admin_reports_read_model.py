@@ -1776,7 +1776,10 @@ def make_financial_report_csv(db: AsyncIOMotorDatabase[Any]) -> object:
 
 
 def make_session_economics_report(
-    db: AsyncIOMotorDatabase[Any], *, class_fees: MongoProjectedClassFees | None = None
+    db: AsyncIOMotorDatabase[Any],
+    *,
+    class_fees: MongoProjectedClassFees | None = None,
+    staff_names: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
 ) -> object:
     """Returns an async callable for monthly session-level economics.
 
@@ -1784,6 +1787,10 @@ def make_session_economics_report(
     uses the fee that month will be charged (a scheduled plan price change
     applied); a past month reads the fee it was billed at (an applied
     change's flip undone); the current month reads the stored fee.
+
+    ``staff_names`` fills ``coach_name`` / ``assistant_coach_names`` on rows
+    carrying ``coach_id`` / ``assistant_coach_ids`` (composition wires the
+    membership-gated admin sessions resolver).
     """
     from backend.v2.shared.tenancy import current_academy_id
 
@@ -1837,18 +1844,15 @@ def make_session_economics_report(
             )
             async for session in sessions_cursor:
                 sessions_by_id[str(session.get("session_id") or session.get("_id"))] = session
-        coach_names = await _coach_display_names(
-            db,
-            {
-                str(coach_id)
-                for session in sessions_by_id.values()
-                for coach_id in [
-                    session.get("coach_id"),
-                    *(session.get("assistant_coach_ids") or []),
-                ]
-                if coach_id
-            },
-        )
+        staff_by_session: dict[str, dict[str, Any]] = {
+            session_id: {
+                "coach_id": session.get("coach_id"),
+                "assistant_coach_ids": session.get("assistant_coach_ids") or [],
+            }
+            for session_id, session in sessions_by_id.items()
+        }
+        if staff_names is not None:
+            await staff_names(list(staff_by_session.values()))
 
         active_enrollments_by_session: dict[str, int] = {
             session_id: 0 for session_id in session_ids
@@ -2065,7 +2069,9 @@ def make_session_economics_report(
                         or session.get("session_name")
                         or "Untitled session"
                     ),
-                    "coach_name": _session_coach_label(session, coach_names),
+                    "coach_name": _session_coach_label(
+                        session, staff_by_session.get(session_id, {})
+                    ),
                     "active_enrollment_count": active_enrollments_by_session.get(session_id, 0),
                     "not_billed_enrollment_count": not_billed_by_session.get(session_id, 0),
                     "paid_student_count": paid_student_count,
@@ -2135,44 +2141,10 @@ def make_session_economics_report(
     return get_session_economics
 
 
-async def _coach_display_names(
-    db: AsyncIOMotorDatabase[Any], coach_ids: set[str]
-) -> dict[str, str]:
-    """Names for coach ids this academy's own sessions name (``users`` is
-    global, so the ids, not an ``academy_id`` filter, scope the lookup)."""
-    names: dict[str, str] = {}
-    for field in ("user_id", "firebase_uid"):
-        missing = sorted(cid for cid in coach_ids if cid not in names)
-        if not missing:
-            break
-        async for user in db["users"].find(
-            {field: {"$in": missing}},
-            {
-                "user_id": 1,
-                "firebase_uid": 1,
-                "display_name": 1,
-                "name": 1,
-                "full_name": 1,
-                "first_name": 1,
-                "last_name": 1,
-            },
-        ):
-            name = str(
-                user.get("display_name")
-                or user.get("full_name")
-                or user.get("name")
-                or f"{user.get('first_name') or ''} {user.get('last_name') or ''}".strip()
-            )
-            key = str(user.get(field) or "")
-            if name and key:
-                names[key] = name
-    return names
-
-
-def _session_coach_label(session: dict[str, Any], names: dict[str, str]) -> str | None:
+def _session_coach_label(session: dict[str, Any], staff: dict[str, Any]) -> str | None:
     """Lead coach then assistants, e.g. "Demo Coach, Casey Newcoach"."""
-    ids = [session.get("coach_id"), *(session.get("assistant_coach_ids") or [])]
-    labels = list(dict.fromkeys(names[str(cid)] for cid in ids if cid and str(cid) in names))
+    names = [staff.get("coach_name"), *(staff.get("assistant_coach_names") or [])]
+    labels = list(dict.fromkeys(str(name) for name in names if name))
     if labels:
         return ", ".join(labels)
     return str(session.get("coach_name") or "") or None
