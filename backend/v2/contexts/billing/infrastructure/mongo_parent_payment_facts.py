@@ -31,9 +31,7 @@ class MongoParentPaymentFacts(TenantScopedRepository):
         ids = sorted(set(invoice_ids))
         if not ids:
             return []
-        allocations = await self._find_many(
-            {"invoice_id": {"$in": ids}}
-        ).to_list(length=None)
+        allocations = await self._find_many({"invoice_id": {"$in": ids}}).to_list(length=None)
         payment_ids = sorted({str(a["payment_id"]) for a in allocations if a.get("payment_id")})
         if not payment_ids:
             return []

@@ -709,7 +709,6 @@ async def test_submit_absence_notice_allowed_when_switch_on() -> None:
     assert result.notice_id
 
 
-
 # --- S43: withdraw (undo) a reported absence before class starts ----------
 
 
@@ -760,7 +759,9 @@ def _submit_and_withdraw(
     return submit, withdraw
 
 
-_CMD = SubmitAbsenceNoticeCommand(parent_id="parent-1", student_id="student-1", occurrence_id="occ-1")
+_CMD = SubmitAbsenceNoticeCommand(
+    parent_id="parent-1", student_id="student-1", occurrence_id="occ-1"
+)
 _WITHDRAW = WithdrawAbsenceNoticeCommand(
     parent_id="parent-1", student_id="student-1", occurrence_id="occ-1"
 )
@@ -869,7 +870,10 @@ async def test_withdraw_refuses_an_admin_recorded_or_co_parent_notice() -> None:
         AbsenceNotice,
     )
 
-    for update in ({"recorded_by_admin": True, "submitted_by": "admin-1"}, {"submitted_by": "parent-2"}):
+    for update in (
+        {"recorded_by_admin": True, "submitted_by": "admin-1"},
+        {"submitted_by": "parent-2"},
+    ):
         notices = _StoreNotices()
         _submit, withdraw = _submit_and_withdraw(notices)
         await notices.add(

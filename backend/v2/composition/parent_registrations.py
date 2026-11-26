@@ -35,7 +35,9 @@ def compose_list_parent_registrations(
         payment = await payments.get(payment_id)
         return payment.status if payment else None
 
-    use_case = ListParentRegistrations(MongoApplicationRepository(db), payment_status=payment_status)
+    use_case = ListParentRegistrations(
+        MongoApplicationRepository(db), payment_status=payment_status
+    )
     sessions = MongoSessionWriter(db)
     academies = MongoAcademyRepository(db)
 

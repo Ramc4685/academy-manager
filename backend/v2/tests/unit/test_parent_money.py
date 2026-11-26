@@ -14,23 +14,47 @@ from backend.v2.contexts.billing.domain.ledger import InvoiceLine, LedgerInvoice
 _T = datetime(2026, 11, 1, tzinfo=UTC)
 
 
-def _inv(invoice_id, student_id, *, total, balance, status="open", period="2026-11",
-         due=date(2026, 12, 1), enrollment_id=None, subtotal=None) -> LedgerInvoice:
+def _inv(
+    invoice_id,
+    student_id,
+    *,
+    total,
+    balance,
+    status="open",
+    period="2026-11",
+    due=date(2026, 12, 1),
+    enrollment_id=None,
+    subtotal=None,
+) -> LedgerInvoice:
     return LedgerInvoice(
-        invoice_id=invoice_id, academy_id="acad", parent_id="p1", student_id=student_id,
-        enrollment_id=enrollment_id, period=period, status=status,
+        invoice_id=invoice_id,
+        academy_id="acad",
+        parent_id="p1",
+        student_id=student_id,
+        enrollment_id=enrollment_id,
+        period=period,
+        status=status,
         subtotal_cents=subtotal if subtotal is not None else total,
         discount_cents=(subtotal - total) if subtotal is not None else 0,
-        total_cents=total, balance_due_cents=balance, due_date=due,
-        created_at=_T, updated_at=_T,
+        total_cents=total,
+        balance_due_cents=balance,
+        due_date=due,
+        created_at=_T,
+        updated_at=_T,
     )
 
 
 def _line(invoice_id, description, cents) -> InvoiceLine:
     return InvoiceLine(
-        line_id=f"{invoice_id}-{description}", academy_id="acad", invoice_id=invoice_id,
-        line_type="discount" if cents < 0 else "tuition", description=description,
-        quantity=1, unit_amount_cents=cents, amount_cents=cents, created_at=_T,
+        line_id=f"{invoice_id}-{description}",
+        academy_id="acad",
+        invoice_id=invoice_id,
+        line_type="discount" if cents < 0 else "tuition",
+        description=description,
+        quantity=1,
+        unit_amount_cents=cents,
+        amount_cents=cents,
+        created_at=_T,
     )
 
 
@@ -54,7 +78,10 @@ def test_two_children_and_a_sibling_discount_add_up_to_the_family_total() -> Non
         [sam, alex],
         {
             "i-sam": [_line("i-sam", "Tuition", 8000)],
-            "i-alex": [_line("i-alex", "Tuition", 8000), _line("i-alex", "Sibling discount", -2000)],
+            "i-alex": [
+                _line("i-alex", "Tuition", 8000),
+                _line("i-alex", "Sibling discount", -2000),
+            ],
         },
     )
     assert out["amount_due_cents"] == 14000
@@ -81,14 +108,20 @@ def test_partial_payment_is_an_already_paid_line_and_draft_void_paid_are_not_due
     )
     assert out["amount_due_cents"] == 3000
     assert out["lines"][-1] == {
-        "kind": "paid", "student_id": None, "label": "Already paid", "detail": None,
+        "kind": "paid",
+        "student_id": None,
+        "label": "Already paid",
+        "detail": None,
         "amount_cents": -5000,
     }
     assert sum(line["amount_cents"] for line in out["lines"]) == 3000
     assert [p["period"] for p in out["periods"]] == ["2026-11", "2026-10"]
     assert out["periods"][0] == {
-        "period": "2026-11", "label": "November 2026",
-        "billed_cents": 8000, "paid_cents": 5000, "due_cents": 3000,
+        "period": "2026-11",
+        "label": "November 2026",
+        "billed_cents": 8000,
+        "paid_cents": 5000,
+        "due_cents": 3000,
     }
 
 
@@ -111,7 +144,9 @@ def test_nothing_due_reports_the_last_settled_payment_in_words() -> None:
     assert out["lines"] == []
     assert out["due_date"] is None
     assert out["last_payment"] == {
-        "amount_cents": 4000, "paid_on": date(2026, 10, 3), "method_label": "Paid in cash",
+        "amount_cents": 4000,
+        "paid_on": date(2026, 10, 3),
+        "method_label": "Paid in cash",
     }
 
 

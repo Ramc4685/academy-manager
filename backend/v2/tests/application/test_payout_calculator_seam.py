@@ -36,7 +36,9 @@ class _Computer:
     async def execute(self, **_: object) -> PayoutStatement:
         return self._statement
 
-    async def execute_many(self, *, coach_ids: list[str], **_: object) -> dict[str, PayoutStatement]:
+    async def execute_many(
+        self, *, coach_ids: list[str], **_: object
+    ) -> dict[str, PayoutStatement]:
         return {coach_id: self._statement for coach_id in coach_ids}
 
 

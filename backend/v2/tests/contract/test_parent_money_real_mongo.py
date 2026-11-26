@@ -24,57 +24,111 @@ from backend.v2.contexts.billing.infrastructure.mongo_parent_payment_facts impor
 _T = datetime(2026, 11, 1, tzinfo=UTC)
 
 
-def _invoice(invoice_id, parent_id, student_id, *, total, balance, status, period,
-             academy_id="test-academy", subtotal=None):
+def _invoice(
+    invoice_id,
+    parent_id,
+    student_id,
+    *,
+    total,
+    balance,
+    status,
+    period,
+    academy_id="test-academy",
+    subtotal=None,
+):
     return {
-        "invoice_id": invoice_id, "academy_id": academy_id, "parent_id": parent_id,
-        "student_id": student_id, "enrollment_id": f"e-{student_id}", "period": period,
-        "status": status, "subtotal_cents": subtotal or total,
-        "discount_cents": (subtotal or total) - total, "total_cents": total,
-        "balance_due_cents": balance, "currency": "usd", "due_date": "2026-12-01",
-        "created_at": _T, "updated_at": _T,
+        "invoice_id": invoice_id,
+        "academy_id": academy_id,
+        "parent_id": parent_id,
+        "student_id": student_id,
+        "enrollment_id": f"e-{student_id}",
+        "period": period,
+        "status": status,
+        "subtotal_cents": subtotal or total,
+        "discount_cents": (subtotal or total) - total,
+        "total_cents": total,
+        "balance_due_cents": balance,
+        "currency": "usd",
+        "due_date": "2026-12-01",
+        "created_at": _T,
+        "updated_at": _T,
     }
 
 
 def _line(invoice_id, description, cents, academy_id="test-academy"):
     return {
-        "line_id": f"{invoice_id}-{description}", "academy_id": academy_id,
-        "invoice_id": invoice_id, "line_type": "discount" if cents < 0 else "tuition",
-        "description": description, "quantity": 1, "unit_amount_cents": cents,
-        "amount_cents": cents, "created_at": _T,
+        "line_id": f"{invoice_id}-{description}",
+        "academy_id": academy_id,
+        "invoice_id": invoice_id,
+        "line_type": "discount" if cents < 0 else "tuition",
+        "description": description,
+        "quantity": 1,
+        "unit_amount_cents": cents,
+        "amount_cents": cents,
+        "created_at": _T,
     }
 
 
 def _payment(payment_id, status, method, paid_at, academy_id="test-academy"):
     return {
-        "payment_id": payment_id, "academy_id": academy_id, "parent_id": "p1",
-        "amount_cents": 6000, "unapplied_amount_cents": 0, "currency": "usd",
-        "status": status, "payment_method": method, "paid_at": paid_at,
-        "created_at": paid_at, "updated_at": paid_at,
+        "payment_id": payment_id,
+        "academy_id": academy_id,
+        "parent_id": "p1",
+        "amount_cents": 6000,
+        "unapplied_amount_cents": 0,
+        "currency": "usd",
+        "status": status,
+        "payment_method": method,
+        "paid_at": paid_at,
+        "created_at": paid_at,
+        "updated_at": paid_at,
     }
 
 
 def _alloc(allocation_id, payment_id, invoice_id, cents, academy_id="test-academy"):
     return {
-        "allocation_id": allocation_id, "academy_id": academy_id, "payment_id": payment_id,
-        "invoice_id": invoice_id, "amount_cents": cents, "created_at": _T,
+        "allocation_id": allocation_id,
+        "academy_id": academy_id,
+        "payment_id": payment_id,
+        "invoice_id": invoice_id,
+        "amount_cents": cents,
+        "created_at": _T,
     }
 
 
 async def _seed(db) -> None:
     await db["invoices"].insert_many(
         [
-            _invoice("nov-sam", "p1", "sam", total=8000, balance=8000, status="open",
-                     period="2026-11"),
-            _invoice("nov-alex", "p1", "alex", total=6000, balance=6000, status="open",
-                     period="2026-11", subtotal=8000),
-            _invoice("oct-sam", "p1", "sam", total=6000, balance=0, status="paid",
-                     period="2026-10"),
+            _invoice(
+                "nov-sam", "p1", "sam", total=8000, balance=8000, status="open", period="2026-11"
+            ),
+            _invoice(
+                "nov-alex",
+                "p1",
+                "alex",
+                total=6000,
+                balance=6000,
+                status="open",
+                period="2026-11",
+                subtotal=8000,
+            ),
+            _invoice(
+                "oct-sam", "p1", "sam", total=6000, balance=0, status="paid", period="2026-10"
+            ),
             # Another family here, and the same family id in another academy.
-            _invoice("nov-other", "p2", "kim", total=9900, balance=9900, status="open",
-                     period="2026-11"),
-            _invoice("nov-elsewhere", "p1", "sam", total=7700, balance=7700, status="open",
-                     period="2026-11", academy_id="other-academy"),
+            _invoice(
+                "nov-other", "p2", "kim", total=9900, balance=9900, status="open", period="2026-11"
+            ),
+            _invoice(
+                "nov-elsewhere",
+                "p1",
+                "sam",
+                total=7700,
+                balance=7700,
+                status="open",
+                period="2026-11",
+                academy_id="other-academy",
+            ),
         ]
     )
     await db["invoice_lines"].insert_many(
@@ -89,8 +143,13 @@ async def _seed(db) -> None:
         [
             _payment("cash-oct", "succeeded", "cash", datetime(2026, 10, 3, 16, tzinfo=UTC)),
             _payment("failed-nov", "failed", "stripe_checkout", datetime(2026, 11, 5, tzinfo=UTC)),
-            _payment("cash-elsewhere", "succeeded", "cash", datetime(2026, 11, 9, tzinfo=UTC),
-                     academy_id="other-academy"),
+            _payment(
+                "cash-elsewhere",
+                "succeeded",
+                "cash",
+                datetime(2026, 11, 9, tzinfo=UTC),
+                academy_id="other-academy",
+            ),
         ]
     )
     await db["payment_allocations"].insert_many(
@@ -104,14 +163,21 @@ async def _seed(db) -> None:
 
 def _money(db, ledger, enrollment_reads=None):
     async def children(_parent_id):
-        return [{"student_id": "sam", "full_name": "Sam Demo"},
-                {"student_id": "alex", "full_name": "Alex Demo"}]
+        return [
+            {"student_id": "sam", "full_name": "Sam Demo"},
+            {"student_id": "alex", "full_name": "Alex Demo"},
+        ]
 
     async def enrollments(_parent_id):
         if enrollment_reads is not None:
             enrollment_reads.append(_parent_id)
-        return [{"enrollment_id": "e-sam", "session_title": "Junior Beginners",
-                 "autopay_offer": "available"}]
+        return [
+            {
+                "enrollment_id": "e-sam",
+                "session_title": "Junior Beginners",
+                "autopay_offer": "available",
+            }
+        ]
 
     async def get_invoice(*, parent_id, invoice_id):
         # The real GetParentInvoice rule: tenant-scoped read, then ownership.
@@ -121,9 +187,13 @@ def _money(db, ledger, enrollment_reads=None):
         return {"invoice": invoice, "lines": await ledger.get_lines_for_invoice(invoice_id)}
 
     async def academy_info(*, academy_id):
-        return {"display_name": "Demo Academy", "address": "12 Court Lane",
-                "contact_phone": "(309) 555-0142", "contact_email": "hello@example.com",
-                "logo_url": None}
+        return {
+            "display_name": "Demo Academy",
+            "address": "12 Court Lane",
+            "contact_phone": "(309) 555-0142",
+            "contact_email": "hello@example.com",
+            "logo_url": None,
+        }
 
     async def payer(_parent_id):
         return "Demo Parent"

@@ -50,7 +50,9 @@ async def test_registrations_are_the_callers_own_in_the_callers_tenant() -> None
     db = mongomock_motor.AsyncMongoMockClient()["parent-registrations-route"]
     await db["onboarding_applications"].insert_many(
         [
-            _doc("mine", academy="acad", parent="parent-1", status="PENDING_APPROVAL", child="Lucia"),
+            _doc(
+                "mine", academy="acad", parent="parent-1", status="PENDING_APPROVAL", child="Lucia"
+            ),
             _doc("other-parent", academy="acad", parent="parent-2", status="DRAFT", child="Ben"),
             _doc("other-tenant", academy="acad-2", parent="parent-1", status="DRAFT", child="Eve"),
         ]

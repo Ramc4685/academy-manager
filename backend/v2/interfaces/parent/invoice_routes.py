@@ -70,8 +70,7 @@ async def list_invoices(
     extras = await money.invoice_extras(claims.user_id, invoices) if money else {}
     return ParentInvoicesResponse(
         invoices=[
-            _invoice_view(inv).model_copy(update=extras.get(inv.invoice_id, {}))
-            for inv in invoices
+            _invoice_view(inv).model_copy(update=extras.get(inv.invoice_id, {})) for inv in invoices
         ]
     )
 

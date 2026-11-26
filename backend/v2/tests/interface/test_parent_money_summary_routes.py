@@ -23,26 +23,48 @@ class _Money:
     async def summary(self, parent_id: str) -> dict:
         self.summary_calls.append(parent_id)
         return {
-            "currency": "usd", "amount_due_cents": 6000, "due_date": date(2026, 12, 1),
-            "overdue": False, "days_overdue": 0, "multiple_due_dates": False,
+            "currency": "usd",
+            "amount_due_cents": 6000,
+            "due_date": date(2026, 12, 1),
+            "overdue": False,
+            "days_overdue": 0,
+            "multiple_due_dates": False,
             "can_pay_online": True,
-            "lines": [{"kind": "child", "student_id": "sam", "label": "Sam Demo",
-                       "detail": None, "amount_cents": 6000}],
-            "periods": [], "last_payment": None,
+            "lines": [
+                {
+                    "kind": "child",
+                    "student_id": "sam",
+                    "label": "Sam Demo",
+                    "detail": None,
+                    "amount_cents": 6000,
+                }
+            ],
+            "periods": [],
+            "last_payment": None,
         }
 
     async def receipt(self, parent_id: str, invoice_id: str):
         if parent_id != "parent-1" or invoice_id != "inv-paid":
             return None
         return {
-            "academy": {"name": "Demo Academy", "address": None, "phone": None,
-                        "email": None, "logo_url": None},
-            "invoice_id": "inv-paid", "invoice_number": "DEMO-202610-0001",
-            "period_label": "October 2026", "payer_name": "Demo Parent",
-            "student_name": "Sam Demo", "lines": [{"label": "Tuition", "amount_cents": 6000}],
-            "total_cents": 6000, "currency": "usd",
+            "academy": {
+                "name": "Demo Academy",
+                "address": None,
+                "phone": None,
+                "email": None,
+                "logo_url": None,
+            },
+            "invoice_id": "inv-paid",
+            "invoice_number": "DEMO-202610-0001",
+            "period_label": "October 2026",
+            "payer_name": "Demo Parent",
+            "student_name": "Sam Demo",
+            "lines": [{"label": "Tuition", "amount_cents": 6000}],
+            "total_cents": 6000,
+            "currency": "usd",
             "payments": [{"paid_on": date(2026, 10, 3), "method": "Cash", "amount_cents": 6000}],
-            "balance_cents": 0, "paid_in_full_on": date(2026, 10, 3),
+            "balance_cents": 0,
+            "paid_in_full_on": date(2026, 10, 3),
         }
 
     async def payment_extras(self, parent_id: str, rows) -> dict:
@@ -54,12 +76,21 @@ class _UseCases:
         self.parent_money = money
 
     async def list_payments_for_parent(self, parent_id: str):
-        return [SimpleNamespace(
-            payment_id="pay-1", amount_cents=6000, currency="usd", status="succeeded",
-            refunded_cents=0, created_at=datetime(2026, 10, 3, tzinfo=UTC), session_id=None,
-            stripe_invoice_id=None, stripe_payment_intent_id=None, invoice_id="i1",
-            invoice_period="2026-10",
-        )]
+        return [
+            SimpleNamespace(
+                payment_id="pay-1",
+                amount_cents=6000,
+                currency="usd",
+                status="succeeded",
+                refunded_cents=0,
+                created_at=datetime(2026, 10, 3, tzinfo=UTC),
+                session_id=None,
+                stripe_invoice_id=None,
+                stripe_payment_intent_id=None,
+                invoice_id="i1",
+                invoice_period="2026-10",
+            )
+        ]
 
 
 @contextmanager
@@ -68,7 +99,9 @@ def _client(use_cases, role: str = "parent") -> Iterator[TestClient]:
     register_exception_handlers(app)
     app.include_router(parent_router, prefix="/api/v2")
     app.dependency_overrides[get_auth_claims] = lambda: AuthClaims(
-        user_id="parent-1", email="p@example.com", academy_id="acad",
+        user_id="parent-1",
+        email="p@example.com",
+        academy_id="acad",
         roles=(role,),  # type: ignore[arg-type]
     )
     app.dependency_overrides[get_parent_use_cases] = lambda: use_cases
@@ -108,7 +141,11 @@ def test_receipt_for_a_paid_invoice_of_the_caller() -> None:
     with _client(_UseCases(_Money())) as client:
         res = client.get("/api/v2/parent/invoices/inv-paid/receipt")
     assert res.status_code == 200
-    assert res.json()["payments"][0] == {"paid_on": "2026-10-03", "method": "Cash", "amount_cents": 6000}
+    assert res.json()["payments"][0] == {
+        "paid_on": "2026-10-03",
+        "method": "Cash",
+        "amount_cents": 6000,
+    }
 
 
 def test_receipt_is_404_when_not_the_callers_or_not_paid() -> None:

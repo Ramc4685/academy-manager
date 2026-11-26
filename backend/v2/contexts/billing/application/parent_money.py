@@ -185,7 +185,13 @@ def build_money_summary(
     ]
     lines.sort(key=lambda line: (line["label"] == "Family", line["label"]))
     lines += [
-        {"kind": "discount", "student_id": None, "label": label, "detail": None, "amount_cents": cents}
+        {
+            "kind": "discount",
+            "student_id": None,
+            "label": label,
+            "detail": None,
+            "amount_cents": cents,
+        }
         for label, cents in discounts.items()
         if cents
     ]
@@ -316,6 +322,7 @@ class GetParentMoneySummary:
             timezone_name=timezone_name,
             can_pay_online=can_pay_online,
         )
+
 
 def build_receipt(
     *,
