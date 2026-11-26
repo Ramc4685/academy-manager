@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   BILLING_PORTAL_PREREQUISITE,
+  toCheckoutStartMessage,
   toPaymentErrorMessage,
   toPortalErrorMessage,
 } from "./payment-error.ts";
@@ -110,4 +111,15 @@ test("maps Billing.AutopayClassUnpriced to an explanation, not the generic failu
   assert.notEqual(message, FALLBACK);
   assert.match(message, /monthly fee/);
   assert.match(message, /contact the academy/);
+});
+
+test("checkout start keeps the backend's plain duplicate-registration refusal", () => {
+  const refusal = "Lucia is already registered for this class. We will email you when the academy confirms.";
+  const err = apiError(refusal, { code: "Onboarding.ApplicationNotEditable", status: 409 });
+  assert.equal(toCheckoutStartMessage(err, FALLBACK), refusal);
+});
+
+test("checkout start still masks gateway detail", () => {
+  const err = apiError("Stripe connected account is not ready", { code: "Some.Internal" });
+  assert.equal(toCheckoutStartMessage(err, FALLBACK), FALLBACK);
 });

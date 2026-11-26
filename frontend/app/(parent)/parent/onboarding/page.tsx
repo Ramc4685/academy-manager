@@ -30,7 +30,7 @@ import {
   type RegistrationWaiver,
 } from "@/lib/api/parent";
 import type { ApiError } from "@/lib/api/client";
-import { toPaymentErrorMessage } from "@/lib/api/payment-error";
+import { toCheckoutStartMessage } from "@/lib/api/payment-error";
 import {
   formatAcademyMoment,
   formatSessionOccurrence,
@@ -247,7 +247,7 @@ export default function OnboardingStepperPage() {
         );
       } else {
         // S24: never show gateway detail ("Stripe connected account...") to a parent.
-        setError(toPaymentErrorMessage(err, CHECKOUT_START_FAILED));
+        setError(toCheckoutStartMessage(err, CHECKOUT_START_FAILED));
       }
       setSaving(false);
     }
