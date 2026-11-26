@@ -60831,7 +60831,7 @@
         ]
       },
       "post": {
-        "description": "Open or continue this family's thread with the academy (D-18).\n\nNo email or push goes to staff (decided); they see it in admin Messages.",
+        "description": "Open or continue this family's thread with the academy (D-18).\n\nAdmins get one email per family per hour, without the message text.",
         "operationId": "send_message_to_academy_api_v2_parent_messages_post",
         "requestBody": {
           "content": {

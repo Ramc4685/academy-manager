@@ -7030,7 +7030,7 @@ export interface paths {
          * Send Message To Academy
          * @description Open or continue this family's thread with the academy (D-18).
          *
-         *     No email or push goes to staff (decided); they see it in admin Messages.
+         *     Admins get one email per family per hour, without the message text.
          */
         post: operations["send_message_to_academy_api_v2_parent_messages_post"];
         delete?: never;
