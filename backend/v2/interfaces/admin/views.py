@@ -1713,6 +1713,10 @@ class AdminAuditLogView(BaseModel):
     actor_role: str | None = None
     actor_name: str | None = None
     action: str
+    # S39: plain words for `action`, and which trail the row came from
+    # (audit_logs, billing_audit_log, payout_audit_log, coach_rate_audit_log).
+    action_label: str | None = None
+    source: str | None = None
     entity_type: str | None = None
     entity_id: str | None = None
     created_at: datetime
@@ -1720,6 +1724,8 @@ class AdminAuditLogView(BaseModel):
 
 class AdminAuditLogList(BaseModel):
     logs: list[AdminAuditLogView]
+    # Pass back as `cursor` for the next, older page; None when there is none.
+    next_cursor: str | None = None
 
 
 class SendDuesRemindersResponse(BaseModel):

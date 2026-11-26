@@ -281,7 +281,6 @@ class AdminUseCases:
     mark_coach_attendance: object  # MarkCoachAttendance
     list_admin_enrollments_for_session: object  # callable
     list_waitlist_for_session: object  # callable
-    list_audit_logs: object  # callable
     list_dues_followup: object  # callable
     send_dues_reminders: SendDuesReminders
     export_report_csv: object  # callable

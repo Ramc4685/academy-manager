@@ -1564,6 +1564,10 @@ export interface AdminAuditLogView {
   actor_role: string | null;
   actor_name: string | null;
   action: string;
+  /** S39: plain words for `action`; null on rows from an older backend. */
+  action_label?: string | null;
+  /** Which trail the row came from (audit_logs, billing_audit_log, ...). */
+  source?: string | null;
   entity_type: string | null;
   entity_id: string | null;
   created_at: string;
@@ -1571,6 +1575,8 @@ export interface AdminAuditLogView {
 
 export interface AdminAuditLogList {
   logs: AdminAuditLogView[];
+  /** Pass back as `cursor` for the next, older page; null at the end. */
+  next_cursor?: string | null;
 }
 
 export interface SendDuesRemindersResponse {
@@ -3987,9 +3993,15 @@ export function listAdminCancellations(): Promise<SelfCancellationsAdminResponse
   });
 }
 
-export function listAuditLogs(actorType?: AdminAuditActorType | null): Promise<AdminAuditLogList> {
-  const query = actorType ? `?actor_type=${encodeURIComponent(actorType)}` : "";
-  return apiFetch<AdminAuditLogList>(`/admin/audit-logs${query}`, { method: "GET" });
+export function listAuditLogs(
+  actorType?: AdminAuditActorType | null,
+  cursor?: string | null,
+): Promise<AdminAuditLogList> {
+  const params = new URLSearchParams();
+  if (actorType) params.set("actor_type", actorType);
+  if (cursor) params.set("cursor", cursor);
+  const query = params.toString();
+  return apiFetch<AdminAuditLogList>(`/admin/audit-logs${query ? `?${query}` : ""}`, { method: "GET" });
 }
 
 export function sendDuesReminders(payload: { parent_ids?: string[] } = {}): Promise<SendDuesRemindersResponse> {

@@ -30,6 +30,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from backend.v2.composition.admin import AcademyPortalUrlAdapter, compose_admin
 from backend.v2.composition.admin_platform_fee import compose_admin_platform_fee
+from backend.v2.composition.audit_log import compose_admin_audit_log
 from backend.v2.composition.billing_health import compose_admin_billing_health
 from backend.v2.composition.billing_rules import compose_admin_billing_rules
 from backend.v2.composition.coach import compose_coach
@@ -1162,6 +1163,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.unsubscribe_prospect = compose_unsubscribe_prospect(db)
     # Billing Health plumbing, owner-only (spec 2026-09-07 §5.1).
     app.state.admin_billing_health = compose_admin_billing_health(db, stripe_gw)
+    # Owner's merged Audit log over every audit trail (S39).
+    app.state.admin_audit_log = compose_admin_audit_log(db)
     app.state.admin_month_close = compose_admin_month_close(db)
     # Academy admin's read-only view of the processing markup (Phase 2 A1).
     app.state.admin_platform_fee = compose_admin_platform_fee(db)

@@ -2482,9 +2482,6 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
             calculated_by="admin",
         )
 
-    async def list_audit_logs(actor_type=None):
-        return []
-
     async def list_dues_followup():
         return []
 
@@ -2891,7 +2888,6 @@ def _build_admin_use_cases(seed) -> AdminUseCases:
         list_occurrence_attendance=_named_attendance,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
-        list_audit_logs=list_audit_logs,
         list_dues_followup=list_dues_followup,
         list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,

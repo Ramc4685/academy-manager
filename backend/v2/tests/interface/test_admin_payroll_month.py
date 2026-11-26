@@ -113,7 +113,6 @@ def _minimal_admin_use_cases(
         mark_coach_attendance=mock,  # type: ignore[arg-type]
         list_admin_enrollments_for_session=mock,
         list_waitlist_for_session=mock,
-        list_audit_logs=mock,
         list_dues_followup=mock,
         list_billing_deferral_warnings=mock,
         send_dues_reminders=mock,  # type: ignore[arg-type]

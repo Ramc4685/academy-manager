@@ -485,7 +485,6 @@ def test_infrastructure_and_transitional_composition_are_no_longer_blanket_exemp
 
 def test_hardened_admin_composition_paths_use_request_tenant_not_default() -> None:
     guarded_functions = [
-        "list_audit_logs",
         "list_dues_followup",
         "get_billing_invoice_detail",
         "generate_billing_invoice_artifact",

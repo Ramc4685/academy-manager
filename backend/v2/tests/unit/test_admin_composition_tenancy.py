@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from backend.v2.composition.admin import compose_admin
+from backend.v2.composition.audit_log import compose_admin_audit_log
 from backend.v2.composition.billing_health import compose_admin_billing_health
 from backend.v2.shared.config.settings import get_settings
 from backend.v2.shared.tenancy.context import tenant_scope
@@ -107,9 +108,9 @@ async def test_admin_audit_logs_use_request_tenant_not_default(mongo_db) -> None
         ]
     )
 
-    admin = _admin_use_cases(mongo_db)
+    audit_log = compose_admin_audit_log(mongo_db)
     with tenant_scope("request-acad"):
-        rows = await admin.list_audit_logs()
+        rows = (await audit_log.list_page())["logs"]
 
     assert [row["audit_id"] for row in rows] == ["audit-request"]
 

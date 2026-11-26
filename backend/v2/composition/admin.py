@@ -529,7 +529,6 @@ from backend.v2.contexts.identity.application.use_cases.stripe_connect import (
     DisconnectStripeUseCase,
     StartStripeConnectUseCase,
 )
-from backend.v2.contexts.identity.domain.audit_actors import audit_actor_fields
 from backend.v2.contexts.identity.domain.errors import (
     StudentAlreadyLinked,
     StudentNotFound,
@@ -546,7 +545,6 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_media_repo import
     MongoAcademyMediaRepository,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
-from backend.v2.contexts.identity.infrastructure.mongo_audit_actors import MongoAuditActorDirectory
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
@@ -3732,38 +3730,6 @@ def compose_admin(
             )
         )
 
-    async def list_audit_logs(actor_type: str | None = None):
-        from backend.v2.shared.tenancy import current_academy_id
-
-        request_academy_id = current_academy_id()
-        cursor = (
-            db["audit_logs"]
-            .find({"academy_id": request_academy_id})
-            .sort([("created_at", -1)])
-            .limit(200)
-        )
-        rows: list[dict[str, Any]] = []
-        async for doc in cursor:
-            rows.append(
-                {
-                    "audit_id": str(doc.get("audit_id") or doc.get("_id")),
-                    "actor_id": doc.get("actor_id") or doc.get("user_id"),
-                    "action": str(doc.get("action") or doc.get("event") or "unknown"),
-                    "entity_type": doc.get("entity_type") or doc.get("resource_type"),
-                    "entity_id": doc.get("entity_id") or doc.get("resource_id"),
-                    "created_at": doc.get("created_at") or datetime.now(UTC),
-                }
-            )
-
-        actors = await MongoAuditActorDirectory(db).resolve(
-            {str(row["actor_id"]) for row in rows if row["actor_id"]},
-            academy_id=request_academy_id,
-        )
-        wanted = (actor_type or "").strip().lower()
-        for row in rows:
-            row.update(audit_actor_fields(row["actor_id"], actors))
-        return [row for row in rows if not wanted or row["actor_type"] == wanted]
-
     async def _parent_payments_link(request_academy_id: str) -> tuple[str | None, str]:
         """Resolve one academy's parent-payments URL and display name.
 
@@ -4327,7 +4293,6 @@ def compose_admin(
         list_attendance_review=attendance_corrections.review,
         list_admin_enrollments_for_session=list_admin_enrollments_for_session,
         list_waitlist_for_session=list_waitlist_for_session,
-        list_audit_logs=list_audit_logs,
         list_dues_followup=list_dues_followup,
         list_billing_deferral_warnings=billing_deferrals.list_admin_warnings,
         send_dues_reminders=send_dues_reminders,

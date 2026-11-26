@@ -8578,11 +8578,15 @@ export interface components {
         AdminAuditLogList: {
             /** Logs */
             logs: components["schemas"]["AdminAuditLogView"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /** AdminAuditLogView */
         AdminAuditLogView: {
             /** Action */
             action: string;
+            /** Action Label */
+            action_label?: string | null;
             /** Actor Id */
             actor_id?: string | null;
             /** Actor Name */
@@ -8602,6 +8606,8 @@ export interface components {
             entity_id?: string | null;
             /** Entity Type */
             entity_type?: string | null;
+            /** Source */
+            source?: string | null;
         };
         /** AdminCoachAttendanceView */
         AdminCoachAttendanceView: {
@@ -22674,6 +22680,9 @@ export interface operations {
             query?: {
                 /** @description Narrow the trail to one kind of actor: admin, owner, coach, parent, system. */
                 actor_type?: string | null;
+                limit?: number;
+                /** @description `next_cursor` from the previous page, for older rows. */
+                cursor?: string | null;
             };
             header?: never;
             path?: never;
