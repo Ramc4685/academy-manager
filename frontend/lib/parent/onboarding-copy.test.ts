@@ -20,9 +20,9 @@ describe("sign-up wizard copy (S22)", () => {
     expect(dateOfBirthError("", today)).toBeNull();
   });
 
-  it("says per month on a class price, and Free for a free class", () => {
+  it("says per month on a class price, and never promises Free for a blank price", () => {
     expect(monthlyPriceLabel(8000)).toBe("$80.00 per month");
-    expect(monthlyPriceLabel(0)).toBe("Free");
+    expect(monthlyPriceLabel(0)).toBe("$0.00 per month");
   });
 
   it("explains every skill level in one line", () => {

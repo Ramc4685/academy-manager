@@ -1,5 +1,7 @@
 /** S22: plain words for the sign-up wizard. Presentation only, no pricing maths. */
 
+import { formatCents } from "@/lib/money";
+
 export type SkillLevel = "beginner" | "intermediate" | "advanced";
 
 export const SKILL_LEVEL_HINTS: Record<SkillLevel, string> = {
@@ -29,13 +31,12 @@ export function classLevelNote(title: string, childLevel: string): string | null
   return `This class is listed as ${LEVEL_NAMES[classLevel]}; you chose ${LEVEL_NAMES[childLevel as SkillLevel]}. You can still pick it.`;
 }
 
-export function formatUsd(cents: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
-}
-
-/** "$80.00 per month", or "Free" for a free class. */
+/**
+ * "$80.00 per month". Never "Free": an unpriced class also reaches here as 0,
+ * and only S42 knows whether a class is explicitly free.
+ */
 export function monthlyPriceLabel(cents: number): string {
-  return cents > 0 ? `${formatUsd(cents)} per month` : "Free";
+  return `${formatCents(cents)} per month`;
 }
 
 /** The local calendar date as YYYY-MM-DD, for a date input's `max`. */

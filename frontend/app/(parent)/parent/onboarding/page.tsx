@@ -53,11 +53,12 @@ import {
 import {
   classLevelNote,
   dateOfBirthError,
-  formatUsd,
   localIsoDate,
   monthlyPriceLabel,
   SKILL_LEVEL_HINTS,
 } from "@/lib/parent/onboarding-copy";
+import { listPhrase } from "@/lib/parent/profile-gaps";
+import { formatCents } from "@/lib/money";
 
 /**
  * Parent onboarding stepper.
@@ -357,12 +358,6 @@ export default function OnboardingStepperPage() {
       </div>
     </section>
   );
-}
-
-/** "a", "a and b", "a, b and c" */
-function listPhrase(items: string[]): string {
-  if (items.length <= 1) return items[0] ?? "";
-  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
 /**
@@ -1020,7 +1015,7 @@ function ReviewStep({
         <li>
           First month:{" "}
           {quote
-            ? `${formatUsd(quote.amount_due_cents)} · ${quote.message}`
+            ? `${formatCents(quote.amount_due_cents)} · ${quote.message}`
             : quoteLoading
               ? "Calculating..."
               : selectedSession
