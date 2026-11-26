@@ -122,6 +122,7 @@ This section is updated per wave as routes ship.
 | Action | Coach has access | Wrong persona returns 404 | Test file |
 |---|:---:|:---:|---|
 | Read a class date's health notes (`GET /coach/roster-health`) | ✅ assigned only | ✅ unassigned coach, assistant on another class, parent, student, other academy | `backend/v2/tests/interface/test_coach_roster_health.py` |
+| Admin Today and its health marker (`GET /admin/today`, `GET /admin/today/roster-health`) | Admin only (own academy) | ✅ coach, parent, front desk, other academy | `backend/v2/tests/interface/test_admin_today.py` |
 
 Health notes are served only by their own routes, sent `Cache-Control: no-store`, excluded from the service worker cache (`frontend/app/sw.test.ts`) and the query persister (`frontend/lib/query/persistence.test.ts`), and never ride on the cached coach Today, sessions or plan payloads (schema test in the same file). They never go into lists, exports, digests, push, emails or AI input.
 

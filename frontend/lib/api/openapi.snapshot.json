@@ -1316,6 +1316,63 @@
         "title": "AdminAuditLogView",
         "type": "object"
       },
+      "AdminChildHealthView": {
+        "additionalProperties": false,
+        "properties": {
+          "emergency_contact_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emergency Contact Name"
+          },
+          "emergency_contact_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emergency Contact Phone"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "status": {
+            "enum": [
+              "declared",
+              "none_declared",
+              "not_answered"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "status"
+        ],
+        "title": "AdminChildHealthView",
+        "type": "object"
+      },
       "AdminCoachAttendanceView": {
         "properties": {
           "attendance_id": {
@@ -6703,6 +6760,33 @@
         "title": "AdminRevenueResponse",
         "type": "object"
       },
+      "AdminRosterHealthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/AdminChildHealthView"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "declared_count": {
+            "title": "Declared Count",
+            "type": "integer"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "declared_count",
+          "children"
+        ],
+        "title": "AdminRosterHealthResponse",
+        "type": "object"
+      },
       "AdminSessionEconomicsResponse": {
         "properties": {
           "empty_states": {
@@ -8921,6 +9005,47 @@
           "student_id"
         ],
         "title": "AdminStudentWaiverStatusView",
+        "type": "object"
+      },
+      "AdminToday": {
+        "properties": {
+          "classes": {
+            "items": {
+              "$ref": "#/components/schemas/TodayClass"
+            },
+            "title": "Classes",
+            "type": "array"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "health_enabled": {
+            "default": true,
+            "title": "Health Enabled",
+            "type": "boolean"
+          },
+          "messages_waiting": {
+            "default": 0,
+            "title": "Messages Waiting",
+            "type": "integer"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "tomorrow": {
+            "$ref": "#/components/schemas/TodayTomorrow"
+          }
+        },
+        "required": [
+          "date",
+          "timezone",
+          "classes",
+          "tomorrow"
+        ],
+        "title": "AdminToday",
         "type": "object"
       },
       "AdminTuitionDiscountCategorySummary": {
@@ -37466,6 +37591,258 @@
         "title": "TenantSubscriptionResponse",
         "type": "object"
       },
+      "TodayClass": {
+        "properties": {
+          "absent_count": {
+            "title": "Absent Count",
+            "type": "integer"
+          },
+          "cancellation_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Reason"
+          },
+          "coach_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coach Id"
+          },
+          "coach_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coach Name"
+          },
+          "cover_coach_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Coach Name"
+          },
+          "cover_requested": {
+            "default": false,
+            "title": "Cover Requested",
+            "type": "boolean"
+          },
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
+            "type": "string"
+          },
+          "enrolled_count": {
+            "title": "Enrolled Count",
+            "type": "integer"
+          },
+          "here_count": {
+            "title": "Here Count",
+            "type": "integer"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "marked_count": {
+            "title": "Marked Count",
+            "type": "integer"
+          },
+          "occurrence_id": {
+            "title": "Occurrence Id",
+            "type": "string"
+          },
+          "phase": {
+            "enum": [
+              "now",
+              "next",
+              "later",
+              "finished",
+              "cancelled"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "roster": {
+            "items": {
+              "$ref": "#/components/schemas/TodayRosterRow"
+            },
+            "title": "Roster",
+            "type": "array"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          },
+          "starts_in_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starts In Minutes"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "session_id",
+          "title",
+          "location",
+          "start_at",
+          "end_at",
+          "status",
+          "phase",
+          "enrolled_count",
+          "here_count",
+          "absent_count",
+          "marked_count",
+          "roster"
+        ],
+        "title": "TodayClass",
+        "type": "object"
+      },
+      "TodayRosterRow": {
+        "properties": {
+          "attendance": {
+            "anyOf": [
+              {
+                "enum": [
+                  "present",
+                  "late",
+                  "absent"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attendance"
+          },
+          "expected_absent": {
+            "default": false,
+            "title": "Expected Absent",
+            "type": "boolean"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "enrolled",
+              "makeup",
+              "trial"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "parent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Name"
+          },
+          "parent_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Phone"
+          },
+          "student_id": {
+            "title": "Student Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "student_id",
+          "full_name",
+          "kind"
+        ],
+        "title": "TodayRosterRow",
+        "type": "object"
+      },
+      "TodayTomorrow": {
+        "properties": {
+          "class_count": {
+            "title": "Class Count",
+            "type": "integer"
+          },
+          "first_start_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Start At"
+          }
+        },
+        "required": [
+          "class_count"
+        ],
+        "title": "TodayTomorrow",
+        "type": "object"
+      },
       "TransferEnrollmentRequest": {
         "properties": {
           "effective_date": {
@@ -54241,6 +54618,100 @@
         "summary": "Stop All Classes",
         "tags": [
           "admin.departures"
+        ]
+      }
+    },
+    "/api/v2/admin/today": {
+      "get": {
+        "operationId": "get_today_api_v2_admin_today_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminToday"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Today's classes with rosters",
+        "tags": [
+          "admin.today"
+        ]
+      }
+    },
+    "/api/v2/admin/today/roster-health": {
+      "get": {
+        "operationId": "get_today_roster_health_api_v2_admin_today_roster_health_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "occurrence_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Occurrence Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminRosterHealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Health notes for one class date (never cached)",
+        "tags": [
+          "admin.today"
         ]
       }
     },

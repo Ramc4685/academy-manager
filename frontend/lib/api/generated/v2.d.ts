@@ -4948,6 +4948,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/admin/today": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Today's classes with rosters */
+        get: operations["get_today_api_v2_admin_today_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/admin/today/roster-health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Health notes for one class date (never cached) */
+        get: operations["get_today_roster_health_api_v2_admin_today_roster_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/admin/users": {
         parameters: {
             query?: never;
@@ -8816,6 +8850,22 @@ export interface components {
             /** Source */
             source?: string | null;
         };
+        /** AdminChildHealthView */
+        AdminChildHealthView: {
+            /** Emergency Contact Name */
+            emergency_contact_name?: string | null;
+            /** Emergency Contact Phone */
+            emergency_contact_phone?: string | null;
+            /** Note */
+            note?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "declared" | "none_declared" | "not_answered";
+            /** Student Id */
+            student_id: string;
+        };
         /** AdminCoachAttendanceView */
         AdminCoachAttendanceView: {
             /** Attendance Id */
@@ -10892,6 +10942,15 @@ export interface components {
                 [key: string]: number;
             };
         };
+        /** AdminRosterHealthResponse */
+        AdminRosterHealthResponse: {
+            /** Children */
+            children: components["schemas"]["AdminChildHealthView"][];
+            /** Declared Count */
+            declared_count: number;
+            /** Occurrence Id */
+            occurrence_id: string;
+        };
         /** AdminSessionEconomicsResponse */
         AdminSessionEconomicsResponse: {
             /**
@@ -11618,6 +11677,29 @@ export interface components {
              * @default []
              */
             waivers: components["schemas"]["AdminStudentWaiverRowView"][];
+        };
+        /** AdminToday */
+        AdminToday: {
+            /** Classes */
+            classes: components["schemas"]["TodayClass"][];
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Health Enabled
+             * @default true
+             */
+            health_enabled: boolean;
+            /**
+             * Messages Waiting
+             * @default 0
+             */
+            messages_waiting: number;
+            /** Timezone */
+            timezone: string;
+            tomorrow: components["schemas"]["TodayTomorrow"];
         };
         /** AdminTuitionDiscountCategorySummary */
         AdminTuitionDiscountCategorySummary: {
@@ -21861,6 +21943,91 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** TodayClass */
+        TodayClass: {
+            /** Absent Count */
+            absent_count: number;
+            /** Cancellation Reason */
+            cancellation_reason?: string | null;
+            /** Coach Id */
+            coach_id?: string | null;
+            /** Coach Name */
+            coach_name?: string | null;
+            /** Cover Coach Name */
+            cover_coach_name?: string | null;
+            /**
+             * Cover Requested
+             * @default false
+             */
+            cover_requested: boolean;
+            /**
+             * End At
+             * Format: date-time
+             */
+            end_at: string;
+            /** Enrolled Count */
+            enrolled_count: number;
+            /** Here Count */
+            here_count: number;
+            /** Location */
+            location: string;
+            /** Marked Count */
+            marked_count: number;
+            /** Occurrence Id */
+            occurrence_id: string;
+            /**
+             * Phase
+             * @enum {string}
+             */
+            phase: "now" | "next" | "later" | "finished" | "cancelled";
+            /** Roster */
+            roster: components["schemas"]["TodayRosterRow"][];
+            /** Session Id */
+            session_id: string;
+            /**
+             * Start At
+             * Format: date-time
+             */
+            start_at: string;
+            /** Starts In Minutes */
+            starts_in_minutes?: number | null;
+            /** Status */
+            status: string;
+            /** Title */
+            title: string;
+        };
+        /** TodayRosterRow */
+        TodayRosterRow: {
+            /** Attendance */
+            attendance?: ("present" | "late" | "absent") | null;
+            /**
+             * Expected Absent
+             * @default false
+             */
+            expected_absent: boolean;
+            /** Full Name */
+            full_name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "enrolled" | "makeup" | "trial";
+            /** Parent Id */
+            parent_id?: string | null;
+            /** Parent Name */
+            parent_name?: string | null;
+            /** Parent Phone */
+            parent_phone?: string | null;
+            /** Student Id */
+            student_id: string;
+        };
+        /** TodayTomorrow */
+        TodayTomorrow: {
+            /** Class Count */
+            class_count: number;
+            /** First Start At */
+            first_start_at?: string | null;
         };
         /** TransferEnrollmentRequest */
         TransferEnrollmentRequest: {
@@ -32175,6 +32342,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StopAllClassesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_today_api_v2_admin_today_get: {
+        parameters: {
+            query?: {
+                date?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminToday"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_today_roster_health_api_v2_admin_today_roster_health_get: {
+        parameters: {
+            query: {
+                occurrence_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminRosterHealthResponse"];
                 };
             };
             /** @description Validation Error */

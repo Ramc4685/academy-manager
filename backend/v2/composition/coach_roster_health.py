@@ -119,14 +119,14 @@ class RosterHealthReader:
     ) -> None:
         self._db = db
         self._occurrences = occurrences
-        self._roster = roster
+        self.roster = roster
 
     async def occurrence(self, occurrence_id: str) -> SessionOccurrence | None:
         return await self._occurrences.get(occurrence_id)
 
     async def for_occurrence(self, occurrence: SessionOccurrence) -> list[ChildHealth]:
         """Every child on that date's roster, in roster order."""
-        roster = await self._roster.execute(
+        roster = await self.roster.execute(
             session_id=occurrence.template_session_id or occurrence.session_id,
             occurrence_id=occurrence.occurrence_id,
         )
@@ -159,12 +159,12 @@ class RosterHealthReader:
             },
         )
         docs = [doc async for doc in cursor]
-        parents = await self._parents([_parent_ref(d) for d in docs])
+        parents = await user_contacts(self._db, [parent_ref(d) for d in docs])
         out: dict[str, ChildHealth] = {}
         for doc in docs:
             student_id = str(doc.get("student_id") or doc.get("_id"))
             status, note = health_status(doc.get("medical_notes"))
-            parent = parents.get(_parent_ref(doc), {})
+            parent = parents.get(parent_ref(doc), {})
             name = _text(doc.get("full_name")) or _text(
                 f"{doc.get('first_name') or ''} {doc.get('last_name') or ''}"
             )
@@ -180,28 +180,31 @@ class RosterHealthReader:
             )
         return out
 
-    async def _parents(self, parent_ids: Sequence[str]) -> dict[str, dict[str, str | None]]:
-        ids = [pid for pid in dict.fromkeys(parent_ids) if pid]
-        if not ids:
-            return {}
-        object_ids = [ObjectId(pid) for pid in ids if ObjectId.is_valid(pid)]
-        cursor = self._db["users"].find(
-            {"$or": [{"user_id": {"$in": ids}}, {"_id": {"$in": object_ids}}]},
-            {"user_id": 1, "display_name": 1, "first_name": 1, "last_name": 1, "phone": 1},
+
+async def user_contacts(db: Any, user_ids: Sequence[str]) -> dict[str, dict[str, str | None]]:
+    """``{user id: {"name", "phone"}}`` for ids taken from tenant-scoped
+    rows (users are global; the ids are what keep this in the tenant)."""
+    ids = [uid for uid in dict.fromkeys(user_ids) if uid]
+    if not ids:
+        return {}
+    object_ids = [ObjectId(uid) for uid in ids if ObjectId.is_valid(uid)]
+    cursor = db["users"].find(
+        {"$or": [{"user_id": {"$in": ids}}, {"_id": {"$in": object_ids}}]},
+        {"user_id": 1, "display_name": 1, "first_name": 1, "last_name": 1, "phone": 1},
+    )
+    out: dict[str, dict[str, str | None]] = {}
+    async for user in cursor:
+        name = _text(user.get("display_name")) or _text(
+            f"{user.get('first_name') or ''} {user.get('last_name') or ''}"
         )
-        out: dict[str, dict[str, str | None]] = {}
-        async for user in cursor:
-            name = _text(user.get("display_name")) or _text(
-                f"{user.get('first_name') or ''} {user.get('last_name') or ''}"
-            )
-            facts = {"name": name, "phone": _text(user.get("phone"))}
-            for key in (user.get("user_id"), user.get("_id")):
-                if key:
-                    out[str(key)] = facts
-        return out
+        facts = {"name": name, "phone": _text(user.get("phone"))}
+        for key in (user.get("user_id"), user.get("_id")):
+            if key:
+                out[str(key)] = facts
+    return out
 
 
-def _parent_ref(doc: dict[str, Any]) -> str:
+def parent_ref(doc: dict[str, Any]) -> str:
     return str(doc.get("parent_id") or doc.get("parent_user_id") or "")
 
 

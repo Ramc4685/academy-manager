@@ -63,6 +63,7 @@ from .session_type_routes import router as session_type_router
 from .sessions_routes import router as sessions_router
 from .setup_checklist_routes import router as setup_checklist_router
 from .teaching_plan_routes import router as teaching_plan_router
+from .today_routes import router as today_router
 from .trial_outcome_routes import router as trial_outcome_router
 from .waitlist_routes import router as waitlist_router
 from .waiver_routes import router as waiver_router
@@ -90,6 +91,7 @@ router.include_router(collections_router)
 router.include_router(family_index_router)
 router.include_router(families_router)
 router.include_router(family_record_router)
+router.include_router(today_router)
 router.include_router(family_crm_router)
 router.include_router(billing_health_router)
 router.include_router(billing_router)
