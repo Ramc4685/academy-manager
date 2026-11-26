@@ -25886,6 +25886,11 @@
           "attendance_this_month": {
             "$ref": "#/components/schemas/ParentHomeAttendanceView"
           },
+          "first_class_pending": {
+            "default": false,
+            "title": "First Class Pending",
+            "type": "boolean"
+          },
           "full_name": {
             "title": "Full Name",
             "type": "string"
@@ -25953,12 +25958,23 @@
         "type": "object"
       },
       "ParentHomeNextSessionView": {
-        "description": "The child's next upcoming occurrence.\n\n``coach_name`` is always ``None`` today \u2014 ``GetChildSchedule.execute``\nhardcodes it. The field is kept for shape parity with\n``ParentScheduleEntryView`` so the card can render a coach line the day\nthe use case starts populating it.",
+        "description": "The child's next upcoming occurrence.\n\nS45: ``coach_name`` is who coaches that date (substitute, else actual,\nelse scheduled coach), and the family-info fields come from the class as\nstored (address falls back to the academy's).",
         "properties": {
           "absence_reported": {
             "default": false,
             "title": "Absence Reported",
             "type": "boolean"
+          },
+          "arrival_minutes_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arrival Minutes Before"
           },
           "coach_name": {
             "anyOf": [
@@ -25991,6 +26007,17 @@
             "title": "Occurrence Id",
             "type": "string"
           },
+          "parking_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parking Notes"
+          },
           "session_id": {
             "title": "Session Id",
             "type": "string"
@@ -26013,6 +26040,28 @@
             "format": "date-time",
             "title": "Start At",
             "type": "string"
+          },
+          "venue_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Venue Address"
+          },
+          "what_to_bring": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "What To Bring"
           }
         },
         "required": [

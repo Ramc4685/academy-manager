@@ -17483,6 +17483,11 @@ export interface components {
         /** ParentHomeChildView */
         ParentHomeChildView: {
             attendance_this_month: components["schemas"]["ParentHomeAttendanceView"];
+            /**
+             * First Class Pending
+             * @default false
+             */
+            first_class_pending: boolean;
             /** Full Name */
             full_name: string;
             latest_milestone?: components["schemas"]["ParentHomeMilestoneView"] | null;
@@ -17509,10 +17514,9 @@ export interface components {
          * ParentHomeNextSessionView
          * @description The child's next upcoming occurrence.
          *
-         *     ``coach_name`` is always ``None`` today — ``GetChildSchedule.execute``
-         *     hardcodes it. The field is kept for shape parity with
-         *     ``ParentScheduleEntryView`` so the card can render a coach line the day
-         *     the use case starts populating it.
+         *     S45: ``coach_name`` is who coaches that date (substitute, else actual,
+         *     else scheduled coach), and the family-info fields come from the class as
+         *     stored (address falls back to the academy's).
          */
         ParentHomeNextSessionView: {
             /**
@@ -17520,6 +17524,8 @@ export interface components {
              * @default false
              */
             absence_reported: boolean;
+            /** Arrival Minutes Before */
+            arrival_minutes_before?: number | null;
             /** Coach Name */
             coach_name?: string | null;
             /**
@@ -17531,6 +17537,8 @@ export interface components {
             location?: string | null;
             /** Occurrence Id */
             occurrence_id: string;
+            /** Parking Notes */
+            parking_notes?: string | null;
             /** Session Id */
             session_id: string;
             /** Session Title */
@@ -17546,6 +17554,10 @@ export interface components {
              * Format: date-time
              */
             start_at: string;
+            /** Venue Address */
+            venue_address?: string | null;
+            /** What To Bring */
+            what_to_bring?: string | null;
         };
         /** ParentHomeResponse */
         ParentHomeResponse: {
