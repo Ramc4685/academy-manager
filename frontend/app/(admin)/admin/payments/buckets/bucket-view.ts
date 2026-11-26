@@ -44,7 +44,7 @@ export const BUCKET_META: Record<
   },
   awaiting: {
     title: "Awaiting payment",
-    hint: "Invoices sent and not yet due. The family pays by card, Zelle or cash.",
+    hint: "Invoices issued and not yet due. The family pays by card, Zelle or cash.",
     stripe: "bg-teal-500",
     emptyLine: "No families awaiting payment",
   },
@@ -68,8 +68,15 @@ export const BUCKET_META: Record<
   },
 };
 
-export const ACTION_LABEL: Record<CollectionsAction, string> = {
+/**
+ * A row action. `send_invoice` is client-side: the backend offers
+ * `send_reminder`, and `rowActions` swaps it when the invoice never went out.
+ */
+export type RowAction = CollectionsAction | "send_invoice";
+
+export const ACTION_LABEL: Record<RowAction, string> = {
   send_reminder: "Send reminder",
+  send_invoice: "Send invoice",
   record_payment: "Record payment",
   message: "Message",
   skip_month: "Skip this month",
@@ -183,6 +190,24 @@ export function actionInvoice(
   return named ?? owingInvoices(family)[0] ?? family.invoices[0] ?? null;
 }
 
+/** True once the invoice email went out ("sent" or a provider "delivered"). */
+export function invoiceDelivered(
+  invoice: Pick<AdminCollectionsFamily["invoices"][number], "delivery_status"> | null,
+): boolean {
+  return invoice?.delivery_status === "sent" || invoice?.delivery_status === "delivered";
+}
+
+/**
+ * The backend's row actions, except a reminder about an invoice the family
+ * never received becomes "Send invoice" (it sends the invoice email itself).
+ */
+export function rowActions(family: AdminCollectionsFamily): RowAction[] {
+  const undelivered = !invoiceDelivered(actionInvoice(family));
+  return family.actions.map((action) =>
+    action === "send_reminder" && undelivered ? "send_invoice" : action,
+  );
+}
+
 function primaryInvoice(family: AdminCollectionsFamily) {
   return actionInvoice(family);
 }
@@ -279,8 +304,7 @@ export function secondaryLine(
     case "awaiting": {
       const inv = primaryInvoice(family);
       if (!inv) return "";
-      const delivered = inv.delivery_status === "sent" || inv.delivery_status === "delivered";
-      return `due ${formatDateOnly(inv.due_date)} · ${delivered ? "invoice emailed" : "invoice not sent"}`;
+      return `due ${formatDateOnly(inv.due_date)} · ${invoiceDelivered(inv) ? "invoice emailed" : "invoice not sent"}`;
     }
     case "autopay_scheduled": {
       const autopay = family.autopay;

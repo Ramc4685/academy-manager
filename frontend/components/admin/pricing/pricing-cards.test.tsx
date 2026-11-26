@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { PricingClass, PricingPlan, PricingSavedOverride } from "@/lib/api/v2/pricing";
 
 import { ClassPricesCard } from "./class-prices-card";
+import { usedByLabel } from "./plans-card";
 import { SavedOverridesCard } from "./saved-overrides-card";
 
 // Settings overhaul PR 11b: the Pricing page shows what each class is charged
@@ -42,7 +43,7 @@ function render(node: React.ReactNode): string {
 describe("ClassPricesCard", () => {
   const plans = [plan("group", 12_000), plan("private", 24_000)];
 
-  it("offers only the plans at the class fee, plus Custom", () => {
+  it("offers only the plans at the class fee, plus Own price", () => {
     const html = render(
       <ClassPricesCard
         classes={[cls({ plan_id: "group", matching_plan_ids: ["group"] })]}
@@ -50,7 +51,7 @@ describe("ClassPricesCard", () => {
         autoLinkable={0}
       />,
     );
-    expect(html).toContain(">Custom<");
+    expect(html).toContain(">Own price<");
     expect(html).toContain(">Group class<");
     expect(html).not.toContain("Private lesson");
     expect(html).toContain("$120.00");
@@ -72,7 +73,7 @@ describe("ClassPricesCard", () => {
     const html = render(
       <ClassPricesCard classes={[cls({ stale_link: true })]} plans={plans} autoLinkable={0} />,
     );
-    expect(html).toContain("Its plan&#x27;s price changed, so it shows as Custom.");
+    expect(html).toContain("Its plan&#x27;s price changed, so it now uses its own price.");
   });
 
   it("says an archived plan was archived, not that its price changed", () => {
@@ -83,7 +84,7 @@ describe("ClassPricesCard", () => {
         autoLinkable={0}
       />,
     );
-    expect(html).toContain("Its plan was archived, so it shows as Custom.");
+    expect(html).toContain("Its plan was archived, so it now uses its own price.");
     expect(html).not.toContain("price changed");
   });
 
@@ -126,5 +127,13 @@ describe("SavedOverridesCard", () => {
     expect(html).toContain("$80.00");
     expect(html).toContain("$120.00");
     expect(html).toContain("Billing plan override");
+  });
+});
+
+describe("Plans used-by label", () => {
+  it("reads as a price list classes use, never Custom", () => {
+    expect(usedByLabel(0)).toBe("Used by 0 classes");
+    expect(usedByLabel(1)).toBe("Used by 1 class");
+    expect(usedByLabel(3)).toBe("Used by 3 classes");
   });
 });

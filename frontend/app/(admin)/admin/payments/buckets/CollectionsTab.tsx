@@ -19,11 +19,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getAdminCollections,
   resumeEnrollment,
+  sendAdminInvoice,
   sendDuesReminders,
   voidAdminInvoice,
   type AdminCollectionsBucket,
   type AdminCollectionsFamily,
-  type CollectionsAction,
   type CollectionsBucketKey,
 } from "@/lib/api/admin";
 import { formatCents } from "@/lib/money";
@@ -48,14 +48,17 @@ import {
   familyChip,
   familyMatches,
   familyName,
+  invoiceDelivered,
   normalizeCollections,
   actionInvoice,
   owingInvoices,
   periodOptionsFrom,
+  rowActions,
   secondaryLine,
   studentLine,
   todayInZone,
   todayISO,
+  type RowAction,
 } from "./bucket-view";
 import { RecordPaymentDialog, type RecordPaymentInvoiceOption } from "./RecordPaymentDialog";
 
@@ -80,6 +83,15 @@ type SkipTarget = {
   familyLabel: string;
   balanceCents: number;
   period: string;
+} | null;
+
+/** An unsent invoice held for a second look before the family is emailed. */
+type SendTarget = {
+  parentId: string;
+  invoiceId: string;
+  invoiceLabel: string;
+  familyLabel: string;
+  balanceCents: number;
 } | null;
 
 function invoiceOption(
@@ -107,6 +119,7 @@ export function CollectionsTab() {
   const [dialog, setDialog] = useState<DialogState>(null);
   const [dialogNonce, setDialogNonce] = useState(0);
   const [skipTarget, setSkipTarget] = useState<SkipTarget>(null);
+  const [sendTarget, setSendTarget] = useState<SendTarget>(null);
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: queryKeys.admin.collections(period || "current"),
@@ -139,6 +152,22 @@ export function CollectionsTab() {
     },
     onError: (error: Error, parentId) =>
       setStatus(parentId, { tone: "error", text: error.message || "Reminder failed." }),
+  });
+
+  const sendInvoiceMutation = useMutation({
+    mutationFn: ({ invoiceId }: { parentId: string; invoiceId: string }) =>
+      sendAdminInvoice(invoiceId),
+    onSuccess: (result, { parentId }) => {
+      setStatus(
+        parentId,
+        invoiceDelivered(result)
+          ? { tone: "ok", text: "Invoice sent" }
+          : { tone: "warn", text: "Invoice not sent. Check the family's email." },
+      );
+      invalidate();
+    },
+    onError: (error: Error, { parentId }) =>
+      setStatus(parentId, { tone: "error", text: error.message || "Could not send the invoice." }),
   });
 
   const skipMutation = useMutation({
@@ -192,13 +221,25 @@ export function CollectionsTab() {
   };
 
   const handleAction = (
-    action: CollectionsAction,
+    action: RowAction,
     family: AdminCollectionsFamily,
   ) => {
     switch (action) {
       case "send_reminder":
         reminderMutation.mutate(family.parent_id);
         return;
+      case "send_invoice": {
+        const invoice = actionInvoice(family);
+        if (!invoice) return;
+        setSendTarget({
+          parentId: family.parent_id,
+          invoiceId: invoice.invoice_id,
+          invoiceLabel: invoice.invoice_number ?? invoice.invoice_id,
+          familyLabel: familyName(family),
+          balanceCents: invoice.balance_due_cents,
+        });
+        return;
+      }
       case "record_payment":
         openRecordPaymentForFamily(family);
         return;
@@ -231,6 +272,7 @@ export function CollectionsTab() {
 
   const busyParent = (parentId: string) =>
     (reminderMutation.isPending && reminderMutation.variables === parentId) ||
+    (sendInvoiceMutation.isPending && sendInvoiceMutation.variables?.parentId === parentId) ||
     (skipMutation.isPending && skipMutation.variables?.parentId === parentId) ||
     (resumeMutation.isPending && resumeMutation.variables?.parentId === parentId);
 
@@ -361,6 +403,32 @@ export function CollectionsTab() {
         />
       )}
 
+      {sendTarget && (
+        <ConfirmActionDialog
+          open
+          onOpenChange={(open) => !open && setSendTarget(null)}
+          overline="Send invoice"
+          title="Email this invoice to the family?"
+          subject={`${sendTarget.invoiceLabel} · ${sendTarget.familyLabel}`}
+          consequence={
+            <p>
+              Emails the invoice for {formatCents(sendTarget.balanceCents)} with a link to pay.
+              The family has not received it yet, so this is the invoice itself, not a reminder.
+            </p>
+          }
+          confirmLabel="Send invoice"
+          confirmVariant="primary"
+          pending={sendInvoiceMutation.isPending}
+          onConfirm={() => {
+            sendInvoiceMutation.mutate({
+              parentId: sendTarget.parentId,
+              invoiceId: sendTarget.invoiceId,
+            });
+            setSendTarget(null);
+          }}
+        />
+      )}
+
       {skipTarget && (
         <ConfirmActionDialog
           open
@@ -443,7 +511,7 @@ function BucketSection({
   rowStatus: Record<string, RowStatus>;
   busyParent: (parentId: string) => boolean;
   canGovernMoney: boolean;
-  onAction: (action: CollectionsAction, family: AdminCollectionsFamily) => void;
+  onAction: (action: RowAction, family: AdminCollectionsFamily) => void;
 }) {
   const meta = BUCKET_META[bucket.key];
   const families = bucket.families.filter((family) => familyMatches(family, search));
@@ -551,13 +619,13 @@ function amountFor(bucket: CollectionsBucketKey, family: AdminCollectionsFamily)
  * phone it moves into the row menu so the row keeps ONE 44px button instead of
  * four 30px ones wrapped over two lines.
  */
-const PRIMARY_ACTIONS: CollectionsAction[] = ["record_payment", "resume"];
+const PRIMARY_ACTIONS: RowAction[] = ["record_payment", "resume"];
 
-function isPrimaryAction(action: CollectionsAction): boolean {
+function isPrimaryAction(action: RowAction): boolean {
   return PRIMARY_ACTIONS.includes(action);
 }
 
-function primaryFirst(actions: CollectionsAction[]): CollectionsAction[] {
+function primaryFirst(actions: RowAction[]): RowAction[] {
   return [...actions].sort(
     (a, b) => Number(isPrimaryAction(b)) - Number(isPrimaryAction(a)),
   );
@@ -578,7 +646,7 @@ function FamilyRow({
   status: RowStatus | undefined;
   busy: boolean;
   canGovernMoney: boolean;
-  onAction: (action: CollectionsAction, family: AdminCollectionsFamily) => void;
+  onAction: (action: RowAction, family: AdminCollectionsFamily) => void;
 }) {
   const isPhone = useIsPhone();
   const chip = familyChip(bucket, family, today);
@@ -590,7 +658,7 @@ function FamilyRow({
     ? family.invoices.filter((invoice) => invoice.status === "paid" || (invoice.allocated_payment_cents ?? 0) > 0)
     : [];
   const actions = primaryFirst(
-    family.actions
+    rowActions(family)
       .filter((action) => action !== "skip_month" || canGovernMoney)
       // WhatsApp is only real when the backend built the family a wa.me URL
       // (month close spec §7); without it there is nothing to link to.
@@ -715,12 +783,12 @@ function ActionControl({
   phone,
   onAction,
 }: {
-  action: CollectionsAction;
+  action: RowAction;
   family: AdminCollectionsFamily;
   busy: boolean;
   /** #861: a thumb needs 44px; a mouse on md+ is fine with the 30px row size. */
   phone: boolean;
-  onAction: (action: CollectionsAction, family: AdminCollectionsFamily) => void;
+  onAction: (action: RowAction, family: AdminCollectionsFamily) => void;
 }): ReactNode {
   const label = ACTION_LABEL[action];
   const testId = `action-${action}-${family.parent_id}`;

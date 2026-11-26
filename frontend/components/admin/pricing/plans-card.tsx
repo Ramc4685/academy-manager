@@ -43,6 +43,11 @@ const BLANK_FORM: FormState = {
   overage_rate: "",
 };
 
+/** "Used by 2 classes": a plan is a price list classes point at. */
+export function usedByLabel(count: number): string {
+  return `Used by ${count} ${count === 1 ? "class" : "classes"}`;
+}
+
 function formatMoney(cents: number | null): string {
   if (cents === null) return "—";
   return `$${(cents / 100).toFixed(2)}`;
@@ -286,7 +291,7 @@ export function PlansCard({
         >
           <p className="text-sm text-rally-muted">
             Students already enrolled keep billing at their current price. Archiving
-            does not stop or change them, and classes linked to it show as Custom. To
+            does not stop or change them, and classes linked to it use their own price. To
             bring it back, tick “Show archived” and reactivate it.
           </p>
           {archiveMutation.isError && (
@@ -347,7 +352,7 @@ export function PlansTable({
             <Th>Plan</Th>
             <Th>Price</Th>
             <Th>Type</Th>
-            <Th align="right">Classes</Th>
+            <Th align="right">Used by</Th>
             <Th align="right">Actions</Th>
           </tr>
         </thead>
@@ -410,7 +415,7 @@ export function PlansTable({
                 className="px-4 py-3 text-right font-mono tabular-nums"
                 data-testid="plan-linked-classes"
               >
-                {linkedCounts?.[row.session_type_id] ?? 0}
+                {usedByLabel(linkedCounts?.[row.session_type_id] ?? 0)}
               </td>
               <td className="px-4 py-3">
                 <div className="flex justify-end gap-2">
@@ -505,7 +510,7 @@ function SessionTypeDialog({
           {sessionType && (
             <p className="rounded-md bg-status-amber-50 px-3 py-2 text-xs text-status-amber-800">
               Classes keep their own monthly fee, so a new price here does not change what
-              any family pays. Classes linked to this plan show as Custom until their fee
+              any family pays. Classes linked to this plan use their own price until their fee
               matches again.
             </p>
           )}

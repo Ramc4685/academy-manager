@@ -33,3 +33,4 @@ Rules for a new kit:
 | k07 | A second academy `acad_fresh_local` at `fresh.localhost` whose only required live waiver is the untouched starter text. Owner `fresh.owner@example.com`: create that login in the Firebase emulator before signing in. |
 | k27 | Dev Patel (k05) also on the $80 Saturday class, ready to move to the unpriced k03 class. Run after k03 and k05. |
 | k16 | (S25 part) the next future Saturday date cancelled with a reason. |
+| k08 | This month on the Saturday class: two enrolled kids not yet invoiced, one paused and one free (NoCharge) enrollment, an overdue emailed invoice, an issued invoice never emailed, and an emailed invoice not yet due. |

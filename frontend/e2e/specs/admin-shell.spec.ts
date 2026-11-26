@@ -2171,9 +2171,9 @@ test.describe("Rally admin shell", () => {
     // price_cents 12000 must render as dollars, not raw cents.
     await expect(plans.getByText("$120.00")).toBeVisible();
     await expect(plans.getByTestId("plan-type")).toHaveText("Monthly · 4 classes, 5th free");
-    await expect(plans.getByTestId("plan-linked-classes")).toHaveText("1");
+    await expect(plans.getByTestId("plan-linked-classes")).toHaveText("Used by 1 class");
 
-    // Where each class's price comes from: the class fee, linked or Custom.
+    // Where each class's price comes from: the class fee, linked or its own price.
     const classes = page.getByTestId("pricing-class-row");
     await expect(classes).toHaveCount(2);
     await expect(classes.nth(0).getByTestId("pricing-class-charged")).toHaveText("$120.00");
