@@ -78,7 +78,8 @@ def _view(m: Message, user_id: str) -> ParentMessageView:
         sender_persona=m.sender_persona,
         body=m.body,
         created_at=m.created_at,
-        read=user_id in m.read_by,
+        # What the parent sent is never unread to them (no header dot for it).
+        read=m.sender_id == user_id or user_id in m.read_by,
         scope_label=m.scope_label,
         urgency=m.urgency,
         # A parent sees the academy's name on a reply, never which staff

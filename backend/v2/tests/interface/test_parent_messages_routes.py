@@ -338,6 +338,7 @@ def test_parent_message_opens_their_own_thread_with_the_academy():
 
         listed = client.get("/api/v2/parent/messages").json()["messages"]
     assert [(m["body"], m["mine"]) for m in listed] == [("Sam will be 10 minutes late.", True)]
+    assert listed[0]["read"] is True
     [stored] = repo.rows.values()
     assert stored.inbox_thread_id == "p1"
     assert stored.sender_id == "p1"
