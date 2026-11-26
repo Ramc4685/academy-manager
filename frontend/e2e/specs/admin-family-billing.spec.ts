@@ -378,6 +378,16 @@ async function setup(
 }
 
 test.describe("Family billing", () => {
+  test("an invoice link opens the matching payment and leaves other invoices collapsed", async ({
+    page,
+  }) => {
+    await setup(page, { owner: true });
+    await page.goto("/admin/families/parent-1?tab=billing&invoice=inv-aug");
+    await expect(page.getByTestId("invoice-expand-inv-aug")).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByTestId("invoice-allocations-inv-aug")).toContainText("pi_aug");
+    await expect(page.getByTestId("invoice-expand-inv-sep")).toHaveAttribute("aria-expanded", "false");
+  });
+
   test("header, students, invoices and timeline render from one response", async ({ page }) => {
     const { errors } = await setup(page, { owner: true });
     await expect(page.getByTestId("family-balance")).toContainText("$70");

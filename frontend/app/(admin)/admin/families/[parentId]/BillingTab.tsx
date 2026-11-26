@@ -101,7 +101,13 @@ function invoiceSubject(inv: FamilyInvoice, amountCents: number): string {
  * Record payment always opens `RecordPaymentDialog` (amount, method, an
  * explicit "Record payment" button); nothing here moves money on one click.
  */
-export function BillingTab({ parentId }: { parentId: string }) {
+export function BillingTab({
+  parentId,
+  linkedInvoiceId,
+}: {
+  parentId: string;
+  linkedInvoiceId?: string | null;
+}) {
   const queryClient = useQueryClient();
   const isOwner = useIsOwner();
   const [dialog, setDialog] = useState<DialogState | null>(null);
@@ -328,6 +334,8 @@ export function BillingTab({ parentId }: { parentId: string }) {
         onBillPeriod={(enrollmentId) => setBillEnrollmentId(enrollmentId)}
       />
       <InvoicesPanel
+        key={linkedInvoiceId}
+        linkedInvoiceId={linkedInvoiceId}
         invoices={view.invoices}
         busy={simple.isPending}
         onAction={onInvoiceAction}

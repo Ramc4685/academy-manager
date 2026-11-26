@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -29,7 +29,12 @@ import {
   type ParentEnrollment,
   type ParentScheduleEntry,
 } from "@/lib/api/parent";
-import { formatAcademyDate, formatAcademyDay, formatAcademyTimeRange } from "@/lib/format/academy-time";
+import {
+  formatAcademyDate,
+  formatAcademyDay,
+  formatAcademyTimeRange,
+  parseAcademyInstant,
+} from "@/lib/format/academy-time";
 import { nameGradient } from "@/lib/avatar-gradient";
 import {
   cancellationResultTitle,
@@ -67,6 +72,11 @@ function money(cents: number, currency = "USD"): string {
 }
 
 export default function ParentChildrenPage() {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const { data, isLoading, isError } = useQuery({
     queryKey: ["parent", "children"],
     queryFn: listParentChildren,
@@ -126,6 +136,7 @@ export default function ParentChildrenPage() {
             <ChildCard
               key={child.student_id}
               child={child}
+              now={now}
               attendance={allAttendance.filter((r) => r.student_id === child.student_id)}
               enrollments={allEnrollments.filter((e) => e.student_id === child.student_id)}
               academyTimezone={academyTimezone}
@@ -142,6 +153,7 @@ export default function ParentChildrenPage() {
 
 function ChildCard({
   child,
+  now,
   attendance,
   enrollments,
   academyTimezone,
@@ -150,6 +162,7 @@ function ChildCard({
   canRequestCancel,
 }: {
   child: ParentChild;
+  now: number;
   attendance: ParentAttendanceRecord[];
   enrollments: ParentEnrollment[];
   academyTimezone: string | null;
@@ -157,7 +170,7 @@ function ChildCard({
   canRequestPause: boolean;
   canRequestCancel: boolean;
 }) {
-  const { data: scheduleData } = useQuery({
+  const scheduleQuery = useQuery({
     queryKey: ["parent", "child-schedule", child.student_id],
     queryFn: () => getChildSchedule(child.student_id),
     // Drop-off: refetch when a window opens and while it is open, so the
@@ -172,7 +185,10 @@ function ChildCard({
       ),
   });
 
-  const sessions = scheduleData?.entries ?? [];
+  const sessions = scheduleQuery.data?.entries ?? [];
+  const nextOccurrenceId = sessions.find(
+    (session) => session.status !== "cancelled" && parseAcademyInstant(session.start_at).getTime() >= now,
+  )?.occurrence_id;
   const gradient = nameGradient(child.full_name);
   const presentCount = attendance.filter((r) => r.status === "present" || r.status === "late").length;
   const absentCount = attendance.filter((r) => r.status === "absent").length;
@@ -230,7 +246,16 @@ function ChildCard({
         <p className="text-[10px] font-bold uppercase tracking-widest mb-2.5 text-rally-cobalt-600">
           Upcoming sessions
         </p>
-        {sessions.length === 0 ? (
+        {scheduleQuery.isPending ? (
+          <p role="status" className="text-xs py-1 text-rally-muted">Loading class schedule…</p>
+        ) : scheduleQuery.isError && sessions.length === 0 ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <p role="alert" className="text-xs py-1 text-status-red-800">Could not load the class schedule.</p>
+            <Button size="sm" variant="secondary" onClick={() => void scheduleQuery.refetch()}>
+              Retry schedule
+            </Button>
+          </div>
+        ) : sessions.length === 0 ? (
           <p className="text-xs py-1 text-rally-subtle">{holdNote ?? "No upcoming sessions."}</p>
         ) : (
           <ul className="space-y-2">
@@ -240,12 +265,19 @@ function ChildCard({
                 studentId={child.student_id}
                 childName={child.full_name}
                 entry={s}
+                isNextClass={s.occurrence_id === nextOccurrenceId}
                 academyTimezone={academyTimezone}
                 canReportAbsence={canReportAbsence}
               />
             ))}
           </ul>
         )}
+        <Link
+          href={`/parent/progress?child=${encodeURIComponent(child.student_id)}#coach-notes`}
+          className="mt-2 inline-flex min-h-touch items-center text-sm font-semibold text-rally-cobalt-700 underline"
+        >
+          Coach notes for {child.full_name}
+        </Link>
       </div>
 
       {/* Enrollments */}
@@ -291,12 +323,14 @@ function SessionRow({
   studentId,
   childName,
   entry,
+  isNextClass,
   academyTimezone,
   canReportAbsence,
 }: {
   studentId: string;
   childName: string;
   entry: ParentScheduleEntry;
+  isNextClass: boolean;
   academyTimezone: string | null;
   canReportAbsence: boolean;
 }) {
@@ -333,6 +367,9 @@ function SessionRow({
           </svg>
         </div>
         <div className="min-w-0 flex-1">
+          {isNextClass && (
+            <p className="mb-1 text-xs font-semibold text-rally-cobalt-700">Next class</p>
+          )}
           <p
             className={
               cancelled

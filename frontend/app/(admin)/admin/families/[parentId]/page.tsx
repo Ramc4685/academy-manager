@@ -203,7 +203,7 @@ export default function FamilyRecordPage() {
             </p>
           </Card>
         ) : activeTab === "billing" ? (
-          <BillingTab parentId={parentId} />
+          <BillingTab parentId={parentId} linkedInvoiceId={searchParams.get("invoice")} />
         ) : activeTab === "notes" ? (
           <NotesTab parentId={parentId} />
         ) : activeTab === "messages" ? (

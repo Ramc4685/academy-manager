@@ -236,6 +236,17 @@ export function ChildDrawer({
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0 text-sm">
+                          {row.classDetails.href ? (
+                            <Link
+                              href={row.classDetails.href}
+                              className="block font-semibold text-rally-cobalt-600 underline"
+                              aria-label={`Attendance for ${row.classDetails.label} · ${row.dateLabel}`}
+                            >
+                              {row.classDetails.label}
+                            </Link>
+                          ) : (
+                            <span className="block font-medium">{row.classDetails.label}</span>
+                          )}
                           <span className="font-medium text-rally-ink">{row.dateLabel}</span>{" "}
                           <span data-testid="drawer-attendance-status">{row.statusLabel}</span>
                           {row.correctedNote && (
@@ -250,7 +261,7 @@ export function ChildDrawer({
                             variant="secondary"
                             id={correctTriggerId(row.occurrenceId ?? "")}
                             data-testid={correctTriggerId(row.occurrenceId ?? "")}
-                            aria-label={`Correct ${row.dateLabel} mark (${row.statusLabel})`}
+                            aria-label={`Correct ${row.dateLabel} mark (${row.statusLabel})${row.classDetails.href ? ` for ${row.classDetails.label}` : ""}`}
                             onClick={() => {
                               save.reset();
                               setSavedNote(null);

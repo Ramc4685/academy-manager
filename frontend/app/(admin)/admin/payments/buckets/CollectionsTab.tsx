@@ -585,6 +585,10 @@ function FamilyRow({
   const line = secondaryLine(bucket, family, today);
   const name = familyName(family);
   const amount = amountFor(bucket, family);
+  const billingHref = `/admin/families/${encodeURIComponent(family.parent_id)}?tab=billing`;
+  const paidInvoices = bucket === "paid"
+    ? family.invoices.filter((invoice) => invoice.status === "paid" || (invoice.allocated_payment_cents ?? 0) > 0)
+    : [];
   const actions = primaryFirst(
     family.actions
       .filter((action) => action !== "skip_month" || canGovernMoney)
@@ -603,7 +607,7 @@ function FamilyRow({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <Link
-              href={`/admin/families/${encodeURIComponent(family.parent_id)}`}
+              href={(bucket === "paid" ? billingHref : `/admin/families/${encodeURIComponent(family.parent_id)}`) as Route}
               data-testid={`family-link-${family.parent_id}`}
               className="font-display font-semibold text-rally-ink hover:underline"
             >
@@ -611,10 +615,33 @@ function FamilyRow({
             </Link>
             <Chip variant={chip.variant} label={chip.label} />
           </div>
-          {family.students.length > 0 && (
-            <p className="mt-0.5 truncate text-sm text-rally-muted">{studentLine(family)}</p>
+          {paidInvoices.length === 0 && family.students.length > 0 && (
+            <p className="mt-0.5 truncate text-sm text-rally-muted">
+              {bucket === "paid" ? family.students.map((child) => child.name).join(", ") : studentLine(family)}
+            </p>
           )}
-          {line && <p className="mt-0.5 text-xs text-rally-subtle">{line}</p>}
+          {paidInvoices.length > 0 && (
+            <ul className="mt-1 space-y-1 text-sm" aria-label="Payments applied to invoices">
+              {paidInvoices.map((invoice) => {
+                const student = invoice.student_id
+                  ? family.students.find((child) => child.student_id === invoice.student_id)?.name ?? "Student invoice"
+                  : "Family invoice";
+                const number = invoice.invoice_number ?? invoice.invoice_id;
+                const allocated = invoice.allocated_payment_cents ?? 0;
+                return (
+                  <li key={invoice.invoice_id}>
+                    <Link
+                      href={`${billingHref}&invoice=${encodeURIComponent(invoice.invoice_id)}` as Route}
+                      className="break-words text-rally-cobalt-700 underline"
+                    >
+                      {student}{allocated > 0 ? ` · ${formatCents(allocated)}` : ""} · {number}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {line && <p className="mt-0.5 text-xs text-rally-subtle">{bucket === "paid" && family.paid?.paid_at ? "Latest payment · " : ""}{line}</p>}
           {status && (
             <p
               className={`mt-1 text-xs ${
@@ -631,6 +658,9 @@ function FamilyRow({
           )}
         </div>
         <div className="font-mono text-base font-semibold tabular-nums text-rally-ink md:text-right">
+          {bucket === "paid" && (
+            <span className="block font-sans text-xs font-normal text-rally-muted">Family total</span>
+          )}
           {formatCents(amount)}
         </div>
         <div className="flex flex-wrap items-center gap-2 md:justify-end">

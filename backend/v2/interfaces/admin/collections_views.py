@@ -54,6 +54,8 @@ class AdminCollectionsStudent(_View):
 class AdminCollectionsInvoice(_View):
     invoice_id: str
     invoice_number: str | None = None
+    student_id: str | None = None
+    allocated_payment_cents: int = 0
     period: str
     status: str
     total_cents: int

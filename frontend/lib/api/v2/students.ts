@@ -90,10 +90,14 @@ export interface AdminStudentCurrentPaymentSummary {
 }
 
 export interface AdminStudentRecentAttendance {
-  session_id: string;
-  date: string;
+  session_id: string | null;
+  date: string | null;
   status: string;
   marked_at?: string | null;
+  class_session_id?: string | null;
+  class_title?: string | null;
+  class_start_at?: string | null;
+  class_timezone?: string | null;
   /** The dated occurrence: the key an admin correction takes (#517). */
   occurrence_id?: string | null;
   /** Set once the mark was corrected: what it replaced, and when. */

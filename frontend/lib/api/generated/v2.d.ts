@@ -8772,6 +8772,11 @@ export interface components {
         };
         /** AdminCollectionsInvoice */
         AdminCollectionsInvoice: {
+            /**
+             * Allocated Payment Cents
+             * @default 0
+             */
+            allocated_payment_cents: number;
             /** Balance Due Cents */
             balance_due_cents: number;
             /** Delivery Status */
@@ -8786,6 +8791,8 @@ export interface components {
             period: string;
             /** Status */
             status: string;
+            /** Student Id */
+            student_id?: string | null;
             /** Total Cents */
             total_cents: number;
         };
@@ -11169,6 +11176,14 @@ export interface components {
         };
         /** AdminStudentRecentAttendanceView */
         AdminStudentRecentAttendanceView: {
+            /** Class Session Id */
+            class_session_id?: string | null;
+            /** Class Start At */
+            class_start_at?: string | null;
+            /** Class Timezone */
+            class_timezone?: string | null;
+            /** Class Title */
+            class_title?: string | null;
             /** Corrected At */
             corrected_at?: string | null;
             /** Date */
