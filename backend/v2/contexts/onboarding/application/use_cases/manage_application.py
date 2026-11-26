@@ -121,6 +121,13 @@ async def _open_duplicate(
     return None
 
 
+#: S48: the refusal when the child is already enrolled, held or pending in the class.
+ALREADY_IN_THIS_CLASS = (
+    "This child is already enrolled in this class. Choose another class, "
+    "or manage their classes from your Home page."
+)
+
+
 class SupersededCheckoutRetirement(Protocol):
     """Cross-context port (Billing): kill a checkout attempt this application
     no longer owns.
@@ -347,6 +354,7 @@ class StudentRegistrationQuery(Protocol):
         student_id: str,
         *,
         exclude_enrollment_id: str | None = None,
+        session_id: str | None = None,
     ) -> bool: ...
 
 
@@ -473,11 +481,20 @@ class PatchApplication:
                 date_of_birth=child_profile.date_of_birth or None,
             )
             if existing_student_id is not None:
-                if await self._student_registrations.has_active_enrollment(existing_student_id):
-                    raise ApplicationNotEditable(
-                        "This child is already enrolled. Manage their existing classes instead."
-                    )
                 student_id = existing_student_id
+        # S48 / D-24: only the same class is refused; a second class for an
+        # enrolled child goes through approval. Checked once both are known.
+        session_id = cmd.selected_session_id or app.selected_session_id
+        if (
+            student_id
+            and session_id
+            and (cmd.child_profile or cmd.selected_session_id)
+            and self._student_registrations is not None
+            and await self._student_registrations.has_active_enrollment(
+                student_id, session_id=session_id
+            )
+        ):
+            raise ApplicationNotEditable(ALREADY_IN_THIS_CLASS)
 
         updated = app.model_copy(
             update={
@@ -891,10 +908,10 @@ class TransitionApplication:
             full_name=full_name,
             date_of_birth=date_of_birth,
         )
-        if student_id and await self._student_registrations.has_active_enrollment(student_id):
-            raise ApplicationNotEditable(
-                "This child is already enrolled. Manage their existing classes instead."
-            )
+        if student_id and await self._student_registrations.has_active_enrollment(
+            student_id, session_id=app.selected_session_id
+        ):
+            raise ApplicationNotEditable(ALREADY_IN_THIS_CLASS)
 
 
 def _registration_paths(

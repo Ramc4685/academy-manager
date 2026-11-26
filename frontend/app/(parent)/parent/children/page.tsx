@@ -302,6 +302,14 @@ function ChildCard({
         >
           Edit emergency contact and medical notes
         </Link>
+        {/* S48 (D-24): a second class for this child reuses their record. */}
+        <Link
+          href={reEnrollHref(child.student_id) as Parameters<typeof Link>[0]["href"]}
+          data-testid={`child-add-class-${child.student_id}`}
+          className="mt-1 flex min-h-touch items-center text-sm font-semibold text-rally-cobalt-700 underline"
+        >
+          Add another class for {child.full_name}
+        </Link>
       </div>
 
       {/* Enrollments */}

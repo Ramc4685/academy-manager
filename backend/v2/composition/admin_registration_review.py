@@ -36,6 +36,9 @@ from backend.v2.contexts.onboarding.application.ports import ApplicationReposito
 from backend.v2.contexts.onboarding.application.use_cases.admin_waiver_templates import (
     AdminWaiverTemplateRecord,
 )
+from backend.v2.contexts.onboarding.application.use_cases.manage_application import (
+    ALREADY_IN_THIS_CLASS,
+)
 from backend.v2.contexts.onboarding.application.use_cases.parent_student_waivers import (
     WaiverSignedNotifier,
 )
@@ -92,6 +95,7 @@ class StudentRegistrationQuery(Protocol):
         student_id: str,
         *,
         exclude_enrollment_id: str | None = None,
+        session_id: str | None = None,
     ) -> bool: ...
 
     async def claim_registration(
@@ -438,7 +442,9 @@ class AdminRegistrationReview:
             expected_enrollment_id = app.enrollment_id or self._registration_enrollment_id(
                 app.application_id, student_id, session_id
             )
-            await self._assert_no_other_active_enrollment(student_id, expected_enrollment_id)
+            await self._assert_no_other_active_enrollment(
+                student_id, expected_enrollment_id, session_id
+            )
             existing = await self._enrollments.find_for_session_student(session_id, student_id)
             # Issue #651: a cancelled or withdrawn row from an earlier stint in
             # the same session is history and must not permanently block a
@@ -458,9 +464,7 @@ class AdminRegistrationReview:
                 existing.enrollment_id != expected_enrollment_id
                 or existing.registration_application_id != app.application_id
             ):
-                raise ApplicationNotEditable(
-                    "This child is already enrolled. Manage their existing classes instead."
-                )
+                raise ApplicationNotEditable(ALREADY_IN_THIS_CLASS)
             acquisition: SeatAcquisition | None = None
             if existing is None:
                 if self._seat_broker is not None:
@@ -481,7 +485,9 @@ class AdminRegistrationReview:
                 enrolled_at=app.created_at,
                 created_at=now,
                 registration_application_id=app.application_id,
-                registration_student_lock=student_id,
+                # S48: one live registration enrollment per child AND class; the
+                # unique index (0185) is the race backstop for the same class only.
+                registration_student_lock=f"{student_id}|{session_id}",
             )
             if existing is None:
                 try:
@@ -674,7 +680,7 @@ class AdminRegistrationReview:
         app = await self._claim_review(app, "WAITLISTING", now)
         student_id: str | None = None
         try:
-            student_id = await self._available_student_id(app)
+            student_id = await self._available_student_id(app, session_id=session_id)
             await self._students.upsert(
                 await self._merged_student(app, student_id, self._student_name(app))
             )
@@ -1094,9 +1100,11 @@ class AdminRegistrationReview:
             if app.selected_session_id
             else None
         )
+        # S48: a child enrolled in ANOTHER class still shows in the queue.
         if await self._student_registrations.has_active_enrollment(
             student_id,
             exclude_enrollment_id=expected_enrollment_id,
+            session_id=app.selected_session_id,
         ):
             return student_id
         return None
@@ -1105,7 +1113,7 @@ class AdminRegistrationReview:
         self,
         app: Application,
         *,
-        session_id: str | None = None,
+        session_id: str,
         allow_current_enrollment: bool = False,
     ) -> str:
         existing_student_id = await self._registration_student_id(app)
@@ -1119,14 +1127,13 @@ class AdminRegistrationReview:
                     or self._registration_enrollment_id(
                         app.application_id, existing_student_id, session_id
                     )
-                    if allow_current_enrollment and session_id
+                    if allow_current_enrollment
                     else None
                 ),
+                session_id=session_id,
             )
         ):
-            raise ApplicationNotEditable(
-                "This child is already enrolled. Manage their existing classes instead."
-            )
+            raise ApplicationNotEditable(ALREADY_IN_THIS_CLASS)
         return (
             existing_student_id
             or (app.student_id if self._student_registrations is None else None)
@@ -1226,16 +1233,14 @@ class AdminRegistrationReview:
             )
 
     async def _assert_no_other_active_enrollment(
-        self, student_id: str, expected_enrollment_id: str
+        self, student_id: str, expected_enrollment_id: str, session_id: str
     ) -> None:
         if self._student_registrations is None:
             return
         if await self._student_registrations.has_active_enrollment(
-            student_id, exclude_enrollment_id=expected_enrollment_id
+            student_id, exclude_enrollment_id=expected_enrollment_id, session_id=session_id
         ):
-            raise ApplicationNotEditable(
-                "This child is already enrolled. Manage their existing classes instead."
-            )
+            raise ApplicationNotEditable(ALREADY_IN_THIS_CLASS)
 
     async def _renew_review_claim(self, app: Application) -> None:
         if not await self._apps.renew_review_claim(

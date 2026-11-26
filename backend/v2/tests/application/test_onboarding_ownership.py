@@ -51,6 +51,12 @@ class FakeAppRepo:
     async def latest_for_parent(self, _):
         return self._app
 
+    async def list_open_for_parent(self, parent_user_id, statuses):
+        app = self._app
+        if app is None or app.parent_user_id != parent_user_id or app.status not in statuses:
+            return []
+        return [app]
+
     async def get_by_payment_id(self, payment_id):
         # Mirrors the adapter: the LIVE attempt only.
         if self._app is None or payment_id != self._app.payment_id:
@@ -125,6 +131,9 @@ class FakeWaiverRepo:
 
 
 class ExistingStudentRegistrations:
+    #: The class the existing live enrollment is in (S48).
+    active_session_id = "sess-1"
+
     async def find_registration_student(
         self,
         *,
@@ -148,8 +157,9 @@ class ExistingStudentRegistrations:
         student_id: str,
         *,
         exclude_enrollment_id: str | None = None,
+        session_id: str | None = None,
     ) -> bool:
-        return student_id == "existing-student"
+        return student_id == "existing-student" and session_id in (None, self.active_session_id)
 
 
 class ConfigurableStudentRegistrations:
@@ -159,10 +169,12 @@ class ConfigurableStudentRegistrations:
         student_id: str | None = None,
         active: bool = False,
         ambiguous: bool = False,
+        active_session_id: str = "sess-1",
     ) -> None:
         self.student_id = student_id
         self.active = active
         self.ambiguous = ambiguous
+        self.active_session_id = active_session_id
 
     async def find_registration_student(self, **kwargs) -> str | None:
         return self.student_id
@@ -171,9 +183,17 @@ class ConfigurableStudentRegistrations:
         return self.ambiguous
 
     async def has_active_enrollment(
-        self, student_id: str, *, exclude_enrollment_id: str | None = None
+        self,
+        student_id: str,
+        *,
+        exclude_enrollment_id: str | None = None,
+        session_id: str | None = None,
     ) -> bool:
-        return self.active and student_id == self.student_id
+        return (
+            self.active
+            and student_id == self.student_id
+            and session_id in (None, self.active_session_id)
+        )
 
 
 def _app(parent_user_id: str = "alice") -> Application:
@@ -218,12 +238,14 @@ async def test_patch_application_allows_owner() -> None:
 
 
 @pytest.mark.asyncio
-async def test_patch_application_rejects_an_already_enrolled_child() -> None:
-    repo = FakeAppRepo(_app(parent_user_id="alice"))
+async def test_patch_application_rejects_a_child_already_in_this_class() -> None:
+    repo = FakeAppRepo(
+        _app(parent_user_id="alice").model_copy(update={"selected_session_id": "sess-1"})
+    )
     uc = PatchApplication(apps=repo, waivers=FakeWaiverRepo())
     uc._student_registrations = ExistingStudentRegistrations()  # type: ignore[attr-defined]
 
-    with pytest.raises(ApplicationNotEditable, match="already enrolled"):
+    with pytest.raises(ApplicationNotEditable, match="already enrolled in this class"):
         await uc.execute(
             PatchApplicationCommand(
                 application_id="app-1",
@@ -1024,3 +1046,76 @@ def test_application_is_expired_only_for_editable_ish_statuses_past_ttl() -> Non
         update={"status": "PENDING_APPROVAL", "expires_at": fake_now - timedelta(seconds=1)}
     )
     assert terminal.is_expired(fake_now) is False
+
+
+@pytest.mark.asyncio
+async def test_patch_application_binds_an_enrolled_child_for_another_class() -> None:
+    """S48 / D-24: the existing child is reused (no retyping, no duplicate student)."""
+    repo = FakeAppRepo(
+        _app(parent_user_id="alice").model_copy(update={"selected_session_id": "sess-2"})
+    )
+    uc = PatchApplication(apps=repo, waivers=FakeWaiverRepo())
+    uc._student_registrations = ExistingStudentRegistrations()  # type: ignore[attr-defined]
+
+    updated = await uc.execute(
+        PatchApplicationCommand(
+            application_id="app-1",
+            caller_user_id="alice",
+            child_profile={
+                "first_name": "Sam",
+                "last_name": "Student",
+                "date_of_birth": "2015-05-10",
+                "skill_level": "beginner",
+            },
+        )
+    )
+
+    assert updated.student_id == "existing-student"
+
+
+@pytest.mark.asyncio
+async def test_patch_application_refuses_choosing_the_class_the_child_is_already_in() -> None:
+    repo = FakeAppRepo(
+        _app(parent_user_id="alice").model_copy(update={"student_id": "existing-student"})
+    )
+    uc = PatchApplication(apps=repo, waivers=FakeWaiverRepo())
+    uc._student_registrations = ExistingStudentRegistrations()  # type: ignore[attr-defined]
+
+    with pytest.raises(ApplicationNotEditable, match="already enrolled in this class"):
+        await uc.execute(
+            PatchApplicationCommand(
+                application_id="app-1", caller_user_id="alice", selected_session_id="sess-1"
+            )
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("session_id", "refused"), [("sess-1", True), ("sess-2", False)])
+async def test_checkout_transition_refuses_only_the_class_the_child_is_in(
+    session_id: str, refused: bool
+) -> None:
+    """S48 / D-24: enrolled in sess-1; sess-2 is a second class and checks out."""
+    app = _app().model_copy(
+        update={
+            "student_id": "existing-student",
+            "selected_session_id": session_id,
+            "child_profile": ChildProfile(
+                first_name="Sam", last_name="Student", date_of_birth="2015-05-10"
+            ),
+        }
+    )
+    repo = FakeAppRepo(app)
+    uc = TransitionApplication(
+        apps=repo,
+        student_registrations=ConfigurableStudentRegistrations(
+            student_id="existing-student", active=True, active_session_id="sess-1"
+        ),
+    )
+
+    if refused:
+        with pytest.raises(ApplicationNotEditable, match="already enrolled in this class"):
+            await uc.execute("app-1", "CHECKOUT_PENDING")
+        assert repo._app is not None and repo._app.status == "DRAFT"
+    else:
+        moved = await uc.execute("app-1", "CHECKOUT_PENDING")
+        assert moved.status == "CHECKOUT_PENDING"
