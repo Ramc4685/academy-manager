@@ -576,7 +576,7 @@ export default function ParentPaymentsPage() {
       <MoneySummaryCard
         summary={moneySummary}
         todayIso={academyDateISO(academyTimezone)}
-        hasInvoices={invoices.length > 0}
+        hasInvoices={moneySummary.periods.length > 0}
         onPay={() =>
           balancePaymentMutation.mutate({
             enrollAutopay: showAutopayOptinForBalance(invoices, enrollments) && balanceAutopayOptin,

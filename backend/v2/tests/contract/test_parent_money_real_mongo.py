@@ -102,12 +102,14 @@ async def _seed(db) -> None:
     )
 
 
-def _money(db, ledger):
+def _money(db, ledger, enrollment_reads=None):
     async def children(_parent_id):
         return [{"student_id": "sam", "full_name": "Sam Demo"},
                 {"student_id": "alex", "full_name": "Alex Demo"}]
 
     async def enrollments(_parent_id):
+        if enrollment_reads is not None:
+            enrollment_reads.append(_parent_id)
         return [{"enrollment_id": "e-sam", "session_title": "Junior Beginners",
                  "autopay_offer": "available"}]
 
@@ -156,8 +158,10 @@ async def test_summary_is_the_callers_own_ledger_with_the_discount_as_its_own_li
     await _seed(db)
     ledger = MongoBillingLedgerRepository(db)
 
-    money = _money(db, ledger)
+    reads: list[str] = []
+    money = _money(db, ledger, reads)
     out = await money.summary("p1")
+    assert reads == ["p1"]  # the heavy enrollment read happens once per summary
 
     assert out["amount_due_cents"] == 14000  # never p2's 9900, never the other academy's 7700
     assert sum(line["amount_cents"] for line in out["lines"]) == out["amount_due_cents"]

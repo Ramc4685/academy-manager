@@ -67,15 +67,20 @@ def compose_parent_money(
     async def child_names(parent_id: str) -> dict[str, str]:
         return {str(c["student_id"]): str(c["full_name"]) for c in await list_children(parent_id)}
 
-    async def class_by_enrollment(parent_id: str) -> dict[str, str]:
+    def _classes(enrollments: Sequence[dict[str, Any]]) -> dict[str, str]:
         return {
             str(e["enrollment_id"]): str(e.get("session_title") or "")
-            for e in await list_enrollments(parent_id)
+            for e in enrollments
             if e.get("enrollment_id")
         }
 
-    async def can_pay_online(parent_id: str) -> bool:
-        return can_pay_online_from(await list_enrollments(parent_id))
+    async def class_by_enrollment(parent_id: str) -> dict[str, str]:
+        return _classes(await list_enrollments(parent_id))
+
+    async def enrollment_facts(parent_id: str) -> tuple[dict[str, str], bool]:
+        # list_enrollments is the heavy parent read (autopay offer per class): once.
+        enrollments = await list_enrollments(parent_id)
+        return _classes(enrollments), can_pay_online_from(enrollments)
 
     async def academy_clock() -> tuple[date, str | None]:
         timezone_name = await timezone_of(current_academy_id())
@@ -90,8 +95,7 @@ def compose_parent_money(
         get_lines=get_lines,
         payment_facts=facts,
         child_names=child_names,
-        class_by_enrollment=class_by_enrollment,
-        can_pay_online=can_pay_online,
+        enrollment_facts=enrollment_facts,
         academy_clock=academy_clock,
     )
 

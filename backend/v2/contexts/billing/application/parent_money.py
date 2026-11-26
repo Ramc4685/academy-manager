@@ -283,16 +283,15 @@ class GetParentMoneySummary:
         get_lines: Callable[[str], Awaitable[list[InvoiceLine]]],
         payment_facts: ParentPaymentFacts,
         child_names: Callable[[str], Awaitable[dict[str, str]]],
-        class_by_enrollment: Callable[[str], Awaitable[dict[str, str]]],
-        can_pay_online: Callable[[str], Awaitable[bool]],
+        #: (class title by enrollment id, can pay online) from ONE enrollment read.
+        enrollment_facts: Callable[[str], Awaitable[tuple[dict[str, str], bool]]],
         academy_clock: Callable[[], Awaitable[tuple[date, str | None]]],
     ) -> None:
         self._list_invoices = list_invoices
         self._get_lines = get_lines
         self._facts = payment_facts
         self._child_names = child_names
-        self._classes = class_by_enrollment
-        self._can_pay_online = can_pay_online
+        self._enrollment_facts = enrollment_facts
         self._clock = academy_clock
 
     async def execute(self, parent_id: str) -> dict[str, Any]:
@@ -306,15 +305,16 @@ class GetParentMoneySummary:
             inv.invoice_id for inv in invoices if str(inv.status) in ISSUED_INVOICE_STATUSES
         ]
         today, timezone_name = await self._clock()
+        classes, can_pay_online = await self._enrollment_facts(parent_id)
         return build_money_summary(
             invoices=invoices,
             lines_by_invoice=lines_by_invoice,
             facts=await self._facts.for_invoices(issued_ids) if issued_ids else [],
             child_names=await self._child_names(parent_id),
-            class_by_enrollment=await self._classes(parent_id),
+            class_by_enrollment=classes,
             today=today,
             timezone_name=timezone_name,
-            can_pay_online=await self._can_pay_online(parent_id),
+            can_pay_online=can_pay_online,
         )
 
 def build_receipt(
