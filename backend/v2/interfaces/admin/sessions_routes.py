@@ -199,7 +199,9 @@ async def create_session(
         amount_cents=body.amount_cents,
     )
     try:
-        session = await use_cases.create_session.execute(CreateSessionCommand(**body.model_dump()))
+        session = await use_cases.create_session.execute(
+            CreateSessionCommand(**body.model_dump(), actor_id=claims.user_id)
+        )
     except DuplicateSessionSeries as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AcademyTimezoneUnset as exc:

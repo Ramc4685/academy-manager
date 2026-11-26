@@ -102,6 +102,7 @@ from backend.v2.contexts.enrollment.domain.models import (
     canonical_status,
 )
 from backend.v2.contexts.enrollment.domain.models_extra import WaitlistEntry
+from backend.v2.shared.audit import AuditTrail, record_best_effort
 from backend.v2.shared.events import Outbox
 from backend.v2.shared.http.errors import DomainError
 from backend.v2.shared.ids import new_ulid
@@ -322,6 +323,8 @@ class CreateSessionCommand(BaseModel):
     arrival_minutes_before: int | None = Field(default=None, ge=0, le=120)
     coach_contact_policy: str | None = None
     absence_policy: str | None = None
+    # S40: who created the class, for the audit trail. Set by the route, never the body.
+    actor_id: str | None = None
 
 
 class CreateSession:
@@ -331,10 +334,12 @@ class CreateSession:
         sessions: SessionWriter,
         academy_id: AcademyIdSource,
         get_academy_timezone: AcademyTimezoneReader,
+        audit: AuditTrail | None = None,
     ) -> None:
         self._sessions = sessions
         self._academy_id = academy_id
         self._get_academy_timezone = get_academy_timezone
+        self._audit = audit
 
     async def execute(self, cmd: CreateSessionCommand) -> Session:
         start_at = cmd.start_at
@@ -389,6 +394,14 @@ class CreateSession:
             **{field: getattr(cmd, field) for field in COMMUNICATION_PACK_FIELDS},
         )
         await self._sessions.create(session)
+        await record_best_effort(
+            self._audit,
+            actor_id=cmd.actor_id,
+            action="class_created",
+            entity_type="session",
+            entity_id=session.session_id,
+            metadata={"title": session.title},
+        )
         return session
 
     async def _ensure_no_duplicate_series(

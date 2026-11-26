@@ -146,13 +146,15 @@ async def create_admin_waiver_template(
 )
 async def publish_admin_waiver_template(
     waiver_template_id: str,
-    _claims: AuthClaims = Depends(require_persona("admin")),
+    claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminWaiverTemplateManagementView:
     manager = _template_manager(use_cases)
     try:
         template = await manager.publish(
-            PublishWaiverTemplateCommand(waiver_template_id=waiver_template_id)
+            PublishWaiverTemplateCommand(
+                waiver_template_id=waiver_template_id, actor_id=claims.user_id
+            )
         )
     except WaiverTemplateNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

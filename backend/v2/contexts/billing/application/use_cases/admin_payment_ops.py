@@ -14,6 +14,8 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, field_validator
 
+from backend.v2.shared.audit import AuditTrail, record_best_effort
+
 log = logging.getLogger(__name__)
 
 ManualPaymentMethod = Literal["cash", "check", "zelle", "venmo", "bank_transfer", "other"]
@@ -22,6 +24,8 @@ ManualPaymentMethod = Literal["cash", "check", "zelle", "venmo", "bank_transfer"
 class GenerateMonthlyPaymentsCommand(BaseModel):
     model_config = {"frozen": True}
     period: str = Field(pattern=r"^\d{4}-\d{2}$")
+    # S40: who pressed Generate monthly; None for the scheduler.
+    actor_id: str | None = None
 
 
 class MonthlyGenerationSkippedDetail(BaseModel):
@@ -139,12 +143,25 @@ class GenerateMonthlyPayments:
         *,
         payments: AdminPaymentOperationsPort,
         notify_minted: Callable[[str], Awaitable[object]] | None = None,
+        audit: AuditTrail | None = None,
     ) -> None:
         self._payments = payments
         self._notify_minted = notify_minted
+        self._audit = audit
 
     async def execute(self, cmd: GenerateMonthlyPaymentsCommand) -> GenerateMonthlyPaymentsResult:
         result = await self._payments.generate_monthly_payments(cmd.period)
+        # A staff run is always recorded; the daily scheduler only when it billed
+        # something, so a quiet day does not fill the trail.
+        if cmd.actor_id is not None or result.created > 0:
+            await record_best_effort(
+                self._audit,
+                actor_id=cmd.actor_id,
+                action="monthly_invoices_generated",
+                entity_type="billing_period",
+                entity_id=cmd.period,
+                metadata={"created": result.created, "skipped_existing": result.skipped_existing},
+            )
         if self._notify_minted is not None and result.created > 0:
             try:
                 outcome = await self._notify_minted(cmd.period)

@@ -545,6 +545,7 @@ from backend.v2.contexts.identity.infrastructure.mongo_academy_media_repo import
     MongoAcademyMediaRepository,
 )
 from backend.v2.contexts.identity.infrastructure.mongo_academy_repo import MongoAcademyRepository
+from backend.v2.contexts.identity.infrastructure.mongo_audit_trail import MongoAuditTrail
 from backend.v2.contexts.identity.infrastructure.mongo_membership_repo import (
     MongoMembershipRepository,
 )
@@ -801,8 +802,12 @@ def compose_admin(
     )
 
     session_tz = request_scoped_academy_timezone(db, request_academy_id)
+    audit_trail = MongoAuditTrail(db)  # S40: best-effort "who did what" rows
     create_session = CreateSession(
-        sessions=sessions_w, academy_id=request_academy_id, get_academy_timezone=session_tz
+        sessions=sessions_w,
+        academy_id=request_academy_id,
+        get_academy_timezone=session_tz,
+        audit=audit_trail,
     )
     edit_session = EditSession(
         sessions=sessions_w,
@@ -1063,6 +1068,7 @@ def compose_admin(
     generate_monthly_payments = GenerateMonthlyPayments(
         payments=payments_repo,
         notify_minted=_notify_minted_invoices,
+        audit=audit_trail,
     )
     mark_payment_paid = MarkPaymentPaid(payments=payments_repo)
     apply_payment_discount = ApplyPaymentDiscount(payments=payments_repo)
@@ -1871,7 +1877,7 @@ def compose_admin(
     list_admin_waivers = ListAdminWaivers(waivers_repo, copies=MongoParentWaiverRepository(db))
     waiver_templates_repo = MongoWaiverTemplateRepository(db)
     manage_admin_waiver_templates = ManageAdminWaiverTemplates(
-        waiver_templates_repo, programs=MongoWaiverProgramLookup(db)
+        waiver_templates_repo, programs=MongoWaiverProgramLookup(db), audit=audit_trail
     )
     admin_registration_review = AdminRegistrationReview(
         apps=MongoApplicationRepository(db),

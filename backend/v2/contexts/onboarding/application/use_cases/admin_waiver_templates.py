@@ -14,6 +14,7 @@ from backend.v2.contexts.onboarding.domain.waiver_assignment import (
     WaiverAssignment,
     WaiverScope,
 )
+from backend.v2.shared.audit import AuditTrail, record_best_effort
 from backend.v2.shared.ids import new_ulid
 
 AdminManagedWaiverTemplateStatus = Literal["draft", "active", "superseded", "retired"]
@@ -98,6 +99,8 @@ class AssignWaiverCommand(BaseModel):
 
 class PublishWaiverTemplateCommand(BaseModel):
     waiver_template_id: str
+    # S40: who published, for the audit trail.
+    actor_id: str | None = None
 
 
 class AssignWaiverTemplateToRegistrationCommand(BaseModel):
@@ -158,9 +161,11 @@ class ManageAdminWaiverTemplates:
         programs: ProgramDirectory | None = None,
         id_factory: Callable[[], str] | None = None,
         clock: Callable[[], datetime] | None = None,
+        audit: AuditTrail | None = None,
     ) -> None:
         self._templates = templates
         self._programs = programs
+        self._audit = audit
         self._id_factory = id_factory or (lambda: f"wt_{new_ulid()}")
         self._clock = clock or (lambda: datetime.now(UTC))
 
@@ -217,12 +222,21 @@ class ManageAdminWaiverTemplates:
         # number because "Liability" was republished in between.
         version = self._next_version([row for row in existing if row.lineage == template.lineage])
         content_hash = sha256(template.body.encode("utf-8")).hexdigest()
-        return await self._templates.publish_draft(
+        published = await self._templates.publish_draft(
             waiver_template_id=template.waiver_template_id,
             version=version,
             content_hash=content_hash,
             published_at=self._clock(),
         )
+        await record_best_effort(
+            self._audit,
+            actor_id=command.actor_id,
+            action="waiver_published",
+            entity_type="waiver_template",
+            entity_id=template.waiver_template_id,
+            metadata={"title": template.title, "version": version},
+        )
+        return published
 
     async def assign_to_registration(
         self, command: AssignWaiverTemplateToRegistrationCommand
