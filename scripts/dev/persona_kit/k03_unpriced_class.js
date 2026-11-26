@@ -5,13 +5,15 @@ const A = "acad_demo_academy", SID = "kit_k03_session_tue", now = new Date();
 const base = db.sessions.findOne({academy_id: A, session_id: "demo_session_sat"});
 if (!base) throw new Error("k03: run the base demo seed first (demo_session_sat missing)");
 
-const {_id, ...copy} = base;
+// Re-asserted every run: the point of the kit is a class nobody priced.
+const fixed = {title: "Tuesday Intermediate", name: "Tuesday Intermediate", days_of_week: ["Tue"],
+  skill_level: "Intermediate", amount_cents: null, monthly_price: null, status: "scheduled",
+  updated_at: now, kit: "k03"};
+// A path may not sit in both $setOnInsert and $set, so the copy drops every fixed key.
+const copy = Object.fromEntries(Object.entries(base).filter(([k]) => k !== "_id" && !(k in fixed)));
 db.sessions.updateOne({academy_id: A, session_id: SID}, {
   $setOnInsert: {...copy, session_id: SID, created_at: now},
-  // Re-asserted every run: the point of the kit is a class nobody priced.
-  $set: {title: "Tuesday Intermediate", name: "Tuesday Intermediate", days_of_week: ["Tue"],
-    skill_level: "Intermediate", amount_cents: null, monthly_price: null, status: "scheduled",
-    updated_at: now, kit: "k03"}}, {upsert: true});
+  $set: fixed}, {upsert: true});
 
 // Its dates: the Saturday class's dates moved back to the Tuesday before.
 let dates = 0;

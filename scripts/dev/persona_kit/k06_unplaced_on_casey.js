@@ -10,7 +10,9 @@ if (!db.users.findOne({user_id: CASEY})) { print("k06: Casey is missing; run k01
 const base = db.sessions.findOne({academy_id: A, session_id: BASE});
 if (!base) { print("k06: the demo Wednesday class is missing; run the base demo seed"); quit(1); }
 
-const {_id, ...tmpl} = base;
+// A path may not sit in both $setOnInsert and $set, so the copies drop the $set keys.
+const without = (doc, keys) => Object.fromEntries(Object.entries(doc).filter(([k]) => k !== "_id" && !keys.includes(k)));
+const tmpl = without(base, ["coach_id", "assistant_coach_ids", "updated_at"]);
 db.sessions.updateOne({academy_id: A, session_id: SID}, {$setOnInsert: {...tmpl, session_id: SID,
   name: "Casey's Junior Starters", title: "Casey's Junior Starters", reserved_seats: 0, created_at: now},
   $set: {coach_id: CASEY, assistant_coach_ids: [], updated_at: now}}, {upsert: true});
@@ -18,7 +20,7 @@ db.sessions.updateOne({academy_id: A, session_id: SID}, {$setOnInsert: {...tmpl,
 // Same dates as the Wednesday clinic, keyed on the new session id.
 let occ = 0;
 db.session_occurrences.find({academy_id: A, session_id: BASE, kit: {$exists: false}}).forEach(o => {
-  const {_id: _oid, ...row} = o;
+  const row = without(o, ["scheduled_coach_id"]);
   const id = o.occurrence_id.replace(BASE, SID);
   db.session_occurrences.updateOne({academy_id: A, occurrence_id: id}, {$setOnInsert: {...row, occurrence_id: id,
     session_id: SID, template_session_id: SID, kit: "k06"}, $set: {scheduled_coach_id: CASEY}}, {upsert: true});
