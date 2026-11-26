@@ -286,6 +286,10 @@ export default function AdminSessionDetailPage() {
       ),
     [enrollments],
   );
+  const activeStudentNameById = useMemo(
+    () => new Map(activeEnrollments.map((e) => [e.student_id, e.full_name])),
+    [activeEnrollments],
+  );
   const waitlist = waitlistQuery.data?.waitlist ?? [];
   const waitingCount = waitlist.filter((w) => w.status === "waiting").length;
 
@@ -903,6 +907,7 @@ export default function AdminSessionDetailPage() {
         sessionTitle={session?.title ?? null}
         timezone={occurrenceTimezone}
         studentNameById={studentNameById}
+        activeStudentNameById={activeStudentNameById}
         onClose={() => setAttendanceTarget(null)}
       />
       <ClassRecapDialog

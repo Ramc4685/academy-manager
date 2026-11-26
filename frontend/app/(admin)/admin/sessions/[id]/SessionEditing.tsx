@@ -222,9 +222,8 @@ export function ReplacementCoachTable({
             Cancel this date
           </Button>
         )}
-        {/* Issue #554: attendance can only be corrected or voided on a date
-            that was actually marked, so the action only appears where there is
-            something to act on. */}
+        {/* Issue #554 / S25: the action appears on a marked date (to correct
+            or void) and around class time (to give a first mark). */}
         {onViewAttendance &&
           (occurrence.attendance_marked_count > 0 || isAroundClassTime(occurrence)) && (
           <Button
@@ -475,12 +474,15 @@ export function OccurrenceAttendanceDialog({
   sessionTitle,
   timezone,
   studentNameById,
+  activeStudentNameById,
   onClose,
 }: {
   occurrence: AdminSessionOccurrenceView | null;
   sessionTitle: string | null;
   timezone: string | null;
   studentNameById: Map<string, string>;
+  /** Active roster only: the children offered a first mark. */
+  activeStudentNameById: Map<string, string>;
   onClose: () => void;
 }) {
   const [voidTarget, setVoidTarget] = useState<string | null>(null);
@@ -513,7 +515,7 @@ export function OccurrenceAttendanceDialog({
   });
 
   const rows: AdminStudentAttendanceView[] = attendanceQuery.data?.attendance ?? [];
-  const rosterRows = occurrenceAttendanceRows(rows, studentNameById);
+  const rosterRows = occurrenceAttendanceRows(rows, studentNameById, activeStudentNameById);
   const dropoff = attendanceQuery.data?.dropoff;
 
   // Admin confirms a parent's "I've arrived": the server writes
@@ -944,16 +946,13 @@ export function OccurrenceReplacementDialog({
               emptyLabel={isEditing ? "No replacement" : "Select coach"}
             />
           ) : (
-            <input
-              value={coachId}
-              onChange={(event) => setCoachId(event.target.value)}
-              className={inputClass}
-              placeholder={
-                coachesQuery.isLoading
-                  ? "Loading coaches..."
-                  : "Coach reference"
-              }
-            />
+            <p className="text-sm text-rally-subtle" data-testid="no-replacement-coach">
+              {coachesQuery.isLoading
+                ? "Loading coaches..."
+                : coachesQuery.isError
+                  ? "Could not load coaches."
+                  : "No other coach to choose."}
+            </p>
           )}
         </Field>
         <Field label="Reason">

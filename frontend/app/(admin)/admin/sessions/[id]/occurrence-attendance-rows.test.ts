@@ -28,6 +28,7 @@ describe("occurrenceAttendanceRows (S25)", () => {
     const rows = occurrenceAttendanceRows(
       [mark("stu-dev", { student_name: "Dev Patel" }), mark("stu-gone", { student_name: null })],
       new Map([["stu-sam", "Sam Demo"]]),
+      new Map([["stu-sam", "Sam Demo"]]),
     );
     expect(rows.map((row) => row.name)).toEqual(["Dev Patel", "Former student", "Sam Demo"]);
     expect(rows.some((row) => row.name.startsWith("stu-"))).toBe(false);
@@ -40,10 +41,30 @@ describe("occurrenceAttendanceRows (S25)", () => {
         ["stu-sam", "Sam Demo"],
         ["stu-alex", "Alex Demo"],
       ]),
+      new Map([
+        ["stu-sam", "Sam Demo"],
+        ["stu-alex", "Alex Demo"],
+      ]),
     );
     expect(rows.map((row) => [row.studentId, row.mark === null])).toEqual([
       ["stu-sam", false],
       ["stu-alex", true],
+    ]);
+  });
+
+  it("does not offer a mark to a past enrollment with no mark", () => {
+    const rows = occurrenceAttendanceRows(
+      [mark("stu-left", { student_name: null })],
+      new Map([
+        ["stu-sam", "Sam Demo"],
+        ["stu-left", "Lee Left"],
+        ["stu-gone", "Gus Gone"],
+      ]),
+      new Map([["stu-sam", "Sam Demo"]]),
+    );
+    expect(rows.map((row) => [row.name, row.mark === null])).toEqual([
+      ["Lee Left", false],
+      ["Sam Demo", true],
     ]);
   });
 });
@@ -60,6 +81,9 @@ describe("the class-date attendance dialog (S25)", () => {
 
   it("keeps the scheduled coach out of the replacement list", () => {
     expect(src).toContain(".filter((coach) => coach.user_id !== scheduled)");
+    // A one-coach academy gets a plain message, never a raw coach-id box.
+    expect(src).toContain("No other coach to choose.");
+    expect(src).not.toContain('"Coach reference"');
   });
 
   it("shows a cancelled date's reason on the row", () => {

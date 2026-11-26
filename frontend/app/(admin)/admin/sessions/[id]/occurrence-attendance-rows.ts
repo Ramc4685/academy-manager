@@ -11,12 +11,14 @@ export interface OccurrenceAttendanceRow {
 
 /**
  * S25: every child on the class date, one row each. Marked children first (in
- * mark order), named by the server (it resolves former students); then roster
- * children with no mark, so an admin can give them one. Never a raw id.
+ * mark order), named by the server (it resolves former students); then ACTIVE
+ * roster children with no mark, so an admin can give them one. Past enrollments
+ * only name existing marks: a withdrawn child is not offered a mark. Never a raw id.
  */
 export function occurrenceAttendanceRows(
   marks: AdminStudentAttendanceView[],
   rosterNameById: Map<string, string>,
+  activeNameById: Map<string, string>,
 ): OccurrenceAttendanceRow[] {
   const marked = new Set(marks.map((mark) => mark.student_id));
   return [
@@ -25,7 +27,7 @@ export function occurrenceAttendanceRows(
       name: mark.student_name || rosterNameById.get(mark.student_id) || FORMER_STUDENT,
       mark,
     })),
-    ...[...rosterNameById]
+    ...[...activeNameById]
       .filter(([studentId]) => !marked.has(studentId))
       .map(([studentId, name]) => ({ studentId, name, mark: null })),
   ];
