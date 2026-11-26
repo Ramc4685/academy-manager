@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from backend.v2.composition.coach_schedule_notices import occurrence_staff, session_staff
 from backend.v2.composition.dropoff_checkins import DropoffCheckinComposition
 from backend.v2.composition.session_announcements import (
     AnnouncementNotFound,
@@ -114,6 +116,17 @@ from backend.v2.shared.tenancy.context import current_academy_id
 log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin.sessions"])
+
+
+def _schedule_notices(request: Request) -> Any:
+    """S44: the coach schedule-notice emitter (``app.state``); None in bare test apps."""
+    return getattr(request.app.state, "coach_schedule_notices", None)
+
+
+async def _occurrence_staff_before(notices: Any, occurrence_id: str) -> dict[str, str]:
+    if not notices:
+        return {}
+    return dict(occurrence_staff(await notices.occurrence_snapshot(occurrence_id)))
 
 
 def _start_of_day_utc(value: date) -> datetime:
@@ -266,9 +279,12 @@ async def copy_session(
 async def edit_session(
     session_id: str,
     body: EditSessionRequest,
+    request: Request,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionView:
+    notices = _schedule_notices(request)
+    before = await notices.session_snapshot(session_id) if notices else None
     field_set = body.model_fields_set
     amount_sent = "amount_cents" in field_set
     current = None
@@ -316,6 +332,8 @@ async def edit_session(
         )
     if use_cases.maintain_session_occurrences is not None:
         await use_cases.maintain_session_occurrences(session)
+    if notices:
+        await notices.session_changed(before, session, actor_id=claims.user_id)
     return AdminSessionView(**session.model_dump(exclude={"academy_id"}))
 
 
@@ -346,20 +364,25 @@ async def preview_welcome_email(
 async def set_session_assistants(
     session_id: str,
     body: SetSessionAssistantsRequest,
+    request: Request,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionView:
     if use_cases.set_session_assistants is None:
         raise HTTPException(status_code=503, detail="Session assistants are not configured")
+    notices = _schedule_notices(request)
+    before = await notices.session_snapshot(session_id) if notices else None
     # Validation (active membership holding coach/assistant_coach) and the
     # 404/422 semantics live in the use case; DomainError reaches the global
     # handler unchanged.
-    await use_cases.set_session_assistants.execute(  # type: ignore[attr-defined]
+    updated = await use_cases.set_session_assistants.execute(  # type: ignore[attr-defined]
         session_id=session_id,
         assistant_coach_ids=body.assistant_coach_ids,
         actor_id=claims.user_id,
         reason=body.reason,
     )
+    if notices:
+        await notices.session_changed(before, updated, actor_id=claims.user_id)
     if use_cases.get_admin_session is None:
         raise HTTPException(status_code=503, detail="Session detail is not configured")
     row = await use_cases.get_admin_session(session_id)  # type: ignore[operator]
@@ -426,9 +449,12 @@ async def list_session_occurrences(
 async def update_session_occurrence_coach(
     occurrence_id: str,
     body: UpdateSessionOccurrenceCoachRequest,
+    request: Request,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionOccurrenceView:
+    notices = _schedule_notices(request)
+    before = await _occurrence_staff_before(notices, occurrence_id)
     row = await use_cases.update_session_occurrence_coach(  # type: ignore[operator]
         occurrence_id=occurrence_id,
         actual_coach_id=body.actual_coach_id,
@@ -438,6 +464,8 @@ async def update_session_occurrence_coach(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Occurrence not found")
+    if notices:
+        await notices.occurrence_changed(occurrence_id, before, actor_id=claims.user_id)
     return AdminSessionOccurrenceView(**row)
 
 
@@ -449,11 +477,15 @@ async def update_session_occurrence_coach(
 async def add_session_replacement(
     session_id: str,
     body: AddSessionReplacementRequest,
+    request: Request,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionOccurrenceView:
     if use_cases.add_session_replacement is None:
         raise HTTPException(status_code=503, detail="Session replacement is not configured")
+    notices = _schedule_notices(request)
+    # The date may not exist yet; the class's own staff is who would teach it.
+    before = dict(session_staff(await notices.session_snapshot(session_id))) if notices else {}
     try:
         row = await use_cases.add_session_replacement(  # type: ignore[operator]
             session_id=session_id,
@@ -466,6 +498,8 @@ async def add_session_replacement(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    if notices:
+        await notices.occurrence_changed(row["occurrence_id"], before, actor_id=claims.user_id)
     return AdminSessionOccurrenceView(**row)
 
 
@@ -477,11 +511,14 @@ async def add_session_replacement(
 async def update_session_occurrence_replacement(
     occurrence_id: str,
     body: UpdateOccurrenceReplacementRequest,
+    request: Request,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> AdminSessionOccurrenceView:
     if use_cases.update_session_occurrence_replacement is None:
         raise HTTPException(status_code=503, detail="Occurrence replacement is not configured")
+    notices = _schedule_notices(request)
+    before = await _occurrence_staff_before(notices, occurrence_id)
     try:
         row = await use_cases.update_session_occurrence_replacement(  # type: ignore[operator]
             occurrence_id=occurrence_id,
@@ -493,6 +530,8 @@ async def update_session_occurrence_replacement(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if row is None:
         raise HTTPException(status_code=404, detail="Occurrence not found")
+    if notices:
+        await notices.occurrence_changed(occurrence_id, before, actor_id=claims.user_id)
     return AdminSessionOccurrenceView(**row)
 
 
@@ -504,11 +543,14 @@ async def update_session_occurrence_replacement(
 async def cancel_session_occurrence(
     occurrence_id: str,
     body: CancelSessionOccurrenceRequest,
+    request: Request,
     claims: AuthClaims = Depends(require_persona("admin")),
     use_cases: AdminUseCases = Depends(get_admin_use_cases),
 ) -> CancelSessionOccurrenceResponse:
     if use_cases.cancel_session_occurrence is None:
         raise HTTPException(status_code=503, detail="Class-date cancellation is not configured")
+    notices = _schedule_notices(request)
+    before = await notices.occurrence_snapshot(occurrence_id) if notices else None
     result = await use_cases.cancel_session_occurrence.execute(
         CancelSessionOccurrenceCommand(
             occurrence_id=occurrence_id,
@@ -518,6 +560,8 @@ async def cancel_session_occurrence(
         )
     )
     occurrence = result.occurrence
+    if notices and occurrence.status == "cancelled":
+        await notices.occurrence_cancelled(before, reason=body.reason, actor_id=claims.user_id)
     return CancelSessionOccurrenceResponse(
         occurrence=AdminSessionOccurrenceView(
             occurrence_id=occurrence.occurrence_id,

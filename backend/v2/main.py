@@ -1029,6 +1029,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # A website guest booked on a cancelled date hears it is off; attached
     # here because composition/admin.py is at its line cap (#743 pattern).
     app.state.admin.cancel_session_occurrence._guest_notifier = app.state.trial_emails
+    # S44: in-app notice to a coach whose classes an admin changed (outbox +
+    # handler); kept out of composition/admin.py, which is at its line cap.
+    from backend.v2.composition.coach_schedule_notices import compose_coach_schedule_notices
+
+    app.state.coach_schedule_notices = compose_coach_schedule_notices(
+        db, outbox, message_push=app.state.message_push
+    )
     # Lead nurture (AI strategy Phase 3 C1): the daily job and the admin editor.
     from backend.v2.composition.nurture import compose_nurture
 

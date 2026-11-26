@@ -139,3 +139,39 @@ class StudentSessionTypeChanged(DomainEvent):
     name: Literal["Enrollment.SessionTypeChanged"] = "Enrollment.SessionTypeChanged"
     schema_version: Literal[1] = 1
     payload: StudentSessionTypeChangedPayload
+
+
+CoachScheduleNoticeKind = Literal[
+    # The whole class (lead or assistant) gained or lost this coach.
+    "assigned",
+    "unassigned",
+    # One dated class gained or lost this coach (cover, replacement).
+    "date_assigned",
+    "date_unassigned",
+    "cancelled",
+    # The class's days, times or court changed.
+    "moved",
+]
+
+
+class CoachScheduleNoticePayload(BaseModel):
+    model_config = {"frozen": True}
+
+    kind: CoachScheduleNoticeKind
+    coach_id: str
+    session_id: str
+    occurrence_id: str | None = None
+    start_at: datetime | None = None
+    role: Literal["lead", "assistant"] | None = None
+    reason: str | None = None
+    actor_id: str | None = None
+
+
+class CoachScheduleNoticeRequested(DomainEvent):
+    """S44: tell one coach, in their inbox, that their teaching schedule changed."""
+
+    name: Literal["Enrollment.CoachScheduleNoticeRequested"] = (
+        "Enrollment.CoachScheduleNoticeRequested"
+    )
+    schema_version: Literal[1] = 1
+    payload: CoachScheduleNoticePayload
