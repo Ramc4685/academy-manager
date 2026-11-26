@@ -149,9 +149,9 @@ async def _reject_percent_pay_missing_price(
         raise HTTPException(
             status_code=400,
             detail=(
-                "Percent-of-revenue coach pay requires a session price. "
-                "Set a session fee, use amount_cents: 0 for an explicit free session, "
-                "or change the coach pay rate before saving."
+                "This coach is paid a share of the class fee, so the class needs a "
+                "monthly fee first. Set a fee ($0 for a free class), choose a coach "
+                "paid another way, or ask the owner to set the price."
             ),
         )
 

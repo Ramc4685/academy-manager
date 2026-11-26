@@ -46,6 +46,22 @@ _SOURCE_LABELS: dict[str, str] = {
 }
 
 
+def _unpriced_label(session: Any, titles: list[str]) -> str:
+    """The class title, plus its day and start time when another listed class
+    shares the title (two "Tuesday Intermediate" rows read as one otherwise)."""
+    title = str(_field(session, "title", "Class"))
+    if titles.count(title) < 2:
+        return title
+    when = " ".join(
+        part
+        for part in (
+            "/".join(_field(session, "days_of_week", None) or []),
+            str(_field(session, "start_time", "") or ""),
+        )
+        if part
+    )
+    return f"{title}, {when}" if when else title
+
 def _oldest_pending_days(rows: list[Any]) -> int:
     """Age in whole days of the longest-waiting request (0 when none is datable).
 
@@ -404,8 +420,9 @@ async def dashboard_attention(
     # A free class (fee 0) is a choice and is not listed.
     unpriced = await read("unpriced_classes", _unpriced_classes_with_students, [], use_cases)
     if unpriced:
+        titles = [str(_field(s, "title", "Class")) for s in unpriced]
         names = ", ".join(
-            f"{_field(s, 'title', 'Class')} ({int(_field(s, 'enrolled_count', 0) or 0)} "
+            f"{_unpriced_label(s, titles)} ({int(_field(s, 'enrolled_count', 0) or 0)} "
             f"student{'s' if int(_field(s, 'enrolled_count', 0) or 0) != 1 else ''})"
             for s in unpriced[:3]
         )

@@ -420,3 +420,31 @@ def test_unpriced_classes_with_students_are_listed_and_free_ones_are_not(admin_c
     rows[0]["amount_cents"] = 9000  # the owner prices it: the item clears
     r = admin_client.get("/api/v2/admin/dashboard/attention")
     assert not [i for i in r.json()["items"] if i["kind"] == "unpriced_classes"]
+
+
+def test_unpriced_classes_sharing_a_title_say_which_is_which(admin_client):
+    """S10 persona follow-up: two unpriced 'Tuesday Intermediate' rows read as
+    one; each gets its day and start time."""
+    rows = [
+        {
+            "session_id": f"s-{start}",
+            "title": "Tuesday Intermediate",
+            "amount_cents": None,
+            "enrolled_count": 2,
+            "status": "scheduled",
+            "days_of_week": ["Tue"],
+            "start_time": start,
+        }
+        for start in ("09:00", "17:30")
+    ]
+
+    async def list_admin_sessions(on_date, *, window=None, coach_id=None):
+        return rows if window == "open" else []
+
+    admin_client.use_cases.list_admin_sessions = list_admin_sessions
+
+    r = admin_client.get("/api/v2/admin/dashboard/attention")
+
+    detail = next(i for i in r.json()["items"] if i["kind"] == "unpriced_classes")["detail"]
+    assert "Tuesday Intermediate, Tue 09:00 (2 students)" in detail
+    assert "Tuesday Intermediate, Tue 17:30 (2 students)" in detail

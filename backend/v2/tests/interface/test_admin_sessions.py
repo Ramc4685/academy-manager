@@ -737,7 +737,9 @@ def test_admin_session_create_blocks_missing_price_for_percent_paid_coach(admin_
     )
 
     assert response.status_code == 400
-    assert "Percent-of-revenue coach pay requires a session price" in response.json()["detail"]
+    assert "This coach is paid a share of the class fee" in response.json()["detail"]
+    # Persona follow-up (S10): no API field names in what staff read.
+    assert "amount_cents" not in response.json()["detail"]
 
 
 def test_admin_session_create_allows_explicit_zero_price_for_percent_paid_coach(
@@ -811,7 +813,7 @@ async def test_admin_session_edit_blocks_clearing_price_for_percent_paid_coach(
         )
 
     assert response.status_code == 400
-    assert "Percent-of-revenue coach pay requires a session price" in response.json()["detail"]
+    assert "This coach is paid a share of the class fee" in response.json()["detail"]
     stored = await db.sessions.find_one(
         {"academy_id": "academy-b", "session_id": "session-percent-price"}
     )
@@ -873,7 +875,7 @@ async def test_admin_session_edit_unpriced_class_blocks_switch_to_percent_paid_c
         )
 
     assert blocked.status_code == 400, blocked.text
-    assert "Percent-of-revenue coach pay requires a session price" in blocked.json()["detail"]
+    assert "This coach is paid a share of the class fee" in blocked.json()["detail"]
     # Unchanged null fee from a non-owner: not a price change, so it saves.
     assert allowed.status_code == 200, allowed.text
     stored = await db.sessions.find_one(
