@@ -210,6 +210,7 @@ export default function OnboardingStepperPage() {
   const order = onboardingOrder(app);
 
   function advance() {
+    if (!app) return;
     const next = nextStep(app, step);
     if (next) setStep(next);
   }
