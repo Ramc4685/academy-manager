@@ -157,6 +157,14 @@ function SessionPlan({
           <p className="mb-2 text-sm font-semibold text-neutral-600">
             Not placed in a level
           </p>
+          {/* S15 persona follow-up: with nobody placed, the page looked like an
+              empty shell. Say what the plan holds and who unlocks it. */}
+          {session.groups.length === 0 && (
+            <p data-testid="plan-all-unplaced" className="mb-2 text-sm text-neutral-600 dark:text-neutral-300">
+              The plan lists the skills to work on for each level. Nobody in this class is placed
+              on a level yet, so there is nothing to plan; the academy office places children.
+            </p>
+          )}
           <ul className="space-y-1 text-sm text-neutral-600 dark:text-neutral-300">
             {session.unplaced.map((u) => (
               <li key={u.student_id}>{u.student_name}</li>
